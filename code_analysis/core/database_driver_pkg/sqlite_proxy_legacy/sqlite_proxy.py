@@ -18,11 +18,12 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import BaseDatabaseDriver
+from code_analysis.core.exceptions import DatabaseOperationError
+
+from .legacy_driver_base import BaseDatabaseDriver
 from .sqlite_proxy_execute import execute_operation_impl
 from .sqlite_proxy_socket import send_request_via_socket
 from .sqlite_proxy_worker import get_socket_path_for_worker
-from ..exceptions import DatabaseOperationError
 
 logger = logging.getLogger(__name__)
 

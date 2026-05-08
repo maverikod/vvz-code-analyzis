@@ -114,6 +114,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._retry_policy: RetryPolicy = RetryPolicy()
         self._qa_transient_injections_remaining: int = 0
         self._pool_max_wait_seconds: float = 30.0
+        self._schema_vector_dim: int = 384
 
     def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
         """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock."""
@@ -147,6 +148,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
 
         try:
             self._connect_kwargs = _connect_kwargs_from_config(config)
+            self._schema_vector_dim = int(config.get("vector_dim", 384))
             logger.info(
                 "PostgreSQL driver connecting to host=%s dbname=%s",
                 self._connect_kwargs.get("host")
@@ -159,7 +161,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self._full_schema = get_schema_definition()
             self._schema_tables = self._full_schema["tables"]
 
-            ensure_postgres_schema(self.conn, self._full_schema)
+            ensure_postgres_schema(
+                self.conn, self._full_schema, vector_dim=self._schema_vector_dim
+            )
 
             self._retry_policy = RetryPolicy.from_driver_config(config)
             # Canonical database driver config keys only (Step 03).
@@ -170,7 +174,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 lock_timeout_seconds=lock_timeout_seconds,
                 statement_timeout_seconds=statement_timeout_seconds,
             )
-            self._schema_manager = PostgreSQLSchemaManager(self.conn)
+            self._schema_manager = PostgreSQLSchemaManager(
+                self.conn, schema_vector_dim=self._schema_vector_dim
+            )
             self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
 
             # Connection topology (phase 1): one **main** ``self.conn`` for schema manager,
@@ -208,7 +214,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             raise DriverConnectionError(f"Failed to connect to PostgreSQL: {e}") from e
 
     def commit(self) -> None:
-        """Commit the main connection (CodeDatabase transaction_id=local)."""
+        """Commit the main connection (legacy SQL facade transaction_id=local)."""
         if self.conn:
             self.conn.commit()
 
@@ -238,8 +244,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self.conn = None
         self.conn = psycopg.connect(**self._connect_kwargs)
         self.conn.autocommit = False
-        ensure_postgres_schema(self.conn, self._full_schema)
-        self._schema_manager = PostgreSQLSchemaManager(self.conn)
+        ensure_postgres_schema(
+            self.conn, self._full_schema, vector_dim=self._schema_vector_dim
+        )
+        self._schema_manager = PostgreSQLSchemaManager(
+            self.conn, schema_vector_dim=self._schema_vector_dim
+        )
         self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
         self._pool = PostgreSQLConnectionPool(
             self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds

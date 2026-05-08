@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from ..exceptions import DatabaseOperationError
+from code_analysis.core.exceptions import DatabaseOperationError
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,8 @@
 """
 RPC handler for index_file: full file index (AST, CST, entities, code_content) in driver process.
 
-Exposes "index_file" RPC used by the indexing worker. Reuses CodeDatabase.update_file_data;
+Exposes "index_file" RPC used by the indexing worker. Delegates to
+:func:`~code_analysis.core.database.files.update_standalone.update_file_data_via_driver`;
 clears needs_chunking after success (single flag for indexer and vectorization).
 
 Author: Vasiliy Zdanovskiy
@@ -96,19 +97,44 @@ class _RPCHandlersIndexFileMixin:
                     description=f"Project has no root_path: {project_id}",
                 )
 
-            # Reuse existing driver connection: do NOT create a second CodeDatabase(driver_config)
-            # (that would open a second connection and call sync_schema(), causing lock contention
-            # and "Schema synchronization failed: disk I/O error"). Use from_existing_driver so
-            # only one connection touches the DB in this process.
-            from code_analysis.core.database import CodeDatabase
-
-            logger.debug(
-                "[index_file] Using from_existing_driver (single connection, no sync_schema)"
-            )
+            # Reuse existing driver: update_file_data_via_driver uses InProcessRpcClient
+            # over this driver (no second legacy SQL facade wrapper with sync_schema in this process).
             try:
-                db = CodeDatabase.from_existing_driver(self.driver)
-                update_result = db.update_file_data(
-                    file_path, project_id, Path(root_path)
+                from code_analysis.core.database.files.update_standalone import (
+                    update_file_data_via_driver,
+                )
+
+                logger.debug(
+                    "[index_file] Using update_file_data_via_driver (no extra DB wrapper)"
+                )
+                docs_indexing = (
+                    params.get("docs_indexing") if isinstance(params, dict) else None
+                )
+                server_config_path = (
+                    params.get("server_config_path")
+                    if isinstance(params, dict)
+                    else None
+                )
+                if docs_indexing is not None and not isinstance(docs_indexing, dict):
+                    docs_indexing = None
+                if server_config_path is not None and not isinstance(
+                    server_config_path, str
+                ):
+                    server_config_path = None
+                skip_file_edit_lock = bool(
+                    params.get("skip_file_edit_lock")
+                    if isinstance(params, dict)
+                    else False
+                )
+
+                update_result = update_file_data_via_driver(
+                    driver=self.driver,
+                    file_path=file_path,
+                    project_id=project_id,
+                    root_dir=Path(root_path),
+                    docs_indexing=docs_indexing,
+                    server_config_path=server_config_path,
+                    skip_file_edit_lock=skip_file_edit_lock,
                 )
             except Exception as e:
                 if not _is_fk_or_integrity_error(e):
@@ -124,7 +150,7 @@ class _RPCHandlersIndexFileMixin:
                     description="Project no longer exists (deleted during indexing)",
                 )
 
-            # Do not disconnect db.driver: it is the RPC server's shared connection.
+            # Shared driver connection: do not disconnect (RPC server owns it).
 
             if not update_result.get("success"):
                 error_msg = update_result.get("error", "Unknown error")

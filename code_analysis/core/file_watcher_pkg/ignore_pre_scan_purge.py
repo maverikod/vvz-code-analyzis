@@ -79,6 +79,7 @@ def collect_file_ids_to_purge_for_ignore_policy(
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
     ignore_exception_patterns: Optional[Sequence[str]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
     Return ``files.id`` for active rows whose path should be ignored by scanner rules.
@@ -90,19 +91,26 @@ def collect_file_ids_to_purge_for_ignore_policy(
     """
     rows = _query_file_rows(
         database,
-        f"SELECT id, path FROM files WHERE project_id = ? AND {WHERE_FILES_ACTIVE}",
+        f"SELECT id, path, relative_path FROM files WHERE project_id = ? AND {WHERE_FILES_ACTIVE}",
         (project_id,),
     )
     project_root = _project_root_for_id(database, project_id)
+    from code_analysis.core.file_identity import absolute_path_for_indexed_file
+
     patterns = list(ignore_patterns)
     exception_patterns = list(ignore_exception_patterns or ())
     out: List[str] = []
     for row in rows:
         fid = row.get("id")
-        pstr = row.get("path")
-        if fid is None or not pstr:
+        if fid is None:
             continue
-        path = Path(str(pstr))
+        if not project_root:
+            continue
+        try:
+            abs_s = absolute_path_for_indexed_file(project_root, row)
+        except Exception:
+            continue
+        path = Path(abs_s)
         try:
             path_resolved = path.resolve()
         except OSError:
@@ -114,6 +122,7 @@ def collect_file_ids_to_purge_for_ignore_policy(
             ignore_exception_files=ignore_exception_files,
             ignore_exception_patterns=exception_patterns or None,
             project_root=project_root,
+            docs_indexing=docs_indexing,
         ):
             out.append(str(fid))
     return out
@@ -126,6 +135,7 @@ def list_non_ignored_code_files_under_root(
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
     ignore_exception_patterns: Optional[Sequence[str]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Path, ...]:
     """
     Walk ``project_root`` with directory pruning (``should_skip_dir`` + ``should_ignore_path``).
@@ -147,6 +157,7 @@ def list_non_ignored_code_files_under_root(
             ignore_exception_files=ignore_exception_files,
             ignore_exception_patterns=exception_patterns or None,
             project_root=root,
+            docs_indexing=docs_indexing,
         ):
             dirnames[:] = []
             continue
@@ -162,6 +173,7 @@ def list_non_ignored_code_files_under_root(
                 ignore_exception_files=ignore_exception_files,
                 ignore_exception_patterns=exception_patterns or None,
                 project_root=root,
+                docs_indexing=docs_indexing,
             ):
                 continue
             pruned_dirs.append(name)
@@ -175,6 +187,7 @@ def list_non_ignored_code_files_under_root(
                 ignore_exception_files=ignore_exception_files,
                 ignore_exception_patterns=exception_patterns or None,
                 project_root=root,
+                docs_indexing=docs_indexing,
             ):
                 continue
             if fp.is_file():
@@ -235,7 +248,11 @@ def build_ignore_purge_sql_batch(
     ops: List[Tuple[str, tuple[Any, ...]]] = []
 
     ops.append((f"DROP TABLE IF EXISTS {TEMP_PURGE_TABLE}", ()))
-    _id_col = "UUID NOT NULL PRIMARY KEY" if use_uuid_temp_table else "TEXT NOT NULL PRIMARY KEY"
+    _id_col = (
+        "UUID NOT NULL PRIMARY KEY"
+        if use_uuid_temp_table
+        else "TEXT NOT NULL PRIMARY KEY"
+    )
     ops.append(
         (
             f"CREATE TEMP TABLE {TEMP_PURGE_TABLE} (id {_id_col})",
@@ -275,7 +292,7 @@ def build_ignore_purge_sql_batch(
         ops.append(
             (
                 "DELETE FROM code_content_fts WHERE rowid IN ("
-                f"SELECT id FROM code_content WHERE file_id IN ({_PURGE}))",
+                f"SELECT rowid FROM code_content WHERE file_id IN ({_PURGE}))",
                 (),
             )
         )
@@ -401,6 +418,14 @@ def _collect_file_ids_for_paths_chunk(
 ) -> List[str]:
     if not abs_paths:
         return []
+    gf = getattr(database, "get_file_by_path", None)
+    if callable(gf):
+        ids: List[str] = []
+        for ap in abs_paths:
+            row = gf(ap, project_id, include_deleted=False)
+            if row and row.get("id") is not None:
+                ids.append(str(row["id"]))
+        return ids
     placeholders = ",".join(["?"] * len(abs_paths))
     sql = (
         f"SELECT id FROM files WHERE project_id = ? AND {WHERE_FILES_ACTIVE} "
@@ -408,12 +433,12 @@ def _collect_file_ids_for_paths_chunk(
     )
     params = (project_id, *abs_paths)
     rows = _query_file_rows(database, sql, params)
-    ids: List[str] = []
+    out: List[str] = []
     for row in rows:
         i = row.get("id")
         if i is not None:
-            ids.append(str(i))
-    return ids
+            out.append(str(i))
+    return out
 
 
 def apply_ignore_purge_split_to_deltas(
@@ -424,6 +449,7 @@ def apply_ignore_purge_split_to_deltas(
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
     ignore_exception_patterns: Optional[Sequence[str]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     For each key in ``deltas`` (``project_id`` -> :class:`FileDelta`), move paths in
@@ -460,6 +486,7 @@ def apply_ignore_purge_split_to_deltas(
                 ignore_exception_files=ignore_exception_files,
                 ignore_exception_patterns=exc_pat or None,
                 project_root=root_res,
+                docs_indexing=docs_indexing,
             ):
                 ign.append(path_str)
             else:
@@ -521,6 +548,7 @@ def run_pre_scan_ignore_purge_for_project(
     ignore_exception_files: Optional[Set[Path]] = None,
     ignore_exception_patterns: Optional[Sequence[str]] = None,
     config_path: Optional[Path] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
 ) -> int:
     """
     Classify active files, logical-delete dependents + rows, invalidate FAISS.
@@ -534,6 +562,7 @@ def run_pre_scan_ignore_purge_for_project(
         allowed_venv_py_files=allowed_venv_py_files,
         ignore_exception_files=ignore_exception_files,
         ignore_exception_patterns=ignore_exception_patterns,
+        docs_indexing=docs_indexing,
     )
     if not ids:
         logger.info(

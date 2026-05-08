@@ -1,5 +1,8 @@
 """
-SQLite database driver.
+In-process SQLite driver (worker/driver process only, legacy CodeDatabase tests).
+
+Same role as the former ``code_analysis.core.db_driver.sqlite``: direct ``sqlite3``
+with :meth:`sync_schema` for :class:`~code_analysis.core.database.schema_sync.SchemaComparator`.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -10,11 +13,16 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import BaseDatabaseDriver
+from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.database.base import MIGRATION_METHODS, SCHEMA_VERSION
+from code_analysis.core.database.schema_sync import SchemaComparator
+from code_analysis.core.db_integrity import fix_all_stale_fks_in_connection
+
+from .legacy_driver_base import BaseDatabaseDriver
 
 
 class SQLiteDriver(BaseDatabaseDriver):
-    """SQLite database driver."""
+    """SQLite database driver (legacy interface; worker or DB driver process only)."""
 
     @property
     def is_thread_safe(self) -> bool:
@@ -36,16 +44,16 @@ class SQLiteDriver(BaseDatabaseDriver):
             config: Configuration dict with 'path' key pointing to database file
 
         Raises:
-            RuntimeError: If code is not running in DB worker process.
+            RuntimeError: If code is not running in DB worker or DB driver process.
         """
         if "path" not in config:
             raise ValueError("SQLite driver requires 'path' in config")
 
-        # Direct SQLite driver can only be used in DB worker process
         is_worker = os.getenv("CODE_ANALYSIS_DB_WORKER", "0") == "1"
-        if not is_worker:
+        is_driver = os.getenv("CODE_ANALYSIS_DB_DRIVER", "0") == "1"
+        if not is_worker and not is_driver:
             raise RuntimeError(
-                "Direct SQLite driver can only be used in DB worker process. "
+                "Direct SQLite driver can only be used in DB worker or DB driver process. "
                 "Use sqlite_proxy driver instead."
             )
 
@@ -254,13 +262,10 @@ class SQLiteDriver(BaseDatabaseDriver):
 
             # Get current schema version (defaults to "0.0.0" if not set)
             current_version = self._get_schema_version() or "0.0.0"
-            from ..database.base import SCHEMA_VERSION
 
             code_version = schema_definition.get("version", SCHEMA_VERSION)
 
             # Compare schemas using SchemaComparator (runs in same process)
-            from ..database.schema_sync import SchemaComparator
-
             comparator = SchemaComparator(self, schema_definition)
             diff = comparator.compare_schemas()
 
@@ -287,12 +292,10 @@ class SQLiteDriver(BaseDatabaseDriver):
             # Schema changes needed - create backup (only if DB is not empty)
             # CRITICAL: If backup fails, do NOT proceed with migration
             # Get project root for BackupManager
-            if self.db_path.parent.name == "data":
+            if self.db_path and self.db_path.parent.name == "data":
                 project_root = self.db_path.parent.parent
             else:
-                project_root = self.db_path.parent
-
-            from ..backup_manager import BackupManager
+                project_root = self.db_path.parent if self.db_path else Path(".")
 
             backup_manager = BackupManager(project_root)
             backup_uuid = backup_manager.create_database_backup(
@@ -327,10 +330,6 @@ class SQLiteDriver(BaseDatabaseDriver):
                     raise RuntimeError(error_msg) from e
 
             result["backup_uuid"] = backup_uuid
-
-            # Run version-specific migration methods if needed
-            # Migration methods are called in order from current_version to code_version
-            from ..database.base import MIGRATION_METHODS
 
             def _version_compare(v1: str, v2: str) -> int:
                 """
@@ -406,8 +405,6 @@ class SQLiteDriver(BaseDatabaseDriver):
                     or "ALTER TABLE methods RENAME TO temp_methods" in s
                     for s in changes
                 ):
-                    from ..db_integrity import fix_all_stale_fks_in_connection
-
                     if fix_all_stale_fks_in_connection(self.conn):
                         logger.info(
                             "Fixed all stale FKs (temp_files/temp_methods) in migration transaction"

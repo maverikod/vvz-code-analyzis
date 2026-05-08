@@ -7,7 +7,8 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from numbers import Real
+from typing import Any, Dict, Optional, Union
 
 from .base import BaseObject
 
@@ -40,7 +41,7 @@ class File(BaseObject):
     path: str = ""
     relative_path: Optional[str] = None
     lines: Optional[int] = None
-    last_modified: Optional[datetime] = None
+    last_modified: Optional[Union[datetime, float, int]] = None
     has_docstring: Optional[bool] = None
     deleted: bool = False
     original_path: Optional[str] = None
@@ -112,7 +113,7 @@ class File(BaseObject):
         result: Dict[str, Any] = {
             "project_id": self.project_id,
             "path": self.path,
-            "deleted": 1 if self.deleted else 0,
+            "deleted": bool(self.deleted),
         }
         if self.id is not None:
             result["id"] = self.id
@@ -123,9 +124,12 @@ class File(BaseObject):
         if self.lines is not None:
             result["lines"] = self.lines
         if self.last_modified is not None:
-            result["last_modified"] = self._to_timestamp(self.last_modified)
+            if isinstance(self.last_modified, datetime):
+                result["last_modified"] = self._to_timestamp(self.last_modified)
+            elif isinstance(self.last_modified, Real):
+                result["last_modified"] = float(self.last_modified)
         if self.has_docstring is not None:
-            result["has_docstring"] = 1 if self.has_docstring else 0
+            result["has_docstring"] = bool(self.has_docstring)
         if self.original_path is not None:
             result["original_path"] = self.original_path
         if self.version_dir is not None:

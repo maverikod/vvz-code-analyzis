@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, cast
 
 from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    WHERE_PROJECTS_ACTIVE_P,
     database_has_sqlite_code_content_fts,
     sql_julian_timestamp_now_expr,
 )
@@ -22,47 +24,94 @@ from code_analysis.core.sql_portable import (
 logger = logging.getLogger(__name__)
 
 
+def _cross_project_active_file_same_absolute(
+    self, abs_path: str, exclude_project_id: str
+) -> Optional[Dict[str, Any]]:
+    """Find an active file row in another project that denotes the same absolute path."""
+    from ...path_normalization import normalize_path_simple
+    from ...file_identity import absolute_path_for_indexed_file
+
+    want = normalize_path_simple(abs_path)
+    legacy = self._fetchone(
+        f"""
+        SELECT id, project_id FROM files
+        WHERE path = ?
+        AND project_id != ?
+        AND {WHERE_FILES_ACTIVE}
+        LIMIT 1
+        """,
+        (want, exclude_project_id),
+    )
+    if legacy:
+        return legacy
+
+    rows = self._fetchall(
+        f"""
+        SELECT f.id, f.project_id, p.root_path, f.path, f.relative_path
+        FROM files f
+        INNER JOIN projects p ON p.id = f.project_id
+        WHERE f.project_id != ?
+        AND {WHERE_FILES_ACTIVE_F}
+        AND {WHERE_PROJECTS_ACTIVE_P}
+        """,
+        (exclude_project_id,),
+    )
+    for row in rows:
+        try:
+            if absolute_path_for_indexed_file(row["root_path"], row) == want:
+                return {"id": row["id"], "project_id": row["project_id"]}
+        except Exception:
+            continue
+    return None
+
+
 def get_file_by_path(
     self, path: str, project_id: str, include_deleted: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
-    Get file record by path and project ID.
+    Get file record by filesystem path and project ID.
 
-    Implements Step 5 of refactor plan: all file paths are absolute.
-    Path is normalized to absolute before querying.
-
-    Args:
-        path: File path (will be normalized to absolute)
-        project_id: Project ID
-        include_deleted: If True, include files marked as deleted (default: False)
-
-    Returns:
-        File record as dictionary or None if not found
+    ``path`` is normalized to an absolute path; the row may store a project-relative
+    ``path`` / ``relative_path`` or a legacy absolute ``path``.
     """
     from ...path_normalization import normalize_path_simple
+    from ...file_identity import (
+        FILE_ROW_PATH_MATCH_SQL,
+        file_row_path_match_values,
+    )
 
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
-    # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
     abs_path = normalize_path_simple(path)
 
-    # Log normalization for debugging path mismatches
     if path != abs_path:
         logger.debug(
             f"[get_file_by_path] Path normalized: {path!r} -> {abs_path!r} | "
             f"project_id={project_id} | include_deleted={include_deleted}"
         )
 
-    if include_deleted:
-        row = self._fetchone(
-            "SELECT * FROM files WHERE path = ? AND project_id = ?",
-            (abs_path, project_id),
+    project = self.get_project(project_id)
+    if not project:
+        return None
+
+    try:
+        r1, r2, r3 = file_row_path_match_values(
+            project_root=project["root_path"], absolute_path=abs_path
         )
-    else:
+    except ValueError:
         row = self._fetchone(
-            "SELECT * FROM files WHERE path = ? AND project_id = ? AND "
-            + WHERE_FILES_ACTIVE,
-            (abs_path, project_id),
+            "SELECT * FROM files WHERE project_id = ? AND path = ?"
+            + ("" if include_deleted else f" AND {WHERE_FILES_ACTIVE}"),
+            (project_id, abs_path),
         )
+        if not isinstance(row, dict):
+            return None
+        return cast(Dict[str, Any], row)
+
+    active_sql = "" if include_deleted else f" AND {WHERE_FILES_ACTIVE}"
+    row = self._fetchone(
+        f"SELECT * FROM files WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
+        f"{active_sql}",
+        (project_id, r1, r2, r3),
+    )
     if not isinstance(row, dict):
         return None
     return cast(Dict[str, Any], row)
@@ -111,11 +160,10 @@ def add_file(
     project_root = Path(project["root_path"]).resolve()
     watch_dir_id = project.get("watch_dir_id")
 
-    # Normalize input path to absolute (identity for DB ``path`` column)
     abs_path = normalize_project_file_path(path)
     abs_path_obj = Path(abs_path)
 
-    # Project-relative path (POSIX); meaningful only within this project_id
+    # Project-relative POSIX path; stored in both ``path`` and ``relative_path``
     relative_path_str = relative_path_for_project(abs_path, project_root)
 
     # Validate project_id matches (if projectid file exists)
@@ -138,18 +186,7 @@ def add_file(
         # Re-raise project ID mismatch - this is a critical error
         raise
 
-    # Cross-project check: only the same absolute path can indicate a shared/relocated
-    # file row. Do not compare relative_path across project_id (not globally unique).
-    existing_file = self._fetchone(
-        f"""
-        SELECT id, project_id FROM files 
-        WHERE path = ? 
-        AND project_id != ? 
-        AND {WHERE_FILES_ACTIVE}
-        LIMIT 1
-        """,
-        (abs_path, project_id),
-    )
+    existing_file = _cross_project_active_file_same_absolute(self, abs_path, project_id)
 
     if existing_file:
         wrong_file_id = existing_file["id"]
@@ -191,14 +228,18 @@ def add_file(
             )
             # Continue anyway - we'll still add the file to the correct project
 
-    # Check if file already exists in the correct project (by relative_path or path)
+    from ...file_identity import FILE_ROW_PATH_MATCH_SQL, file_row_path_match_values
+
+    r1, r2, r3 = file_row_path_match_values(
+        project_root=project_root, absolute_path=abs_path
+    )
     existing_in_correct_project = self._fetchone(
-        """
-        SELECT id FROM files 
+        f"""
+        SELECT id FROM files
         WHERE project_id = ?
-        AND (relative_path = ? OR path = ?)
+        AND {FILE_ROW_PATH_MATCH_SQL}
         """,
-        (project_id, relative_path_str, abs_path),
+        (project_id, r1, r2, r3),
     )
 
     if existing_in_correct_project:
@@ -220,7 +261,7 @@ def add_file(
             """,
             (
                 watch_dir_id,
-                abs_path,
+                relative_path_str,
                 relative_path_str,
                 lines,
                 last_modified,
@@ -245,7 +286,7 @@ def add_file(
                 new_id,
                 project_id,
                 watch_dir_id,
-                abs_path,
+                relative_path_str,
                 relative_path_str,
                 lines,
                 last_modified,
@@ -261,39 +302,11 @@ def add_file(
 def get_file_id(
     self, path: str, project_id: str, include_deleted: bool = False
 ) -> Optional[str]:
-    """
-    Get file ID by path and project.
-
-    Implements Step 5 of refactor plan: all file paths are absolute.
-    Path is normalized to absolute before querying.
-
-    Args:
-        path: File path (will be normalized to absolute)
-        project_id: Project ID
-        include_deleted: If True, include files marked as deleted (default: False)
-
-    Returns:
-        File ID (UUID string) or None if not found
-    """
-    from ...path_normalization import normalize_path_simple
-
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_path_simple(path)
-
-    if include_deleted:
-        row = self._fetchone(
-            "SELECT id FROM files WHERE path = ? AND project_id = ?",
-            (abs_path, project_id),
-        )
-    else:
-        row = self._fetchone(
-            "SELECT id FROM files WHERE path = ? AND project_id = ? AND "
-            + WHERE_FILES_ACTIVE,
-            (abs_path, project_id),
-        )
-    if not row:
+    """Return file id for an absolute (or normalizable) path within ``project_id``."""
+    rec = get_file_by_path(self, path, project_id, include_deleted=include_deleted)
+    if not rec:
         return None
-    return str(row["id"])
+    return str(rec["id"])
 
 
 def get_file_by_id(self, file_id: str) -> Optional[Dict[str, Any]]:
@@ -380,10 +393,12 @@ def clear_file_data(self, file_id: str) -> None:
     func_rows = self._fetchall("SELECT id FROM functions WHERE file_id = ?", (file_id,))
     function_ids = [r["id"] for r in func_rows]
 
-    content_rows = self._fetchall(
-        "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
-    )
-    content_ids = [row["id"] for row in content_rows]
+    content_ids: List[Any] = []
+    if database_has_sqlite_code_content_fts(self):
+        content_rows = self._fetchall(
+            "SELECT rowid FROM code_content WHERE file_id = ?", (file_id,)
+        )
+        content_ids = [row["rowid"] for row in content_rows]
 
     # Build entity_cross_ref DELETE (same WHERE logic as delete_entity_cross_ref_for_file)
     conditions = ["file_id = ?"]

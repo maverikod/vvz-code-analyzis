@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..db_worker_manager import get_db_worker_manager
+from code_analysis.core.db_worker_manager import get_db_worker_manager
 
 logger = logging.getLogger(__name__)
 

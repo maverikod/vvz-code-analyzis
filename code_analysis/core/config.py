@@ -230,9 +230,17 @@ def get_driver_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             driver_type = driver.get("type")
             driver_config = driver.get("config", {})
             if driver_type and driver_config:
+                merged_cfg: Dict[str, Any] = dict(driver_config)
+                if str(driver_type).strip().lower() == "postgres":
+                    vd = code_analysis.get("vector_dim")
+                    if vd is not None:
+                        merged_cfg["vector_dim"] = int(vd)
+                    vsb = code_analysis.get("vector_search_backend")
+                    if vsb is not None:
+                        merged_cfg["vector_search_backend"] = vsb
                 return {
                     "type": driver_type,
-                    "config": driver_config,
+                    "config": merged_cfg,
                 }
 
     db_path = code_analysis.get("db_path")

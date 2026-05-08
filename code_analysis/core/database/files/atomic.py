@@ -76,7 +76,9 @@ def update_file_data_atomic(
                     "error": f"File not found in database by file_id: {file_id}",
                     "file_path": file_path,
                 }
-            abs_path = file_record.get("path") or file_path
+            from ...file_identity import absolute_path_for_indexed_file
+
+            abs_path = absolute_path_for_indexed_file(root_dir, file_record)
         else:
             # Normalize path to absolute
             abs_path = normalize_path_simple(file_path)
@@ -164,7 +166,12 @@ def update_file_data_atomic(
         from ...cst_tree.tree_range_finder import find_node_by_range
 
         try:
-            cst_tree = create_tree_from_code(abs_path, source_code)
+            ap = Path(abs_path)
+            cst_tree = create_tree_from_code(
+                abs_path,
+                source_code,
+                persist_sidecar=ap.is_file(),
+            )
         except Exception as e:
             logger.error(f"Error building CST for {file_path}: {e}", exc_info=True)
             return {

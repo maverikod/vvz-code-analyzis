@@ -8,11 +8,12 @@ email: vasilyvz@gmail.com
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.core.config.simple_config_generator import SimpleConfigGenerator
 
 from .constants import DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
+from .docs_indexing_defaults import default_docs_indexing_dict
 
 
 class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
@@ -78,6 +79,11 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         file_watcher_log_path: Optional[str] = None,
         file_watcher_version_dir: Optional[str] = None,
         allow_line_commands_on_healthy_files: Optional[bool] = None,
+        code_analysis_docs_indexing_enabled: Optional[bool] = None,
+        code_analysis_docs_indexing_vectorize: Optional[bool] = None,
+        code_analysis_docs_indexing_roots: Optional[str] = None,
+        code_analysis_docs_indexing_include: Optional[str] = None,
+        code_analysis_docs_indexing_exclude: Optional[str] = None,
     ) -> str:
         """
         Generate configuration file for code-analysis-server.
@@ -131,6 +137,11 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             file_watcher_scan_interval: File watcher scan interval (seconds)
             file_watcher_log_path: File watcher log path
             file_watcher_version_dir: File watcher version directory
+            code_analysis_docs_indexing_enabled: Override docs_indexing.enabled (default False; docs file types)
+            code_analysis_docs_indexing_vectorize: Override docs_indexing.vectorize (eligibility ignores this flag)
+            code_analysis_docs_indexing_roots: Comma-separated project-relative roots (default docs)
+            code_analysis_docs_indexing_include: Comma-separated include globs (each pattern must mention .md/.json/.yaml/.yml)
+            code_analysis_docs_indexing_exclude: Comma-separated exclude globs
 
         Returns:
             Path to generated configuration file
@@ -319,6 +330,28 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
                     "log_path": "logs/file_watcher.log",
                     "version_dir": "data/versions",
                 }
+
+        di_block = default_docs_indexing_dict()
+        if code_analysis_docs_indexing_enabled is not None:
+            di_block["enabled"] = bool(code_analysis_docs_indexing_enabled)
+        if code_analysis_docs_indexing_vectorize is not None:
+            di_block["vectorize"] = bool(code_analysis_docs_indexing_vectorize)
+
+        def _csv_to_list(raw: Optional[str]) -> Optional[List[str]]:
+            if raw is None or not str(raw).strip():
+                return None
+            return [x.strip() for x in str(raw).split(",") if x.strip()]
+
+        roots_csv = _csv_to_list(code_analysis_docs_indexing_roots)
+        if roots_csv is not None:
+            di_block["roots"] = roots_csv
+        include_csv = _csv_to_list(code_analysis_docs_indexing_include)
+        if include_csv is not None:
+            di_block["include"] = include_csv
+        exclude_csv = _csv_to_list(code_analysis_docs_indexing_exclude)
+        if exclude_csv is not None:
+            di_block["exclude"] = exclude_csv
+        ca["docs_indexing"] = di_block
 
         # Save updated config
         with open(base_config_path, "w", encoding="utf-8") as f:

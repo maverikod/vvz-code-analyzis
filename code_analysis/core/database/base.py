@@ -13,8 +13,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..db_driver import create_driver
-
 from .base_chunks import (
     get_all_chunks_for_faiss_rebuild as _get_all_chunks_for_faiss_rebuild,
     get_non_vectorized_chunks as _get_non_vectorized_chunks,
@@ -131,11 +129,17 @@ class CodeDatabase:
         )
 
         try:
+            from ..database_driver_pkg.driver_factory import (
+                create_driver as _create_database_driver,
+            )
+
             logger.info(f"[CodeDatabase] Calling create_driver({driver_type}, ...)")
             print(
                 f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True
             )
-            self.driver = create_driver(driver_type, driver_cfg)
+            self.driver = _create_database_driver(
+                driver_type, driver_cfg, connect=False
+            )
             logger.info(
                 f"[CodeDatabase] Database driver '{driver_type}' loaded successfully"
             )
@@ -154,7 +158,8 @@ class CodeDatabase:
         self._driver_type = driver_type
 
         # Use lock only if driver is not thread-safe
-        if not self.driver.is_thread_safe:
+        # Universal drivers (database_driver_pkg) omit is_thread_safe; treat as False.
+        if not getattr(self.driver, "is_thread_safe", False):
             # Use driver instance as lock key (each instance gets its own lock)
             lock_key = f"{driver_type}:{id(self.driver)}"
             self._lock = _get_db_lock(lock_key)
@@ -301,7 +306,7 @@ class CodeDatabase:
     def _invoke_driver_execute(
         self, sql: str, params: Optional[tuple], tid: Optional[str]
     ) -> Any:
-        """Call driver.execute; older db_driver modules omit transaction_id."""
+        """Call driver.execute; some drivers omit transaction_id (TypeError fallback)."""
         try:
             return self.driver.execute(sql, params, tid)
         except TypeError:
@@ -354,7 +359,7 @@ class CodeDatabase:
         last = getattr(self, "_last_execute_result", None)
         if isinstance(last, dict):
             return last
-        # Legacy db_driver: execute() is void; use rowcount for DML (worker_project_activity)
+        # Legacy void execute(); use rowcount for DML (worker_project_activity)
         drc = getattr(self.driver, "_rowcount", None)
         if isinstance(drc, int) and drc >= 0:
             return {"affected_rows": drc, "data": None}
@@ -375,7 +380,7 @@ class CodeDatabase:
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """``SELECT`` for :mod:`worker_project_activity` when using legacy db_driver."""
+        """``SELECT`` for :mod:`worker_project_activity` when the driver has no ``select``."""
         t = self._valid_sql_ident(table_name)
         if columns:
             cs = ", ".join(self._valid_sql_ident(c) for c in columns)
@@ -449,7 +454,7 @@ class CodeDatabase:
         if isinstance(result, dict) and "data" in result:
             data = result.get("data", [])
             return data[0] if data else None
-        # Driver with fetchone (e.g. db_driver/sqlite)
+        # Driver with fetchone (e.g. in-process sqlite stack)
         if hasattr(self.driver, "fetchone"):
             if self._lock:
                 with self._lock:
@@ -471,7 +476,7 @@ class CodeDatabase:
         if isinstance(result, dict) and "data" in result:
             data = result.get("data", [])
             return list(data) if data else []
-        # Driver with fetchall (e.g. db_driver/sqlite)
+        # Driver with fetchall (e.g. in-process sqlite stack)
         if hasattr(self.driver, "fetchall"):
             if self._lock:
                 with self._lock:

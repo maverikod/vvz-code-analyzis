@@ -17,18 +17,14 @@ from typing import Any, Dict, Optional, Sequence
 from ..backup_manager import BackupManager
 from ..file_lock import file_lock
 from .models import CSTTree, TreeNodeMetadata, TreeOperation
-from .node_id_inline import restore_inline_stable_ids
 from .tree_builder import (
     _attach_disk_snapshot,
+    _read_logical_py_source_sync_disk,
     create_tree_from_code,
     get_tree,
     remove_tree,
 )
-from .tree_sidecar import (
-    sidecar_persistence_enabled,
-    target_path_under_code_analysis_package,
-    write_sidecar_atomic,
-)
+from .tree_sidecar import write_sidecar_atomic
 from .tree_save_verification import (
     WRITE_VERIFY_FAILED,
     SaveVerificationError,
@@ -39,7 +35,8 @@ from .tree_save_verification import (
 )
 
 logger = logging.getLogger(__name__)
-# @node-id: 58476a10-f7e1-412f-ac59-369985b2268b
+
+
 def save_tree_to_file(
     tree_id: str,
     file_path: str,
@@ -58,9 +55,8 @@ def save_tree_to_file(
     Process:
     1. Validate entire file through compile() (before any changes)
     2. Create backup via BackupManager (mandatory if file exists)
-    3. Generate source code from CST tree (clean ``.py`` for project files; sidecar
-       ``.cst/<name>.tree`` holds node ids. Package files under ``code_analysis`` keep
-       inline ``# @node-id`` in ``.py``.)
+    3. Generate source code from CST tree (clean ``.py``; sidecar ``.cst/<name>.tree``
+       holds node ids.)
     4. Write to temporary file
     5. Validate temporary file (compile, linter, type checker)
     6. Atomically replace file via os.replace()
@@ -122,7 +118,10 @@ def save_tree_to_file(
     temp_file: Optional[Path] = None
 
     with file_lock(target_path):
-        # @node-id: 927a86a8-20f1-47f9-88a6-b96c757285c6
+        if target_path.exists():
+            suf = target_path.suffix
+            if suf == ".py" or (suf == ".tmp" and target_path.stem.endswith(".py")):
+                _read_logical_py_source_sync_disk(target_path)
 
         def try_restore_from_backup() -> None:
             if backup_uuid and backup_manager and target_path.exists():
@@ -136,9 +135,8 @@ def save_tree_to_file(
                 if restore_success:
                     logger.info("File restored from backup: %s", restore_message)
                     try:
-                        _attach_disk_snapshot(
-                            tree, target_path.read_text(encoding="utf-8")
-                        )
+                        logical_disk, _ = _read_logical_py_source_sync_disk(target_path)
+                        _attach_disk_snapshot(tree, logical_disk)
                     except OSError:
                         logger.warning(
                             "Could not refresh disk snapshot after backup restore (%s)",
@@ -196,21 +194,11 @@ def save_tree_to_file(
                     )
             timings["backup"] = time.perf_counter() - t0
 
-            # Step 3: Generate source code from CST tree
-            # restore_inline_stable_ids inserts # @node-id: comments into FunctionDef/ClassDef
-            # leading_lines so that stable_id survives file shifts on disk.
+            # Step 3: Generate source code from CST tree (clean .py; sidecar holds ids).
             t0 = time.perf_counter()
             clean_source_code = tree.module.code
-            if target_path_under_code_analysis_package(target_path):
-                # Package sources: keep inline @node-id in .py for stable handles (no sidecar).
-                persisted_source = restore_inline_stable_ids(
-                    tree.module, tree.metadata_map
-                ).code
-                prebuilt_cst_tree_for_sync = None
-            else:
-                # Project sources: clean .py; identities live in ``.cst/<stem>.tree``.
-                persisted_source = clean_source_code
-                prebuilt_cst_tree_for_sync = tree
+            persisted_source = clean_source_code
+            prebuilt_cst_tree_for_sync = tree
             timings["code_gen"] = time.perf_counter() - t0
 
             ops_list = list(tree_operations) if tree_operations is not None else None
@@ -314,11 +302,7 @@ def save_tree_to_file(
             )
             timings["sync_file_to_db"] = time.perf_counter() - t0
 
-            if (
-                sync_result.get("success")
-                and prebuilt_cst_tree_for_sync is not None
-                and sidecar_persistence_enabled(target_path)
-            ):
+            if sync_result.get("success") and prebuilt_cst_tree_for_sync is not None:
                 try:
                     write_sidecar_atomic(target_path, tree)
                 except OSError as exc:

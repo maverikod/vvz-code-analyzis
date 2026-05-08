@@ -27,12 +27,12 @@ from ..path_normalization import normalize_path_simple
 from .tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
-# @node-id: 7ad1b145-5254-41eb-827b-9ca83fdbf2de
 
 
 def _serialize_document(root_data: Any) -> str:
     return json.dumps(root_data, indent=2, ensure_ascii=False) + "\n"
-# @node-id: 7f66c0e9-4a53-4d7d-a64d-8b2c95f6dda5
+
+
 def save_json_tree_to_file(
     tree_id: str,
     file_path: str,
@@ -40,12 +40,12 @@ def save_json_tree_to_file(
     project_id: str,
     database: Any,
     backup: bool = True,
-    commit_message: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Atomic write (.tmp + replace), optional backup, File row + update_file_data_atomic_batch.
 
     Mirrors write_project_text_lines DB path (AST batch over file contents), not sync_file_to_db_atomic.
+    Git commits are handled by the MCP command layer (commit_after_write / config).
     """
     tree = get_tree(tree_id)
     if not tree:
@@ -201,17 +201,6 @@ def save_json_tree_to_file(
 
                 release_file_edit_lock(database, file_id, transaction_id=transaction_id)
                 database.commit_transaction(transaction_id)
-
-                if commit_message:
-                    from ..git_integration import create_git_commit
-
-                    git_success, git_error = create_git_commit(
-                        root_dir, target_path, commit_message
-                    )
-                    if not git_success:
-                        logger.warning(
-                            "json_save_tree git commit failed: %s", git_error
-                        )
 
                 tree.file_path = str(target_path)
 

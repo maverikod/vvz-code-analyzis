@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
+from code_analysis.core.file_identity import absolute_path_for_indexed_file
 from code_analysis.core.resolve_indexed_file_path import resolve_indexed_file_path
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
 from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
@@ -47,6 +49,9 @@ async def _request_chunking_for_files(
         faiss_manager=self.faiss_manager,
         min_chunk_length=self.min_chunk_length,
         log_timing=getattr(self, "log_timing", False),
+        docs_markdown_embeddings_enabled=getattr(
+            self, "docs_markdown_embeddings_enabled", True
+        ),
     )
 
     chunked_count = 0
@@ -113,7 +118,41 @@ async def _request_chunking_for_files(
                 logger.warning(f"[FILE {file_id}] Failed to read file {file_path}: {e}")
                 continue
 
-            # Parse AST
+            if Path(file_path).suffix.lower() in DOCS_INDEX_FILE_SUFFIXES:
+                logger.debug(
+                    f"[FILE {file_id}] Documentation file ({Path(file_path).suffix}): "
+                    "skipping ast.parse; routing to DocBlock chunker process_markdown_document"
+                )
+                chunking_start_time = time.time()
+                await chunker.process_markdown_document(
+                    file_id=str(file_id),
+                    project_id=project_id,
+                    file_path=file_path,
+                    text=file_content,
+                )
+                chunking_duration = time.time() - chunking_start_time
+                log_operation_timing(
+                    getattr(self, "log_timing", False),
+                    logger,
+                    "chunker_process_markdown",
+                    chunking_duration,
+                    file_id=file_id,
+                )
+                try:
+                    database.execute(
+                        "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                        (file_id,),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"[FILE {file_id}] Could not clear needs_chunking: {e}"
+                    )
+                chunked_count += 1
+                await process_embedding_ready_chunks(self, database)
+                continue
+
+            # Parse AST (Python / .pyi only)
             logger.debug(f"[FILE {file_id}] Parsing AST...")
             try:
                 t0_ast = time.time()
@@ -214,13 +253,14 @@ def _log_missing_docstring_files(
     try:
         rows_result = database.execute(
             f"""
-            SELECT f.path
+            SELECT f.path, f.relative_path, p.root_path AS project_root_path
             FROM files f
+            INNER JOIN projects p ON p.id = f.project_id
             LEFT JOIN code_chunks c
               ON f.id = c.file_id AND c.source_type LIKE '%docstring%'
             WHERE f.project_id = ?
             AND {WHERE_FILES_ACTIVE_F}
-            GROUP BY f.id, f.path
+            GROUP BY f.id, f.path, f.relative_path, p.root_path
             HAVING COUNT(c.id) = 0
             LIMIT ?
             """,
@@ -230,7 +270,10 @@ def _log_missing_docstring_files(
         # Extract data from result - execute() returns dict with "data" key
         rows = rows_result.get("data", []) if isinstance(rows_result, dict) else []
         if rows:
-            paths = [row["path"] for row in rows]
+            paths = [
+                absolute_path_for_indexed_file(row["project_root_path"], row)
+                for row in rows
+            ]
             # Filter out paths that don't exist on disk (may have been split/refactored)
             existing_paths = [p for p in paths if Path(p).exists()]
             if existing_paths:

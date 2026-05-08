@@ -50,6 +50,13 @@ def validate_field_types_code_analysis_impl(
     validate_field_type(
         results,
         "code_analysis",
+        "vector_search_backend",
+        code_analysis.get("vector_search_backend"),
+        str,
+    )
+    validate_field_type(
+        results,
+        "code_analysis",
         "min_chunk_length",
         code_analysis.get("min_chunk_length"),
         int,
@@ -385,6 +392,50 @@ def validate_field_types_code_analysis_impl(
                 "file_watcher.log_rotation.backup_count",
                 log_rotation.get("backup_count"),
                 (int, type(None)),
+            )
+
+    docs_indexing = code_analysis.get("docs_indexing")
+    if docs_indexing is not None and isinstance(docs_indexing, dict):
+        validate_field_type(
+            results,
+            "code_analysis",
+            "docs_indexing.enabled",
+            docs_indexing.get("enabled"),
+            (bool, type(None)),
+        )
+        validate_field_type(
+            results,
+            "code_analysis",
+            "docs_indexing.vectorize",
+            docs_indexing.get("vectorize"),
+            (bool, type(None)),
+        )
+        roots_di = docs_indexing.get("roots")
+        if roots_di is not None:
+            validate_field_type(
+                results,
+                "code_analysis",
+                "docs_indexing.roots",
+                roots_di,
+                list,
+            )
+        inc_di = docs_indexing.get("include")
+        if inc_di is not None:
+            validate_field_type(
+                results,
+                "code_analysis",
+                "docs_indexing.include",
+                inc_di,
+                list,
+            )
+        exc_di = docs_indexing.get("exclude")
+        if exc_di is not None:
+            validate_field_type(
+                results,
+                "code_analysis",
+                "docs_indexing.exclude",
+                exc_di,
+                list,
             )
 
     database = code_analysis.get("database", {})

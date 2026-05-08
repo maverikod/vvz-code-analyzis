@@ -1,9 +1,13 @@
 """
 Git integration for automatic commits.
 
-When code_analysis.git_commit_on_write is true, write commands create a git commit
-after (and for refactor commands also before) the operation. When false, backup/version
-is used (callers create backup before overwrite).
+When ``code_analysis.git_commit_on_write`` is true, mutating commands should call
+:func:`commit_after_write` after a successful write so changes are staged and committed.
+When false, only filesystem history applies — callers must still use
+:class:`code_analysis.core.backup_manager.BackupManager` before overwriting or deleting
+files (see :mod:`code_analysis.core.file_write_history`).
+
+Refactor commands may also commit *before* the operation (see command docs).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

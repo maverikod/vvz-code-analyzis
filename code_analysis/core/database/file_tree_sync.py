@@ -13,9 +13,13 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..database_client.file_data_batch import build_file_data_atomic_batches
+from ..database_client.file_data_batch import (
+    build_file_data_atomic_batches,
+    execute_all_batches_in_transaction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +76,9 @@ def sync_file_to_db_atomic(
     source_code: str,
     file_mtime: float,
     file_id: Optional[str] = None,
+    *,
+    skip_file_edit_lock: bool = False,
+    prebuilt_cst_tree: Any = None,
 ) -> Dict[str, Any]:
     """
     Rebuild and write all file-level DB structures for one file in one coordinated operation.
@@ -89,6 +96,16 @@ def sync_file_to_db_atomic(
         file_mtime: File mtime (Unix timestamp) for operational metadata.
         file_id: Optional existing file row id (UUID string or legacy int);
             if None, resolved by path and project_id.
+        skip_file_edit_lock: When True, do not take ``files.editing_pid`` (caller holds it).
+        prebuilt_cst_tree: Optional in-memory :class:`~code_analysis.core.cst_tree.models.CSTTree`
+            aligned with ``source_code``. When set, skips ``create_tree_from_code`` entirely so DB
+            snapshot node IDs match the caller's tree (e.g. ``cst_save_tree`` / combined
+            ``cst_modify_tree`` with clean ``.py`` and sidecar identities). Callers that pass this
+            **must** persist ``.cst`` sidecar themselves when applicable (e.g.
+            ``save_tree_to_file`` → ``write_sidecar_atomic`` after sync). This function must not
+            call ``create_tree_from_code(..., persist_sidecar=True)`` in that mode: a fresh parse
+            would assign new UUIDs and could overwrite the sidecar on disk before the caller
+            writes the authoritative tree.
 
     Returns:
         Dict with:
@@ -124,6 +141,11 @@ def sync_file_to_db_atomic(
 
     def _sync() -> Dict[str, Any]:
         nonlocal file_id
+        from code_analysis.core.database.file_edit_lock import (
+            acquire_file_edit_lock_with_retry,
+            release_file_edit_lock,
+        )
+
         if file_id is None:
             file_record = database.get_file_by_path(absolute_path, project_id)
             if not file_record:
@@ -132,6 +154,8 @@ def sync_file_to_db_atomic(
             file_id = str(file_record["id"])
         result["file_id"] = file_id
 
+        lock_held = False
+        own_tid: Optional[str] = None
         try:
             from ..cst_tree.tree_builder import create_tree_from_code
         except Exception as e:
@@ -140,7 +164,17 @@ def sync_file_to_db_atomic(
             return result
 
         try:
-            tree = create_tree_from_code(absolute_path, source_code)
+            if prebuilt_cst_tree is not None:
+                # Do not parse or persist sidecar here; caller owns sidecar after DB sync.
+                tree = prebuilt_cst_tree
+            else:
+                # Indexer / repair: build CST from ``source_code``; may write sidecar when enabled.
+                tree = create_tree_from_code(
+                    absolute_path,
+                    source_code,
+                    persist_sidecar=True,
+                    register_in_memory=False,
+                )
         except Exception as e:
             logger.warning("CST build failed for %s: %s", absolute_path, e)
             result["error"] = f"Failed to build CST: {e}"
@@ -152,6 +186,7 @@ def sync_file_to_db_atomic(
             source_code,
             absolute_path,
             file_mtime,
+            driver_type=getattr(database, "_driver_type", None),
         )
         if meta.get("success") is False:
             result["error"] = meta.get("error", "AST parse failed")
@@ -210,16 +245,50 @@ def sync_file_to_db_atomic(
             result["error"] = "No SQL batches to execute"
             return result
 
-        try:
-            raw = database.execute_logical_write_operation({"batches": all_batches})
-        except Exception as e:
-            logger.exception("sync_file_to_db_atomic failed for %s", absolute_path)
-            result["error"] = str(e)
+        own_tid = database.begin_transaction()
+        if not own_tid:
+            result["error"] = "Database transaction could not be started"
+            result["error_code"] = "TRANSACTION_ERROR"
             return result
 
-        if not (isinstance(raw, dict) and raw.get("success")):
-            result["error"] = "Logical write did not report success"
+        if not skip_file_edit_lock:
+            if not acquire_file_edit_lock_with_retry(
+                database, file_id, transaction_id=own_tid
+            ):
+                try:
+                    database.rollback_transaction(own_tid)
+                except Exception:
+                    pass
+                own_tid = None
+                result["error"] = (
+                    "File is being edited by another live process (file edit lock). "
+                    "Try again shortly."
+                )
+                result["error_code"] = "FILE_EDIT_LOCKED"
+                return result
+            lock_held = True
+
+        batch_err = execute_all_batches_in_transaction(
+            database,
+            all_batches,
+            own_tid,
+            file_path=str(absolute_path),
+            file_id=file_id,
+        )
+        if batch_err is not None:
+            try:
+                database.rollback_transaction(own_tid)
+            except Exception:
+                pass
+            own_tid = None
+            result["error"] = batch_err.get("error", "batch failed")
             return result
+
+        if lock_held:
+            release_file_edit_lock(database, file_id, transaction_id=own_tid)
+        database.commit_transaction(own_tid)
+        own_tid = None
+        lock_held = False
 
         result["success"] = True
         result["snapshot"] = 1
@@ -253,22 +322,53 @@ def _build_snapshot_node_rows(
     Root has parent_node_id=None and child_index=0. Other nodes use their
     parent's children_ids order for child_index. snapshot_id is unused;
     caller binds snapshot via SQL subquery.
+
+    ``child_index`` values under the same ``parent_node_id`` must be unique:
+    ``file_tree_snapshot_nodes`` has a unique constraint on
+    (snapshot_id, parent_node_id, child_index). Nodes missing from the
+    parent's ``children_ids`` (stale metadata after reindex, etc.) used to
+    all fall back to index 0 and caused duplicate-key failures; those
+    children are appended after the ordered slice with monotonic indices.
     """
     _ = snapshot_id
-    rows: List[Tuple[str, Optional[str], int]] = []
     metadata_map = getattr(tree, "metadata_map", {})
     parent_map = getattr(tree, "parent_map", {})
 
+    by_parent: Dict[Optional[str], List[str]] = defaultdict(list)
     for node_id in metadata_map:
-        parent_node_id = parent_map.get(node_id)
+        by_parent[parent_map.get(node_id)].append(node_id)
+
+    rows: List[Tuple[str, Optional[str], int]] = []
+    for parent_node_id, child_node_ids in by_parent.items():
         if parent_node_id is None:
-            child_index = 0
-        else:
-            parent_meta = metadata_map.get(parent_node_id)
-            children_ids = list(getattr(parent_meta, "children_ids", []) or [])
-            child_index = next(
-                (i for i, cid in enumerate(children_ids) if cid == node_id),
-                0,
-            )
-        rows.append((node_id, parent_node_id, child_index))
+            for idx, node_id in enumerate(sorted(child_node_ids)):
+                rows.append((node_id, None, idx))
+            continue
+
+        parent_meta = metadata_map.get(parent_node_id)
+        preferred_order = list(
+            getattr(parent_meta, "children_ids", []) or [],
+        )
+
+        assigned: Dict[str, int] = {}
+        next_idx = 0
+        for cid in preferred_order:
+            if cid in child_node_ids and cid not in assigned:
+                assigned[cid] = next_idx
+                next_idx += 1
+
+        for nid in sorted(child_node_ids):
+            if nid not in assigned:
+                logger.warning(
+                    "Snapshot row: node %s has parent %s but is not listed in "
+                    "that parent's children_ids; assigning child_index=%s",
+                    nid,
+                    parent_node_id,
+                    next_idx,
+                )
+                assigned[nid] = next_idx
+                next_idx += 1
+
+        for node_id in child_node_ids:
+            rows.append((node_id, parent_node_id, assigned[node_id]))
     return rows

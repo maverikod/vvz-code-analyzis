@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
+from code_analysis.core.database.file_edit_lock import editing_lock_holder_is_alive
+
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
@@ -76,7 +78,7 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                 # Use execute() for get_file_by_path
                 file_result = database.execute(
                     """
-                    SELECT id, path, last_modified FROM files
+                    SELECT id, path, last_modified, editing_pid FROM files
                     WHERE path = ? AND project_id = ?
                     LIMIT 1
                     """,
@@ -117,6 +119,8 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                     )
                     enqueued += 1
                 else:
+                    if editing_lock_holder_is_alive(file_rec.get("editing_pid")):
+                        continue
                     db_mtime = file_rec.get("last_modified")
                     if db_mtime is None or db_mtime != file_mtime:
                         database.execute(

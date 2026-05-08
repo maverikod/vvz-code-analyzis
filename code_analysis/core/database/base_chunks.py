@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from typing import Any, Dict, List, Optional, cast
 
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
+from code_analysis.core.vector_search_backend import uses_pgvector_ann_for_database
 
 
 def get_all_chunks_for_faiss_rebuild(
@@ -94,16 +95,16 @@ def get_non_vectorized_chunks(
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    Get chunks that have embeddings but need vector_id assignment.
+    Get chunks that have embeddings but are not yet in the ANN store.
 
-    Args:
-        db: CodeDatabase instance (or duck-typed with _fetchall).
-        project_id: Project ID.
-        limit: Maximum number of chunks to return.
-
-    Returns:
-        List of chunk records that need vector_id assignment.
+    For FAISS backends this means ``vector_id IS NULL``; for PostgreSQL pgvector
+    it means ``embedding_vec IS NULL``.
     """
+    ann_pending = (
+        "cc.embedding_vec IS NULL"
+        if uses_pgvector_ann_for_database(db)
+        else "cc.vector_id IS NULL"
+    )
     return cast(
         List[Dict[str, Any]],
         db._fetchall(
@@ -130,7 +131,7 @@ def get_non_vectorized_chunks(
         WHERE cc.project_id = ?
           AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
-          AND cc.vector_id IS NULL
+          AND {ann_pending}
         ORDER BY cc.created_at, cc.id
         LIMIT ?
         """,

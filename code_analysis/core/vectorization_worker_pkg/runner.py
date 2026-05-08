@@ -168,6 +168,7 @@ def run_vectorization_worker(
 
     from ..config import get_driver_config
     from ..storage_paths import load_raw_config
+    from ..vector_search_backend import effective_vector_search_backend
 
     try:
         is_postgres = (get_driver_config(load_raw_config(cfg_path_resolved)) or {}).get(
@@ -175,6 +176,32 @@ def run_vectorization_worker(
         ) == "postgres"
     except Exception:
         is_postgres = False
+
+    try:
+        _raw_ann = load_raw_config(cfg_path_resolved)
+        _dc_ann = get_driver_config(_raw_ann) or {}
+        _ca_ann = _raw_ann.get("code_analysis", _raw_ann)
+        _eff_ann = effective_vector_search_backend(
+            str(_dc_ann.get("type") or ""),
+            _ca_ann.get("vector_search_backend"),
+        )
+        vector_ann_backend: str = "pgvector" if _eff_ann == "pgvector" else "faiss"
+    except Exception:
+        vector_ann_backend = "faiss"
+
+    docs_md_embeddings_enabled = True
+    try:
+        from ..docs_markdown_vector_gate import (
+            docs_markdown_embeddings_enabled_from_server_config_mapping,
+        )
+
+        docs_md_embeddings_enabled = (
+            docs_markdown_embeddings_enabled_from_server_config_mapping(
+                load_raw_config(cfg_path_resolved)
+            )
+        )
+    except Exception:
+        docs_md_embeddings_enabled = True
 
     # Check if database exists, create if not (SQLite file chain only; not PostgreSQL)
     if not is_postgres and not db_path_obj.exists():
@@ -214,12 +241,16 @@ def run_vectorization_worker(
             "No svo_config provided, SVO client manager will not be initialized"
         )
 
-    # FAISS index sync check for all projects at startup
-    try:
+    # FAISS index sync check for all projects at startup (skipped for pgvector ANN)
+    if vector_ann_backend == "pgvector":
         logger.info(
-            "Checking FAISS index synchronization with database for all projects..."
+            "Skipping FAISS startup sync (vector_ann_backend=pgvector / PostgreSQL)"
         )
+    else:
         try:
+            logger.info(
+                "Checking FAISS index synchronization with database for all projects..."
+            )
             sync_database = create_worker_database_client(
                 config_path=cfg_path_resolved,
                 timeout=30.0,
@@ -294,6 +325,7 @@ def run_vectorization_worker(
                                     database=sync_database,
                                     svo_client_manager=svo_client_manager,
                                     project_id=project_id,
+                                    omit_docs_markdown=not docs_md_embeddings_enabled,
                                 )
                             )
                             logger.info(
@@ -315,18 +347,12 @@ def run_vectorization_worker(
                         # Continue with next project
 
             sync_database.disconnect()
-        except Exception as db_e:
+        except Exception as e:
             logger.warning(
-                f"⚠️  Database is unavailable during startup sync check: {db_e}. "
-                "Skipping index synchronization check. Worker will retry when database becomes available."
+                "FAISS startup sync check failed (%s). Continuing worker startup.",
+                e,
+                exc_info=True,
             )
-    except Exception as e:
-        logger.warning(
-            f"Failed to check FAISS index synchronization: {e}. "
-            "Continuing with worker startup, but indexes may be out of sync.",
-            exc_info=True,
-        )
-        # Continue anyway - worker can still function, but indexes may need manual rebuild
 
     # Get retry config, min_chunk_length, batch_processor, max_files_per_pass from svo_config if available
     min_chunk_length = 30  # default
@@ -386,6 +412,8 @@ def run_vectorization_worker(
         max_files_per_pass=max_files_per_pass,
         status_file_path=status_file_path,
         log_timing=log_timing,
+        docs_markdown_embeddings_enabled=docs_md_embeddings_enabled,
+        vector_ann_backend=vector_ann_backend,  # type: ignore[arg-type]
     )
 
     async def _run_worker_with_svo() -> Dict[str, Any]:

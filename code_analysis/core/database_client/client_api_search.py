@@ -75,6 +75,8 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
     ) -> List[Dict[str, Any]]:
         """PostgreSQL: ``tsvector`` / ``plainto_tsquery`` over ``code_content`` rows."""
         cap = _PG_TSVECTOR_INPUT_MAX_CHARS
+        # Use the ``simple`` text search config so identifiers (classes, methods,
+        # variables) are not stemmed away like common English words.
         sql = f"""
             SELECT
                 c.entity_type,
@@ -84,27 +86,27 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
                 f.path AS file_path,
                 ts_rank_cd(
                     to_tsvector(
-                        'english',
+                        'simple',
                         left(
                             coalesce(c.content, '') || ' ' || coalesce(c.docstring, '')
                             || ' ' || coalesce(c.entity_name, ''),
                             {cap}
                         )
                     ),
-                    plainto_tsquery('english', ?)
+                    plainto_tsquery('simple', ?)
                 ) AS bm25_score
             FROM code_content c
             INNER JOIN files f ON f.id = c.file_id
             WHERE f.project_id = ?
               AND to_tsvector(
-                    'english',
+                    'simple',
                     left(
                         coalesce(c.content, '') || ' ' || coalesce(c.docstring, '')
                         || ' ' || coalesce(c.entity_name, ''),
                         {cap}
                     )
                 )
-                @@ plainto_tsquery('english', ?)
+                @@ plainto_tsquery('simple', ?)
         """
         params: List[Any] = [fts_query, project_id, fts_query]
         if entity_type:
@@ -126,19 +128,20 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
         entity_type: Optional[str] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """Run full-text search in code content and docstrings.
+        """Run full-text search in code content, docstrings, and symbol-augmented text.
 
         Uses SQLite FTS5 table code_content_fts. Joins with code_content and files
         to filter by project_id. Returns entity_type, entity_name, content,
         docstring, and file_path.
 
-        On PostgreSQL, uses ``to_tsvector`` / ``plainto_tsquery`` on ``code_content``
-        (no FTS5 virtual table).
+        On PostgreSQL, uses ``to_tsvector('simple', ...)`` / ``plainto_tsquery('simple', ...)``
+        on ``code_content`` (no FTS5 virtual table; ``simple`` preserves identifiers).
 
         Args:
             query: FTS5 search query (e.g. word, phrase in double quotes).
             project_id: Project UUID to restrict results.
-            entity_type: Optional filter: 'class', 'function', 'method', 'file'.
+            entity_type: Optional filter: 'file', 'class', 'function', 'method',
+                'variable', 'attribute'.
             limit: Maximum number of results (default 20).
 
         Returns:
@@ -168,7 +171,7 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
                 f.path AS file_path,
                 bm25(code_content_fts) AS bm25_score
             FROM code_content_fts fts
-            JOIN code_content c ON c.id = fts.rowid
+            JOIN code_content c ON c.rowid = fts.rowid
             JOIN files f ON f.id = c.file_id
             WHERE f.project_id = ? AND code_content_fts MATCH ?
         """

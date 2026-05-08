@@ -240,6 +240,14 @@ def ensure_files_table_migrations(conn: Any, schema_manager: Any) -> None:
                 "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
             )
             conn.commit()
+        info = schema_manager.get_table_info("files")
+        columns = {row["name"] for row in info}
+        if "editing_pid" not in columns:
+            logger.info("Migrating files table: adding editing_pid column (driver)")
+            conn.execute(
+                "ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL"
+            )
+            conn.commit()
         if "dataset_id" in columns:
             logger.info("Migrating files table: dropping dataset_id column (driver)")
             try:
@@ -308,7 +316,7 @@ def ensure_project_activity_locks_table(conn: Any) -> None:
 
 def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     """Run all connection-time migrations in order."""
-    # Align with CodeDatabase / run_create_schema: apply schema_creation_migrate so
+    # Align with legacy schema bootstrap / run_create_schema: apply schema_creation_migrate so
     # existing DBs gain columns (e.g. files.deleted, projects.deleted) before RPC SQL.
     from code_analysis.core.database.schema_creation_migrate import run_migrate_schema
 

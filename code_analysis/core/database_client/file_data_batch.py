@@ -40,17 +40,67 @@ def _row_to_insert_sql(table: str, row: Dict[str, Any]) -> Tuple[str, tuple]:
 def _method_insert_sql_with_class_id(
     row: Dict[str, Any],
     class_id: str,
+    method_id: str,
 ) -> Tuple[str, Tuple[Any, ...]]:
-    """INSERT method row with explicit class UUID and generated method UUID."""
+    """INSERT method row with explicit class UUID and method UUID."""
     data = {k: v for k, v in row.items() if k not in ("id", "class_id")}
     if not data:
         raise ValueError("Empty method row")
-    mid = str(uuid.uuid4())
     cols = ["id", "class_id"] + list(data.keys())
     placeholders = ", ".join(["?"] * len(cols))
     sql = f"INSERT INTO methods ({', '.join(cols)}) VALUES ({placeholders})"
-    params = (mid, class_id) + tuple(data.values())
+    params = (method_id, class_id) + tuple(data.values())
     return sql, params
+
+
+def _code_content_insert_ops(
+    *,
+    file_id: str,
+    entity_type: str,
+    entity_id: Optional[str],
+    entity_name: str,
+    content: str,
+    docstring: Optional[str],
+    driver_type: Optional[str],
+) -> List[Tuple[str, Any]]:
+    """INSERT ``code_content`` and, on SQLite, ``code_content_fts`` keyed by INTEGER rowid.
+
+    SQLite FTS5 external table uses ``content_rowid='rowid'``; ``rowid`` must match the
+    autoincrement primary key of ``code_content``, not a UUID string (see ``entities.add_code_content``).
+    PostgreSQL has no FTS virtual table; ``code_content.id`` is an explicit UUID.
+    """
+    if driver_type == "postgres":
+        rid = str(uuid.uuid4())
+        row: Dict[str, Any] = {
+            "id": rid,
+            "file_id": file_id,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "entity_name": entity_name,
+            "content": content or "",
+            "docstring": docstring,
+        }
+        sql, params = _row_to_insert_sql("code_content", row)
+        return [(sql, params)]
+
+    ins = (
+        "INSERT INTO code_content (file_id, entity_type, entity_id, entity_name, content, docstring) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            file_id,
+            entity_type,
+            entity_id,
+            entity_name,
+            content or "",
+            docstring,
+        ),
+    )
+    fts = (
+        "INSERT INTO code_content_fts (rowid, entity_type, entity_name, content, docstring) "
+        "VALUES (last_insert_rowid(), ?, ?, ?, ?)",
+        (entity_type, entity_name, content or "", docstring or ""),
+    )
+    return [ins, fts]
 
 
 def build_file_data_atomic_batches(
@@ -59,9 +109,20 @@ def build_file_data_atomic_batches(
     source_code: str,
     file_path: str,
     file_mtime: float,
+    *,
+    driver_type: Optional[str] = None,
 ) -> Tuple[list[list[Tuple[str, Any]]], dict[str, Any]]:
     """
     Build ordered batches for file data update and metadata for the result dict.
+
+    Populates ``code_content`` (and on SQLite, ``code_content_fts``) so
+    :meth:`~code_analysis.core.database_client.client_api_search._ClientAPISearchMixin.full_text_search`
+    returns matches after indexing.
+
+    Args:
+        driver_type: ``postgres`` skips SQLite-only FTS virtual table DML; omit or use
+            ``sqlite`` / ``sqlite_proxy`` for FTS5 sidecar updates (same as
+            :attr:`~code_analysis.core.database_client.client.DatabaseClient._driver_type`).
 
     Returns:
         (batches, meta). On syntax error, ([], {success: False, ...}).
@@ -102,7 +163,21 @@ def build_file_data_atomic_batches(
     ast_row_id = str(uuid.uuid4())
     cst_row_id = str(uuid.uuid4())
 
-    ops1: List[Tuple[str, Optional[tuple]]] = [
+    # Full-text rows (code_content / SQLite FTS) must be cleared before entity teardown.
+    code_content_deletes: List[Tuple[str, Optional[tuple]]] = []
+    if driver_type != "postgres":
+        code_content_deletes.append(
+            (
+                "DELETE FROM code_content_fts WHERE rowid IN ("
+                "SELECT rowid FROM code_content WHERE file_id = ?)",
+                (file_id,),
+            )
+        )
+    code_content_deletes.append(
+        ("DELETE FROM code_content WHERE file_id = ?", (file_id,))
+    )
+
+    ops1: List[Tuple[str, Optional[tuple]]] = code_content_deletes + [
         (
             "DELETE FROM methods WHERE class_id IN (SELECT id FROM classes WHERE file_id = ?)",
             (file_id,),
@@ -125,8 +200,9 @@ def build_file_data_atomic_batches(
     ]
 
     class_rows: List[Dict[str, Any]] = []
-    method_specs: List[Tuple[int, Dict[str, Any]]] = []
+    method_specs: List[Tuple[int, Dict[str, Any], str, ast.AST]] = []
     function_rows: List[Dict[str, Any]] = []
+    function_ast_nodes: List[ast.AST] = []
     import_rows: List[Dict[str, Any]] = []
 
     class_nodes_ordered: List[ast.ClassDef] = []
@@ -180,7 +256,7 @@ def build_file_data_atomic_batches(
                     row_m.pop("id", None)
                     row_m.pop("created_at", None)
                     row_m.setdefault("cst_node_id", "")
-                    method_specs.append((idx, row_m))
+                    method_specs.append((idx, row_m, str(uuid.uuid4()), item))
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -219,6 +295,7 @@ def build_file_data_atomic_batches(
             row.pop("created_at", None)
             row.setdefault("cst_node_id", "")
             function_rows.append(row)
+            function_ast_nodes.append(node)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -252,6 +329,9 @@ def build_file_data_atomic_batches(
     for r in class_rows:
         r["id"] = str(uuid.uuid4())
 
+    for row in function_rows:
+        row["id"] = str(uuid.uuid4())
+
     batches: list[list[Tuple[str, Any]]] = [ops1]
 
     if class_rows:
@@ -259,10 +339,10 @@ def build_file_data_atomic_batches(
         batches.append(ops2)
 
     ops3: List[Tuple[str, Any]] = []
-    for class_idx, row in method_specs:
-        row_d = dict(row)
+    for class_idx, row_m, method_id, _meth_ast in method_specs:
+        row_d = dict(row_m)
         class_id_val = class_rows[class_idx]["id"]
-        ops3.append(_method_insert_sql_with_class_id(row_d, class_id_val))
+        ops3.append(_method_insert_sql_with_class_id(row_d, class_id_val, method_id))
     for row in function_rows:
         ops3.append(_row_to_insert_sql("functions", row))
     for row in import_rows:
@@ -270,6 +350,70 @@ def build_file_data_atomic_batches(
 
     if ops3:
         batches.append(ops3)
+
+    ops_cc: List[Tuple[str, Any]] = []
+    try:
+        module_docstring = ast.get_docstring(tree)
+    except Exception:
+        module_docstring = None
+    ops_cc.extend(
+        _code_content_insert_ops(
+            file_id=file_id,
+            entity_type="file",
+            entity_id=file_id,
+            entity_name=str(file_path),
+            content=source_code,
+            docstring=module_docstring,
+            driver_type=driver_type,
+        )
+    )
+    for class_idx, cls_node in enumerate(class_nodes_ordered):
+        cid = class_rows[class_idx]["id"]
+        class_doc = ast.get_docstring(cls_node)
+        class_src = ast.get_source_segment(source_code, cls_node) or ""
+        ops_cc.extend(
+            _code_content_insert_ops(
+                file_id=file_id,
+                entity_type="class",
+                entity_id=cid,
+                entity_name=cls_node.name,
+                content=class_src,
+                docstring=class_doc,
+                driver_type=driver_type,
+            )
+        )
+    for class_idx, _row_m, method_id, meth_node in method_specs:
+        cls_node = class_nodes_ordered[class_idx]
+        method_doc = ast.get_docstring(meth_node)
+        method_src = ast.get_source_segment(source_code, meth_node) or ""
+        qual = f"{cls_node.name}.{meth_node.name}"
+        ops_cc.extend(
+            _code_content_insert_ops(
+                file_id=file_id,
+                entity_type="method",
+                entity_id=method_id,
+                entity_name=qual,
+                content=method_src,
+                docstring=method_doc,
+                driver_type=driver_type,
+            )
+        )
+    for row, func_node in zip(function_rows, function_ast_nodes):
+        fn_doc = ast.get_docstring(func_node)
+        fn_src = ast.get_source_segment(source_code, func_node) or ""
+        ops_cc.extend(
+            _code_content_insert_ops(
+                file_id=file_id,
+                entity_type="function",
+                entity_id=row["id"],
+                entity_name=str(row.get("name") or getattr(func_node, "name", "")),
+                content=fn_src,
+                docstring=fn_doc,
+                driver_type=driver_type,
+            )
+        )
+    if ops_cc:
+        batches.append(ops_cc)
 
     meta: dict[str, Any] = {
         "success": True,
@@ -289,6 +433,34 @@ def build_file_data_atomic_batches(
     return (batches, meta)
 
 
+def execute_all_batches_in_transaction(
+    database: Any,
+    batches: List[List[Tuple[str, Any]]],
+    transaction_id: str,
+    *,
+    file_path: str,
+    file_id: Any,
+) -> Optional[Dict[str, Any]]:
+    """
+    Run logical-write batch groups on an existing transaction connection.
+
+    Returns:
+        None on success, or an error-shaped dict on the first batch failure.
+    """
+    try:
+        for batch_ops in batches:
+            database.execute_batch(batch_ops, transaction_id=transaction_id)
+    except Exception as e:
+        logger.exception("execute_batch failed for %s", file_path)
+        return {
+            "success": False,
+            "error": str(e),
+            "file_path": file_path,
+            "file_id": file_id,
+        }
+    return None
+
+
 def update_file_data_atomic_batch(
     database: Any,
     file_id: str,
@@ -297,20 +469,37 @@ def update_file_data_atomic_batch(
     file_path: str,
     file_mtime: float,
     transaction_id: Optional[str] = None,
+    *,
+    skip_file_edit_lock: bool = False,
 ) -> Dict[str, Any]:
     """
-    Update all file data (AST, CST, classes, methods, functions, imports) in one RPC.
+    Update all file data (AST, CST, classes, methods, functions, imports).
 
-    Uses execute_logical_write_operation (single transaction on the server).
-    ``transaction_id`` is accepted for API compatibility and ignored.
+    When ``transaction_id`` is set and ``skip_file_edit_lock`` is True, the caller
+    already opened a transaction and acquired ``files.editing_pid`` on that same
+    connection; this function only runs the batch SQL on ``transaction_id`` (no
+    nested ``execute_logical_write_operation`` transaction).
+
+    Otherwise this function begins a transaction, optionally acquires the edit
+    lock on that connection, runs batches, clears ``editing_pid`` on the same
+    connection, then commits (avoids a second pool connection after commit).
     """
-    _ = transaction_id
     logger.info(
         "update_file_data_atomic_batch file_id=%s (logical write)",
         file_id,
     )
+    from code_analysis.core.database.file_edit_lock import (
+        acquire_file_edit_lock_with_retry,
+        release_file_edit_lock,
+    )
+
     batches, meta = build_file_data_atomic_batches(
-        file_id, project_id, source_code, file_path, file_mtime
+        file_id,
+        project_id,
+        source_code,
+        file_path,
+        file_mtime,
+        driver_type=getattr(database, "_driver_type", None),
     )
     if meta.get("success") is False:
         return meta
@@ -318,21 +507,91 @@ def update_file_data_atomic_batch(
         raise RuntimeError(
             "build_file_data_atomic_batches returned empty batches with success=True",
         )
-    try:
-        raw = database.execute_logical_write_operation({"batches": batches})
-    except Exception as e:
-        logger.exception("execute_logical_write_operation failed for %s", file_path)
+
+    if transaction_id is not None and skip_file_edit_lock:
+        err = execute_all_batches_in_transaction(
+            database,
+            batches,
+            transaction_id,
+            file_path=file_path,
+            file_id=file_id,
+        )
+        if err is not None:
+            return err
+        return {**meta, "success": True}
+
+    lock_held = False
+    own_tid: Optional[str] = None
+    own_tid = database.begin_transaction()
+    if not own_tid:
         return {
             "success": False,
-            "error": str(e),
+            "error": "Database transaction could not be started",
+            "error_code": "TRANSACTION_ERROR",
             "file_path": file_path,
             "file_id": file_id,
         }
-    if isinstance(raw, dict) and raw.get("success"):
-        return {**meta, "success": True}
-    return {
-        "success": False,
-        "error": "Logical write did not report success",
-        "file_path": file_path,
-        "file_id": file_id,
-    }
+
+    if not skip_file_edit_lock:
+        if not acquire_file_edit_lock_with_retry(
+            database, file_id, transaction_id=own_tid
+        ):
+            try:
+                database.rollback_transaction(own_tid)
+            except Exception:
+                pass
+            own_tid = None
+            return {
+                "success": False,
+                "error": (
+                    "File is being edited by another live process (file edit lock). "
+                    "Try again shortly."
+                ),
+                "error_code": "FILE_EDIT_LOCKED",
+                "file_path": file_path,
+                "file_id": file_id,
+            }
+        lock_held = True
+
+    err = execute_all_batches_in_transaction(
+        database,
+        batches,
+        own_tid,
+        file_path=file_path,
+        file_id=file_id,
+    )
+    if err is not None:
+        try:
+            database.rollback_transaction(own_tid)
+        except Exception:
+            pass
+        own_tid = None
+        return err
+
+    # Clear editing_pid on the same backend connection before commit so we never
+    # rely on a second pool connection after commit (PostgreSQL deadlock / crash).
+    if lock_held:
+        try:
+            release_file_edit_lock(database, file_id, transaction_id=own_tid)
+        except Exception:
+            logger.warning(
+                "release_file_edit_lock before commit failed for file_id=%s",
+                file_id,
+                exc_info=True,
+            )
+            try:
+                database.rollback_transaction(own_tid)
+            except Exception:
+                pass
+            own_tid = None
+            return {
+                "success": False,
+                "error": "Failed to release file edit lock before commit",
+                "error_code": "FILE_EDIT_LOCK_RELEASE_ERROR",
+                "file_path": file_path,
+                "file_id": file_id,
+            }
+
+    database.commit_transaction(own_tid)
+    own_tid = None
+    return {**meta, "success": True}

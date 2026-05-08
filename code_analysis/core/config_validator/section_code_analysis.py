@@ -7,6 +7,11 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, List
 
+from ..docs_indexing_defaults import (
+    ALLOWED_DOCS_INDEXING_KEYS,
+    docs_include_pattern_mentions_indexed_suffix,
+)
+from ..docs_indexing_eligibility import normalize_project_relative_posix
 from .constants import ALLOWED_CODE_ANALYSIS_KEYS
 from .result import ValidationResult
 
@@ -42,6 +47,9 @@ def validate_code_analysis_section_impl(
                 suggestion="Set to a positive byte threshold or omit to use the default constant",
             )
         )
+
+    _validate_docs_indexing(code_analysis, results)
+    _validate_vector_search_backend_vs_driver(code_analysis, results)
 
     worker = code_analysis.get("worker")
     if worker and isinstance(worker, dict):
@@ -306,3 +314,238 @@ def validate_code_analysis_section_impl(
                     suggestion="Set pack_rotated to true or false",
                 )
             )
+
+
+def _infer_database_driver_type(code_analysis: Dict[str, Any]) -> str:
+    """Infer driver type string from ``code_analysis`` (same idea as ``get_driver_config``)."""
+    database = code_analysis.get("database")
+    if isinstance(database, dict):
+        driver = database.get("driver")
+        if isinstance(driver, dict):
+            t = driver.get("type")
+            if t:
+                return str(t).strip().lower()
+    if code_analysis.get("db_path"):
+        return "sqlite_proxy"
+    return ""
+
+
+def _validate_vector_search_backend_vs_driver(
+    code_analysis: Dict[str, Any], results: List[ValidationResult]
+) -> None:
+    """
+    Enforce: pgvector is not a valid choice for SQLite-class drivers (FAISS only).
+    """
+    raw = code_analysis.get("vector_search_backend")
+    if raw is None:
+        return
+    cfg = str(raw).strip().lower()
+    if cfg not in ("auto", "faiss", "pgvector"):
+        return
+
+    dt = _infer_database_driver_type(code_analysis)
+    if not dt:
+        return
+
+    if cfg == "pgvector" and dt in ("sqlite", "sqlite_proxy"):
+        results.append(
+            ValidationResult(
+                level="error",
+                message=(
+                    "code_analysis.vector_search_backend cannot be 'pgvector' when the "
+                    "database driver is sqlite or sqlite_proxy: FAISS is always used for those drivers."
+                ),
+                section="code_analysis",
+                key="vector_search_backend",
+                suggestion='Use "auto" or "faiss", or switch to the postgres driver for pgvector.',
+            )
+        )
+
+
+def _validate_docs_indexing(
+    code_analysis: Dict[str, Any], results: List[ValidationResult]
+) -> None:
+    """Validate ``code_analysis.docs_indexing`` shape and semantics."""
+    di = code_analysis.get("docs_indexing")
+    if di is None:
+        return
+    if not isinstance(di, dict):
+        results.append(
+            ValidationResult(
+                level="error",
+                message="code_analysis.docs_indexing must be an object",
+                section="code_analysis",
+                key="docs_indexing",
+                suggestion=(
+                    "Use a JSON object with keys: enabled, vectorize, roots, include, exclude"
+                ),
+            )
+        )
+        return
+
+    for key in di:
+        if key not in ALLOWED_DOCS_INDEXING_KEYS:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"Unknown key 'code_analysis.docs_indexing.{key}'; "
+                        f"allowed: {', '.join(sorted(ALLOWED_DOCS_INDEXING_KEYS))}"
+                    ),
+                    section="code_analysis",
+                    key=f"docs_indexing.{key}",
+                    suggestion="Remove the unknown key or fix the spelling",
+                )
+            )
+
+    roots = di.get("roots")
+    if roots is not None:
+        if not isinstance(roots, list):
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.docs_indexing.roots must be a list of strings",
+                    section="code_analysis",
+                    key="docs_indexing.roots",
+                    suggestion='Use project-relative paths, e.g. ["docs"]',
+                )
+            )
+        elif len(roots) == 0:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.docs_indexing.roots must not be empty when set",
+                    section="code_analysis",
+                    key="docs_indexing.roots",
+                    suggestion='Add at least one root, e.g. ["docs"]',
+                )
+            )
+        else:
+            for i, r in enumerate(roots):
+                if not isinstance(r, str) or not r.strip():
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.roots[{i}] must be a non-empty string"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.roots[{i}]",
+                            suggestion="Use a project-relative POSIX path (no absolute paths or ..)",
+                        )
+                    )
+                    continue
+                text = r.strip().replace("\\", "/")
+                if text.startswith("/") or (
+                    ":" in text and len(text) > 1 and text[1] == ":"
+                ):
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.roots[{i}] must be project-relative "
+                                "(no absolute paths)"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.roots[{i}]",
+                            suggestion="Use paths like docs or docs/guides (no leading slash)",
+                        )
+                    )
+                    continue
+                _, terr = normalize_project_relative_posix(text)
+                if terr:
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.roots[{i}] must not use path traversal "
+                                "or empty segments"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.roots[{i}]",
+                            suggestion="Remove ., .., and empty path components",
+                        )
+                    )
+
+    inc = di.get("include")
+    if inc is not None:
+        if not isinstance(inc, list):
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.docs_indexing.include must be a list of strings",
+                    section="code_analysis",
+                    key="docs_indexing.include",
+                    suggestion=(
+                        "Use globs that mention .md / .json / .yaml / .yml, "
+                        'e.g. ["docs/**/*.md", "docs/**/*.json", "README.md"]'
+                    ),
+                )
+            )
+        elif len(inc) == 0:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.docs_indexing.include must not be empty when set",
+                    section="code_analysis",
+                    key="docs_indexing.include",
+                    suggestion="Add at least one pattern that matches .md / .json / .yaml / .yml files",
+                )
+            )
+        else:
+            for i, p in enumerate(inc):
+                if not isinstance(p, str) or not p.strip():
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.include[{i}] must be a non-empty string"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.include[{i}]",
+                            suggestion="Use a glob that includes a .md, .json, .yaml, or .yml suffix",
+                        )
+                    )
+                    continue
+                if not docs_include_pattern_mentions_indexed_suffix(p):
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.include[{i}] must reference "
+                                "an indexed documentation type (.md, .json, .yaml, or .yml)"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.include[{i}]",
+                            suggestion=(
+                                "Examples: docs/**/*.md, docs/**/*.json, README.md, **/*.yaml"
+                            ),
+                        )
+                    )
+
+    exc = di.get("exclude")
+    if exc is not None:
+        if not isinstance(exc, list):
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.docs_indexing.exclude must be a list of strings",
+                    section="code_analysis",
+                    key="docs_indexing.exclude",
+                    suggestion='Use globs such as ["docs/plans/**", "docs/ai_reports/**"]',
+                )
+            )
+        else:
+            for i, p in enumerate(exc):
+                if not isinstance(p, str) or not p.strip():
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"code_analysis.docs_indexing.exclude[{i}] must be a non-empty string"
+                            ),
+                            section="code_analysis",
+                            key=f"docs_indexing.exclude[{i}]",
+                            suggestion="Use a non-empty glob pattern",
+                        )
+                    )

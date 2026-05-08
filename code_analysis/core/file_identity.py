@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Union
+from typing import Any, Mapping, Union
 
 from code_analysis.core.path_normalization import normalize_path_simple
 
@@ -25,13 +25,57 @@ class FileIdentityCase(Enum):
 
     SAME_PROJECT_SAME_ABSOLUTE_PATH = "same_project_same_absolute_path"
     DIFFERENT_PROJECT_SAME_ABSOLUTE_PATH = "different_project_same_absolute_path"
-    DIFFERENT_PROJECT_SAME_RELATIVE_PATH_ONLY = "different_project_same_relative_path_only"
+    DIFFERENT_PROJECT_SAME_RELATIVE_PATH_ONLY = (
+        "different_project_same_relative_path_only"
+    )
     UNRELATED = "unrelated"
 
 
 def normalize_project_file_path(path: PathLike) -> str:
     """Return normalized absolute path string (same rules as ``path`` column)."""
     return normalize_path_simple(path)
+
+
+def is_database_path_stored_absolute(stored: str) -> bool:
+    """True if ``stored`` looks like a legacy absolute filesystem path (not project-relative)."""
+    s = (stored or "").strip()
+    if not s:
+        return False
+    return Path(s).is_absolute()
+
+
+def absolute_path_for_indexed_file(
+    project_root: PathLike, row: Mapping[str, Any]
+) -> str:
+    """
+    Normalized absolute path for a ``files`` row.
+
+    Active rows store project-relative POSIX paths in ``path`` (and usually the same
+    in ``relative_path``). Legacy rows may store an absolute path in ``path``;
+    soft-deleted rows may store an absolute trash path.
+    """
+    root_resolved = normalize_path_simple(project_root)
+    raw_path = (row.get("path") or "").strip()
+    raw_rel = (row.get("relative_path") or "").strip()
+    if raw_path and is_database_path_stored_absolute(raw_path):
+        return normalize_path_simple(raw_path)
+    rel = raw_rel or raw_path
+    if not rel:
+        return root_resolved
+    return normalize_path_simple(Path(root_resolved) / rel)
+
+
+# SQL fragment + bind order: (relative_path, path_as_rel, path_as_abs_legacy)
+FILE_ROW_PATH_MATCH_SQL = "(relative_path = ? OR path = ? OR path = ?)"
+
+
+def file_row_path_match_values(
+    *, project_root: PathLike, absolute_path: PathLike
+) -> tuple[str, str, str]:
+    """Three bind values for :data:`FILE_ROW_PATH_MATCH_SQL` (rel duplicated for OR path)."""
+    rel = relative_path_for_project(absolute_path, project_root)
+    abs_norm = normalize_path_simple(absolute_path)
+    return rel, rel, abs_norm
 
 
 def relative_path_for_project(abs_path: PathLike, project_root: PathLike) -> str:

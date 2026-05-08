@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from ..path_normalization import normalize_path_simple
+from ..file_identity import absolute_path_for_indexed_file
+
 from .scanner import find_missing_files
 
 logger = logging.getLogger(__name__)
@@ -98,14 +101,22 @@ def compute_delta(
             db_files = []
             for f in db_files_list:
                 if isinstance(f, dict):
-                    fid, path, lm = f.get("id"), f.get("path"), f.get("last_modified")
+                    fid = f.get("id")
+                    path = f.get("path")
+                    rel = f.get("relative_path")
+                    lm = f.get("last_modified")
                 else:
                     fid, path = f.id, f.path
+                    rel = getattr(f, "relative_path", None)
                     lm = getattr(f, "last_modified", None)
+                row_for_abs = {"path": path, "relative_path": rel}
+                abs_key = normalize_path_simple(
+                    absolute_path_for_indexed_file(project_root, row_for_abs)
+                )
                 db_files.append(
                     {
                         "id": fid,
-                        "path": path,
+                        "path": abs_key,
                         "last_modified": last_modified_to_unix(lm),
                     }
                 )
@@ -126,7 +137,9 @@ def compute_delta(
                 except Exception as e:
                     logger.error(f"Error computing delta for file {file_path_str}: {e}")
 
-            deleted_files = list(find_missing_files(project_files, db_files))
+            deleted_files = list(
+                find_missing_files(project_files, db_files_list, project_root)
+            )
 
             if changed_files and logger.isEnabledFor(logging.DEBUG):
                 fp, disk_mt, _ = changed_files[0]

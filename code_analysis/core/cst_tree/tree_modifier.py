@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -56,8 +55,6 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
-# @node-id: b9eaa0d6-9b25-4b71-a6a1-efd399d3525e
-
 
 
 def _apply_libcst_codegen_compat() -> None:
@@ -69,7 +66,6 @@ def _apply_libcst_codegen_compat() -> None:
     TypeError. We wrap _codegen_impl to accept **kwargs and ignore them.
     """
     orig = cst.SimpleStatementLine._codegen_impl
-    # @node-id: e8226144-262d-4c7a-9362-d9c320abdbcd
 
     def _codegen_impl_compat(
         self: cst.SimpleStatementLine,
@@ -81,10 +77,7 @@ def _apply_libcst_codegen_compat() -> None:
     cst.SimpleStatementLine._codegen_impl = _codegen_impl_compat  # type: ignore[method-assign]
 
 
-
 _apply_libcst_codegen_compat()
-# @node-id: 8a55697b-0cb0-472b-81f3-cbff0524536d
-
 
 
 def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> bool:
@@ -125,7 +118,8 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
         if node_type and node_type in FINE_GRAINED_REPLACE_NODE_TYPES:
             return False
     return replace_count > 1 or insert_count > 1 or has_delete
-# @node-id: a9387f0c-0a22-4825-8948-c1b5d85dd6dc
+
+
 def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     """
     Modify tree with atomic operations.
@@ -258,7 +252,7 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     except Exception as e:
         logger.error(f"Error applying operations to tree {tree_id}: {e}")
         raise
-# @node-id: bee2b1fd-cdd3-4827-b863-5530a2caca2b
+
 
 
 
@@ -301,7 +295,7 @@ def _sort_operations_for_batch(
         + [op for (_, _, op) in inserts]
         + others
     )
-# @node-id: 8eedd870-f981-4caa-bd80-10fea1977d2f
+
 
 
 
@@ -345,7 +339,7 @@ def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) 
         tree.node_map.pop(nid, None)
         tree.metadata_map.pop(nid, None)
         tree.parent_map.pop(nid, None)
-# @node-id: 6446dfe2-edf7-4ca4-b33b-dc9800eb8704
+
 
 
 
@@ -391,10 +385,95 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
         current_id = current_meta.parent_id
 
     return None
-# @node-id: d56fe90c-b34b-4c0b-a191-4770fb0ac579
+def _replace_node_header(
+    module: cst.Module,
+    tree: CSTTree,
+    node_id: str,
+    code: str,
+) -> cst.Module:
+    """Replace only the header of a ClassDef or FunctionDef, preserving the body.
 
+    Parses ``code`` as a class/function stub (with ``pass`` body if needed),
+    extracts the new name, bases (for class) or params/returns (for function),
+    and patches the existing LibCST node in-place, keeping its original body.
 
+    Args:
+        module: Current LibCST module.
+        tree: CSTTree containing node metadata and node_map.
+        node_id: ID of the ClassDef or FunctionDef node to patch.
+        code: New header code, e.g. ``'class Foo(Base):'`` or
+              ``'def bar(self, x: int) -> str:'``.
 
+    Returns:
+        Updated module with only the header replaced.
+    """
+    # Resolve node
+    resolved_id = tree.node_id_aliases.get(node_id, node_id)
+    old_node = tree.node_map.get(resolved_id) or tree.node_map.get(node_id)
+    if old_node is None:
+        raise ValueError(f"Node not found for header-replace: {node_id}")
+
+    # Parse the new header — append a pass body so libcst accepts it
+    stub = code.rstrip()
+    if not stub.endswith(":"):
+        stub = stub + ":"
+    stub_src = stub + "\n    pass\n"
+    try:
+        parsed = cst.parse_module(stub_src)
+    except cst.ParserSyntaxError as exc:
+        raise ValueError(f"Invalid header code: {exc}") from exc
+
+    new_node_raw = parsed.body[0]
+
+    if isinstance(old_node, cst.ClassDef) and isinstance(new_node_raw, cst.ClassDef):
+        patched = old_node.with_changes(
+            name=new_node_raw.name,
+            bases=new_node_raw.bases,
+            keywords=new_node_raw.keywords,
+            decorators=new_node_raw.decorators,
+        )
+    elif isinstance(old_node, cst.FunctionDef) and isinstance(new_node_raw, cst.FunctionDef):
+        patched = old_node.with_changes(
+            name=new_node_raw.name,
+            params=new_node_raw.params,
+            returns=new_node_raw.returns,
+            decorators=new_node_raw.decorators,
+        )
+    else:
+        # Type mismatch or unsupported node — fall back to full replace
+        logger.warning(
+            "_replace_node_header: node %s type mismatch (old=%s, new=%s), falling back to full replace",
+            node_id,
+            type(old_node).__name__,
+            type(new_node_raw).__name__,
+        )
+        return replace_node(module, tree, node_id, code)
+
+    # Swap the node in place using a CSTTransformer
+    class _HeaderPatcher(cst.CSTTransformer):
+        def __init__(self, target: cst.CSTNode, replacement: cst.CSTNode) -> None:
+            self._target = target
+            self._replacement = replacement
+            self._replaced = False
+
+        def on_leave(
+            self, original_node: cst.CSTNode, updated_node: cst.CSTNode
+        ) -> cst.CSTNode:
+            if original_node is self._target and not self._replaced:
+                self._replaced = True
+                return self._replacement
+            return updated_node
+
+    patcher = _HeaderPatcher(old_node, patched)
+    new_module = module.visit(patcher)
+    if not patcher._replaced:
+        raise ValueError(
+            f"Node {node_id} (type={type(old_node).__name__}) was not patched in module. "
+            "Hint: node may be stale — reload tree via cst_load_file."
+        )
+    # Update node_map so subsequent operations see the new node
+    tree.node_map[resolved_id] = patched
+    return new_module
 def _apply_operation(
     module: cst.Module, tree: CSTTree, operation: TreeOperation
 ) -> cst.Module:
@@ -407,6 +486,11 @@ def _apply_operation(
             code = "\n".join(operation.code_lines)
         if not code:
             raise ValueError("code or code_lines required for replace operation")
+        if not operation.replace_all_child_nodes:
+            _nid = tree.node_id_aliases.get(operation.node_id, operation.node_id)
+            _meta = tree.metadata_map.get(_nid) or tree.metadata_map.get(operation.node_id)
+            if _meta and _meta.type in ("ClassDef", "FunctionDef"):
+                return _replace_node_header(module, tree, operation.node_id, code)
         return replace_node(module, tree, operation.node_id, code)
     elif operation.action == TreeOperationType.REPLACE_RANGE:
         code = operation.code
@@ -496,7 +580,7 @@ def _apply_operation(
         )
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")
-# @node-id: 867c0d68-f2d4-4b97-975a-d133147f8ab2
+
 
 
 

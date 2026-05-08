@@ -230,6 +230,15 @@ class FileWatcherWorker:
                         list(immediate_roots),
                         allowed_venv or set(),
                     )
+                docs_indexing_snap = None
+                if self.config_path:
+                    from ..docs_indexing_config_load import (
+                        load_docs_indexing_from_config_path,
+                    )
+
+                    docs_indexing_snap = load_docs_indexing_from_config_path(
+                        Path(self.config_path)
+                    )
                 scanned_files = scan_directory(
                     root_dir=root_dir,
                     watch_dirs=self.watch_dirs,
@@ -237,6 +246,7 @@ class FileWatcherWorker:
                     allowed_venv_py_files=allowed_venv or None,
                     ignore_exception_files=ign_ex or None,
                     immediate_project_roots=immediate_roots,
+                    docs_indexing=docs_indexing_snap,
                 )
 
                 # Compute delta (scan phase - no DB writes)

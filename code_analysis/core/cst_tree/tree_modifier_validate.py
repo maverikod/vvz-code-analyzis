@@ -67,6 +67,19 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
                     raise ValueError(
                         f"Unexpected fine-grained replace type: {meta.type!r}"
                     )
+            elif (
+                not operation.replace_all_child_nodes
+                and meta
+                and meta.type in ("ClassDef", "FunctionDef")
+            ):
+                # Header-only replace: validate by parsing with stub body
+                _header_code = (
+                    "\n".join(operation.code_lines)
+                    if operation.code_lines
+                    else (operation.code or "")
+                )
+                _stub = _header_code.rstrip().rstrip(":") + ":\n    pass\n"
+                cst.parse_module(_stub)
             else:
                 parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:

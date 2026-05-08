@@ -91,9 +91,29 @@ class SQLiteSchemaManager:
                 "errors": [],
             }
 
-            tables = schema_definition.get("tables", [])
-            for table_schema in tables:
+            raw_tables = schema_definition.get("tables", [])
+            if isinstance(raw_tables, dict):
+                table_list: List[Dict[str, Any]] = []
+                for name, body in raw_tables.items():
+                    if not isinstance(body, dict):
+                        continue
+                    entry = dict(body)
+                    entry["name"] = name
+                    table_list.append(entry)
+            elif isinstance(raw_tables, list):
+                table_list = list(raw_tables)
+            else:
+                table_list = []
+
+            table_name: Optional[str] = None
+            for table_schema in table_list:
+                table_name = None
                 try:
+                    if not isinstance(table_schema, dict):
+                        result["errors"].append(
+                            f"Error processing table: invalid entry {table_schema!r}"
+                        )
+                        continue
                     table_name = table_schema.get("name")
                     if not table_name:
                         continue
@@ -113,7 +133,8 @@ class SQLiteSchemaManager:
                         # Table exists - could implement ALTER TABLE logic here
                         result["modified_tables"].append(table_name)
                 except Exception as e:
-                    result["errors"].append(f"Error processing table {table_name}: {e}")
+                    label = table_name or str(table_schema)
+                    result["errors"].append(f"Error processing table {label}: {e}")
 
             if result["errors"]:
                 self.conn.rollback()

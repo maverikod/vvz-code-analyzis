@@ -193,7 +193,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
     def commit(self) -> None:
-        """Commit the main connection (used with transaction_id=LOCAL in CodeDatabase)."""
+        """Commit the main connection (used with transaction_id=LOCAL in legacy SQL facade)."""
         if self.conn:
             self.conn.commit()
 

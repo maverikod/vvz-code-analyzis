@@ -83,7 +83,57 @@ def idempotent_ensure_project_activity_locks_table(
     conn.commit()
 
 
-def ensure_postgres_schema(conn: Any, schema_definition: Dict[str, Any]) -> None:
+def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
+    """Create pgvector extension (if permitted), ``embedding_vec``, and HNSW index."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.commit()
+    except Exception as exc:
+        logger.warning(
+            "PostgreSQL: CREATE EXTENSION vector failed (pgvector optional): %s",
+            exc,
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return
+
+    dim = max(1, int(vector_dim))
+    _ensure_missing_column(
+        conn,
+        table_name="code_chunks",
+        column_name="embedding_vec",
+        add_sql=f"ALTER TABLE code_chunks ADD COLUMN embedding_vec vector({dim})",
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding_vec_hnsw
+                ON code_chunks
+                USING hnsw (embedding_vec vector_cosine_ops)
+                """
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.warning(
+            "PostgreSQL: HNSW index on embedding_vec skipped (may retry later): %s",
+            exc,
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def ensure_postgres_schema(
+    conn: Any,
+    schema_definition: Dict[str, Any],
+    *,
+    vector_dim: int = 384,
+) -> None:
     """Create tables and indexes if missing (FTS5 virtual tables are not created)."""
     locked = False
     try:
@@ -113,6 +163,7 @@ def ensure_postgres_schema(conn: Any, schema_definition: Dict[str, Any]) -> None
             column_name="editing_pid",
             add_sql="ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL",
         )
+        _ensure_pgvector_embedding_column(conn, vector_dim)
     finally:
         if locked:
             try:

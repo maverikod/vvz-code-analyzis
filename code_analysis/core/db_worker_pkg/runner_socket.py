@@ -86,7 +86,9 @@ def handle_client_connection(
                     {"success": False, "error": "Missing schema_definition"},
                 )
                 return
-            from ..db_driver.sqlite import SQLiteDriver
+            from code_analysis.core.database_driver_pkg.drivers.sqlite import (
+                SQLiteDriver,
+            )
 
             driver = SQLiteDriver()
             driver.connect({"path": db_path})

@@ -29,7 +29,6 @@ BODY_PLACEHOLDER_COMMENT = (
 
 
 VISIBLE_KINDS = {"module", "import", "class", "function", "method"}
-# @node-id: 09107ce4-e79d-46bc-9e61-e54cd03c672e
 
 
 
@@ -53,7 +52,6 @@ def build_declarative_overview(tree: CSTTree) -> tuple[str, List[Dict[str, Any]]
         outline_nodes=outline_nodes,
     )
     return ("\n".join(lines) + ("\n" if lines else ""), outline_nodes)
-# @node-id: 0faaa6c7-2f27-4ef5-ae6c-74fe4bb31153
 
 
 
@@ -61,7 +59,6 @@ def skeleton_from_tree(tree: CSTTree) -> str:
     """Backward-compatible alias for the new declarative overview."""
     overview, _outline_nodes = build_declarative_overview(tree)
     return overview
-# @node-id: e4c7a0f5-b5f2-4026-b568-a223ba317823
 
 
 def build_node_declarative_overview(
@@ -92,7 +89,6 @@ def build_node_declarative_overview(
         outline_nodes=outline_nodes,
     )
     return ("\n".join(lines) + ("\n" if lines else ""), outline_nodes)
-# @node-id: 2b4af175-9480-4dfe-8d1c-a5eda6642410
 
 def _append_node_overview(
     tree: CSTTree,
@@ -187,7 +183,6 @@ def _append_node_overview(
                 )
     elif metadata.kind in {"function", "method"}:
         lines.append(f"{'    ' * (depth + 1)}{BODY_PLACEHOLDER_COMMENT}")
-# @node-id: 01db1372-71c7-4ab6-b0d6-a1fad6b6f510
 
 
 
@@ -227,7 +222,6 @@ def _append_visible_descendants(
             lines=lines,
             outline_nodes=outline_nodes,
         )
-# @node-id: 8596e5ac-8ad1-4e6f-bd3f-362189ac2c7d
 
 def _build_signature(metadata: TreeNodeMetadata, code: str) -> str:
     """Build a short signature line for a node including its stable_id prefix.
@@ -261,20 +255,17 @@ def _build_signature(metadata: TreeNodeMetadata, code: str) -> str:
         header_lines = [metadata.type]
     header = " ".join(part.strip() for part in header_lines)
     return f"{prefix}{header}"
-# @node-id: ed5eb386-0f30-4ee6-b164-7497e6aaabc4
 
 
 
 def _format_docstring(docstring: str) -> List[str]:
     return ['"""', *docstring.splitlines(), '"""']
-# @node-id: f23d9970-c13d-4d37-bd22-c9d5caad6378
 
 
 
 def _indent_block(lines: List[str], depth: int) -> List[str]:
     prefix = "    " * depth
     return [f"{prefix}{line}" for line in lines]
-# @node-id: 150068da-7766-4592-b24f-c6caca7334ef
 
 
 
@@ -287,7 +278,6 @@ def _outline_entry(
     data["depth"] = depth
     data["signature"] = signature
     return data
-# @node-id: ce275d9f-b7ae-41f8-80bc-e2e88a07991c
 
 
 

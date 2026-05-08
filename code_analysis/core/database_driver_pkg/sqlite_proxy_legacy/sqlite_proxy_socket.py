@@ -12,7 +12,7 @@ import struct
 from pathlib import Path
 from typing import Any, Dict, cast
 
-from ..exceptions import DatabaseOperationError
+from code_analysis.core.exceptions import DatabaseOperationError
 
 logger = logging.getLogger(__name__)
 

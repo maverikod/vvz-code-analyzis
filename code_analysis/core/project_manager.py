@@ -50,7 +50,7 @@ class ProjectManager:
         Initialize project manager.
 
         Args:
-            database: Optional CodeDatabase instance for project storage
+            database: Optional legacy SQL facade instance for project storage
         """
         self.database = database
         self.settings = get_settings()

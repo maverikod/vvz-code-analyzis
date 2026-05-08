@@ -84,10 +84,11 @@ async def process_projects_in_cycle(
         faiss_manager = None
         try:
             index_path = worker.faiss_dir / f"{project_id}.bin"
-            faiss_manager = FaissIndexManager(
-                index_path=str(index_path),
-                vector_dim=worker.vector_dim,
-            )
+            if getattr(worker, "vector_ann_backend", "faiss") != "pgvector":
+                faiss_manager = FaissIndexManager(
+                    index_path=str(index_path),
+                    vector_dim=worker.vector_dim,
+                )
             original_faiss_manager = getattr(worker, "faiss_manager", None)
             original_project_id = getattr(worker, "project_id", None)
             worker.faiss_manager = faiss_manager

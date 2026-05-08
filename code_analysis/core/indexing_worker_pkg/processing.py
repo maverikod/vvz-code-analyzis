@@ -37,6 +37,12 @@ from code_analysis.core.sql_portable import (
     sql_julian_timestamp_now_expr,
 )
 from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from code_analysis.core.docs_indexing_config_load import (
+    load_docs_indexing_from_config_path,
+)
+from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
+from code_analysis.core.docs_indexing_eligibility import is_docs_markdown_eligible
+from code_analysis.core.database.file_edit_lock import editing_lock_holder_is_alive
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +281,22 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         cycle_files_failed = 0
                         cycle_total_time = 0.0
                         owner_id = self._project_activity_owner_id
+                        cfg_raw_path = getattr(self, "config_path", None)
+                        cfg_worker_path: Optional[Path] = (
+                            Path(cfg_raw_path).expanduser().resolve()
+                            if cfg_raw_path
+                            else None
+                        )
+                        docs_cfg_loaded = (
+                            load_docs_indexing_from_config_path(cfg_worker_path)
+                            if cfg_worker_path is not None and cfg_worker_path.is_file()
+                            else None
+                        )
+                        srv_cfg_str = (
+                            str(cfg_worker_path)
+                            if cfg_worker_path is not None and cfg_worker_path.is_file()
+                            else None
+                        )
                         for project_id in project_ids:
                             if not try_acquire_project_activity(
                                 database,
@@ -295,11 +317,12 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                             errors_to_insert: list[tuple[str, str, str, str]] = []
                             try:
                                 files_result = database.execute(
-                                    "SELECT id, path, project_id FROM files "
+                                    "SELECT id, path, project_id, editing_pid FROM files "
                                     "WHERE project_id = ? AND "
                                     + WHERE_FILES_ACTIVE
                                     + " "
-                                    "AND needs_chunking = 1 ORDER BY updated_at DESC, id DESC LIMIT ?",
+                                    "AND needs_chunking = 1 "
+                                    "ORDER BY updated_at DESC, id DESC LIMIT ?",
                                     (project_id, self.batch_size),
                                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                 )
@@ -314,14 +337,71 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     project_id[:8] if project_id else None,
                                     len(files_data),
                                 )
+                                proj_root_for_docs: Optional[Path] = None
+                                proj_row = database.execute(
+                                    "SELECT root_path FROM projects WHERE id = ?",
+                                    (project_id,),
+                                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                )
+                                if isinstance(proj_row, dict):
+                                    pd = proj_row.get("data") or []
+                                    if pd:
+                                        try:
+                                            proj_root_for_docs = Path(
+                                                str(pd[0].get("root_path"))
+                                            ).resolve()
+                                        except Exception:
+                                            proj_root_for_docs = None
                                 for row in files_data:
                                     path = row.get("path")
                                     if not path or not project_id:
                                         continue
-                                    # Only index Python files; skip others and clear flag
-                                    if not (
-                                        path.endswith(".py") or path.endswith(".pyi")
+                                    if editing_lock_holder_is_alive(
+                                        row.get("editing_pid")
                                     ):
+                                        logger.debug(
+                                            "Skipping file_id=%s path=%s: live edit lock pid=%s",
+                                            row.get("id"),
+                                            path[:120] if path else "",
+                                            row.get("editing_pid"),
+                                        )
+                                        heartbeat_project_activity(
+                                            database,
+                                            project_id,
+                                            "indexer",
+                                            owner_id,
+                                            "indexer_processing",
+                                            _INDEXER_LEASE_TTL_S,
+                                            rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                        )
+                                        continue
+                                    is_python = path.endswith(".py") or path.endswith(
+                                        ".pyi"
+                                    )
+                                    is_docs_file_eligible = False
+                                    doc_suffix = Path(path).suffix.lower()
+                                    if (
+                                        doc_suffix in DOCS_INDEX_FILE_SUFFIXES
+                                        and docs_cfg_loaded is not None
+                                        and proj_root_for_docs is not None
+                                    ):
+                                        try:
+                                            rel_docs = str(
+                                                Path(path)
+                                                .resolve()
+                                                .relative_to(proj_root_for_docs)
+                                            )
+                                        except ValueError:
+                                            rel_docs = ""
+                                        verdict_docs = is_docs_markdown_eligible(
+                                            docs_indexing=docs_cfg_loaded,
+                                            relative_path=rel_docs,
+                                            file_exists=True,
+                                            is_deleted=False,
+                                        )
+                                        is_docs_file_eligible = verdict_docs.eligible
+
+                                    if not is_python and not is_docs_file_eligible:
                                         try:
                                             database.execute(
                                                 "UPDATE files SET needs_chunking = 0 WHERE id = ?",
@@ -356,10 +436,19 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         progress_percent=progress_pct,
                                     )
                                     try:
+                                        idx_kw = (
+                                            dict(
+                                                docs_indexing=docs_cfg_loaded,
+                                                server_config_path=srv_cfg_str,
+                                            )
+                                            if is_docs_file_eligible
+                                            else {}
+                                        )
                                         result = database.index_file(
                                             path,
                                             project_id,
                                             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                            **idx_kw,
                                         )
                                         elapsed = time.time() - file_start
                                         log_operation_timing(

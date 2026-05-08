@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import uuid
 
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from datetime import datetime
@@ -30,9 +31,30 @@ from .ignore_pre_scan_purge import (
 )
 from .processor_delta import FileDelta
 
+from code_analysis.core.database.file_edit_lock import file_row_has_live_edit_lock
+from code_analysis.core.file_identity import (
+    FILE_ROW_PATH_MATCH_SQL,
+    file_row_path_match_values,
+    relative_path_for_project,
+)
+
 logger = logging.getLogger(__name__)
 
 _WATCHER_PHASE_HB = 50
+
+
+def _watch_dir_id_for_project(database: Any, project_id: str) -> Optional[str]:
+    gp = getattr(database, "get_project", None)
+    if not callable(gp):
+        return None
+    po = gp(project_id)
+    if isinstance(po, dict):
+        wd = po.get("watch_dir_id")
+        return str(wd) if wd is not None else None
+    if po is not None:
+        wd = getattr(po, "watch_dir_id", None)
+        return str(wd) if wd is not None else None
+    return None
 
 
 def _watcher_heartbeat_n(
@@ -61,7 +83,7 @@ class ProcessorQueueOps:
         self.watch_dirs_resolved = watch_dirs_resolved
 
     def _db_execute(self, sql: str, params: Optional[tuple] = None) -> Any:
-        """Execute SQL; support both execute() (client) and _execute() (CodeDatabase)."""
+        """Execute SQL; support both execute() (client) and _execute() (legacy SQL facade)."""
         if hasattr(self.database, "execute"):
             return self.database.execute(
                 sql,
@@ -72,7 +94,7 @@ class ProcessorQueueOps:
         result = getattr(self.database, "_last_execute_result", None)
         if result is not None:
             return result
-        # CodeDatabase with db_driver: _execute returns None; use _fetchone for SELECT
+        # Legacy SQL facade: _execute returns None; use _fetchone for SELECT
         if hasattr(self.database, "_fetchone") and sql.strip().upper().startswith(
             "SELECT"
         ):
@@ -253,8 +275,10 @@ class ProcessorQueueOps:
             )
 
         try:
+            watch_dir_id_queue = _watch_dir_id_for_project(self.database, project_id)
+
             watch_dirs: List[Path] = list(self.watch_dirs_resolved)
-            Row = Tuple[str, int, float, bool]
+            Row = Tuple[str, str, int, float, bool]
             new_rows: List[Row] = []
             changed_rows: List[Row] = []
 
@@ -294,6 +318,7 @@ class ProcessorQueueOps:
                         )
                         return False
                     abs_path = normalized.absolute_path
+                    rel_posix = relative_path_for_project(abs_path, pr)
                     path_obj = Path(abs_path)
                     lines = 0
                     has_docstring = False
@@ -307,7 +332,7 @@ class ProcessorQueueOps:
                             ) or stripped.startswith("'''")
                         except Exception:
                             pass
-                    out.append((abs_path, lines, mtime, has_docstring))
+                    out.append((rel_posix, abs_path, lines, mtime, has_docstring))
                     return True
                 except Exception as e:
                     logger.debug(
@@ -350,15 +375,14 @@ class ProcessorQueueOps:
                     raise RuntimeError("watcher phase inserting_new_files not acquired")
             insert_new_sql = (
                 "INSERT INTO files "
-                "(path, lines, last_modified, has_docstring, project_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now')) "
+                "(id, project_id, watch_dir_id, path, relative_path, lines, last_modified, "
+                "has_docstring, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now')) "
                 "ON CONFLICT (project_id, path) DO NOTHING"
             )
-            update_chunk_sql = (
-                "UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?"
-            )
+            update_chunk_sql = f"UPDATE files SET needs_chunking = 1 WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
             n_ins = 0
-            for path, lines, mtime, has_doc in new_rows:
+            for rel_path, abs_path, lines, mtime, has_doc in new_rows:
                 n_ins += 1
                 if use_lease and wdb and owner_id and has_work:
                     _watcher_heartbeat_n(
@@ -370,14 +394,30 @@ class ProcessorQueueOps:
                         n_ins,
                     )
                 self._db_execute(
-                    insert_new_sql, (path, lines, mtime, has_doc, project_id)
+                    insert_new_sql,
+                    (
+                        str(uuid.uuid4()),
+                        project_id,
+                        watch_dir_id_queue,
+                        rel_path,
+                        rel_path,
+                        lines,
+                        mtime,
+                        has_doc,
+                    ),
+                )
+                r1, r2, r3 = file_row_path_match_values(
+                    project_root=project_root, absolute_path=abs_path
                 )
                 rsel = self._db_execute(
-                    "SELECT 1 AS ok FROM files WHERE project_id = ? AND path = ?",
-                    (project_id, path),
+                    f"SELECT 1 AS ok FROM files WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}",
+                    (project_id, r1, r2, r3),
                 )
                 if rsel and (rsel.get("data") or ()):
-                    self._db_execute(update_chunk_sql, (path, project_id))
+                    if not file_row_has_live_edit_lock(
+                        self.database, project_id=project_id, path=str(abs_path)
+                    ):
+                        self._db_execute(update_chunk_sql, (project_id, r1, r2, r3))
                 stats["new_files"] += 1
             if use_lease and wdb and owner_id and has_work:
                 if not _phase("watcher_updating_changed_files"):
@@ -385,10 +425,10 @@ class ProcessorQueueOps:
             update_changed_sql = (
                 "UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
                 "deleted = FALSE, updated_at = julianday('now') "
-                "WHERE project_id = ? AND path = ?"
+                f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
             )
             n_ch = 0
-            for path, lines, mtime, has_doc in changed_rows:
+            for _rel_path, abs_path, lines, mtime, has_doc in changed_rows:
                 n_ch += 1
                 if use_lease and wdb and owner_id and has_work:
                     _watcher_heartbeat_n(
@@ -399,11 +439,22 @@ class ProcessorQueueOps:
                         ttl,
                         n_ch,
                     )
+                if file_row_has_live_edit_lock(
+                    self.database, project_id=project_id, path=str(abs_path)
+                ):
+                    logger.debug(
+                        "[QUEUE] skip changed file DB touch (live edit lock): %s",
+                        abs_path,
+                    )
+                    continue
+                r1, r2, r3 = file_row_path_match_values(
+                    project_root=project_root, absolute_path=abs_path
+                )
                 self._db_execute(
                     update_changed_sql,
-                    (lines, mtime, has_doc, project_id, path),
+                    (lines, mtime, has_doc, project_id, r1, r2, r3),
                 )
-                self._db_execute(update_chunk_sql, (path, project_id))
+                self._db_execute(update_chunk_sql, (project_id, r1, r2, r3))
                 stats["changed_files"] += 1
 
             if use_lease and wdb and owner_id and has_work:
@@ -539,78 +590,49 @@ class ProcessorQueueOps:
                     db_project_id=project_id,
                 )
 
+            if file_row_has_live_edit_lock(
+                self.database, project_id=project_id, path=str(abs_file_path)
+            ):
+                logger.debug(
+                    "[QUEUE] skip queue (live edit lock): %s",
+                    abs_file_path,
+                )
+                return True
+
             if project_root is None:
                 project_root = normalized.project_root
 
             if not project_root:
                 root_dir = self._get_project_root_dir(project_id, abs_file_path)
-                if not root_dir:
-                    logger.warning(
-                        f"Could not determine root_dir for {abs_file_path}, "
-                        "falling back to mark_file_needs_chunking"
-                    )
-                    res = self._db_execute(
-                        "SELECT id FROM files WHERE path = ? AND project_id = ?",
-                        (abs_file_path, project_id),
-                    )
-                    data = res.get("data", [])
-                    existing = data[0] if data else None
-                    if not existing:
-                        path_obj = Path(abs_file_path)
-                        lines = 0
-                        has_docstring = False
-                        try:
-                            if path_obj.exists() and path_obj.is_file():
-                                text = path_obj.read_text(
-                                    encoding="utf-8", errors="ignore"
-                                )
-                                lines = text.count("\n") + (1 if text else 0)
-                                stripped = text.lstrip()
-                                has_docstring = stripped.startswith(
-                                    '"""'
-                                ) or stripped.startswith("'''")
-                        except Exception:
-                            logger.debug(
-                                f"[QUEUE] Failed to read file for metadata: {abs_file_path}"
-                            )
-                        try:
-                            self._db_execute(
-                                """
-                                INSERT INTO files (path, lines, last_modified, has_docstring, project_id, created_at)
-                                VALUES (?, ?, ?, ?, ?, julianday('now'))
-                                """,
-                                (
-                                    abs_file_path,
-                                    lines,
-                                    mtime,
-                                    has_docstring,
-                                    project_id,
-                                ),
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"[QUEUE] Failed to add new file: {abs_file_path} ({e})"
-                            )
-                            return False
-                        self._db_execute(
-                            """
-                            UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
-                            """,
-                            (abs_file_path, project_id),
-                        )
-                    else:
-                        self._db_execute(
-                            """
-                            UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
-                            """,
-                            (abs_file_path, project_id),
-                        )
-                    return True
+                if root_dir:
+                    project_root = root_dir
 
-            if project_root:
-                logger.debug(
-                    f"[QUEUE] File normalized: file={abs_file_path}, project_root={project_root}, project_id={project_id}"
+            if not project_root:
+                logger.warning(
+                    "Could not determine project root for %s; chunking update only",
+                    abs_file_path,
                 )
+                gf = getattr(self.database, "get_file_by_path", None)
+                if callable(gf):
+                    row = gf(abs_file_path, project_id, include_deleted=False)
+                    if row and row.get("id"):
+                        self._db_execute(
+                            "UPDATE files SET needs_chunking = 1 WHERE id = ?",
+                            (row["id"],),
+                        )
+                return True
+
+            try:
+                root_res = project_root.resolve()
+            except OSError:
+                root_res = project_root
+
+            logger.debug(
+                "[QUEUE] File normalized: file=%s, project_root=%s, project_id=%s",
+                abs_file_path,
+                project_root,
+                project_id,
+            )
 
             path_obj = Path(abs_file_path)
             lines = 0
@@ -624,15 +646,17 @@ class ProcessorQueueOps:
                         "'''"
                     )
             except Exception:
-                logger.debug(
-                    f"[QUEUE] Failed to read file for metadata: {abs_file_path}"
-                )
+                logger.debug("Failed to read file for metadata: %s", abs_file_path)
+
+            rel_key = relative_path_for_project(abs_file_path, root_res)
+            wdid = _watch_dir_id_for_project(self.database, project_id)
 
             try:
                 self._db_execute(
                     """
-                    INSERT INTO files (path, lines, last_modified, has_docstring, project_id, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))
+                    INSERT INTO files (id, project_id, watch_dir_id, path, relative_path,
+                        lines, last_modified, has_docstring, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now'))
                     ON CONFLICT (project_id, path) DO UPDATE SET
                     lines = excluded.lines,
                     last_modified = excluded.last_modified,
@@ -641,50 +665,65 @@ class ProcessorQueueOps:
                     updated_at = julianday('now')
                     """,
                     (
-                        abs_file_path,
+                        str(uuid.uuid4()),
+                        project_id,
+                        wdid,
+                        rel_key,
+                        rel_key,
                         lines,
                         mtime,
                         has_docstring,
-                        project_id,
                     ),
                 )
-                res = self._db_execute(
-                    "SELECT id FROM files WHERE path = ? AND project_id = ? LIMIT 1",
-                    (abs_file_path, project_id),
+                r1, r2, r3 = file_row_path_match_values(
+                    project_root=root_res, absolute_path=abs_file_path
                 )
-                data = res.get("data", [])
+                res = self._db_execute(
+                    f"SELECT id FROM files WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL} LIMIT 1",
+                    (project_id, r1, r2, r3),
+                )
+                data = res.get("data", []) if isinstance(res, dict) else []
                 file_row = data[0] if data else None
                 file_id = file_row.get("id", 0) if file_row else 0
                 logger.debug(
-                    f"[QUEUE] File added/updated: {abs_file_path} | file_id={file_id} | project_id={project_id}"
+                    "[QUEUE] File added/updated: %s | file_id=%s | project_id=%s",
+                    abs_file_path,
+                    file_id,
+                    project_id,
                 )
 
                 file_record = self.database.get_file_by_id(file_id) if file_id else None
                 if not file_record:
                     logger.error(
-                        f"[QUEUE] File file_id={file_id} not found after add: {abs_file_path}"
+                        "[QUEUE] File file_id=%s not found after add: %s",
+                        file_id,
+                        abs_file_path,
                     )
                     return False
                 logger.debug(
-                    f"[QUEUE] File verified: file_id={file_id}, path={file_record.get('path')}"
+                    "[QUEUE] File verified: file_id=%s, path=%s",
+                    file_id,
+                    file_record.get("path"),
                 )
+                logger.debug(
+                    "[QUEUE] Marking for processing: file_id=%s, path=%s",
+                    file_id,
+                    abs_file_path,
+                )
+                self._db_execute(
+                    f"UPDATE files SET needs_chunking = 1 WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}",
+                    (project_id, r1, r2, r3),
+                )
+                logger.debug("[QUEUE] File marked for vectorization: %s", abs_file_path)
             except Exception as e:
                 logger.error(
-                    f"[QUEUE] Failed to add/update file: {abs_file_path} ({e})",
+                    "[QUEUE] Failed to add/update file: %s (%s)",
+                    abs_file_path,
+                    e,
                     exc_info=True,
                 )
                 return False
 
-            logger.debug(
-                f"[QUEUE] Marking for processing: file_id={file_id}, path={abs_file_path}"
-            )
-            self._db_execute(
-                """
-                UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
-                """,
-                (abs_file_path, project_id),
-            )
-            logger.debug(f"[QUEUE] File marked for vectorization: {abs_file_path}")
             return True
 
         except Exception as e:

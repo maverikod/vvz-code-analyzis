@@ -16,9 +16,15 @@ from typing import Any, Dict
 
 from code_analysis.core.database_client.protocol import (
     DataResult,
+    ErrorCode,
     ErrorResult,
     SuccessResult,
-    ErrorCode,
+)
+from code_analysis.core.database.files.trash_standalone import (
+    get_deleted_files_via_driver,
+    hard_delete_file_via_driver,
+    mark_file_deleted_via_driver,
+    unmark_file_deleted_via_driver,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,12 +32,6 @@ logger = logging.getLogger(__name__)
 
 class _RPCHandlersFileTrashMixin:
     """Mixin for file trash RPC: mark_file_deleted, unmark_file_deleted, hard_delete_file, get_deleted_files."""
-
-    def _get_code_db(self):
-        """Get CodeDatabase using existing driver connection (backend-agnostic)."""
-        from code_analysis.core.database import CodeDatabase
-
-        return CodeDatabase.from_existing_driver(self.driver)
 
     def handle_mark_file_deleted(
         self, params: Dict[str, Any]
@@ -49,12 +49,12 @@ class _RPCHandlersFileTrashMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="mark_file_deleted requires file_path and project_id",
             )
-        db = self._get_code_db()
         try:
             version_dir = params.get("version_dir")
             reason = params.get("reason")
             trash_dir = params.get("trash_dir")
-            ok = db.mark_file_deleted(
+            ok = mark_file_deleted_via_driver(
+                self.driver,
                 file_path=file_path,
                 project_id=project_id,
                 version_dir=version_dir,
@@ -85,10 +85,10 @@ class _RPCHandlersFileTrashMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="unmark_file_deleted requires file_path and project_id",
             )
-        db = self._get_code_db()
         try:
             out_error: Dict[str, str] = {}
-            ok = db.unmark_file_deleted(
+            ok = unmark_file_deleted_via_driver(
+                self.driver,
                 file_path=file_path,
                 project_id=project_id,
                 out_error=out_error,
@@ -130,9 +130,8 @@ class _RPCHandlersFileTrashMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="hard_delete_file file_id must not be empty",
             )
-        db = self._get_code_db()
         try:
-            db.hard_delete_file(file_id)
+            hard_delete_file_via_driver(self.driver, file_id)
             return SuccessResult(data={"success": True})
         except Exception as e:
             logger.error("hard_delete_file failed: %s", e, exc_info=True)
@@ -156,10 +155,8 @@ class _RPCHandlersFileTrashMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="get_deleted_files requires project_id",
             )
-        db = self._get_code_db()
         try:
-            rows = db.get_deleted_files(project_id)
-            # Convert rows to list of dicts (sqlite3.Row or similar)
+            rows = get_deleted_files_via_driver(self.driver, project_id)
             data = [dict(r) for r in rows] if rows else []
             return DataResult(data=data)
         except Exception as e:

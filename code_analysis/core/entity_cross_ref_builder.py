@@ -19,7 +19,7 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
     Uses end_line when present; if end_line is NULL, treats entity as single-line (line only).
 
     Args:
-        db: CodeDatabase-like instance (_execute, _fetchall).
+        db: Legacy DB facade-like instance (_execute, _fetchall).
         file_id: File id.
         line: 1-based line number.
 
@@ -96,7 +96,7 @@ def resolve_callee(
     Prefer same file_id when multiple matches.
 
     Args:
-        db: CodeDatabase-like instance.
+        db: Legacy DB facade-like instance.
         project_id: Project id for scoping.
         file_id: File id where reference occurs (for same-file preference).
         line: Line number (unused; for future use).
@@ -166,7 +166,7 @@ def build_entity_cross_ref_for_file(
     On failure for a single usage, logs and continues.
 
     Args:
-        db: CodeDatabase-like (add_entity_cross_ref, add_usage semantics).
+        db: Legacy DB facade-like (add_entity_cross_ref, add_usage semantics).
         file_id: File id.
         project_id: Project id for resolve_callee.
         source_code: Unused; for future context.

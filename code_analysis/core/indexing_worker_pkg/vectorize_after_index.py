@@ -16,6 +16,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +30,8 @@ def vectorize_file_after_index(
 ) -> Dict[str, Any]:
     """Run chunking and embedding for a file after it was indexed (so vectors are ready for transfer).
 
-    Uses direct CodeDatabase + SVOClientManager to run vectorize_file_immediately.
+    Uses DatabaseClient via InProcessRpcClient + SVOClientManager to run
+    vectorize_file_immediately.
     On failure logs and returns; does not raise (index already succeeded).
 
     Args:
@@ -85,14 +88,22 @@ def _load_config(config_path: str) -> Optional[Dict[str, Any]]:
 
 
 def _create_database(db_path: Path) -> Any:
-    """Create CodeDatabase using direct SQLite driver (same process as indexer)."""
+    """Create DatabaseClient using InProcessRpcClient over a local SQLiteDriver."""
     try:
-        from code_analysis.core.database import CodeDatabase
+        from code_analysis.core.database_client.client import DatabaseClient
+        from code_analysis.core.database_client.in_process_rpc_client import (
+            InProcessRpcClient,
+        )
         from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
+        from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
         driver = SQLiteDriver()
         driver.connect({"path": str(db_path.resolve())})
-        return CodeDatabase.from_existing_driver(driver)
+        handlers = RPCHandlers(driver)
+        ipc = InProcessRpcClient(handlers)
+        ipc.connect()
+        client = DatabaseClient(rpc_client=ipc, driver_type="sqlite")
+        return client
     except Exception as e:
         logger.warning("Could not create database for %s: %s", db_path, e)
         return None
@@ -117,10 +128,25 @@ async def _vectorize_file_immediately(
     file_path: str,
     svo_client_manager: Any,
 ) -> Dict[str, Any]:
-    """Thin wrapper around database.vectorize_file_immediately."""
+    """Vectorize via standalone function (db is DatabaseClient after step 06)."""
+    if Path(file_path).suffix.lower() in DOCS_INDEX_FILE_SUFFIXES:
+        return {
+            "success": True,
+            "chunked": False,
+            "chunks_created": 0,
+            "vectorized": False,
+            "marked_for_worker": False,
+            "error": None,
+        }
+
+    from code_analysis.core.database.files.update_standalone import (
+        _vectorize_via_client,
+    )
+
     await svo_client_manager.initialize()
     try:
-        return await db.vectorize_file_immediately(
+        return await _vectorize_via_client(
+            client=db,
             file_id=file_id,
             project_id=project_id,
             file_path=file_path,
@@ -132,11 +158,10 @@ async def _vectorize_file_immediately(
 
 
 def _close_driver(db: Any) -> None:
-    """Close the driver connection if present."""
+    """Disconnect InProcessRpcClient (also disconnects the underlying SQLiteDriver)."""
     try:
-        driver = getattr(db, "driver", None)
-        if driver and getattr(driver, "conn", None):
-            driver.conn.close()
-            driver.conn = None
+        rpc_client = getattr(db, "rpc_client", None)
+        if rpc_client is not None:
+            rpc_client.disconnect()
     except Exception as e:
-        logger.debug("Error closing driver: %s", e)
+        logger.debug("Error disconnecting rpc_client: %s", e)

@@ -43,12 +43,10 @@ CST_REPLAY_MISMATCH = "CST_REPLAY_MISMATCH"
 
 WRITE_VERIFY_FAILED = "WRITE_VERIFY_FAILED"
 TREE_MODULE_CORRUPT = "TREE_MODULE_CORRUPT"
-# @node-id: 5732116d-5d8e-402b-8494-fcb9a41610d9
 
 
 class SaveVerificationError(Exception):
     """Raised when a save-time verification invariant fails."""
-    # @node-id: 71e1af78-030d-46c7-b123-225af4503e0b
 
 
     def __init__(
@@ -57,7 +55,6 @@ class SaveVerificationError(Exception):
         self.code = code
         self.details: dict[str, object] = dict(details) if details is not None else {}
         super().__init__(code)
-# @node-id: 5a844df9-a519-4318-ae99-c4215ac30b39
 
 
 
@@ -75,7 +72,6 @@ def _resolve_meta_for_replay_remap(
     if id_lookup_tree is not None:
         return id_lookup_tree.metadata_map.get(node_id)
     return None
-# @node-id: 64b37bd5-cc63-42b5-aa08-5e5652af2720
 
 
 
@@ -125,7 +121,6 @@ def _replay_node_id_for_operation_id(
             best_score = score
             best = rid
     return best if best is not None else node_id
-# @node-id: 8a12f37e-d3e4-46f3-bc81-cd007788be4f
 
 
 
@@ -150,7 +145,6 @@ def _remap_ops_to_replay_tree(
         )
         exact_to_replay_id[exact_key] = rid
         loose_to_replay_ids[(rmeta.start_line, rmeta.start_col, rmeta.type)].append(rid)
-    # @node-id: 07334d1a-20a5-46b5-938c-4641ca4a03fd
 
     def _remap_one(nid: Optional[str]) -> Optional[str]:
         if not nid:
@@ -177,7 +171,6 @@ def _remap_ops_to_replay_tree(
             )
         )
     return out
-# @node-id: 2621d201-f543-465d-ae29-c5a33b6a3851
 
 
 
@@ -219,7 +212,6 @@ def _replay_operations_produce_code_at_path(
         return cast(str, final.module.code)
     finally:
         remove_tree(new_id)
-# @node-id: 30529c9b-3203-4509-9494-c52653dc4d24
 
 
 
@@ -242,7 +234,6 @@ def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
     raw = text.encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
     return bool(digest == snapshot_hex and len(raw) == tree.disk_source_length)
-# @node-id: 660a8ba1-05c7-439a-a018-ce0712b8de9e
 
 
 
@@ -276,7 +267,6 @@ def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
     if read_error is not None:
         details["read_error"] = read_error
     raise SaveVerificationError(code=FILE_CHANGED_SINCE_LOAD, details=dict(details))
-# @node-id: 629373c4-73c3-4aee-8adc-2600a86dbb99
 
 
 
@@ -290,7 +280,6 @@ def replay_operations_produce_code(
     return _replay_operations_produce_code_at_path(
         original_source, tree_operations, stub, id_lookup_tree=None
     )
-# @node-id: d1feb303-7ae4-4dd4-99ea-ffc5cc7c73c9
 
 
 
@@ -328,7 +317,6 @@ def assert_replay_matches(
             "working_length": len(working),
         },
     )
-# @node-id: 6d45d829-5ae8-4a8f-ba74-31d905b324e3
 
 
 
@@ -346,7 +334,6 @@ def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
             "actual_length": len(actual),
         },
     )
-# @node-id: 471356cc-4ff7-4be1-afe8-0bf434a2fd62
 
 
 

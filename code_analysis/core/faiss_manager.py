@@ -21,9 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from typing import Union
-
-from .database import CodeDatabase
 from .database_client.client import DatabaseClient
 from .faiss_manager_rebuild import rebuild_from_database_impl
 from .faiss_manager_sync import check_index_sync_impl
@@ -309,7 +306,7 @@ class FaissIndexManager:
 
     def check_index_sync(
         self: "FaissIndexManager",
-        database: Union[CodeDatabase, DatabaseClient],
+        database: DatabaseClient,
         project_id: str,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -320,7 +317,7 @@ class FaissIndexManager:
 
         Args:
             self: Instance.
-            database: CodeDatabase or DatabaseClient.
+            database: DatabaseClient — universal driver interface (RPC client).
             project_id: Project ID to check.
 
         Returns:
@@ -342,9 +339,11 @@ class FaissIndexManager:
 
     async def rebuild_from_database(
         self: "FaissIndexManager",
-        database: Union[CodeDatabase, DatabaseClient],
+        database: DatabaseClient,
         svo_client_manager: Optional[Any] = None,
         project_id: Optional[str] = None,
+        *,
+        omit_docs_markdown: bool = False,
     ) -> int:
         """
         Rebuild FAISS index from database.
@@ -354,15 +353,20 @@ class FaissIndexManager:
 
         Args:
             self: Instance.
-            database: CodeDatabase or DatabaseClient.
+            database: DatabaseClient — universal driver interface (RPC client).
             svo_client_manager: Optional SVOClientManager to get embeddings if missing.
             project_id: Optional project ID to filter by.
+            omit_docs_markdown: Exclude Markdown docs chunks from rebuild when policy dictates.
 
         Returns:
             Number of vectors loaded.
         """
         return await rebuild_from_database_impl(
-            self, database, svo_client_manager, project_id
+            self,
+            database,
+            svo_client_manager,
+            project_id,
+            omit_docs_markdown=omit_docs_markdown,
         )
 
     def get_stats(self: "FaissIndexManager") -> Dict[str, Any]:

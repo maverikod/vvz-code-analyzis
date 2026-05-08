@@ -17,20 +17,31 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 import numpy as np
 
+from code_analysis.core.faiss_manager import FaissIndexManager
+from code_analysis.core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
 from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from code_analysis.core.docs_markdown_vector_gate import (
+    sql_and_exclude_docs_markdown_chunks,
+)
 
-from .file_batch_packing import pack_files_into_packets
+from .file_batch_packing import FileCountInput, pack_files_into_packets
 from .timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
-# Logger for blocks sent to chunker (separate file, blocks tied to files)
 _chunking_blocks_logger: Optional[logging.Logger] = None
+
+
+def _sql_exclude_docs_markdown_if_gated(worker_like: Any) -> str:
+    """When Markdown docs embeddings are disabled by config, omit those chunks from SQL."""
+    if getattr(worker_like, "docs_markdown_embeddings_enabled", True):
+        return ""
+    return sql_and_exclude_docs_markdown_chunks("cc")
 
 
 def _get_chunking_blocks_logger(log_dir: Optional[Path] = None) -> logging.Logger:
@@ -186,7 +197,7 @@ async def process_chunks_missing_embedding_params(
 
     Args:
         self: VectorizationWorker instance (bound dynamically).
-        database: DatabaseClient/CodeDatabase instance.
+        database: DatabaseClient or legacy SQL facade instance.
 
     Returns:
         Tuple of (updated_count, error_count).
@@ -208,6 +219,7 @@ async def process_chunks_missing_embedding_params(
     )
     step_start = time.time()
     batch_size = getattr(self, "batch_size", 10)
+    md_excl = _sql_exclude_docs_markdown_if_gated(self)
 
     # Step 1: Build table (file_id, file_path, count of non-vectorized chunks)
     logger.info(
@@ -221,7 +233,7 @@ async def process_chunks_missing_embedding_params(
         FROM files f
         INNER JOIN code_chunks cc ON cc.file_id = f.id
         WHERE cc.project_id = ?
-          AND {WHERE_FILES_ACTIVE_F}
+          AND {WHERE_FILES_ACTIVE_F}{md_excl}
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
@@ -270,7 +282,9 @@ async def process_chunks_missing_embedding_params(
         )
         for r in file_counts_data
     ]
-    packets = pack_files_into_packets(file_table, batch_size)
+    packets = pack_files_into_packets(
+        cast(List[FileCountInput], file_table), batch_size
+    )
     logger.info(
         "[missing_embedding_params] file-based batching: %d files -> %d packet(s)",
         len(file_table),
@@ -283,7 +297,7 @@ async def process_chunks_missing_embedding_params(
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
           AND cc.file_id = ?
-          AND {WHERE_FILES_ACTIVE_F}
+          AND {WHERE_FILES_ACTIVE_F}{md_excl}
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
@@ -393,24 +407,27 @@ async def process_embedding_ready_chunks(
     database: Any,
 ) -> Tuple[int, int]:
     """
-    Process chunks that already have embedding_vector (ready vectors): add to FAISS, set vector_id.
+    Process chunks that already have embedding_vector (ready vectors): add to FAISS + vector_id,
+    or write ``embedding_vec`` (PostgreSQL pgvector) when ``vector_ann_backend`` is ``pgvector``.
 
-    Only selects rows where embedding_vector IS NOT NULL and vector_id IS NULL.
     Does not create embeddings; indexer is responsible for that.
 
     Notes:
         - Called from VectorizationWorker.process_chunks.
-        - Expects `self` to have `batch_size`, `faiss_manager`, `svo_client_manager`, `_stop_event`.
+        - Expects `self` to have `batch_size`, `faiss_manager` (unless pgvector), `svo_client_manager`, `_stop_event`.
 
     Args:
         self: VectorizationWorker instance (bound dynamically).
-        database: CodeDatabase instance.
+        database: Legacy SQL facade instance.
 
     Returns:
         Tuple of (batch_processed, batch_errors).
     """
     batch_processed = 0
     batch_errors = 0
+    md_excl = _sql_exclude_docs_markdown_if_gated(self)
+    use_pgvector = getattr(self, "vector_ann_backend", "faiss") == "pgvector"
+    ann_pending = "cc.embedding_vec IS NULL" if use_pgvector else "cc.vector_id IS NULL"
 
     # Single query: get one set of records to process (no inner loop)
     step_start = time.time()
@@ -425,9 +442,9 @@ async def process_embedding_ready_chunks(
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
-          AND {WHERE_FILES_ACTIVE_F}
+          AND {WHERE_FILES_ACTIVE_F}{md_excl}
           AND cc.embedding_vector IS NOT NULL
-          AND cc.vector_id IS NULL
+          AND {ann_pending}
         ORDER BY cc.created_at DESC, cc.id DESC
         LIMIT ?
         """,
@@ -448,7 +465,7 @@ async def process_embedding_ready_chunks(
     if not chunks:
         logger.info(
             f"[STEP] Step 5 (embedding_ready): 0 chunks selected "
-            f"(criteria: embedding_vector IS NOT NULL AND vector_id IS NULL, project={scope_desc}, limit={self.batch_size})"
+            f"(criteria: embedding_vector IS NOT NULL AND {ann_pending}, project={scope_desc}, limit={self.batch_size})"
         )
         from ..worker_status_file import (
             STATUS_OPERATION_IDLE,
@@ -464,10 +481,11 @@ async def process_embedding_ready_chunks(
         return batch_processed, batch_errors
 
     logger.info(
-        f"[STEP] Step 5: Processing {len(chunks)} chunks (add to FAISS, set vector_id)"
+        f"[STEP] Step 5: Processing {len(chunks)} chunks "
+        f"({'pgvector embedding_vec' if use_pgvector else 'FAISS + vector_id'})"
     )
     logger.info(
-        f"Processing batch of {len(chunks)} chunks that have embeddings but need vector_id"
+        f"Processing batch of {len(chunks)} chunks that have embeddings but need ANN indexing"
     )
 
     # Profiling: accumulate time per phase
@@ -476,8 +494,9 @@ async def process_embedding_ready_chunks(
     total_faiss_s = 0.0
     total_db_update_s = 0.0
 
-    # Collect (chunk_id, vector_id, embedding_model) for batch UPDATE at the end
-    updates_to_apply: List[Tuple[str, int, str]] = []
+    # FAISS: (chunk_id, vector_id, embedding_model); pgvector: (chunk_id, vec_text, embedding_model)
+    updates_faiss: List[Tuple[str, int, str]] = []
+    updates_pg: List[Tuple[str, str, str]] = []
 
     for chunk in chunks:
         if self._stop_event.is_set():
@@ -541,32 +560,45 @@ async def process_embedding_ready_chunks(
                 )
                 continue
 
-            # Add to FAISS index
-            logger.debug(
-                f"[CHUNK {chunk_id}] Adding embedding to FAISS index "
-                f"(dim={len(embedding_array)}, model={embedding_model})"
-            )
-            faiss_add_start = time.time()
-            vector_id = self.faiss_manager.add_vector(embedding_array)
-            faiss_add_duration = time.time() - faiss_add_start
-            total_faiss_s += faiss_add_duration
-            logger.debug(
-                f"[TIMING] [CHUNK {chunk_id}] FAISS add_vector took {faiss_add_duration:.3f}s, "
-                f"assigned vector_id={vector_id}"
-            )
+            norm = FaissIndexManager._normalize_vector(embedding_array)
 
-            # Collect for batch UPDATE (single execute_batch after loop)
-            updates_to_apply.append((chunk_id, vector_id, embedding_model or ""))
-
-            chunk_total_duration = time.time() - chunk_start_time
-            batch_processed += 1
-            logger.info(
-                f"✅ Vectorized chunk {chunk_id} → vector_id={vector_id} "
-                f"({ast_binding}) in {chunk_total_duration:.3f}s"
-            )
-            logger.debug(
-                f"[TIMING] [CHUNK {chunk_id}] Total processing time: {chunk_total_duration:.3f}s"
-            )
+            if use_pgvector:
+                vec_txt = numpy_embedding_to_pgvector_text(norm)
+                updates_pg.append((chunk_id, vec_txt, embedding_model or ""))
+                chunk_total_duration = time.time() - chunk_start_time
+                batch_processed += 1
+                logger.info(
+                    f"✅ pgvector chunk {chunk_id} ({ast_binding}) in {chunk_total_duration:.3f}s"
+                )
+            else:
+                if self.faiss_manager is None:
+                    logger.error(
+                        "faiss_manager is None but vector_ann_backend is not pgvector"
+                    )
+                    batch_errors += 1
+                    continue
+                logger.debug(
+                    f"[CHUNK {chunk_id}] Adding embedding to FAISS index "
+                    f"(dim={len(embedding_array)}, model={embedding_model})"
+                )
+                faiss_add_start = time.time()
+                vector_id = self.faiss_manager.add_vector(embedding_array)
+                faiss_add_duration = time.time() - faiss_add_start
+                total_faiss_s += faiss_add_duration
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] FAISS add_vector took {faiss_add_duration:.3f}s, "
+                    f"assigned vector_id={vector_id}"
+                )
+                updates_faiss.append((chunk_id, vector_id, embedding_model or ""))
+                chunk_total_duration = time.time() - chunk_start_time
+                batch_processed += 1
+                logger.info(
+                    f"✅ Vectorized chunk {chunk_id} → vector_id={vector_id} "
+                    f"({ast_binding}) in {chunk_total_duration:.3f}s"
+                )
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] Total processing time: {chunk_total_duration:.3f}s"
+                )
 
         except Exception as e:
             logger.error(
@@ -577,15 +609,36 @@ async def process_embedding_ready_chunks(
             batch_errors += 1
             continue
 
-    # Batch update: write all vector_id and embedding_model in one execute_batch
-    if updates_to_apply:
+    if updates_pg:
+        db_batch_start = time.time()
+        pg_ops: List[Tuple[str, Optional[tuple]]] = [
+            (
+                "UPDATE code_chunks SET embedding_vec = ?::vector, embedding_model = ? WHERE id = ?",
+                (vtxt, em, cid),
+            )
+            for (cid, vtxt, em) in updates_pg
+        ]
+        database.execute_batch(pg_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
+        total_db_update_s = time.time() - db_batch_start
+        logger.debug(
+            f"[TIMING] execute_batch: {len(pg_ops)} pgvector UPDATEs in {total_db_update_s:.3f}s"
+        )
+        log_operation_timing(
+            getattr(self, "log_timing", False),
+            logger,
+            "Step5_execute_batch_UPDATE_embedding_vec",
+            total_db_update_s,
+            ops=len(pg_ops),
+        )
+
+    if updates_faiss:
         db_batch_start = time.time()
         update_ops: List[Tuple[str, Optional[tuple]]] = [
             (
                 "UPDATE code_chunks SET vector_id = ?, embedding_model = ? WHERE id = ?",
                 (vid, em, cid),
             )
-            for (cid, vid, em) in updates_to_apply
+            for (cid, vid, em) in updates_faiss
         ]
         database.execute_batch(update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
         total_db_update_s = time.time() - db_batch_start
@@ -602,7 +655,7 @@ async def process_embedding_ready_chunks(
 
     # Save FAISS index after batch and log profile summary
     faiss_save_s = 0.0
-    if batch_processed > 0:
+    if batch_processed > 0 and not use_pgvector and self.faiss_manager is not None:
         faiss_save_start = time.time()
         try:
             logger.debug(

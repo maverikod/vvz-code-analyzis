@@ -103,7 +103,7 @@ class Project(BaseObject):
             result["comment"] = self.comment
         if self.watch_dir_id is not None:
             result["watch_dir_id"] = self.watch_dir_id
-        result["processing_paused"] = 1 if self.processing_paused else 0
+        result["processing_paused"] = bool(self.processing_paused)
         if self.created_at is not None:
             result["created_at"] = self._to_timestamp(self.created_at)
         if self.updated_at is not None:

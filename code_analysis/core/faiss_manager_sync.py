@@ -5,16 +5,15 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Set, Tuple, Union
+from typing import Any, Dict, Set, Tuple
 
-from .database import CodeDatabase
 from .database_client.client import DatabaseClient
 
 
 def check_index_sync_impl(
     index_ntotal: int,
     id_map: Any,
-    database: Union[CodeDatabase, DatabaseClient],
+    database: DatabaseClient,
     project_id: str,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
@@ -26,38 +25,25 @@ def check_index_sync_impl(
     Args:
         index_ntotal: Number of vectors in the index (index.ntotal).
         id_map: FAISS id_map (Int64Vector) or None for dense 0..ntotal-1.
-        database: CodeDatabase or DatabaseClient.
+        database: DatabaseClient — universal driver interface (RPC client).
         project_id: Project ID to check.
 
     Returns:
         Tuple of (is_synced, details dict).
     """
     # Get all vector_id values from database for this project
-    if isinstance(database, DatabaseClient):
-        result = database.execute(
-            """
-            SELECT DISTINCT vector_id
-            FROM code_chunks
-            WHERE project_id = ?
-              AND vector_id IS NOT NULL
-              AND embedding_vector IS NOT NULL
-            ORDER BY vector_id
-            """,
-            (project_id,),
-        )
-        rows = result.get("data", []) if isinstance(result, dict) else []
-    else:
-        rows = database._fetchall(
-            """
-            SELECT DISTINCT vector_id
-            FROM code_chunks
-            WHERE project_id = ?
-              AND vector_id IS NOT NULL
-              AND embedding_vector IS NOT NULL
-            ORDER BY vector_id
-            """,
-            (project_id,),
-        )
+    result = database.execute(
+        """
+        SELECT DISTINCT vector_id
+        FROM code_chunks
+        WHERE project_id = ?
+          AND vector_id IS NOT NULL
+          AND embedding_vector IS NOT NULL
+        ORDER BY vector_id
+        """,
+        (project_id,),
+    )
+    rows = result.get("data", []) if isinstance(result, dict) else []
 
     db_vector_ids: Set[int] = {
         row["vector_id"] for row in rows if row["vector_id"] is not None

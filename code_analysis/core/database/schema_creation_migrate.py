@@ -341,6 +341,19 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not create entity_cross_ref table: {e}")
 
+    # File-level edit lock (CST / universal_file_replace vs background indexer).
+    files_table_info_editing = db._get_table_info("files")
+    files_columns_editing = {col["name"]: col["type"] for col in files_table_info_editing}
+    if "editing_pid" not in files_columns_editing:
+        try:
+            logger.info("Migrating files table: adding editing_pid column")
+            db._execute(
+                "ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL"
+            )
+            db._commit()
+        except Exception as e:
+            logger.warning(f"Could not add editing_pid column to files: {e}")
+
 
 def run_uuid_migration_phase2(db: Any, *, skip_preflight: bool = False) -> Any:
     """

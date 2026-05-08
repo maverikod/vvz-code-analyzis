@@ -168,6 +168,11 @@ def get_tables_core() -> Dict[str, Any]:
                     "default": "0",
                 },
                 {
+                    "name": "editing_pid",
+                    "type": "INTEGER",
+                    "not_null": False,
+                },
+                {
                     "name": "created_at",
                     "type": "REAL",
                     "not_null": False,

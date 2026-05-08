@@ -230,7 +230,7 @@ def recover_files_table_if_needed(
 ) -> bool:
     """If table 'files' is missing but 'temp_files' exists, rename temp_files to files.
 
-    Used after an aborted schema migration (e.g. in db_driver) that left only temp_files.
+    Used after an aborted schema migration that left only temp_files.
     Call this from repair_sqlite_database (or similar) so recovery is explicit, not on connect.
 
     Args:

@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from ..constants import (
     DEFAULT_LOG_BACKUP_COUNT,
@@ -168,7 +168,7 @@ def run_database_driver(
 
         # Create driver
         try:
-            driver = create_driver(driver_type, driver_config)
+            driver = cast(BaseDatabaseDriver, create_driver(driver_type, driver_config))
             logger.info(f"Driver created: {driver_type}")
         except Exception as e:
             logger.error(f"Failed to create driver: {e}", exc_info=True)

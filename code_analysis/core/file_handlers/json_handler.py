@@ -244,9 +244,6 @@ class JsonFileHandler(BaseFileHandler):
         tree = build_tree_from_data(str(abs_path.resolve()), data, register=True)
         tid = tree.tree_id
         try:
-            commit_message = request.extra.get("commit_message")
-            if not isinstance(commit_message, str):
-                commit_message = None
             result = save_json_tree_to_file(
                 tree_id=tid,
                 file_path=str(abs_path.resolve()),
@@ -254,7 +251,6 @@ class JsonFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 database=database,
                 backup=request.backup,
-                commit_message=commit_message,
             )
         finally:
             remove_tree(tid)
@@ -371,9 +367,6 @@ class JsonFileHandler(BaseFileHandler):
                 return db_ex
             database, root_dir = db_ex
 
-            commit_message = request.extra.get("commit_message")
-            if not isinstance(commit_message, str):
-                commit_message = None
             result = save_json_tree_to_file(
                 tree_id=tid,
                 file_path=str(abs_path.resolve()),
@@ -381,7 +374,6 @@ class JsonFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 database=database,
                 backup=request.backup,
-                commit_message=commit_message,
             )
         finally:
             remove_tree(tid)

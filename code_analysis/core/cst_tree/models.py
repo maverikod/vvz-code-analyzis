@@ -266,7 +266,25 @@ class TreeNodeMetadata:
             code=data.get("code"),
             docstring=docstring,
         )
-replace_all_child_nodes: bool = True
+
+
+@dataclass
+class TreeOperation:
+    """Operation to modify a CST tree."""
+
+    action: TreeOperationType
+    node_id: str = (
+        ""  # Node ID for replace/delete operations (empty for insert with target_node_id)
+    )
+    code: Optional[str] = None
+    code_lines: Optional[List[str]] = None
+    position: Optional[str] = None
+    position_after_index: Optional[int] = None
+    parent_node_id: Optional[str] = None
+    target_node_id: Optional[str] = None
+    start_node_id: Optional[str] = None
+    end_node_id: Optional[str] = None
+    replace_all_child_nodes: bool = False
 
 
 # Reserved node_id: denotes the Module (root) node of the tree.

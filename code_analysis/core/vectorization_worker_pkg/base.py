@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 if TYPE_CHECKING:
     from ..svo_client_manager import SVOClientManager
@@ -38,6 +38,8 @@ class VectorizationWorker:
         max_files_per_pass: int = 30,
         status_file_path: Optional[Path] = None,
         log_timing: bool = False,
+        docs_markdown_embeddings_enabled: bool = True,
+        vector_ann_backend: Literal["faiss", "pgvector"] = "faiss",
     ):
         """
         Initialize universal vectorization worker.
@@ -61,6 +63,11 @@ class VectorizationWorker:
             max_files_per_pass: Max files to process in one pass (from config; includes re-embed and new files)
             status_file_path: Optional path to write current_operation/current_file for monitoring
             log_timing: When True, log every operation with duration for bottleneck analysis
+            docs_markdown_embeddings_enabled: When False and ``docs_indexing`` disables
+                vectorization, Markdown docs chunks are persisted without embeddings
+                or FAISS (see ``docs_markdown_vector_gate``).
+            vector_ann_backend: ``faiss`` (SQLite / optional Postgres) or ``pgvector``
+                (PostgreSQL ``embedding_vec`` + HNSW).
         """
         self.db_path = db_path
         self.faiss_dir = Path(faiss_dir)
@@ -76,6 +83,8 @@ class VectorizationWorker:
         self.config_path = config_path
         self.status_file_path = Path(status_file_path) if status_file_path else None
         self.log_timing = log_timing
+        self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+        self.vector_ann_backend: Literal["faiss", "pgvector"] = vector_ann_backend
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

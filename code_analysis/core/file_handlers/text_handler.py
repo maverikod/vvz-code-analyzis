@@ -187,13 +187,28 @@ def persist_plain_text_file_metadata(
     absolute_path: Path,
     normalized_path: str,
     source_code: str,
+    *,
+    skip_file_edit_lock: bool = False,
 ) -> Dict[str, Any]:
     """
     Update the ``files`` table row only (line count, mtime, ``has_docstring=False``).
 
     Does not call ``update_file_data_atomic_batch``, AST, CST, or entity indexing.
+
+    When ``skip_file_edit_lock`` is False (default), acquires ``files.editing_pid`` on the
+    same open DB transaction as the metadata UPDATE so PostgreSQL does not mix pool
+    connections with the transaction connection (deadlock risk with the indexer).
+
+    When ``skip_file_edit_lock`` is True, the caller must already hold ``files.editing_pid``
+    (legacy path: single-shot ``update_file`` / ``create_file`` without a nested lock txn).
     """
+    from ..database.file_edit_lock import (
+        acquire_file_edit_lock_with_retry,
+        release_file_edit_lock,
+    )
+    from ..database_client.objects.base import BaseObject
     from ..database_client.objects.file import File
+    from ..sql_portable import sql_julian_timestamp_now_expr
 
     existing = database.select(
         "files",
@@ -205,41 +220,135 @@ def persist_plain_text_file_metadata(
     logical_lines = source_code.splitlines(keepends=False)
     lines_count = len(logical_lines)
     last_modified = datetime.fromtimestamp(absolute_path.stat().st_mtime)
+    lm_julian = BaseObject._to_timestamp(last_modified)
 
-    try:
-        if existing:
-            file_record = existing[0]
-            file_obj = File(
-                id=file_record["id"],
-                project_id=project_id,
-                path=normalized_path,
-                lines=lines_count,
-                last_modified=last_modified,
-                has_docstring=False,
-            )
-            database.update_file(file_obj)
-            file_id = file_obj.id
-        else:
-            file_obj = File(
-                project_id=project_id,
-                path=normalized_path,
-                lines=lines_count,
-                last_modified=last_modified,
-                has_docstring=False,
-            )
-            created = database.create_file(file_obj)
-            file_id = created.id
-    except Exception as e:  # noqa: BLE001 — surface DB errors to caller
+    base: Dict[str, Any] = {"file_path": str(absolute_path)}
+
+    def _locked_response() -> Dict[str, Any]:
         return {
             "success": False,
-            "error": str(e),
-            "file_path": str(absolute_path),
+            "error": (
+                "File is being edited by another live process (file edit lock). "
+                "Try again shortly."
+            ),
+            "error_code": "FILE_EDIT_LOCKED",
+            **base,
         }
 
+    if skip_file_edit_lock:
+        file_id: Any = None
+        try:
+            if existing:
+                file_record = existing[0]
+                file_id = file_record["id"]
+                file_obj = File(
+                    id=file_id,
+                    project_id=project_id,
+                    path=normalized_path,
+                    lines=lines_count,
+                    last_modified=last_modified,
+                    has_docstring=False,
+                )
+                database.update_file(file_obj)
+            else:
+                file_obj = File(
+                    project_id=project_id,
+                    path=normalized_path,
+                    lines=lines_count,
+                    last_modified=last_modified,
+                    has_docstring=False,
+                )
+                created = database.create_file(file_obj)
+                file_id = created.id
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e), **base}
+        return {
+            "success": True,
+            "file_id": file_id,
+            **base,
+            "metadata_only": True,
+        }
+
+    now_sql = sql_julian_timestamp_now_expr(database)
+
+    if existing:
+        file_record = existing[0]
+        file_id = file_record["id"]
+        tid = database.begin_transaction()
+        if not tid:
+            return {
+                "success": False,
+                "error": "Database transaction could not be started",
+                "error_code": "TRANSACTION_ERROR",
+                **base,
+            }
+        try:
+            if not acquire_file_edit_lock_with_retry(
+                database, file_id, transaction_id=tid
+            ):
+                database.rollback_transaction(tid)
+                return _locked_response()
+            update_sql = (
+                f"UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
+                f"updated_at = {now_sql} WHERE id = ?"
+            )
+            database.execute(
+                update_sql,
+                (lines_count, lm_julian, False, file_id),
+                transaction_id=tid,
+            )
+            release_file_edit_lock(database, file_id, transaction_id=tid)
+            database.commit_transaction(tid)
+        except Exception as e:  # noqa: BLE001
+            try:
+                database.rollback_transaction(tid)
+            except Exception:
+                pass
+            return {"success": False, "error": str(e), **base}
+        return {
+            "success": True,
+            "file_id": file_id,
+            **base,
+            "metadata_only": True,
+        }
+
+    file_obj = File(
+        project_id=project_id,
+        path=normalized_path,
+        lines=lines_count,
+        last_modified=last_modified,
+        has_docstring=False,
+    )
+    try:
+        created = database.create_file(file_obj)
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "error": str(e), **base}
+    file_id = created.id
+
+    tid = database.begin_transaction()
+    if not tid:
+        return {
+            "success": False,
+            "error": "Database transaction could not be started",
+            "error_code": "TRANSACTION_ERROR",
+            **base,
+        }
+    try:
+        if not acquire_file_edit_lock_with_retry(database, file_id, transaction_id=tid):
+            database.rollback_transaction(tid)
+            return _locked_response()
+        release_file_edit_lock(database, file_id, transaction_id=tid)
+        database.commit_transaction(tid)
+    except Exception as e:  # noqa: BLE001
+        try:
+            database.rollback_transaction(tid)
+        except Exception:
+            pass
+        return {"success": False, "error": str(e), **base}
     return {
         "success": True,
         "file_id": file_id,
-        "file_path": str(absolute_path),
+        **base,
         "metadata_only": True,
     }
 

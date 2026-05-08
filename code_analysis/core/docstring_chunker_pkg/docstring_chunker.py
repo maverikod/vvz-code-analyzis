@@ -35,6 +35,7 @@ from code_analysis.core.database.code_chunk_sql import (
 )
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
+from ..docs_markdown_vector_gate import DOCS_MARKDOWN_SOURCE_TYPE
 from ..exceptions import ChunkerResponseError
 from ..vectorization_worker_pkg.timing_log import log_operation_timing
 
@@ -98,7 +99,7 @@ class DocstringChunker:
           manager's `get_embeddings(...)` (requires real embedding service).
 
     Attributes:
-        database: CodeDatabase instance.
+        database: Legacy SQL facade instance.
         svo_client_manager: Optional embedding client manager.
         faiss_manager: Optional FAISS manager (not used directly here).
         min_chunk_length: Minimum length of docstring text to store.
@@ -113,17 +114,20 @@ class DocstringChunker:
         min_chunk_length: int = 30,
         embedding_model: Optional[str] = None,
         log_timing: bool = False,
+        docs_markdown_embeddings_enabled: bool = True,
     ) -> None:
         """
         Initialize docstring chunker.
 
         Args:
-            database: CodeDatabase instance.
+            database: Legacy SQL facade instance.
             svo_client_manager: SVO client manager for embeddings (optional).
             faiss_manager: FAISS index manager (optional, reserved for future use).
             min_chunk_length: Minimum text length to store (default: 30).
             embedding_model: Embedding model identifier stored in DB.
             log_timing: When True, log every operation with duration for bottleneck analysis.
+            docs_markdown_embeddings_enabled: When False, Markdown docs use local text rows
+                without chunker/embed RPC (``docs_indexing.vectorize=false`` gate).
         """
 
         self.database = database
@@ -132,6 +136,7 @@ class DocstringChunker:
         self.min_chunk_length = int(min_chunk_length)
         self.embedding_model = embedding_model
         self.log_timing = log_timing
+        self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
 
     def _file_still_exists_and_not_deleted(self, file_id: str, project_id: str) -> bool:
         """
@@ -503,45 +508,22 @@ class DocstringChunker:
             counts[fid] = counts.get(fid, 0) + 1
         return counts
 
-    async def process_file(
+    async def _gather_rows_for_docblock_items(
         self,
+        items: List[_DocItem],
         *,
-        file_id: str,
-        project_id: str,
-        file_path: str,
-        tree: ast.AST,
-        file_content: str,
-    ) -> int:
-        """
-        Extract docstrings from the AST and persist them into the database.
-
-        Args:
-            file_id: Database file ID.
-            project_id: Project UUID.
-            file_path: Path to file (used for diagnostics only).
-            tree: Parsed AST tree.
-            file_content: Original file content (used only for module docstring safety).
-
-        Returns:
-            Number of chunks inserted/updated.
-        """
-        process_start_time = time.time()
-        logger.info(f"[FILE {file_id}] Starting process_file for {file_path}")
-
-        if not isinstance(tree, ast.Module):
-            logger.debug("Skipping non-module AST for %s", file_path)
-            return 0
-
-        items = list(self._extract_docstrings(tree, file_content))
-        logger.info(
-            f"[FILE {file_id}] Extracted {len(items)} docstrings from {file_path}"
-        )
-        if not items:
-            return 0
-
-        # For each docstring: call chunker (SVO) - it returns all chunks with embeddings.
-        # Collect (item, chunk_index, chunk_text, embedding, embedding_model, token_count)
-        # for every chunk; if chunker returns [], persist one row with original text.
+        log_file_id: str,
+    ) -> List[
+        Tuple[
+            _DocItem,
+            int,
+            str,
+            Optional[List[float]],
+            Optional[str],
+            Optional[int],
+        ]
+    ]:
+        """Collect (item, slice, text, embedding, model, tokens) rows via DocBlock chunker."""
         rows_to_persist: List[
             Tuple[
                 _DocItem,
@@ -554,7 +536,9 @@ class DocstringChunker:
         ] = []
         if self.svo_client_manager:
             logger.info(
-                f"[FILE {file_id}] Requesting chunks+embeddings for {len(items)} docstrings from chunker service..."
+                "[FILE %s] Requesting DocBlock chunks (%s texts) via SVO chunker…",
+                log_file_id,
+                len(items),
             )
             embedding_start_time = time.time()
             try:
@@ -572,7 +556,7 @@ class DocstringChunker:
                                 logger,
                                 "get_chunks_batch",
                                 time.time() - t0_batch,
-                                file_id=file_id,
+                                file_id=log_file_id,
                                 texts=len(texts),
                                 attempt=attempt + 1,
                             )
@@ -581,12 +565,12 @@ class DocstringChunker:
                             batch_last_error = batch_e
                             if attempt == 0:
                                 logger.warning(
-                                    f"[FILE {file_id}] get_chunks_batch attempt {attempt + 1}/2 failed: {batch_e}, retrying in 2s..."
+                                    f"[FILE {log_file_id}] get_chunks_batch attempt {attempt + 1}/2 failed: {batch_e}, retrying in 2s…"
                                 )
                                 await asyncio.sleep(2)
                             else:
                                 logger.warning(
-                                    f"[FILE {file_id}] get_chunks_batch failed after 2 attempts: {batch_last_error}, "
+                                    f"[FILE {log_file_id}] get_chunks_batch failed after 2 attempts: {batch_last_error}, "
                                     "falling back to per-item get_chunks"
                                 )
                                 rows_to_persist = []
@@ -648,7 +632,7 @@ class DocstringChunker:
                                 logger,
                                 "get_chunks_one",
                                 time.time() - t0_one,
-                                file_id=file_id,
+                                file_id=log_file_id,
                                 index=i,
                             )
                             if chunks and len(chunks) > 0:
@@ -691,7 +675,7 @@ class DocstringChunker:
                                 )
                         except Exception as e:
                             logger.warning(
-                                f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks: {e} "
+                                f"[FILE {log_file_id}] [item {i+1}/{len(items)}] Failed to get chunks: {e} "
                                 "(persisting one row without embedding)"
                             )
                             tc = _token_count_from_text(item.text)
@@ -707,7 +691,7 @@ class DocstringChunker:
                             )
             except Exception as e:
                 logger.warning(
-                    f"[FILE {file_id}] Chunker failed: {e}; persisting docstrings without embeddings"
+                    f"[FILE {log_file_id}] Chunker failed: {e}; persisting without embeddings"
                 )
                 for item in items:
                     tc = _token_count_from_text(item.text)
@@ -716,7 +700,7 @@ class DocstringChunker:
                     )
             else:
                 logger.info(
-                    f"[FILE {file_id}] Chunker returned {len(rows_to_persist)} chunks in "
+                    f"[FILE {log_file_id}] Chunker returned {len(rows_to_persist)} rows in "
                     f"{time.time() - embedding_start_time:.3f}s"
                 )
         else:
@@ -725,8 +709,31 @@ class DocstringChunker:
                 rows_to_persist.append(
                     (item, 0, item.text, None, None, tc if tc else None)
                 )
+        return rows_to_persist
 
-        # Persist each chunk row (only if file and project still exist)
+    async def _write_docblock_chunk_rows(
+        self,
+        *,
+        file_id: str,
+        project_id: str,
+        file_path: str,
+        rows_to_persist: List[
+            Tuple[
+                _DocItem,
+                int,
+                str,
+                Optional[List[float]],
+                Optional[str],
+                Optional[int],
+            ]
+        ],
+        log_kind: str = "chunks",
+    ) -> int:
+        """Persist assembled DocBlock rows via portable code_chunks upsert."""
+        process_start_time = time.time()
+        logger.info(
+            f"[FILE {file_id}] Starting _write_docblock_chunk_rows ({log_kind}) for {file_path}"
+        )
         if not self._file_still_exists_and_not_deleted(file_id, project_id):
             logger.warning(
                 f"[FILE {file_id}] File or project no longer exists or file is marked deleted, "
@@ -737,8 +744,8 @@ class DocstringChunker:
         with_embedding = sum(1 for r in rows_to_persist if r[3] is not None)
         without_embedding = len(rows_to_persist) - with_embedding
         logger.info(
-            f"[FILE {file_id}] Persisting {len(rows_to_persist)} chunks "
-            f"({with_embedding} with embedding, {without_embedding} without) to database..."
+            f"[FILE {file_id}] Persisting {len(rows_to_persist)} rows "
+            f"({with_embedding} with embedding, {without_embedding} without)…"
         )
         persist_start_time = time.time()
         param_rows = self._code_chunk_upsert_param_rows_for_docstring_rows(
@@ -760,8 +767,118 @@ class DocstringChunker:
             written=written,
             total=len(rows_to_persist),
         )
+        total_dur = time.time() - process_start_time
         logger.info(
-            f"[FILE {file_id}] Persisted {written} docstring chunks to database in {persist_duration:.3f}s"
+            f"[FILE {file_id}] Persisted {written} rows in {persist_duration:.3f}s "
+            f"({total_dur:.3f}s total)"
+        )
+        return written
+
+    async def _mark_docs_markdown_vectorization_skipped(
+        self, file_id: str, project_id: str
+    ) -> None:
+        """Exclude Markdown docs chunks from embedding retry loops."""
+        sql = (
+            "UPDATE code_chunks SET vectorization_skipped = 1 "
+            "WHERE file_id = ? AND project_id = ? AND source_type = ?"
+        )
+        params = (file_id, project_id, DOCS_MARKDOWN_SOURCE_TYPE)
+        ex = getattr(self.database, "execute", None)
+        if not callable(ex):
+            return
+        if asyncio.iscoroutinefunction(ex):
+            await ex(sql, params)
+        else:
+
+            def _run() -> None:
+                ex(sql, params)
+
+            await asyncio.to_thread(_run)
+
+    async def process_markdown_document(
+        self,
+        *,
+        file_id: str,
+        project_id: str,
+        file_path: str,
+        text: str,
+    ) -> int:
+        """Chunk full Markdown file text as DocBlock; Group F distinguishes via ``source_type=docs_markdown``."""
+        if not text.strip():
+            return 0
+        item = _DocItem(
+            source_type="docs_markdown",
+            chunk_type="DocBlock",
+            text=text,
+            line=1,
+            ast_node_type="MarkdownDoc",
+            binding_level=0,
+        )
+        if not self.docs_markdown_embeddings_enabled:
+            tc = _token_count_from_text(text)
+            rows_to_persist = [
+                (item, 0, text, None, None, tc if tc else None),
+            ]
+        else:
+            rows_to_persist = await self._gather_rows_for_docblock_items(
+                [item], log_file_id=str(file_id)
+            )
+        written = await self._write_docblock_chunk_rows(
+            file_id=file_id,
+            project_id=project_id,
+            file_path=file_path,
+            rows_to_persist=rows_to_persist,
+            log_kind="markdown_doc",
+        )
+        if written and not self.docs_markdown_embeddings_enabled:
+            await self._mark_docs_markdown_vectorization_skipped(file_id, project_id)
+        return written
+
+    async def process_file(
+        self,
+        *,
+        file_id: str,
+        project_id: str,
+        file_path: str,
+        tree: ast.AST,
+        file_content: str,
+    ) -> int:
+        """
+        Extract docstrings from the AST and persist them into the database.
+
+        Args:
+            file_id: Database file ID.
+            project_id: Project UUID.
+            file_path: Path to file (used for diagnostics only).
+            tree: Parsed AST tree.
+            file_content: Original file content (used only for module docstring safety).
+
+        Returns:
+            Number of chunks inserted/updated.
+        """
+        process_start_time = time.time()
+        logger.info(f"[FILE {file_id}] Starting process_file for {file_path}")
+
+        if not isinstance(tree, ast.Module):
+            logger.debug("Skipping non-module AST for %s", file_path)
+            return 0
+
+        items = list(self._extract_docstrings(tree, file_content))
+        logger.info(
+            f"[FILE {file_id}] Extracted {len(items)} docstrings from {file_path}"
+        )
+        if not items:
+            return 0
+
+        rows_to_persist = await self._gather_rows_for_docblock_items(
+            items, log_file_id=str(file_id)
+        )
+        written = await self._write_docblock_chunk_rows(
+            file_id=file_id,
+            project_id=project_id,
+            file_path=file_path,
+            rows_to_persist=rows_to_persist,
+            log_kind="docstring",
         )
         total_duration = time.time() - process_start_time
         logger.info(

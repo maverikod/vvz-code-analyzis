@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from ..docs_indexing_config_load import load_docs_indexing_from_config_path
 from ..venv_path_policy import (
     allowed_venv_py_files_for_watch_dir,
     build_ignore_exception_files_for_projects,
@@ -332,6 +333,11 @@ class MultiProjectFileWatcherWorker:
                 # Ignore policy is defined per watch_dir, not from file_watcher section.
                 merged_ignore = list(spec.ignore_patterns)
                 allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
+                docs_indexing_snap: Optional[Dict[str, Any]] = None
+                if self.config_path:
+                    docs_indexing_snap = load_docs_indexing_from_config_path(
+                        Path(self.config_path)
+                    )
                 if self.config_path:
                     exc_patterns = load_ignore_exceptions_from_config_path(
                         Path(self.config_path)
@@ -373,6 +379,7 @@ class MultiProjectFileWatcherWorker:
                     ignore_exception_files=exc_files_filtered or None,
                     ignore_exception_patterns=exc_patterns or None,
                     immediate_project_roots=immediate_roots,
+                    docs_indexing=docs_indexing_snap,
                 )
                 total_files += len(scanned_files)
             except Exception as e:

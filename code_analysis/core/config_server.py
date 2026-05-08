@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -39,7 +39,42 @@ from .constants import (
     FILE_WATCHER_IGNORE_PATTERNS,
 )
 from .config_models import ProjectDir, SVOServiceConfig
+from .docs_indexing_defaults import (
+    DEFAULT_DOCS_INDEXING_EXCLUDE,
+    DEFAULT_DOCS_INDEXING_INCLUDE,
+    DEFAULT_DOCS_INDEXING_ROOTS,
+)
 from .settings_manager import get_settings
+
+
+class DocsIndexingConfig(BaseModel):
+    """Documentation indexing (Markdown, JSON, YAML; server config); vectorization is gated separately."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = Field(
+        default=False,
+        description="When false, docs indexing eligibility is off (omitted section equals disabled).",
+    )
+    vectorize: bool = Field(
+        default=False,
+        description="When true, eligible docs may be vectorized (enforced in vectorization worker).",
+    )
+    roots: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_DOCS_INDEXING_ROOTS),
+        description="Project-relative directory roots for doc trees (POSIX paths).",
+    )
+    include: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_DOCS_INDEXING_INCLUDE),
+        description=(
+            "Glob patterns for documentation files to include; each pattern should reference "
+            ".md, .json, .yaml, or .yml."
+        ),
+    )
+    exclude: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_DOCS_INDEXING_EXCLUDE),
+        description="Glob patterns that win over include.",
+    )
 
 
 class ServerConfig(BaseModel):
@@ -75,6 +110,13 @@ class ServerConfig(BaseModel):
     vector_dim: Optional[int] = Field(
         default=None,
         description="Vector dimension for embeddings (required if using FAISS)",
+    )
+    vector_search_backend: Optional[Literal["auto", "faiss", "pgvector"]] = Field(
+        default="auto",
+        description=(
+            "Vector ANN backend: auto (PostgreSQL→pgvector, SQLite→FAISS), faiss, or pgvector. "
+            "SQLite/sqlite_proxy always use FAISS regardless of this value."
+        ),
     )
     min_chunk_length: int = Field(
         default_factory=lambda: get_settings().get(
@@ -219,6 +261,13 @@ class ServerConfig(BaseModel):
             "under the project venv."
         ),
     )
+    docs_indexing: Optional[DocsIndexingConfig] = Field(
+        default=None,
+        description=(
+            "Optional Markdown docs indexing (roots/include/exclude). Omitted or disabled: no "
+            "docs eligibility. ``vectorize`` does not affect eligibility."
+        ),
+    )
 
     @field_validator("port")
     @classmethod
@@ -273,6 +322,21 @@ class ServerConfig(BaseModel):
         if v is not None and v <= 0:
             raise ValueError("Vector dimension must be positive")
         return v
+
+    @field_validator("vector_search_backend")
+    @classmethod
+    def validate_vector_search_backend(
+        cls, v: Optional[str]
+    ) -> Optional[Literal["auto", "faiss", "pgvector"]]:
+        """Allow only known backend keywords."""
+        if v is None:
+            return "auto"
+        s = str(v).strip().lower()
+        if s not in ("auto", "faiss", "pgvector"):
+            raise ValueError(
+                "vector_search_backend must be one of: auto, faiss, pgvector"
+            )
+        return s  # type: ignore[return-value]
 
     @field_validator("batch_max_response_bytes")
     @classmethod

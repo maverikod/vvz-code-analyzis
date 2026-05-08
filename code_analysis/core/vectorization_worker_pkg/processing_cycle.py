@@ -27,12 +27,38 @@ from code_analysis.core.sql_portable import (
     WHERE_HAS_DOCSTRING_F,
     WHERE_PROCESSING_ACTIVE_P,
 )
+from code_analysis.core.docs_markdown_vector_gate import (
+    sql_and_exclude_docs_markdown_chunks,
+)
 from .processing_cycle_projects import process_projects_in_cycle
 
 logger = logging.getLogger(__name__)
 
-# SQL to get projects with pending items (same as in processing.py)
-PROJECTS_PENDING_SQL = f"""
+
+def projects_pending_sql(
+    docs_markdown_embeddings_enabled: bool = True,
+    *,
+    use_pgvector_ann: bool = False,
+) -> str:
+    """
+    SQL listing projects that have pending vectorization/chunking work.
+
+    When ``docs_markdown_embeddings_enabled`` is false (``docs_indexing`` policy),
+    excludes ``docs_markdown`` chunks from embedding-related pending counts so the
+    worker does not spin on Markdown-only embedding backlog.
+
+    When ``use_pgvector_ann`` is true (PostgreSQL + pgvector), rows that still need
+    a DB vector use ``embedding_vec IS NULL`` instead of ``vector_id IS NULL``, and
+    the "needs embedding" subquery does not gate on ``vector_id``.
+    """
+    frag = ""
+    if not docs_markdown_embeddings_enabled:
+        frag = sql_and_exclude_docs_markdown_chunks("cc")
+    ann_ready_pending = (
+        "cc.embedding_vec IS NULL" if use_pgvector_ann else "cc.vector_id IS NULL"
+    )
+    needs_emb_prefix = "" if use_pgvector_ann else "cc.vector_id IS NULL AND "
+    return f"""
 SELECT
     p.id AS project_id,
     p.root_path,
@@ -72,17 +98,16 @@ SELECT
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
-           AND {WHERE_FILES_ACTIVE_F}
+           AND {WHERE_FILES_ACTIVE_F}{frag}
            AND cc.embedding_vector IS NOT NULL
-           AND cc.vector_id IS NULL)
+           AND {ann_ready_pending})
         +
         (SELECT COUNT(cc.id)
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
-           AND {WHERE_FILES_ACTIVE_F}
-           AND cc.vector_id IS NULL
-           AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
+           AND {WHERE_FILES_ACTIVE_F}{frag}
+           AND {needs_emb_prefix}(cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
            AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
     ) AS pending_count,
     (SELECT MAX(f2.updated_at) FROM files f2
@@ -126,21 +151,23 @@ AND (
      FROM code_chunks cc
      INNER JOIN files f ON cc.file_id = f.id
      WHERE cc.project_id = p.id
-       AND {WHERE_FILES_ACTIVE_F}
+       AND {WHERE_FILES_ACTIVE_F}{frag}
        AND cc.embedding_vector IS NOT NULL
-       AND cc.vector_id IS NULL)
+       AND {ann_ready_pending})
     +
     (SELECT COUNT(cc.id)
      FROM code_chunks cc
      INNER JOIN files f ON cc.file_id = f.id
      WHERE cc.project_id = p.id
-       AND {WHERE_FILES_ACTIVE_F}
-       AND cc.vector_id IS NULL
-       AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
+       AND {WHERE_FILES_ACTIVE_F}{frag}
+       AND {needs_emb_prefix}(cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
        AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
 ) > 0
 ORDER BY max_file_updated_at DESC, pending_count ASC, p.id DESC
 """
+
+
+PROJECTS_PENDING_SQL = projects_pending_sql(True, use_pgvector_ann=False)
 
 
 async def run_one_cycle(
@@ -180,9 +207,19 @@ async def run_one_cycle(
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
+    use_pgvector_ann = getattr(worker, "vector_ann_backend", "faiss") == "pgvector"
+    chunk_unindexed_clause = (
+        "embedding_vec IS NULL" if use_pgvector_ann else "vector_id IS NULL"
+    )
+    chunk_indexed_clause = (
+        "cc.embedding_vec IS NOT NULL"
+        if use_pgvector_ann
+        else "cc.vector_id IS NOT NULL"
+    )
+
     chunks_result = database.execute(
-        """SELECT COUNT(*) as count FROM code_chunks
-           WHERE vector_id IS NULL
+        f"""SELECT COUNT(*) as count FROM code_chunks
+           WHERE {chunk_unindexed_clause}
              AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
         None,
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
@@ -206,7 +243,7 @@ async def run_one_cycle(
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
         WHERE {WHERE_FILES_ACTIVE_F}
-        AND cc.vector_id IS NOT NULL
+        AND {chunk_indexed_clause}
         """,
         None,
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
@@ -251,7 +288,12 @@ async def run_one_cycle(
         extra={"cycle": cycle_count},
     )
     projects_result = database.execute(
-        PROJECTS_PENDING_SQL, None, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+        projects_pending_sql(
+            bool(getattr(worker, "docs_markdown_embeddings_enabled", True)),
+            use_pgvector_ann=use_pgvector_ann,
+        ),
+        None,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     projects: List[Any] = (
         projects_result.get("data", []) if isinstance(projects_result, dict) else []
@@ -315,68 +357,83 @@ async def run_one_cycle(
         )
 
         t0_step3 = time.time()
-        write_worker_status(
-            getattr(worker, "status_file_path", None),
-            "rebuilding_faiss",
-            current_file=None,
-            extra={"cycle": cycle_count},
-        )
-        logger.info(
-            "[CYCLE #%s] Rebuilding FAISS indexes for all projects...",
-            cycle_count,
-        )
-        all_projects_list = database.list_projects()
-        all_projects = [
-            {
-                "id": p.id,
-                "root_path": p.root_path,
-                "name": p.name,
-                "comment": p.comment,
-                "processing_paused": getattr(p, "processing_paused", False),
-            }
-            for p in all_projects_list
-        ]
-        for project in all_projects:
-            if project.get("processing_paused"):
-                logger.info(
-                    "Skipping FAISS rebuild for project %s (processing_paused)",
-                    project.get("id"),
-                )
-                continue
-            project_id = project["id"]
-            project_path = project.get("root_path", "unknown")
+        if use_pgvector_ann:
+            logger.info(
+                "[CYCLE #%s] Skipping per-project FAISS rebuild (pgvector ANN backend)",
+                cycle_count,
+            )
+            write_worker_status(
+                getattr(worker, "status_file_path", None),
+                STATUS_OPERATION_IDLE,
+                current_file=None,
+                extra={"cycle": cycle_count, "reason": "pgvector_no_faiss_rebuild"},
+            )
+        else:
             write_worker_status(
                 getattr(worker, "status_file_path", None),
                 "rebuilding_faiss",
                 current_file=None,
-                extra={
-                    "project_id": project_id,
-                    "root_path": str(project_path),
-                },
+                extra={"cycle": cycle_count},
             )
-            try:
-                index_path = worker.faiss_dir / f"{project_id}.bin"
-                faiss_manager = FaissIndexManager(
-                    index_path=str(index_path),
-                    vector_dim=worker.vector_dim,
+            logger.info(
+                "[CYCLE #%s] Rebuilding FAISS indexes for all projects...",
+                cycle_count,
+            )
+            all_projects_list = database.list_projects()
+            all_projects = [
+                {
+                    "id": p.id,
+                    "root_path": p.root_path,
+                    "name": p.name,
+                    "comment": p.comment,
+                    "processing_paused": getattr(p, "processing_paused", False),
+                }
+                for p in all_projects_list
+            ]
+            for project in all_projects:
+                if project.get("processing_paused"):
+                    logger.info(
+                        "Skipping FAISS rebuild for project %s (processing_paused)",
+                        project.get("id"),
+                    )
+                    continue
+                project_id = project["id"]
+                project_path = project.get("root_path", "unknown")
+                write_worker_status(
+                    getattr(worker, "status_file_path", None),
+                    "rebuilding_faiss",
+                    current_file=None,
+                    extra={
+                        "project_id": project_id,
+                        "root_path": str(project_path),
+                    },
                 )
-                vectors_count = await faiss_manager.rebuild_from_database(
-                    database=database,
-                    svo_client_manager=worker.svo_client_manager,
-                    project_id=project_id,
-                )
-                logger.info(
-                    "FAISS index rebuilt for project %s: %s vectors",
-                    project_id,
-                    vectors_count,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to rebuild FAISS index for project %s: %s",
-                    project_id,
-                    e,
-                    exc_info=True,
-                )
+                try:
+                    index_path = worker.faiss_dir / f"{project_id}.bin"
+                    faiss_manager = FaissIndexManager(
+                        index_path=str(index_path),
+                        vector_dim=worker.vector_dim,
+                    )
+                    vectors_count = await faiss_manager.rebuild_from_database(
+                        database=database,
+                        svo_client_manager=worker.svo_client_manager,
+                        project_id=project_id,
+                        omit_docs_markdown=not bool(
+                            getattr(worker, "docs_markdown_embeddings_enabled", True)
+                        ),
+                    )
+                    logger.info(
+                        "FAISS index rebuilt for project %s: %s vectors",
+                        project_id,
+                        vectors_count,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to rebuild FAISS index for project %s: %s",
+                        project_id,
+                        e,
+                        exc_info=True,
+                    )
         cycle_step3_s = time.time() - t0_step3
 
     database.execute(

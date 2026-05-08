@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 class PostgreSQLSchemaManager:
     """Schema introspection and sync for PostgreSQL."""
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, schema_vector_dim: int = 384) -> None:
         self.conn = connection
+        self._schema_vector_dim = int(schema_vector_dim)
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         if not self.conn:
@@ -80,7 +81,9 @@ class PostgreSQLSchemaManager:
         del create_table_func, backup_dir
         from .postgres_migrations import ensure_postgres_schema
 
-        ensure_postgres_schema(self.conn, schema_definition)
+        ensure_postgres_schema(
+            self.conn, schema_definition, vector_dim=self._schema_vector_dim
+        )
         names = list(schema_definition.get("tables", {}).keys())
         logger.info(
             "PostgreSQL sync_schema applied (tables=%s); FTS virtual tables skipped on PG",

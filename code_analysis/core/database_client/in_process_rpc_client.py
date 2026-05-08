@@ -51,9 +51,11 @@ class InProcessRpcClient:
             raise ConnectionError("In-process RPC client is closed")
         self._connected = True
 
-    def disconnect(self) -> None:
+    def disconnect(self, *, close_driver: bool = True) -> None:
         self._closed = True
         self._connected = False
+        if not close_driver:
+            return
         try:
             self.handlers.driver.disconnect()
         except Exception:

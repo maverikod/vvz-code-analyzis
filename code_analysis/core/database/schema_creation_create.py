@@ -85,6 +85,7 @@ def run_create_schema(db: Any) -> None:
                 original_path TEXT,
                 version_dir TEXT,
                 needs_chunking INTEGER DEFAULT 0,
+                editing_pid INTEGER DEFAULT NULL,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,

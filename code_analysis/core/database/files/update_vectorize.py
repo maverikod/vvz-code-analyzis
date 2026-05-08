@@ -289,8 +289,10 @@ async def remove_missing_files(
     files = self.get_project_files(project_id)
     removed_files = []
     removed_count = 0
+    from ...file_identity import absolute_path_for_indexed_file
+
     for file_record in files:
-        file_path = Path(file_record["path"])
+        file_path = Path(absolute_path_for_indexed_file(root_path, file_record))
         if not file_path.exists():
             file_id = file_record["id"]
             logger.info(f"File not found on disk, removing from database: {file_path}")

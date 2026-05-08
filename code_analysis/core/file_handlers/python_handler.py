@@ -40,19 +40,20 @@ PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 LINE_RANGE_MUTATION_KEYS = frozenset(
     {"start_line", "end_line", "new_lines", "replacements"}
 )
-# @node-id: 0986b2ce-94e4-47c8-8e2c-3dd884ad7e4d
 
 
 def ensure_python_suffix(file_path: str) -> None:
     suf = Path(file_path).suffix.lower()
     if suf not in PYTHON_SUFFIXES:
         raise ValueError(f"Not a configured Python handler suffix: {suf!r}")
-# @node-id: 3724b6aa-b870-4546-b8f3-93f63f48f553
+
+
 
 
 def is_registered_python_suffix(file_path: str) -> bool:
     return Path(file_path).suffix.lower() in PYTHON_SUFFIXES
-# @node-id: 1aa9b21e-9baa-47dd-8123-ac1ba3f32880
+
+
 
 
 def _reject_line_mutation_params(
@@ -70,7 +71,8 @@ def _reject_line_mutation_params(
         request=request,
         extra_details={"unsupported_keys": sorted(overlap)},
     )
-# @node-id: 5fadc53c-a3ba-40a4-b029-688dd9e19481
+
+
 def read_python_lines_payload(
     *,
     project_relative_path: str,
@@ -144,7 +146,8 @@ def read_python_lines_payload(
         "lines": lines,
         "total_lines": total_lines,
     }
-# @node-id: 4ab90ce2-d1ef-4d22-920b-5c00b215be5b
+
+
 
 
 def _mcp_to_file_handler_result(
@@ -185,7 +188,8 @@ def _mcp_to_file_handler_result(
         message=str(data.get("message", "")),
         data=data,
     )
-# @node-id: 07d960af-37b0-40a7-8585-b61078af8492
+
+
 
 
 def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
@@ -197,7 +201,8 @@ def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
             request=request,
         )
     return raw
-# @node-id: 618869c5-6718-42e3-a02c-c923c8bb6f24
+
+
 
 
 def _ops_for_save_new_or_overwrite(
@@ -230,7 +235,8 @@ def _ops_for_save_new_or_overwrite(
             "new_code": content,
         },
     ]
-# @node-id: 6d36bb79-e5fd-41d3-ae68-ca9e78a00747
+
+
 
 
 class PythonFileHandler(BaseFileHandler):
@@ -245,16 +251,16 @@ class PythonFileHandler(BaseFileHandler):
     ``replace`` / non-full ``delete`` use ``extra.ops`` (selector + ``new_code`` per
     :func:`code_analysis.commands.compose_cst_validation.ops_from_params`).
     """
-    # @node-id: 12e12885-b6be-4182-9560-ad69cd0c29df
+
 
     @property
     def handler_id(self) -> str:
         return HANDLER_PYTHON
-    # @node-id: 3150a538-bc9e-4e22-b719-6b07cd300c73
+
 
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
         return get_handler_schema(HANDLER_PYTHON, operation)
-    # @node-id: 4c964b86-6ece-4235-8614-f2bb24ac5eaf
+
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
         abs_path = request.extra.get("absolute_path")
@@ -358,7 +364,7 @@ class PythonFileHandler(BaseFileHandler):
             dry_run=request.dry_run,
             data=payload,
         )
-    # @node-id: bebf1150-ad10-4983-968f-46bd1a4168ff
+
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
@@ -402,7 +408,7 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-    # @node-id: 1fc9b6e6-b1a9-4164-b264-be682e55062e
+
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
@@ -443,7 +449,7 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-    # @node-id: c25cad2d-bdb4-443b-ac65-75fcaa149df2
+
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)

@@ -123,14 +123,11 @@ def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
         True if file was found and processed, False otherwise.
     """
     from ...path_normalization import normalize_path_simple
+    from .crud import get_file_by_path
 
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
     abs_path = normalize_path_simple(file_path)
 
-    row = self._fetchone(
-        "SELECT id, deleted FROM files WHERE project_id = ? AND path = ?",
-        (project_id, abs_path),
-    )
+    row = get_file_by_path(self, abs_path, project_id, include_deleted=True)
     if not row:
         return False
 

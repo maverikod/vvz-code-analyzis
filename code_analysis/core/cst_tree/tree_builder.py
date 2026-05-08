@@ -27,57 +27,42 @@ from .node_id_markers import (
     build_exact_node_key,
     strip_persisted_node_ids,
 )
-from .node_id_inline import strip_inline_stable_ids
 from .node_type_utils import get_node_kind, get_node_name, get_node_qualname
-from .node_stable_id import get_stable_id as _get_stable_id_from_node
+from .node_stable_id import (
+    get_stable_id as _get_stable_id_from_node,
+    strip_inline_node_id_lines_from_source,
+)
 from .tree_sidecar import (
     aliases_from_payload,
-    flatten_path_to_node_id,
     metadata_map_from_payload,
     persisted_node_ids_from_payload,
     read_sidecar_payload,
     sidecar_matches_built_tree,
-    sidecar_persistence_enabled,
     verify_sidecar_against_source,
     write_sidecar_atomic,
 )
 
 logger = logging.getLogger(__name__)
-# @node-id: 150033b6-fae2-4860-8ad1-855eada30de8
+# @node-id: b65e0660-2f5f-4918-9146-f1944d64e403
 
 
-def _reindex_cst_tree_after_strip_inline_ids(
-    tree: CSTTree,
-    *,
-    node_types: Optional[List[str]],
-    max_depth: Optional[int],
-    include_children: bool,
-) -> None:
-    """Rebuild ``node_map`` / ``metadata_map`` on the stripped ``tree.module``.
+def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNodeIds]:
+    """Read Python source, strip persisted node-id markers, write disk if needed.
 
-    :func:`_build_tree_index` runs first on a module that may still contain
-    ``# @node-id`` leading lines. :func:`strip_inline_stable_ids` removes those
-    lines and returns a new CST graph whose :class:`~libcst.metadata.CodeRange`
-    values differ, while ``tree.module.code`` is unchanged. Without a second
-    index pass, ``metadata_map`` coordinates are stale and position-based
-    lookups (e.g. ``find_node_in_module_by_position``) fail.
+    Call before ``cst.parse_module`` so on-disk bytes match the logical source used
+    for SHA snapshots (same policy as ``load_file_to_tree`` / save preflight).
     """
-    path_ids: PersistedNodeIds = flatten_path_to_node_id(
-        tree.metadata_map, tree.root_node_id
-    )
-    prev_full = dict(tree.metadata_map)
-    tree.node_map.clear()
-    tree.metadata_map.clear()
-    tree.parent_map.clear()
-    _build_tree_index(
-        tree,
-        node_types=node_types,
-        max_depth=max_depth,
-        include_children=include_children,
-        previous_metadata_map=prev_full,
-        persisted_node_ids=path_ids,
-    )
-# @node-id: 51f37554-9741-4c1f-9cf9-23c0012225ab
+    raw = py_path.read_text(encoding="utf-8")
+    logical, ids = strip_persisted_node_ids(raw)
+    logical = strip_inline_node_id_lines_from_source(logical)
+    if logical != raw:
+        py_path.write_text(logical, encoding="utf-8")
+    return logical, ids
+
+
+# @node-id: e526cb82-cb31-4ee3-a40d-9a52f4ea00d9
+
+
 def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     """Record SHA256 + length of disk source and module code snapshot on tree.
 
@@ -90,7 +75,9 @@ def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     tree.disk_source_sha256_hex = digest
     tree.disk_source_length = len(source_bytes)
     tree.module_source_sha256_hex = digest
-# @node-id: 3548eea4-283d-47d7-9ab4-43571f663353
+
+
+# @node-id: a0e4d4b4-808a-4c2c-85c8-0d6ab73b1560
 
 
 def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
@@ -104,9 +91,9 @@ def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
         logger.info("Stripped legacy cst-node-ids trailer from %s", py_path)
     except OSError as exc:
         logger.warning("Could not strip legacy trailer from %s: %s", py_path, exc)
-# @node-id: 2ea5ca79-22ac-423e-8f62-da4b6ed07e45
 
 
+# @node-id: a48a4ef0-e75f-4e68-956b-764f89b20f3b
 def _finalize_cst_tree(
     tree: CSTTree,
     module: cst.Module,
@@ -127,11 +114,7 @@ def _finalize_cst_tree(
     """
     tree.module = module
 
-    if (
-        py_path is not None
-        and py_path.is_file()
-        and sidecar_persistence_enabled(py_path)
-    ):
+    if py_path is not None and py_path.is_file():
         payload = read_sidecar_payload(py_path)
         if payload is not None and verify_sidecar_against_source(
             logical_source, payload
@@ -158,18 +141,14 @@ def _finalize_cst_tree(
                     previous_metadata_map=prev_side,
                     persisted_node_ids=persisted_side,
                 )
-                tree.module = strip_inline_stable_ids(tree.module)
-                _reindex_cst_tree_after_strip_inline_ids(
-                    tree,
-                    node_types=node_types,
-                    max_depth=max_depth,
-                    include_children=include_children,
-                )
                 if sidecar_matches_built_tree(tree, payload):
                     tree.node_id_aliases = aliases_from_payload(payload)
                     if raw_disk_source is not None:
-                        # SHA must match logical source (no legacy trailer), same as sidecar
-                        _attach_disk_snapshot(tree, logical_source)
+                        # SHA must match logical source (no inline/legacy markers)
+                        _attach_disk_snapshot(tree, tree.module.code)
+                        # Strip inline/legacy markers from disk unconditionally
+                        if raw_disk_source != logical_source and py_path is not None:
+                            _strip_legacy_trailer_from_disk(py_path, logical_source)
                     return
                 tree.module = cst.parse_module(logical_source)
 
@@ -186,24 +165,13 @@ def _finalize_cst_tree(
         previous_metadata_map=previous_metadata_map,
         persisted_node_ids=legacy_persisted or None,
     )
-    tree.module = strip_inline_stable_ids(tree.module)
-    _reindex_cst_tree_after_strip_inline_ids(
-        tree,
-        node_types=node_types,
-        max_depth=max_depth,
-        include_children=include_children,
-    )
     if raw_disk_source is not None:
-        # SHA must match logical source (no legacy trailer), same as sidecar
-        _attach_disk_snapshot(tree, logical_source)
-        # If disk file still has legacy # cst-node-ids block — strip it atomically
-        if (
-            raw_disk_source != logical_source
-            and py_path is not None
-            and sidecar_persistence_enabled(py_path)
-        ):
+        # SHA must match logical source (no inline/legacy markers)
+        _attach_disk_snapshot(tree, tree.module.code)
+        # Strip inline/legacy markers from disk unconditionally (regardless of sidecar policy)
+        if raw_disk_source != logical_source and py_path is not None:
             _strip_legacy_trailer_from_disk(py_path, logical_source)
-    if write_sidecar and py_path is not None and sidecar_persistence_enabled(py_path):
+    if write_sidecar and py_path is not None:
         try:
             write_sidecar_atomic(py_path, tree)
         except OSError as exc:
@@ -212,7 +180,7 @@ def _finalize_cst_tree(
 
 # In-memory storage for CST trees
 _trees: dict[str, CSTTree] = {}
-# @node-id: b9240ab8-2715-4144-b9bd-b28281758b38
+# @node-id: 09db228e-5b6d-447b-a04f-192a29acc799
 
 
 def load_file_to_tree(
@@ -241,8 +209,7 @@ def load_file_to_tree(
     if not is_py and not is_py_tmp:
         raise ValueError(f"File must be a Python file (.py): {file_path}")
 
-    source = path.read_text(encoding="utf-8")
-    logical_source, persisted_node_ids = strip_persisted_node_ids(source)
+    logical_source, persisted_node_ids = _read_logical_py_source_sync_disk(path)
     module = cst.parse_module(logical_source)
     tree = CSTTree.create(str(path.resolve()), module)
     _finalize_cst_tree(
@@ -250,7 +217,7 @@ def load_file_to_tree(
         module,
         logical_source,
         py_path=path,
-        raw_disk_source=source,
+        raw_disk_source=logical_source,
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
@@ -261,7 +228,9 @@ def load_file_to_tree(
 
     _trees[tree.tree_id] = tree
     return tree
-# @node-id: 128db20b-6415-4ed7-b8e2-ed727e9b139a
+
+
+# @node-id: f471c2a5-b8d8-4b1b-a6b1-fcc7dbfc0d84
 
 
 def create_tree_from_code(
@@ -294,13 +263,12 @@ def create_tree_from_code(
         CSTTree with tree_id and metadata
     """
     logical_source, persisted_node_ids = strip_persisted_node_ids(source_code)
+    logical_source = strip_inline_node_id_lines_from_source(logical_source)
     module = cst.parse_module(logical_source)
 
     tree = CSTTree.create(str(Path(file_path).resolve()), module)
     py_path = Path(file_path).resolve()
-    write_sidecar = bool(
-        persist_sidecar and py_path.is_file() and sidecar_persistence_enabled(py_path)
-    )
+    write_sidecar = bool(persist_sidecar and py_path.is_file())
     _finalize_cst_tree(
         tree,
         module,
@@ -320,7 +288,9 @@ def create_tree_from_code(
     if register_in_memory:
         _trees[tree.tree_id] = tree
     return tree
-# @node-id: 5f2108fc-0580-4831-a00a-4629f1b20362
+
+
+# @node-id: f847c769-7675-45db-8ebe-363b3bf16123
 
 
 def _build_tree_index(
@@ -349,8 +319,6 @@ def _build_tree_index(
         node_types_set = {t.lower() for t in node_types}
 
     exact_key_to_id: Dict[Tuple[int, int, int, int, str], str] = {}
-    if persisted_node_ids:
-        exact_key_to_id.update(persisted_node_ids)
     if previous_metadata_map:
         for key, node_id in build_exact_key_to_id_from_metadata(
             previous_metadata_map
@@ -363,7 +331,7 @@ def _build_tree_index(
     class_stack: List[str] = []
     func_stack: List[str] = []
     node_to_uuid: Dict[int, str] = {}
-    # @node-id: 333075e2-443c-4e6b-af8a-ecc76f7fb83a
+    # @node-id: 9e6b6a21-255f-4cde-a230-ca5abb0f1f41
 
     def visit(node: cst.CSTNode, depth: int, path_indices: tuple[int, ...]) -> None:
         if max_depth is not None and depth > max_depth:
@@ -492,7 +460,9 @@ def _build_tree_index(
                 current = tree.node_id_aliases.get(old_uuid, old_uuid)
                 tree.node_id_aliases[current] = new_uuid
                 tree.node_id_aliases[old_uuid] = new_uuid
-# @node-id: 2cc8930e-4c8d-4467-84d2-deefe125ace2
+
+
+# @node-id: 762544bf-0d1b-46f4-a4ab-5a2a2e5ae840
 
 
 def get_tree(tree_id: str) -> Optional[CSTTree]:
@@ -501,7 +471,9 @@ def get_tree(tree_id: str) -> Optional[CSTTree]:
     if tree is not None:
         tree.last_accessed_at = time.monotonic()
     return tree
-# @node-id: 4426ceec-42e0-42a6-a8f1-1ce98d0c395e
+
+
+# @node-id: db218b06-bc4c-4dcc-8085-8f1c99d2a71b
 
 
 def remove_tree(tree_id: str) -> bool:
@@ -510,7 +482,9 @@ def remove_tree(tree_id: str) -> bool:
         del _trees[tree_id]
         return True
     return False
-# @node-id: d77a3447-38d0-42cf-875e-b2ffab64082e
+
+
+# @node-id: b19255fb-cf63-4485-a318-497618de577f
 
 
 def reload_tree_from_file(
@@ -550,8 +524,7 @@ def reload_tree_from_file(
     if path.suffix != ".py":
         raise ValueError(f"File must be a Python file (.py): {tree.file_path}")
 
-    source = path.read_text(encoding="utf-8")
-    logical_source, persisted_node_ids = strip_persisted_node_ids(source)
+    logical_source, persisted_node_ids = _read_logical_py_source_sync_disk(path)
     module = cst.parse_module(logical_source)
     previous_metadata_map = dict(tree.metadata_map)
 
@@ -566,7 +539,7 @@ def reload_tree_from_file(
         module,
         logical_source,
         py_path=path,
-        raw_disk_source=source,
+        raw_disk_source=logical_source,
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
@@ -576,7 +549,9 @@ def reload_tree_from_file(
     )
 
     return tree
-# @node-id: a3826a24-e633-4251-a744-e618b3412096
+
+
+# @node-id: a4039634-e529-4165-9e7b-a9cb00d67430
 
 
 def rollback_tree_to_code(
@@ -592,10 +567,10 @@ def rollback_tree_to_code(
     Replaces tree.module with parsed code and rebuilds index. Use when save
     fails after modify so the tree is reverted to pre-modify state.
 
-    Disk snapshot fields (``disk_source_sha256_hex``, ``disk_source_length``) are
-    cleared to None and 0: rollback reflects in-memory code only, not the file on
-    disk, so save-side disk verification must not run against a stale snapshot
-    until ``reload_tree_from_file`` / equivalent reload from disk.
+    Disk snapshot fields (``disk_source_sha256_hex``, ``disk_source_length``) and
+    ``module_source_sha256_hex`` are cleared: rollback reflects in-memory code only,
+    not the file on disk, so save-side disk verification must not run against a stale
+    snapshot until ``reload_tree_from_file`` / equivalent reload from disk.
 
     Args:
         tree_id: Tree ID to roll back
@@ -611,6 +586,7 @@ def rollback_tree_to_code(
     if not tree:
         return False
     logical_source, persisted_node_ids = strip_persisted_node_ids(code)
+    logical_source = strip_inline_node_id_lines_from_source(logical_source)
     previous_metadata_map = dict(tree.metadata_map)
     module = cst.parse_module(logical_source)
     _finalize_cst_tree(
@@ -628,11 +604,14 @@ def rollback_tree_to_code(
     )
     tree.disk_source_sha256_hex = None
     tree.disk_source_length = 0
+    # modify_tree updates module_source_sha256_hex; rollback must not leave a stale
+    # digest that no longer matches tree.module.code (e.g. cst_modify_tree preview).
+    tree.module_source_sha256_hex = None
     return True
 
 
 CST_TREE_TTL_SECONDS: float = 900.0  # 15 minutes
-# @node-id: a9692551-a8ab-4a40-b08f-495e4563e234
+# @node-id: 09ea45c7-957c-421a-8cae-c09260e12d2f
 
 
 async def _cst_tree_ttl_cleanup_loop() -> None:
@@ -646,7 +625,9 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
         ]
         for tid in expired:
             _trees.pop(tid, None)
-# @node-id: 46c61a5d-ad53-4fdd-a12c-4bb810ffb747
+
+
+# @node-id: 784dc496-5666-4266-a26b-b60fd3a2f75c
 
 
 def start_cst_tree_ttl_cleanup() -> None:

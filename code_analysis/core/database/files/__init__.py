@@ -29,7 +29,14 @@ from .trash import (
     mark_file_deleted,
     unmark_file_deleted,
 )
+from .trash_standalone import (
+    get_deleted_files_via_driver,
+    hard_delete_file_via_driver,
+    mark_file_deleted_via_driver,
+    unmark_file_deleted_via_driver,
+)
 from .update import update_file_data
+from .update_standalone import update_file_data_via_driver
 from .update_vectorize import (
     remove_missing_files,
     update_and_vectorize_file,
@@ -43,6 +50,7 @@ __all__ = [
     "clear_file_data",
     "collapse_file_versions",
     "delete_file",
+    "get_deleted_files_via_driver",
     "get_deleted_files",
     "get_file_by_id",
     "get_file_by_path",
@@ -50,13 +58,17 @@ __all__ = [
     "get_file_summary",
     "get_file_versions",
     "get_files_needing_chunking",
+    "hard_delete_file_via_driver",
     "hard_delete_file",
+    "mark_file_deleted_via_driver",
     "mark_file_deleted",
     "mark_file_needs_chunking",
     "remove_missing_files",
+    "unmark_file_deleted_via_driver",
     "unmark_file_deleted",
     "update_and_vectorize_file",
     "update_file_data",
+    "update_file_data_via_driver",
     "update_file_data_atomic",
     "vectorize_file_immediately",
 ]

@@ -12,14 +12,12 @@ concepts:
   properties:
   - one MCP command name visible to callers
   - input schema is fixed and validates statically
-  - response envelope is uniform across all file types
+  - response envelope is uniform across all file types and node kinds
   - 'read-only: writes nothing to files, database, or external tree sessions'
   source_ranges:
   - start: 5
     end: 8
-  - start: 12
-    end: 18
-  - start: 20
+  - start: 13
     end: 21
 - concept_id: C-002
   name: HandlerDispatcher
@@ -31,87 +29,105 @@ concepts:
   - one extension maps to exactly one handler
   - 'handlers are pluggable: adding a handler does not change the public schema'
   source_ranges:
-  - start: 24
+  - start: 25
     end: 29
 - concept_id: C-003
   name: Handler
-  definition: 'Component responsible for one family of files. Knows how to open the
-    file, pick an engine, build the response.
+  definition: 'Component that opens one family of files and produces the uniform in-memory
+    node representation. Does not implement navigation.
 
     '
   properties:
   - has a static set of supported extensions
-  - selects one of three engines (lines, tree, sequence) per request
-  - returns response in the uniform envelope
+  - produces a root Node when opening a file
+  - resolves node_ref values in its native identifier format to a Node
+  - produces children of any Node lazily on demand
   source_ranges:
-  - start: 30
-    end: 36
+  - start: 25
+    end: 29
+  - start: 75
+    end: 92
 - concept_id: C-004
-  name: LinesEngine
-  definition: 'Internal engine for files whose addressable set is lines of text.
+  name: NodeKind
+  definition: 'Classification of any node in the uniform representation. One of: scalar,
+    lines, mapping, sequence, tree_node.
 
     '
   properties:
-  - 'addressable set: lines'
-  - returns 'lines' response kind
-  source_ranges:
-  - start: 31
-    end: 32
-- concept_id: C-005
-  name: TreeEngine
-  definition: 'Internal engine for files whose addressable set is the children of
-    a node in a hierarchical structure.
-
-    '
-  properties:
-  - 'addressable set: children of a focused node'
-  - returns 'tree' response kind
-  - the focused node is determined by NodeReference; default is file root
-  source_ranges:
-  - start: 33
-    end: 35
-- concept_id: C-006
-  name: SequenceEngine
-  definition: 'Internal engine for files whose addressable set is an ordered collection
-    of elements.
-
-    '
-  properties:
-  - 'addressable set: indexed elements'
-  - returns 'sequence' response kind
+  - 'scalar: leaf value, no children'
+  - 'lines: ordered children, each is a line of text'
+  - 'mapping: ordered key-value pairs'
+  - 'sequence: ordered indexed elements of arbitrary kind'
+  - 'tree_node: ordered children plus named attributes (e.g. CST FunctionDef)'
+  - the kind is intrinsic to the node, not to the parent or to the file type
   source_ranges:
   - start: 36
-    end: 37
-- concept_id: C-007
-  name: AddressableSet
-  definition: 'The ordered, indexable collection that a single preview request operates
-    on. Determined by file type and by the focused node.
+    end: 45
+- concept_id: C-005
+  name: Sliceability
+  definition: 'Level-local predicate on a Node that reports whether the node exposes
+    an ordered, indexable child set addressable by the Slice parameter.
 
     '
   properties:
-  - always ordered and indexable
-  - exactly one per request
-  - 'kind is one of: file lines, node children, sequence elements, mapping keys, document
-    list'
+  - answered per-node, not per-file-type
+  - scalar nodes are never sliceable
+  - lines, mapping, sequence, tree_node are sliceable
+  - sliceability is the first question of every navigation step
+  - asking for slice on a non-sliceable focus is an input error
   source_ranges:
-  - start: 41
-    end: 50
+  - start: 47
+    end: 70
+  - start: 95
+    end: 106
+- concept_id: C-006
+  name: ChildPreviewRule
+  definition: 'Function that turns a Node into a compact summary when that Node appears
+    as a child in some other node''s slice. Depends on the child''s own NodeKind.
+
+    '
+  properties:
+  - 'scalar: truncated value'
+  - 'lines: count + first line truncated'
+  - 'sequence: length + coarse element-kind summary'
+  - 'mapping: key count + truncated key name list'
+  - 'tree_node: type, name, attributes, child count'
+  - never includes the child's own children content
+  source_ranges:
+  - start: 108
+    end: 122
+- concept_id: C-007
+  name: NavigationStep
+  definition: 'The single procedure the command executes on every request: resolve
+    focus, check sliceability, apply slice, summarise each child via its ChildPreviewRule.
+
+    '
+  properties:
+  - one procedure shared by all node kinds and all file types
+  - operates on one focus Node per request
+  - 'recursive: drilling into a child issues a new request with that child''s node_ref'
+  - no engine selection or branch on file type beyond Handler choice
+  source_ranges:
+  - start: 31
+    end: 34
+  - start: 56
+    end: 70
 - concept_id: C-008
   name: Slice
   definition: 'Caller-supplied selector that designates a contiguous subset of the
-    AddressableSet using Python-style zero-based half-open indexing.
+    focus node''s ordered child set using Python-style zero-based half-open indexing.
 
     '
   properties:
   - 'syntax: start:stop with start and stop optional, negative allowed'
   - 'semantics: zero-based, half-open'
-  - applies uniformly to every AddressableSet, regardless of file type
+  - applies to the focus node's child set, whatever its NodeKind
   - local to this command; does not change semantics of other commands
   source_ranges:
-  - start: 52
-    end: 58
-  - start: 60
-    end: 66
+  - start: 49
+    end: 54
+  - start: 80
+    end: 84
 - concept_id: C-009
   name: StableIdentifier
   definition: 'Identifier of a node inside a tree-structured file. Reused from the
@@ -123,14 +139,16 @@ concepts:
   - 'JSON source: node_id from list_json_blocks, or JSON pointer'
   - 'YAML source: reused from project YAML tree infra when present, otherwise JSON-pointer-style
     path'
+  - 'lines and JSONL roots: child addressed by zero-based index, no separate identifier
+    scheme'
   - identifier scheme is per-handler; format is opaque to the dispatcher
   source_ranges:
-  - start: 70
-    end: 82
+  - start: 124
+    end: 145
 - concept_id: C-010
   name: NodeReference
   definition: 'Optional caller-supplied parameter that focuses the preview on a specific
-    node identified by a StableIdentifier.
+    Node identified by a StableIdentifier.
 
     '
   properties:
@@ -138,8 +156,8 @@ concepts:
   - default focus is the file root
   - value is a StableIdentifier in the handler's native format
   source_ranges:
-  - start: 84
-    end: 86
+  - start: 147
+    end: 149
 - concept_id: C-011
   name: TreeSession
   definition: 'In-memory parsed tree of a file identified by a tree_id, owned either
@@ -149,25 +167,27 @@ concepts:
   properties:
   - identified by tree_id (UUID)
   - owned either externally or internally
-  - this command never closes a session it did not create
-  - this command never invalidates a session it did not create
+  - command never closes a session it did not create
+  - command never invalidates a session it did not create
   source_ranges:
-  - start: 88
-    end: 103
+  - start: 151
+    end: 166
 - concept_id: C-012
   name: ResponseEnvelope
-  definition: 'Uniform top-level shape of every successful preview response.
+  definition: 'Uniform top-level shape of every successful preview response. One shape
+    for all NodeKind values.
 
     '
   properties:
-  - reports kind in {tree, sequence, lines}
-  - reports slice_applied
-  - reports total size of addressable set
-  - reports the slice content in the shape appropriate to kind
-  - when relevant, reports tree_id and root NodeReference
+  - 'reports focus Node: node_kind, node_ref, type, name, attributes'
+  - reports whether focus was sliceable and the slice that was applied
+  - reports total size of focus child set
+  - reports the children in the slice with their ChildPreviewRule output
+  - each reported child carries its own node_ref
+  - when relevant, reports tree_id for reuse
   source_ranges:
-  - start: 105
-    end: 121
+  - start: 168
+    end: 184
 - concept_id: C-013
   name: PreviewBudget
   definition: 'Caps that bound the size of one response, independent of slice.
@@ -175,11 +195,11 @@ concepts:
     '
   properties:
   - 'preview_lines: cap when slice is omitted'
-  - 'value_preview_len: cap on a single scalar value shown inline'
+  - 'value_preview_len: cap on a single scalar value or name shown inline'
   - overflow to file is delegated to the read-only batch mechanism
   source_ranges:
-  - start: 123
-    end: 134
+  - start: 186
+    end: 198
 - concept_id: C-014
   name: ErrorClassification
   definition: 'Distinction between input errors, file-structure errors, and handler-internal
@@ -187,14 +207,14 @@ concepts:
 
     '
   properties:
-  - 'input errors: unknown extension, malformed slice, unknown node_ref, conflicting
-    parameters'
+  - 'input errors: unknown extension, malformed slice, unknown node_ref, slice on
+    non-sliceable focus, conflicting parameters'
   - 'file-structure errors: parse failure with parser name and line range'
   - 'handler-internal errors: code names the handler'
-  - no silent fallback between engines or handlers
+  - no silent fallback to a different file type
   source_ranges:
-  - start: 136
-    end: 148
+  - start: 200
+    end: 213
 - concept_id: C-015
   name: ReadOnlyBatchIntegration
   definition: 'Inclusion of the command name in the read-only batch whitelist so the
@@ -206,85 +226,83 @@ concepts:
   - 'whitelist constant: READ_ONLY_BATCH_WHITELIST (frozenset of strings)'
   - inclusion is a separate step performed only after command tests are green
   source_ranges:
-  - start: 19
+  - start: 20
     end: 21
-  - start: 167
-    end: 175
+  - start: 228
+    end: 238
 - concept_id: C-016
   name: PythonHandler
-  definition: 'Handler for .py, .pyi, .pyw files. Uses TreeEngine. Source of stable
-    identifiers is cst_load_file.
+  definition: 'Handler for .py, .pyi, .pyw files. Produces a tree_node root (Module)
+    and tree_node children for FunctionDef/ClassDef. Identifier source is cst_load_file.
 
     '
   properties:
   - 'supported extensions: .py, .pyi, .pyw'
-  - 'engine: TreeEngine'
-  - 'identifier source: cst_load_file outline_nodes'
-  - 'root focus when node_ref absent: Module node'
+  - 'root NodeKind: tree_node (Module)'
+  - interior nodes are tree_node, sequence, or scalar depending on CST
+  - 'identifier source: cst_load_file outline_nodes stable_id'
   source_ranges:
-  - start: 31
-    end: 33
-  - start: 73
-    end: 76
+  - start: 130
+    end: 134
 - concept_id: C-017
   name: TextHandler
-  definition: 'Handler for .md, .txt, .rst, .adoc files. Uses LinesEngine.
+  definition: 'Handler for .md, .txt, .rst, .adoc files. Produces a lines root.
 
     '
   properties:
   - 'supported extensions: .md, .txt, .rst, .adoc'
-  - 'engine: LinesEngine'
-  - no NodeReference accepted (rejected as input error)
+  - 'root NodeKind: lines'
+  - children are scalar lines
+  - node_ref values are zero-based line indices
   source_ranges:
-  - start: 31
-    end: 32
+  - start: 141
+    end: 144
 - concept_id: C-018
   name: JsonHandler
-  definition: 'Handler for .json files. Selects engine per request based on document
-    root.
+  definition: 'Handler for .json files. Root NodeKind depends on the document type:
+    mapping for objects, sequence for arrays, scalar for bare scalars.
 
     '
   properties:
   - 'supported extensions: .json'
-  - 'engine per root kind: object selects TreeEngine, array selects SequenceEngine'
+  - 'root NodeKind: mapping, sequence, or scalar (depending on document root)'
   - 'identifier source: list_json_blocks (node_id or JSON pointer)'
   source_ranges:
-  - start: 34
-    end: 38
-  - start: 77
-    end: 80
+  - start: 136
+    end: 139
 - concept_id: C-019
   name: JsonLinesHandler
-  definition: 'Handler for .jsonl, .ndjson files. Uses LinesEngine where each line
-    is treated as a document boundary.
+  definition: 'Handler for .jsonl, .ndjson files. Root is a lines node whose children
+    are scalar text lines; the caller can drill into a specific line by passing its
+    index, and that follow-up request opens the JSON on that line as its own root.
 
     '
   properties:
   - 'supported extensions: .jsonl, .ndjson'
-  - 'engine: LinesEngine'
-  - 'addressable set: document lines'
+  - 'root NodeKind: lines'
+  - slice on root selects line indices
+  - drilling into a line parses that line as JSON
   source_ranges:
-  - start: 31
-    end: 32
-  - start: 49
-    end: 50
+  - start: 137
+    end: 137
+  - start: 141
+    end: 144
 - concept_id: C-020
   name: YamlHandler
-  definition: 'Handler for .yaml, .yml files. Selects engine per request based on
-    document root or multi-document state.
+  definition: 'Handler for .yaml, .yml files. Root NodeKind depends on the document:
+    mapping for YAML mappings, sequence for YAML sequences, scalar for bare scalars;
+    for multi-document files the root is a sequence of document roots.
 
     '
   properties:
   - 'supported extensions: .yaml, .yml'
-  - 'engine per root kind: mapping selects TreeEngine, sequence selects SequenceEngine,
-    multi-document selects LinesEngine over documents'
+  - 'root NodeKind: mapping, sequence, or scalar'
+  - 'multi-document file: root is a sequence of document roots'
   - 'identifier source: reused from project YAML infra when present, else JSON-pointer-style
     path'
   source_ranges:
-  - start: 34
-    end: 38
-  - start: 81
-    end: 83
+  - start: 138
+    end: 139
 - concept_id: C-021
   name: ScopeBoundary
   definition: 'Explicit set of behaviours that the command does NOT perform, used
@@ -297,8 +315,8 @@ concepts:
   - no globs in file_path; exactly one file per call
   - XML and HTML are out of scope
   source_ranges:
-  - start: 150
-    end: 165
+  - start: 215
+    end: 226
 relations:
 - from_concept: C-001
   to_concept: C-002
@@ -306,40 +324,40 @@ relations:
 - from_concept: C-002
   to_concept: C-003
   type: uses
-- from_concept: C-003
-  to_concept: C-004
-  type: uses
-- from_concept: C-003
+- from_concept: C-001
+  to_concept: C-007
+  type: owns
+- from_concept: C-007
   to_concept: C-005
-  type: uses
-- from_concept: C-003
+  type: consumes
+- from_concept: C-007
+  to_concept: C-008
+  type: consumes
+- from_concept: C-007
   to_concept: C-006
   type: uses
-- from_concept: C-004
-  to_concept: C-007
+- from_concept: C-007
+  to_concept: C-012
   type: produces
 - from_concept: C-005
-  to_concept: C-007
-  type: produces
+  to_concept: C-004
+  type: depends_on
 - from_concept: C-006
-  to_concept: C-007
-  type: produces
-- from_concept: C-008
-  to_concept: C-007
-  type: consumes
+  to_concept: C-004
+  type: depends_on
 - from_concept: C-001
   to_concept: C-008
   type: consumes
 - from_concept: C-010
   to_concept: C-009
   type: depends_on
-- from_concept: C-005
+- from_concept: C-007
   to_concept: C-010
   type: consumes
 - from_concept: C-001
   to_concept: C-010
   type: consumes
-- from_concept: C-005
+- from_concept: C-007
   to_concept: C-011
   type: uses
 - from_concept: C-001
@@ -348,16 +366,10 @@ relations:
 - from_concept: C-001
   to_concept: C-012
   type: produces
-- from_concept: C-005
-  to_concept: C-012
-  type: produces
-- from_concept: C-004
-  to_concept: C-012
-  type: produces
-- from_concept: C-006
-  to_concept: C-012
-  type: produces
 - from_concept: C-001
+  to_concept: C-013
+  type: consumes
+- from_concept: C-007
   to_concept: C-013
   type: consumes
 - from_concept: C-001
@@ -366,6 +378,9 @@ relations:
 - from_concept: C-003
   to_concept: C-014
   type: produces
+- from_concept: C-007
+  to_concept: C-014
+  type: produces
 - from_concept: C-016
   to_concept: C-003
   type: extends
@@ -382,35 +397,29 @@ relations:
   to_concept: C-003
   type: extends
 - from_concept: C-016
-  to_concept: C-005
-  type: uses
+  to_concept: C-004
+  type: produces
+- from_concept: C-017
+  to_concept: C-004
+  type: produces
+- from_concept: C-018
+  to_concept: C-004
+  type: produces
+- from_concept: C-019
+  to_concept: C-004
+  type: produces
+- from_concept: C-020
+  to_concept: C-004
+  type: produces
 - from_concept: C-016
   to_concept: C-009
   type: depends_on
-- from_concept: C-017
-  to_concept: C-004
-  type: uses
-- from_concept: C-018
-  to_concept: C-005
-  type: uses
-- from_concept: C-018
-  to_concept: C-006
-  type: uses
 - from_concept: C-018
   to_concept: C-009
   type: depends_on
-- from_concept: C-019
-  to_concept: C-004
-  type: uses
 - from_concept: C-020
-  to_concept: C-005
-  type: uses
-- from_concept: C-020
-  to_concept: C-006
-  type: uses
-- from_concept: C-020
-  to_concept: C-004
-  type: uses
+  to_concept: C-009
+  type: depends_on
 - from_concept: C-015
   to_concept: C-001
   type: depends_on

@@ -97,6 +97,35 @@ PROJECT_ACTIVITY_LOCKS_INDEX = (
     "CREATE INDEX IF NOT EXISTS idx_project_activity_locks_lease_until "
     f"ON {PROJECT_ACTIVITY_LOCKS_TABLE}(lease_until)"
 )
+RUNTIME_LOCK_SESSIONS_TABLE = "runtime_lock_sessions"
+FILE_ADVISORY_LOCK_LEASES_TABLE = "file_advisory_lock_leases"
+RUNTIME_LOCK_SESSIONS_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {RUNTIME_LOCK_SESSIONS_TABLE} ("
+    "session_id TEXT PRIMARY KEY, "
+    "pid INTEGER NOT NULL UNIQUE, "
+    "listener_url TEXT, "
+    "role TEXT NOT NULL, "
+    "hostname TEXT, "
+    "started_at REAL DEFAULT (julianday('now')), "
+    "updated_at REAL DEFAULT (julianday('now'))"
+    ")"
+)
+FILE_ADVISORY_LOCK_LEASES_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {FILE_ADVISORY_LOCK_LEASES_TABLE} ("
+    "session_id TEXT NOT NULL, "
+    "project_id TEXT NOT NULL, "
+    "file_path TEXT NOT NULL, "
+    "lock_mode TEXT NOT NULL, "
+    "locked_since REAL DEFAULT (julianday('now')), "
+    "updated_at REAL DEFAULT (julianday('now')), "
+    "refcount INTEGER NOT NULL DEFAULT 1, "
+    "PRIMARY KEY (session_id, project_id, file_path, lock_mode), "
+    "FOREIGN KEY (session_id) REFERENCES runtime_lock_sessions(session_id) ON DELETE CASCADE, "
+    "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE, "
+    "CHECK (lock_mode IN ('exclusive', 'shared')), "
+    "CHECK (refcount > 0)"
+    ")"
+)
 
 
 def ensure_indexing_errors_table(conn: Any) -> None:
@@ -314,6 +343,38 @@ def ensure_project_activity_locks_table(conn: Any) -> None:
             pass
 
 
+def ensure_runtime_file_lock_tables(conn: Any) -> None:
+    """
+    Create runtime advisory lock session/lease tables after core DB bootstrap.
+    """
+    if not conn:
+        return
+    if not _sqlite_table_exists(conn, "projects"):
+        return
+    try:
+        conn.execute(RUNTIME_LOCK_SESSIONS_DDL)
+        conn.execute(FILE_ADVISORY_LOCK_LEASES_DDL)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_lock_sessions_pid "
+            f"ON {RUNTIME_LOCK_SESSIONS_TABLE}(pid)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_file "
+            f"ON {FILE_ADVISORY_LOCK_LEASES_TABLE}(project_id, file_path)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_session "
+            f"ON {FILE_ADVISORY_LOCK_LEASES_TABLE}(session_id)"
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning("Could not ensure runtime file lock tables: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     """Run all connection-time migrations in order."""
     # Align with legacy schema bootstrap / run_create_schema: apply schema_creation_migrate so
@@ -326,3 +387,4 @@ def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     ensure_indexing_worker_stats_table(conn, schema_manager)
     ensure_indexing_errors_table(conn)
     ensure_project_activity_locks_table(conn)
+    ensure_runtime_file_lock_tables(conn)

@@ -92,7 +92,7 @@ def create_database_client_from_config_path(
         driver.connect(resolved["config"])
         handlers = RPCHandlers(driver)
         transport = InProcessRpcClient(handlers)
-        return DatabaseClient(
+        client = DatabaseClient(
             rpc_client=transport,
             timeout=timeout,
             max_retries=max_retries,
@@ -100,6 +100,8 @@ def create_database_client_from_config_path(
             pool_size=pool_size,
             driver_type=driver_type,
         )
+        client.driver_config = resolved
+        return client
 
     if driver_type not in ("sqlite", "sqlite_proxy"):
         logger.warning(
@@ -108,7 +110,7 @@ def create_database_client_from_config_path(
         )
 
     socket_path = compute_socket_path_for_sqlite_driver(resolved, storage.db_path)
-    return DatabaseClient(
+    client = DatabaseClient(
         socket_path=socket_path,
         timeout=timeout,
         max_retries=max_retries,
@@ -116,6 +118,8 @@ def create_database_client_from_config_path(
         pool_size=pool_size,
         driver_type=driver_type,
     )
+    client.driver_config = resolved
+    return client
 
 
 def create_worker_database_client(

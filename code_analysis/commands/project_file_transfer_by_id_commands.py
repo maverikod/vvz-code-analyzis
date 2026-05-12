@@ -14,7 +14,7 @@ from __future__ import annotations
 import gzip
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, Dict, Optional, Tuple, Type, Union, cast
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from mcp_proxy_adapter.api.transfer_session_service import (
@@ -44,8 +44,22 @@ from .universal_file_save_command import UniversalFileSaveCommand
 from ..core.backup_manager import BackupManager
 from ..core.database_client.client import DatabaseClient
 from ..core.exceptions import ValidationError
+from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
+from ..core.runtime_lock_sessions import (
+    get_session_id_for_current_pid,
+    normalize_lock_mode,
+    register_runtime_session,
+    runtime_session_exists,
+)
+from ..core.transfer_lock_registry import (
+    TransferLockEntry,
+    install_transfer_lock_hooks,
+    register_transfer_lock,
+    release_transfer_lock,
+)
 
 logger = logging.getLogger(__name__)
+install_transfer_lock_hooks()
 
 
 def _read_completed_upload_text(
@@ -270,6 +284,7 @@ def _resolve_file_target(
             code="VALIDATION_ERROR",
             details={"field": "project_id"},
         )
+    assert fp is not None
     out = _resolve_by_file_path(
         database, pid_in, fp, require_file_exists=path_must_exist
     )
@@ -297,7 +312,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
-        return get_project_file_transfer_download_begin_schema()
+        return cast(Dict[str, Any], get_project_file_transfer_download_begin_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super().validate_params(params)
@@ -308,6 +323,14 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
                 field="compression",
                 details={},
             )
+        try:
+            normalize_lock_mode(params.get("lock_mode") or "none")
+        except ValueError as exc:
+            raise ValidationError(
+                str(exc),
+                field="lock_mode",
+                details={"lock_mode": params.get("lock_mode")},
+            ) from exc
         cs = params.get("chunk_size")
         if cs is not None:
             if not isinstance(cs, int) or cs <= 0:
@@ -322,7 +345,9 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
     def metadata(
         cls: Type["ProjectFileTransferDownloadBeginCommand"],
     ) -> Dict[str, Any]:
-        return get_project_file_transfer_download_begin_metadata(cls)
+        return cast(
+            Dict[str, Any], get_project_file_transfer_download_begin_metadata(cls)
+        )
 
     async def execute(
         self,
@@ -332,6 +357,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         file_path: Optional[str] = None,
         chunk_size: Optional[int] = None,
         include_backup_history: bool = True,
+        lock_mode: str = "none",
         job_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
         **kwargs: Any,
@@ -383,14 +409,59 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         if correlation_id:
             payload["correlation_id"] = str(correlation_id).strip()
 
+        mode = normalize_lock_mode(lock_mode)
+        lock_session_id: Optional[str] = None
+        lock_handle = None
+        if mode != "none":
+            lock_session_id = get_session_id_for_current_pid(database, role="daemon")
+            if not runtime_session_exists(database, lock_session_id):
+                register_runtime_session(
+                    database, role="daemon", session_id=lock_session_id
+                )
+            try:
+                lock_handle = acquire_persistent_file_lock(
+                    abs_path,
+                    mode=lock_mode,
+                    database=database,
+                    project_id=effective_project_id,
+                    file_path=rel_posix,
+                    session_id=lock_session_id,
+                    register_role="daemon",
+                )
+            except Exception as exc:
+                return ErrorResult(
+                    message=f"Failed to acquire transfer lock: {exc}",
+                    code="LOCK_ACQUIRE_FAILED",
+                    details={
+                        "project_id": effective_project_id,
+                        "file_path": rel_posix,
+                        "lock_mode": mode,
+                    },
+                )
         try:
             data = await run_create_download_session(payload)
         except TransferPayloadValidationError as exc:
+            if lock_handle is not None:
+                lock_handle.release(force_lease=True)
             return transfer_validation_error_result(exc.missing_fields)
         except (TransferTooLargeError, TransferCompressionError, TransferError) as exc:
+            if lock_handle is not None:
+                lock_handle.release(force_lease=True)
             return transfer_domain_error_result(exc)
 
         tid = str(data.get("transfer_id", "")).strip()
+        if lock_handle is not None and lock_session_id is not None:
+            register_transfer_lock(
+                TransferLockEntry(
+                    transfer_id=tid,
+                    direction="download",
+                    project_id=effective_project_id,
+                    file_path=rel_posix,
+                    session_id=lock_session_id,
+                    lock_mode=lock_mode,
+                    handle=lock_handle,
+                )
+            )
         transport = build_transfer_chunk_transport(
             direction="download", transfer_id=tid
         )
@@ -403,6 +474,8 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
             "file_id": fid_out,
             "project_id": effective_project_id,
             "file_path": rel_posix,
+            "lock_mode": lock_mode,
+            "lock_session_id": lock_session_id,
         }
         if include_backup_history:
             bm = BackupManager(root)
@@ -438,7 +511,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
-        return get_project_file_transfer_upload_save_schema()
+        return cast(Dict[str, Any], get_project_file_transfer_upload_save_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super().validate_params(params)
@@ -458,11 +531,19 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                     field="diff_context_lines",
                     details={"diff_context_lines": dcl},
                 )
+        try:
+            normalize_lock_mode(params.get("lock_mode") or "none")
+        except ValueError as exc:
+            raise ValidationError(
+                str(exc),
+                field="lock_mode",
+                details={"lock_mode": params.get("lock_mode")},
+            ) from exc
         return params
 
     @classmethod
     def metadata(cls: Type["ProjectFileTransferUploadSaveCommand"]) -> Dict[str, Any]:
-        return get_project_file_transfer_upload_save_metadata(cls)
+        return cast(Dict[str, Any], get_project_file_transfer_upload_save_metadata(cls))
 
     async def execute(
         self,
@@ -477,6 +558,8 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         diff_context_lines: Optional[int] = None,
         validate_syntax_only: bool = False,
         tree_id: Optional[str] = None,
+        unlock_after_write: bool = True,
+        lock_mode: str = "none",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         database = self._open_database_from_config(auto_analyze=False)
@@ -496,6 +579,57 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             return read_out
         content, _compression = read_out
 
+        mode = normalize_lock_mode(lock_mode)
+        lock_session_id: Optional[str] = None
+        lock_handle = None
+        if mode != "none":
+            project = database.get_project(effective_project_id)
+            if not project:
+                return ErrorResult(
+                    message=f"Project {effective_project_id} not found",
+                    code="PROJECT_NOT_FOUND",
+                    details={"project_id": effective_project_id},
+                )
+            root = Path(project.root_path).resolve()
+            try:
+                abs_path = resolve_under_project_root(
+                    root,
+                    rel_posix,
+                    require_exists=False,
+                    must_be_file=None,
+                )
+            except ValidationError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="PATH_ERROR",
+                    details=getattr(e, "details", None) or {},
+                )
+            lock_session_id = get_session_id_for_current_pid(database, role="daemon")
+            if not runtime_session_exists(database, lock_session_id):
+                register_runtime_session(
+                    database, role="daemon", session_id=lock_session_id
+                )
+            try:
+                lock_handle = acquire_persistent_file_lock(
+                    abs_path,
+                    mode=lock_mode,
+                    database=database,
+                    project_id=effective_project_id,
+                    file_path=rel_posix,
+                    session_id=lock_session_id,
+                    register_role="daemon",
+                )
+            except Exception as exc:
+                return ErrorResult(
+                    message=f"Failed to acquire transfer save lock: {exc}",
+                    code="LOCK_ACQUIRE_FAILED",
+                    details={
+                        "project_id": effective_project_id,
+                        "file_path": rel_posix,
+                        "lock_mode": mode,
+                    },
+                )
+
         saver = UniversalFileSaveCommand()
         result = await saver.execute(
             project_id=effective_project_id,
@@ -510,8 +644,12 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             tree_id=tree_id,
             **kwargs,
         )
+        if not isinstance(result, SuccessResult) and lock_handle is not None:
+            lock_handle.release(force_lease=True)
         if isinstance(result, SuccessResult) and isinstance(result.data, dict):
             result.data.setdefault("resolved_file_path", rel_posix)
+            result.data.setdefault("lock_mode", lock_mode)
+            result.data.setdefault("lock_session_id", lock_session_id)
             fid_out: Optional[str] = None
             if file_id and str(file_id).strip():
                 fid_out = str(file_id).strip()
@@ -534,4 +672,21 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                             result.data["file_id"] = str(row2["id"])
                     except (ValidationError, OSError, ValueError):
                         pass
+            if bool(unlock_after_write) and not bool(dry_run):
+                released_by_transfer = release_transfer_lock(
+                    str(transfer_id),
+                    reason="upload_save",
+                )
+                if not released_by_transfer and lock_session_id is not None:
+                    release_persistent_file_lock(
+                        session_id=lock_session_id,
+                        project_id=effective_project_id,
+                        file_path=rel_posix,
+                        database=database,
+                        force=True,
+                    )
+                result.data["lock_released"] = True
+            elif bool(dry_run) and lock_handle is not None:
+                lock_handle.release(force_lease=True)
+                result.data["lock_released"] = True
         return result

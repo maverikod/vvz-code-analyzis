@@ -800,13 +800,33 @@ def _merge_explicit_watcher_file_paths(
             logger.debug("Error normalizing merged path %s: %s", item, e)
 
 
+def _db_file_row_mapping(db_file: Any) -> Dict[str, Any]:
+    """Normalize a DB row dict or ``File`` model for :func:`absolute_path_for_indexed_file`."""
+    if isinstance(db_file, dict):
+        return db_file
+    path = getattr(db_file, "path", None) or ""
+    rel = getattr(db_file, "relative_path", None)
+    return {
+        "path": path if isinstance(path, str) else str(path),
+        "relative_path": (
+            rel if isinstance(rel, str) else (str(rel) if rel is not None else "")
+        ),
+    }
+
+
 def find_missing_files(
     scanned_files: Dict[str, Dict],
-    db_files: List[Dict],
+    db_files: List[Any],
     project_root: Path,
 ) -> Set[str]:
     """
-    Find files that exist in database but not on disk.
+    Find DB file rows that are not covered by this scan and are not regular files on disk.
+
+    Paths present in ``scanned_files`` (project-relative keys) are never reported as
+    missing. Otherwise the resolved absolute path is checked: if it is not a regular
+    file (deleted, moved, permission error), the row is treated as missing. Files that
+    still exist on disk but were skipped by the scanner (for example ignore rules) are
+    not reported so the watcher does not soft-delete them.
 
     Args:
         scanned_files: Files found on disk for this project, keyed by **project-relative**
@@ -818,16 +838,29 @@ def find_missing_files(
         Set of **project-relative** POSIX paths that are missing on disk
     """
     from ..path_normalization import normalize_path_simple
-    from ..file_identity import absolute_path_for_indexed_file, relative_path_for_project
+    from ..file_identity import (
+        absolute_path_for_indexed_file,
+        relative_path_for_project,
+    )
 
     missing: set[str] = set()
-    root = project_root.resolve()
+    try:
+        root = project_root.resolve()
+    except OSError:
+        root = project_root
     for db_file in db_files:
-        abs_key = normalize_path_simple(absolute_path_for_indexed_file(root, db_file))
+        row = _db_file_row_mapping(db_file)
+        abs_key = normalize_path_simple(absolute_path_for_indexed_file(root, row))
         try:
             rel_key = relative_path_for_project(abs_key, root)
         except ValueError:
             continue
-        if rel_key not in scanned_files:
+        if rel_key in scanned_files:
+            continue
+        try:
+            still_file = Path(abs_key).is_file()
+        except OSError:
+            still_file = False
+        if not still_file:
             missing.add(rel_key)
     return missing

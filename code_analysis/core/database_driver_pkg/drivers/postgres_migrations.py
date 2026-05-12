@@ -52,25 +52,32 @@ def _ensure_missing_column(
     conn.commit()
 
 
-def idempotent_ensure_project_activity_locks_table(
+def idempotent_ensure_runtime_lock_tables(
     conn: Any, schema_definition: Dict[str, Any]
 ) -> None:
     """
-    Create project_activity_locks and idx_project_activity_locks_lease_until if missing.
+    Create runtime/project lock tables and indexes if missing.
 
-    Uses the same DDL as create_postgresql_schema for this table (CREATE IF NOT EXISTS).
+    Uses the same DDL as create_postgresql_schema for these tables (CREATE IF NOT EXISTS).
     Safe to run repeatedly; no SQLite-only syntax.
     """
-    if "project_activity_locks" not in schema_definition.get("tables", {}):
-        return
     with conn.cursor() as cur:
-        cur.execute(
-            generate_create_table_sql_postgres(
-                schema_definition, "project_activity_locks"
+        for table_name in (
+            "project_activity_locks",
+            "runtime_lock_sessions",
+            "file_advisory_lock_leases",
+        ):
+            if table_name not in schema_definition.get("tables", {}):
+                continue
+            cur.execute(
+                generate_create_table_sql_postgres(schema_definition, table_name)
             )
-        )
         for idx in schema_definition.get("indexes", []):
-            if idx.get("name") != "idx_project_activity_locks_lease_until":
+            if idx.get("table") not in {
+                "project_activity_locks",
+                "runtime_lock_sessions",
+                "file_advisory_lock_leases",
+            }:
                 continue
             idef = IndexDef(
                 name=idx["name"],
@@ -81,6 +88,13 @@ def idempotent_ensure_project_activity_locks_table(
             )
             cur.execute(generate_create_index_sql_postgres(idef))
     conn.commit()
+
+
+def idempotent_ensure_project_activity_locks_table(
+    conn: Any, schema_definition: Dict[str, Any]
+) -> None:
+    """Backward-compatible wrapper for project/runtime lock table ensures."""
+    idempotent_ensure_runtime_lock_tables(conn, schema_definition)
 
 
 def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
@@ -144,8 +158,8 @@ def ensure_postgres_schema(
             )
         locked = True
         create_postgresql_schema(conn, schema_definition)
-        # Step 12: explicit idempotent pass (CREATE IF NOT EXISTS) for the lease table and index.
-        idempotent_ensure_project_activity_locks_table(conn, schema_definition)
+        # Explicit idempotent pass for runtime lock tables and indexes.
+        idempotent_ensure_runtime_lock_tables(conn, schema_definition)
         _ensure_missing_column(
             conn,
             table_name="code_chunks",

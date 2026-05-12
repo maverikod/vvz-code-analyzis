@@ -57,6 +57,18 @@ logger = logging.getLogger(__name__)
 _MISSING_VALUE = object()
 
 
+def _sort_text_replacements_bottom_up(
+    triples: List[Tuple[int, int, List[str]]],
+) -> List[Tuple[int, int, List[str]]]:
+    """
+    Order text replacement ranges for sequential application without line drift.
+
+    Larger physical positions are applied first (bottom of file upward). Within the
+    same start_line, larger end_line first. Matches :func:`merge_adjacent_ranges_for_replace`.
+    """
+    return sorted(triples, key=lambda t: (t[0], t[1]), reverse=True)
+
+
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
     data: Dict[str, Any] = {
         "success": True,
@@ -291,7 +303,8 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
         "Partial replace using the universal handler registry. "
         "Unsupported extensions fail with UNSUPPORTED_FILE_EXTENSION before any backup or write. "
         "Text: single range (start_line, end_line, new_lines) or replacements "
-        "(non-overlapping ranges). JSON: operations list. YAML: yaml_path + value. "
+        "(non-overlapping ranges; applied bottom-up so line numbers stay stable). "
+        "JSON: operations list. YAML: yaml_path + value. "
         "Python: ops list only. Supports dry_run and diff."
         + " "
         + MCP_FILE_MANAGEMENT_REGISTRY_HELP
@@ -309,7 +322,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
             "description": (
                 "Registry-first replace. Required: project_id, file_path. "
                 "Handler-specific: text — (start_line, end_line, new_lines) or "
-                "replacements (overlapping ranges rejected before write); json — "
+                "replacements (overlapping ranges rejected; applied bottom-up); json — "
                 "operations; yaml — yaml_path, value; python — ops. "
                 "Optional: dry_run, diff, backup, commit_message, diff_context_lines, "
                 "validate_syntax_only (python), validate_docstrings (python), tree_id (python). "
@@ -387,7 +400,9 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                     "description": (
                         "Text: multiple disjoint ranges. Each item: either "
                         '{"start_line", "end_line", "new_lines"} or '
-                        "[start_line, end_line, new_lines]. Overlapping ranges rejected."
+                        "[start_line, end_line, new_lines]. Overlapping ranges rejected. "
+                        "Application order is bottom-up (by start_line, then end_line); "
+                        "the order of items in this array need not match that order."
                     ),
                 },
                 "operations": {
@@ -523,7 +538,8 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 if replacements is not None:
                     triples = _normalize_text_replacement_triples(replacements)
                     assert isinstance(triples, list)
-                    extra["replacements"] = [[a, b, nl] for a, b, nl in triples]
+                    ordered = _sort_text_replacements_bottom_up(triples)
+                    extra["replacements"] = [[a, b, nl] for a, b, nl in ordered]
                 else:
                     extra["start_line"] = int(start_line)  # type: ignore[arg-type]
                     extra["end_line"] = int(end_line)  # type: ignore[arg-type]

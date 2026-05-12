@@ -251,6 +251,35 @@ def compute_delta(
                         "Skipping automatic deletion. Files will be checked again in next scan."
                     )
                     continue
+                # No scan entries for this project this cycle (e.g. last indexed file removed),
+                # but DB rows must still be reconciled against disk.
+                try:
+                    get_raw = getattr(database, "get_project_file_rows", None)
+                    if get_raw is not None:
+                        sup_db_list = get_raw(db_project_id, include_deleted=False)
+                    else:
+                        sup_db_list = database.get_project_files(
+                            db_project_id, include_deleted=False
+                        )
+                    if not sup_db_list:
+                        continue
+                    extra_deleted = list(
+                        find_missing_files({}, sup_db_list, db_root_path)
+                    )
+                    if not extra_deleted:
+                        continue
+                    deltas[db_project_id] = FileDelta(
+                        new_files=[],
+                        changed_files=[],
+                        deleted_files=extra_deleted,
+                    )
+                except Exception as sup_e:
+                    logger.error(
+                        "Supplemental watcher delta (no scan hits) failed for project %s: %s",
+                        db_project_id,
+                        sup_e,
+                        exc_info=True,
+                    )
             except Exception as e:
                 logger.debug(
                     f"Error checking project {db_project_id} root_path {db_root_path_str}: {e}"

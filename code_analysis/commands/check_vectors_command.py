@@ -24,16 +24,16 @@ class CheckVectorsCommand(BaseMCPCommand):
 
     Provides comprehensive statistics about code chunks and their vectorization status:
     - Total number of chunks in database
-    - Number of chunks with vector_id (vectorized)
+    - Number of chunks ANN-indexed (FAISS: vector_id; pgvector: embedding_vec)
     - Number of chunks with embedding_model
-    - Number of chunks pending vectorization (vector_id IS NULL)
+    - Number of chunks pending ANN indexing for the active backend
     - Vectorization percentage
     - Sample chunks with vector data
 
     This command is useful for:
     - Monitoring vectorization progress
     - Diagnosing vectorization issues
-    - Verifying that vectors are being added to FAISS index
+    - Verifying ANN indexing (FAISS file index or PostgreSQL pgvector column)
     - Checking embedding model usage
     """
 
@@ -63,16 +63,13 @@ class CheckVectorsCommand(BaseMCPCommand):
             "detailed_description": (
                 "The `check_vectors` command provides a comprehensive overview of the "
                 "vectorization status of code chunks stored in the database. "
-                "It reports on the total number of chunks, how many have been "
-                "vectorized (i.e., have a `vector_id` in the FAISS index), "
+                "It reports on the total number of chunks, how many are ANN-ready "
+                "(FAISS: non-null `vector_id`; PostgreSQL pgvector: non-null `embedding_vec`), "
                 "how many have an `embedding_model` specified, and how many are "
-                "still pending vectorization. It also calculates the overall "
-                "vectorization percentage and provides a sample of vectorized chunks "
-                "with detailed information such as their FAISS ID, the embedding model used, "
-                "chunk type, source type, and a text preview. "
-                "This command is crucial for monitoring the progress and health of "
-                "the vectorization pipeline, diagnosing issues, and verifying the "
-                "integrity of the FAISS index."
+                "still pending ANN indexing. It also calculates the overall "
+                "vectorization percentage and provides a sample of indexed chunks "
+                "(FAISS ID may be null when using pgvector). "
+                "The field `vector_ann_backend` in the result is `faiss` or `pgvector`."
             ),
             "parameters": {
                 "root_dir": {
@@ -199,8 +196,8 @@ class CheckVectorsCommand(BaseMCPCommand):
                     "chunks_with_vector": {
                         "type": "integer",
                         "description": (
-                            "Number of chunks that have been assigned a `vector_id` "
-                            "(i.e., indexed in FAISS). These chunks are ready for semantic search."
+                            "Chunks ready for semantic ANN search: non-null `vector_id` "
+                            "(FAISS) or non-null `embedding_vec` (pgvector on PostgreSQL)."
                         ),
                     },
                     "chunks_with_model": {
@@ -213,8 +210,9 @@ class CheckVectorsCommand(BaseMCPCommand):
                     "chunks_pending_vectorization": {
                         "type": "integer",
                         "description": (
-                            "Number of chunks that do not yet have a `vector_id` (pending processing). "
-                            "These chunks are waiting to be processed by the vectorization worker."
+                            "Chunks not yet ANN-indexed (null `vector_id` for FAISS, "
+                            "or null `embedding_vec` for pgvector), excluding "
+                            "`vectorization_skipped` rows."
                         ),
                     },
                     "vectorization_percentage": {
@@ -246,7 +244,10 @@ class CheckVectorsCommand(BaseMCPCommand):
                                 },
                                 "vector_id": {
                                     "type": "integer",
-                                    "description": "FAISS index ID for the chunk's embedding vector.",
+                                    "description": (
+                                        "FAISS index slot when using FAISS; often null with pgvector "
+                                        "(ANN storage is embedding_vec)."
+                                    ),
                                 },
                                 "embedding_model": {
                                     "type": "string",
@@ -336,7 +337,7 @@ class CheckVectorsCommand(BaseMCPCommand):
                     {
                         "id": int,
                         "chunk_type": str,               # e.g., "DocBlock"
-                        "vector_id": int,                # FAISS index ID
+                        "vector_id": int | None,         # FAISS slot; null typical for pgvector
                         "embedding_model": str,          # Model name used
                         "source_type": str,              # 'docstring', 'comment', 'file_docstring'
                         "text_preview": str              # First 100 characters of chunk text
@@ -352,7 +353,30 @@ class CheckVectorsCommand(BaseMCPCommand):
             ErrorResult with code "CHECK_VECTORS_ERROR" for other errors
         """
         try:
+            from ...core.config import get_driver_config
+            from ...core.storage_paths import load_raw_config
+            from ...core.vector_search_backend import effective_vector_search_backend
+
             root_path = self._resolve_project_root(project_id)
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            dc = get_driver_config(config_data) or {}
+            driver_type = str(dc.get("type") or "").strip().lower()
+            code_analysis_config = config_data.get("code_analysis", config_data)
+            vector_ann_backend = effective_vector_search_backend(
+                driver_type,
+                code_analysis_config.get("vector_search_backend"),
+            )
+            use_pgvector_ann = vector_ann_backend == "pgvector"
+            ann_ready_col = (
+                "embedding_vec IS NOT NULL"
+                if use_pgvector_ann
+                else "vector_id IS NOT NULL"
+            )
+            ann_pending_col = (
+                "embedding_vec IS NULL" if use_pgvector_ann else "vector_id IS NULL"
+            )
+
             db = self._open_database()
             proj_id = project_id
 
@@ -366,7 +390,7 @@ class CheckVectorsCommand(BaseMCPCommand):
                             vec_params,
                         ),
                         (
-                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL AND project_id = ?",
+                            f"SELECT COUNT(*) as count FROM code_chunks WHERE {ann_ready_col} AND project_id = ?",
                             vec_params,
                         ),
                         (
@@ -374,16 +398,16 @@ class CheckVectorsCommand(BaseMCPCommand):
                             vec_params,
                         ),
                         (
-                            """SELECT COUNT(*) as count FROM code_chunks
-                               WHERE vector_id IS NULL AND project_id = ?
+                            f"""SELECT COUNT(*) as count FROM code_chunks
+                               WHERE {ann_pending_col} AND project_id = ?
                                  AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
                             vec_params,
                         ),
                         (
-                            """
+                            f"""
                         SELECT id, chunk_type, chunk_text, vector_id, embedding_model, source_type
                         FROM code_chunks
-                        WHERE vector_id IS NOT NULL AND project_id = ?
+                        WHERE {ann_ready_col} AND project_id = ?
                         LIMIT 5
                         """,
                             vec_params,
@@ -393,7 +417,7 @@ class CheckVectorsCommand(BaseMCPCommand):
                     check_ops = [
                         ("SELECT COUNT(*) as count FROM code_chunks", None),
                         (
-                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL",
+                            f"SELECT COUNT(*) as count FROM code_chunks WHERE {ann_ready_col}",
                             None,
                         ),
                         (
@@ -401,16 +425,16 @@ class CheckVectorsCommand(BaseMCPCommand):
                             None,
                         ),
                         (
-                            """SELECT COUNT(*) as count FROM code_chunks
-                               WHERE vector_id IS NULL
+                            f"""SELECT COUNT(*) as count FROM code_chunks
+                               WHERE {ann_pending_col}
                                  AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
                             None,
                         ),
                         (
-                            """
+                            f"""
                         SELECT id, chunk_type, chunk_text, vector_id, embedding_model, source_type
                         FROM code_chunks
-                        WHERE vector_id IS NOT NULL
+                        WHERE {ann_ready_col}
                         LIMIT 5
                         """,
                             None,
@@ -471,6 +495,7 @@ class CheckVectorsCommand(BaseMCPCommand):
                     "chunks_with_vector": chunks_with_vector,
                     "chunks_with_model": chunks_with_model,
                     "chunks_pending_vectorization": chunks_pending,
+                    "vector_ann_backend": vector_ann_backend,
                     "vectorization_percentage": (
                         round((chunks_with_vector / total_chunks * 100), 2)
                         if total_chunks > 0

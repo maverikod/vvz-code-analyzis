@@ -347,7 +347,13 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
 
-        with file_lock(absolute_path):
+        with file_lock(
+            absolute_path,
+            mode="full",
+            database=database,
+            project_id=req.project_id,
+            file_path=req.file_path,
+        ):
             normalized_path = normalize_path_simple(str(absolute_path))
 
             backup_uuid: Optional[str] = None

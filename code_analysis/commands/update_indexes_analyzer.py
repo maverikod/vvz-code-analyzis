@@ -243,8 +243,11 @@ def analyze_file(
             progress_callback(phase)
 
     try:
-        file_path = file_path.resolve()
         root_path = root_path.resolve()
+        if not file_path.is_absolute():
+            file_path = (root_path / file_path).resolve()
+        else:
+            file_path = file_path.resolve()
 
         try:
             rel_path = str(file_path.relative_to(root_path))

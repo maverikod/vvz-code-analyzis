@@ -49,10 +49,11 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "- needing_chunking_sample: Sample of files needing chunking (up to 10)\n\n"
             "Chunk Statistics:\n"
             "- total: Total number of code chunks\n"
-            "- vectorized: Chunks with embedding vectors\n"
-            "- not_vectorized: Chunks without embedding vectors\n"
-            "- vectorization_percent: Percentage of chunks that are vectorized\n"
-            "- needing_vectorization_sample: Sample of chunks needing vectorization (up to 10)\n\n"
+            "- vectorized: Chunks ANN-indexed (FAISS: non-null vector_id; pgvector: non-null embedding_vec)\n"
+            "- not_vectorized: Chunks not yet ANN-indexed (same backend as vector_ann_backend in the result)\n"
+            "- vectorization_percent: Percentage of chunks that are ANN-indexed\n"
+            "- needing_vectorization_sample: Sample of chunks needing ANN indexing (up to 10)\n\n"
+            "The result includes vector_ann_backend (faiss or pgvector) from server config.\n\n"
             "Project Statistics:\n"
             "- total: Total number of projects\n"
             "- sample: Sample of projects (up to 10) with id and name\n\n"
@@ -166,9 +167,11 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     },
                     "chunks": {
                         "total": "Total number of chunks",
-                        "vectorized": "Chunks with embedding vectors",
-                        "not_vectorized": "Chunks without embedding vectors",
-                        "vectorization_percent": "Percentage of vectorized chunks",
+                        "vectorized": (
+                            "Chunks ANN-indexed (FAISS: vector_id; pgvector: embedding_vec)"
+                        ),
+                        "not_vectorized": "Chunks not yet ANN-indexed for the active backend",
+                        "vectorization_percent": "Percentage of ANN-indexed chunks",
                         "needing_vectorization_sample": (
                             "Sample of chunks needing vectorization (up to 10). Each contains: "
                             "id (code_chunks.pk UUID string), file_id (files.pk UUID string), "

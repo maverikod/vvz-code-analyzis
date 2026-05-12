@@ -48,6 +48,10 @@ def register_file_management_commands(reg: Any) -> None:
         ProjectFileTransferDownloadBeginCommand,
         ProjectFileTransferUploadSaveCommand,
     )
+    from .project_file_advisory_lock_batch_command import (
+        ProjectFileAdvisoryLockBatchCommand,
+    )
+    from .project_file_lock_status_command import ProjectFileLockStatusCommand
     from .read_project_text_file_command import ReadProjectTextFileCommand
     from .universal_file_delete_command import UniversalFileDeleteCommand
     from .universal_file_read_command import UniversalFileReadCommand
@@ -61,5 +65,7 @@ def register_file_management_commands(reg: Any) -> None:
     reg.register(UniversalFileReplaceCommand, "custom")
     reg.register(UniversalFileDeleteCommand, "custom")
     reg.register(WriteProjectTextLinesCommand, "custom")
+    reg.register(ProjectFileAdvisoryLockBatchCommand, "custom")
+    reg.register(ProjectFileLockStatusCommand, "custom")
     reg.register(ProjectFileTransferDownloadBeginCommand, "custom")
     reg.register(ProjectFileTransferUploadSaveCommand, "custom")

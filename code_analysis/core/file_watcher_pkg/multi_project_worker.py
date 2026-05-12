@@ -16,9 +16,10 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, cast
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
+from ..runtime_lock_sessions import register_runtime_session
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..docs_indexing_config_load import load_docs_indexing_from_config_path
 from ..venv_path_policy import (
@@ -152,6 +153,7 @@ class MultiProjectFileWatcherWorker:
                             config_path=cfg_path,
                         )
                         database.connect()
+                        register_runtime_session(database, role="file_watcher")
                         # Test connection with a simple query
                         try:
                             # Try to get a project to test connection
@@ -390,7 +392,7 @@ class MultiProjectFileWatcherWorker:
 
     async def _scan_cycle(self, database: Any, processors: Any) -> Dict[str, Any]:
         """Perform one scan cycle for all watched directories (delegate to cycle module)."""
-        return await run_scan_cycle(self, database, processors)
+        return cast(Dict[str, Any], await run_scan_cycle(self, database, processors))
 
     def _initialize_watch_dirs(self, database: Any) -> None:
         """Initialize watch directories from config (delegate to init module)."""

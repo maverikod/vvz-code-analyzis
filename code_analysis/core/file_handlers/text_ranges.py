@@ -242,7 +242,7 @@ def merge_adjacent_ranges_for_replace(
     work = lines[:]
     ordered = sorted(
         replacements,
-        key=lambda x: x[0].start_line,
+        key=lambda x: (x[0].start_line, x[0].end_line),
         reverse=True,
     )
     for lr, new_lines in ordered:

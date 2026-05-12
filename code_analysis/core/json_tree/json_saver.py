@@ -79,7 +79,14 @@ def save_json_tree_to_file(
     backup_manager: Optional[BackupManager] = None
     temp_file: Optional[Path] = None
 
-    with file_lock(target_path):
+    rel_lock_path = str(target_path.relative_to(root_dir))
+    with file_lock(
+        target_path,
+        mode="full",
+        database=database,
+        project_id=project_id,
+        file_path=rel_lock_path,
+    ):
         try:
             if backup and target_path.exists():
                 backup_manager = BackupManager(root_dir)

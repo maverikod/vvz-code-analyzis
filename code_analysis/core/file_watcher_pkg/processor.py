@@ -7,7 +7,8 @@ Implements Step 3 of refactor plan: scan → queue → process phases.
 - Process phase: downstream workers consume queued items
 
 Deleted file handling (FILE_TRASH_SPEC step 10):
-- When a file disappears from disk, the watcher soft-deletes the row (``deleted`` / TRUE).
+- When a file disappears from disk, the watcher soft-deletes the row (``deleted`` / TRUE),
+  including projects that produced no scan hits in a cycle but still have DB rows.
 - No physical move to trash is performed (the file is already gone from disk).
 - Explicit "mark for deletion" (mark_file_deleted in files.py) moves the file
   to trash_dir/project_id and then sets the flag; that path is the only way

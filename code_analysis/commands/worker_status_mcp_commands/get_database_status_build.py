@@ -7,9 +7,16 @@ email: vasilyvz@gmail.com
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
+from code_analysis.core.vector_search_backend import (
+    VectorSearchBackend,
+    ann_pending_sql_fragment,
+    ann_ready_sql_fragment,
+    driver_requires_faiss,
+    uses_pgvector_ann_for_database,
+)
 from code_analysis.core.project_ignore_policy import (
     sql_and_absolute_path_eligible_for_default_status_aggregates as _sql_path_ok_status,
 )
@@ -41,12 +48,22 @@ def _julian_day_threshold_sql(driver_type: str) -> str:
     return "julianday('now', '-1 day')"
 
 
-def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
-    """SQL batch for get_database_status; SQLite uses julianday(), PostgreSQL uses EXTRACT(JULIAN ...)."""
+def build_status_ops(
+    driver_type: str,
+    *,
+    vector_ann_backend: VectorSearchBackend = "faiss",
+) -> List[Tuple[str, Any]]:
+    """SQL batch for get_database_status; SQLite uses julianday(), PostgreSQL uses EXTRACT(JULIAN ...).
+
+    ``vector_ann_backend`` selects how \"vectorized\" chunks are counted: FAISS uses
+    ``vector_id``; pgvector uses ``embedding_vec`` (PostgreSQL only).
+    """
     j = _julian_day_threshold_sql(driver_type)
     p_files = _sql_path_ok_status("files.path")
     p_f = _sql_path_ok_status("f.path")
     p_fl = _sql_path_ok_status("fl.path")
+    cc_ready = ann_ready_sql_fragment("cc", vector_ann_backend)
+    cc_pending = ann_pending_sql_fragment("cc", vector_ann_backend)
     return [
         ("SELECT COUNT(*) as count FROM projects", None),
         (
@@ -74,14 +91,18 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
             + p_fl
             + """) as chunk_count,
             (SELECT COUNT(*) FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id
-              WHERE cc.project_id = p.id AND cc.vector_id IS NOT NULL AND """
+              WHERE cc.project_id = p.id AND """
+            + cc_ready
+            + """ AND """
             + _WHERE_FILES_ACTIVE_FL
             + p_fl
             + """) as vectorized_chunks,
             (SELECT COUNT(DISTINCT f.id) FROM files f INNER JOIN code_chunks cc ON f.id = cc.file_id WHERE f.project_id = p.id AND """
             + WHERE_FILES_ACTIVE_F
             + p_f
-            + """ AND cc.vector_id IS NOT NULL) as files_vectorized
+            + """ AND """
+            + cc_ready
+            + """) as files_vectorized
         FROM projects p
         ORDER BY p.name
         """,
@@ -134,14 +155,17 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
             "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE "
             + _WHERE_FILES_ACTIVE_FL
             + p_fl
-            + " AND cc.vector_id IS NOT NULL",
+            + " AND "
+            + cc_ready,
             None,
         ),
         (
             "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE "
             + _WHERE_FILES_ACTIVE_FL
             + p_fl
-            + " AND cc.vector_id IS NULL AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)",
+            + " AND "
+            + cc_pending
+            + " AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)",
             None,
         ),
         (
@@ -174,8 +198,9 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
         ),
         (
             "SELECT cc.id, cc.file_id, cc.chunk_text, cc.created_at FROM code_chunks cc "
-            "INNER JOIN files fl ON fl.id = cc.file_id WHERE cc.vector_id IS NULL "
-            "AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0) AND "
+            "INNER JOIN files fl ON fl.id = cc.file_id WHERE "
+            + cc_pending
+            + " AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0) AND "
             + _WHERE_FILES_ACTIVE_FL
             + p_fl
             + " ORDER BY cc.id DESC LIMIT 10",
@@ -185,7 +210,7 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
 
 
 # Default batch for SQLite-style servers (tests, scripts).
-STATUS_OPS: List[tuple] = build_status_ops("sqlite_proxy")
+STATUS_OPS: List[tuple] = build_status_ops("sqlite_proxy", vector_ann_backend="faiss")
 
 
 def _postgres_pool_observability_fields(db: Any, driver_type: str) -> Dict[str, Any]:
@@ -223,6 +248,7 @@ def build_database_status_result(
     db_path: Path,
     *,
     driver_type: str = "sqlite_proxy",
+    vector_ann_backend: Optional[VectorSearchBackend] = None,
 ) -> Dict[str, Any]:
     """
     Run status queries and build the full result dict.
@@ -230,11 +256,24 @@ def build_database_status_result(
     Caller must pass an open db client and the resolved db_path.
     ``driver_type`` must match ``code_analysis.database.driver.type`` so
     \"last 24h\" queries use valid SQL (SQLite ``julianday`` vs PostgreSQL ``EXTRACT``).
+
+    If ``vector_ann_backend`` is omitted, it is inferred from the driver type and
+    ``vector_search_backend`` on the database client (or defaults: SQLite → FAISS,
+    Postgres without client hint → pgvector when permitted).
     """
+    if vector_ann_backend is None:
+        if driver_requires_faiss(driver_type):
+            vector_ann_backend = "faiss"
+        else:
+            vector_ann_backend = (
+                "pgvector" if uses_pgvector_ann_for_database(db) else "faiss"
+            )
+
     is_pg = driver_type == "postgres"
     result: Dict[str, Any] = {
         "db_path": str(db_path),
         "database_driver": driver_type,
+        "vector_ann_backend": vector_ann_backend,
         "timestamp": datetime.now().isoformat(),
         "exists": True if is_pg else (db_path.exists() if db_path else False),
         "file_size_mb": (
@@ -253,7 +292,9 @@ def build_database_status_result(
         "worker_stats": {},
     }
 
-    batch_results = db.execute_batch(build_status_ops(driver_type))
+    batch_results = db.execute_batch(
+        build_status_ops(driver_type, vector_ann_backend=vector_ann_backend)
+    )
 
     def _row0(idx: int) -> int:
         d = batch_results[idx].get("data", []) if idx < len(batch_results) else []

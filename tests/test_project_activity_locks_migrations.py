@@ -21,6 +21,7 @@ from code_analysis.core.database_driver_pkg.drivers.postgres_migrations import (
 )
 from code_analysis.core.database_driver_pkg.drivers.sqlite_migrations import (
     ensure_project_activity_locks_table,
+    ensure_runtime_file_lock_tables,
 )
 
 
@@ -40,6 +41,18 @@ def test_schema_definition_includes_project_activity_locks() -> None:
     assert any(
         i.get("name") == "idx_project_activity_locks_lease_until" for i in sd["indexes"]
     )
+    assert "runtime_lock_sessions" in sd["tables"]
+    assert "file_advisory_lock_leases" in sd["tables"]
+    lease_cols = {
+        c["name"] for c in sd["tables"]["file_advisory_lock_leases"]["columns"]
+    }
+    assert {
+        "session_id",
+        "project_id",
+        "file_path",
+        "lock_mode",
+        "refcount",
+    }.issubset(lease_cols)
 
 
 def test_postgres_ddl_uses_create_if_not_exists() -> None:
@@ -70,6 +83,25 @@ def test_ensure_sqlite_project_activity_locks_idempotent() -> None:
             conn.close()
 
 
+def test_ensure_sqlite_runtime_file_lock_tables_idempotent() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "t.db"
+        conn = sqlite3.connect(str(p))
+        try:
+            conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
+            conn.commit()
+            ensure_runtime_file_lock_tables(conn)
+            for table in ("runtime_lock_sessions", "file_advisory_lock_leases"):
+                one = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                assert one is not None
+            ensure_runtime_file_lock_tables(conn)
+        finally:
+            conn.close()
+
+
 def test_ensure_sqlite_skips_without_projects_table() -> None:
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.db"
@@ -92,9 +124,10 @@ def test_idempotent_ensure_postgres_runs_table_and_index() -> None:
     conn = MagicMock()
     conn.cursor = MagicMock(return_value=ctx)
     idempotent_ensure_project_activity_locks_table(conn, get_schema_definition())
-    assert cur.execute.call_count == 2
+    assert cur.execute.call_count >= 2
     assert "CREATE TABLE IF NOT EXISTS" in cur.execute.call_args_list[0][0][0]
-    assert (
-        "idx_project_activity_locks_lease_until" in cur.execute.call_args_list[1][0][0]
-    )
+    statements = [call[0][0] for call in cur.execute.call_args_list]
+    assert any("idx_project_activity_locks_lease_until" in stmt for stmt in statements)
+    assert any("runtime_lock_sessions" in stmt for stmt in statements)
+    assert any("file_advisory_lock_leases" in stmt for stmt in statements)
     conn.commit.assert_called_once()

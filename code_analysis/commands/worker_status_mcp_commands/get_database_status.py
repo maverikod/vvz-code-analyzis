@@ -52,6 +52,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 resolve_storage_paths,
                 ensure_storage_dirs,
             )
+            from ...core.vector_search_backend import effective_vector_search_backend
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -66,10 +67,19 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             if not isinstance(driver_type, str):
                 driver_type = "sqlite_proxy"
 
+            code_analysis_config = config_data.get("code_analysis", config_data)
+            vector_ann_backend = effective_vector_search_backend(
+                str(driver_type),
+                code_analysis_config.get("vector_search_backend"),
+            )
+
             db = self._open_database_from_config(auto_analyze=False)
             try:
                 result = build_database_status_result(
-                    db, db_path, driver_type=driver_type
+                    db,
+                    db_path,
+                    driver_type=driver_type,
+                    vector_ann_backend=vector_ann_backend,
                 )
                 return SuccessResult(data=result)
             finally:

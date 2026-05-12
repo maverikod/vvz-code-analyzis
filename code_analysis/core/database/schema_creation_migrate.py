@@ -16,6 +16,60 @@ def run_migrate_schema(db: Any) -> None:
     Migrate database schema - add missing columns, update structure.
     Called on every database initialization to ensure schema is up to date.
     """
+    try:
+        db._execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_lock_sessions (
+                session_id TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL UNIQUE,
+                listener_url TEXT,
+                role TEXT NOT NULL,
+                hostname TEXT,
+                started_at REAL DEFAULT (julianday('now')),
+                updated_at REAL DEFAULT (julianday('now'))
+            )
+            """
+        )
+        db._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_runtime_lock_sessions_pid
+            ON runtime_lock_sessions(pid)
+            """
+        )
+        db._execute(
+            """
+            CREATE TABLE IF NOT EXISTS file_advisory_lock_leases (
+                session_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                lock_mode TEXT NOT NULL,
+                locked_since REAL DEFAULT (julianday('now')),
+                updated_at REAL DEFAULT (julianday('now')),
+                refcount INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (session_id, project_id, file_path, lock_mode),
+                FOREIGN KEY (session_id) REFERENCES runtime_lock_sessions(session_id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                CHECK (lock_mode IN ('exclusive', 'shared')),
+                CHECK (refcount > 0)
+            )
+            """
+        )
+        db._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_file
+            ON file_advisory_lock_leases(project_id, file_path)
+            """
+        )
+        db._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_session
+            ON file_advisory_lock_leases(session_id)
+            """
+        )
+        db._commit()
+    except Exception as e:
+        logger.warning("Could not create runtime lock tables/indexes: %s", e)
+
     # Use driver interface to get table info
     issues_table_info = db._get_table_info("issues")
     issues_columns = {col["name"]: col["type"] for col in issues_table_info}
@@ -343,13 +397,13 @@ def run_migrate_schema(db: Any) -> None:
 
     # File-level edit lock (CST / universal_file_replace vs background indexer).
     files_table_info_editing = db._get_table_info("files")
-    files_columns_editing = {col["name"]: col["type"] for col in files_table_info_editing}
+    files_columns_editing = {
+        col["name"]: col["type"] for col in files_table_info_editing
+    }
     if "editing_pid" not in files_columns_editing:
         try:
             logger.info("Migrating files table: adding editing_pid column")
-            db._execute(
-                "ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL"
-            )
+            db._execute("ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL")
             db._commit()
         except Exception as e:
             logger.warning(f"Could not add editing_pid column to files: {e}")

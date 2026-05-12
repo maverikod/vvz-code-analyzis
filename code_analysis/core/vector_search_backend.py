@@ -58,6 +58,22 @@ def effective_vector_search_backend(
     return "faiss"
 
 
+def ann_ready_sql_fragment(cc_alias: str, backend: VectorSearchBackend) -> str:
+    """
+    SQL predicate: chunk is indexed for ANN search (FAISS slot or pgvector column).
+    """
+    if backend == "pgvector":
+        return f"{cc_alias}.embedding_vec IS NOT NULL"
+    return f"{cc_alias}.vector_id IS NOT NULL"
+
+
+def ann_pending_sql_fragment(cc_alias: str, backend: VectorSearchBackend) -> str:
+    """SQL predicate: chunk is not yet ANN-indexed (same notion as the vectorization worker)."""
+    if backend == "pgvector":
+        return f"{cc_alias}.embedding_vec IS NULL"
+    return f"{cc_alias}.vector_id IS NULL"
+
+
 def uses_pgvector_ann_for_database(db: Any) -> bool:
     """
     True when this :class:`~code_analysis.core.database.base.CodeDatabase` (or RPC

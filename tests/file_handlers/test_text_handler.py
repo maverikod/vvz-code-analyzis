@@ -48,6 +48,15 @@ def test_compute_replace_multi_rejects_overlapping_ranges() -> None:
         compute_replace_lines_multi(lines, [(1, 2, ["x"]), (2, 3, ["y"])])
 
 
+def test_compute_replace_multi_same_result_regardless_of_input_order() -> None:
+    lines = ["l1", "l2", "l3", "l4", "l5"]
+    forward = [(1, 1, ["A"]), (4, 5, ["B", "C"])]
+    backward = list(reversed(forward))
+    out_f = compute_replace_lines_multi(lines, forward)
+    out_b = compute_replace_lines_multi(lines, backward)
+    assert out_f == out_b == ["A", "l2", "l3", "B", "C"]
+
+
 @patch(
     "code_analysis.core.database.file_edit_lock.acquire_file_edit_lock_with_retry",
     return_value=True,

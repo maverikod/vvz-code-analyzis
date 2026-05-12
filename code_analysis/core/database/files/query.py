@@ -69,8 +69,19 @@ def get_files_needing_chunking(
         List[Dict[str, Any]],
         self._fetchall(
             f"""
-                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring
+                SELECT DISTINCT
+                    f.id,
+                    f.project_id,
+                    f.path,
+                    f.relative_path,
+                    f.has_docstring,
+                    p.root_path AS project_root_path,
+                    p.name AS project_name,
+                    (SELECT wdp.absolute_path FROM watch_dir_paths wdp
+                     WHERE wdp.watch_dir_id = COALESCE(f.watch_dir_id, p.watch_dir_id)
+                     LIMIT 1) AS watch_absolute_path
                 FROM files f
+                JOIN projects p ON p.id = f.project_id
                 WHERE f.project_id = ?
                 AND {WHERE_FILES_ACTIVE_F}
                 AND (

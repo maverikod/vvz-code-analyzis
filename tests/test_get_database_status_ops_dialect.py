@@ -49,3 +49,20 @@ def test_build_status_ops_batch_length_matches_documented_indices() -> None:
     """Guards against dropping the leading projects COUNT query (regression)."""
     assert len(build_status_ops("sqlite_proxy")) == 17
     assert build_status_ops("sqlite_proxy")[0][0].strip().startswith("SELECT COUNT")
+
+
+def test_build_status_ops_pgvector_uses_embedding_vec_predicate() -> None:
+    sql = " ".join(
+        q[0] for q in build_status_ops("postgres", vector_ann_backend="pgvector")
+    )
+    assert "embedding_vec IS NOT NULL" in sql
+    assert "embedding_vec IS NULL" in sql
+    assert "cc.vector_id IS NOT NULL" not in sql
+
+
+def test_build_status_ops_postgres_faiss_uses_vector_id_predicate() -> None:
+    sql = " ".join(
+        q[0] for q in build_status_ops("postgres", vector_ann_backend="faiss")
+    )
+    assert "cc.vector_id IS NOT NULL" in sql
+    assert "embedding_vec IS NOT NULL" not in sql

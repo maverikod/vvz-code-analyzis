@@ -117,7 +117,18 @@ def save_tree_to_file(
     backup_manager: Optional[BackupManager] = None
     temp_file: Optional[Path] = None
 
-    with file_lock(target_path):
+    rel_lock_path = (
+        str(target_path.relative_to(root_dir))
+        if target_path.is_relative_to(root_dir)
+        else file_path
+    )
+    with file_lock(
+        target_path,
+        mode="full",
+        database=database,
+        project_id=project_id,
+        file_path=rel_lock_path,
+    ):
         if target_path.exists():
             suf = target_path.suffix
             if suf == ".py" or (suf == ".tmp" and target_path.stem.endswith(".py")):

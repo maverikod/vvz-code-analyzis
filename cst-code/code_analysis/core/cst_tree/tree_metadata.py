@@ -1,0 +1,199 @@
+"""
+CST tree metadata utilities.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+from __future__ import annotations
+
+from typing import List, Optional, Tuple
+
+from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeNodeMetadata
+from .tree_builder import get_tree
+
+
+def _resolve_node_id(tree: Optional[CSTTree], node_id: str) -> str:
+    """
+    Resolve reserved __root__ to the tree's root node_id.
+    Also resolves stale node_ids from previous cst_modify_tree calls
+    to their current equivalents via tree.node_id_aliases.
+    Also resolves stable_id to current node_id via find_by_stable_id.
+    """
+    if node_id == ROOT_NODE_ID_SENTINEL and tree and tree.root_node_id:
+        return tree.root_node_id
+    if tree and tree.node_id_aliases:
+        # Walk the alias chain to handle multiple successive operations
+        resolved = node_id
+        seen = set()
+        while resolved in tree.node_id_aliases and resolved not in seen:
+            seen.add(resolved)
+            resolved = tree.node_id_aliases[resolved]
+        return resolved
+    # Resolve stable_id -> current node_id
+    if tree and node_id not in tree.metadata_map:
+        meta = tree.find_by_stable_id(node_id)
+        if meta:
+            return meta.node_id
+    return node_id
+
+
+def get_node_metadata(
+    tree_id: str, node_id: str, include_code: bool = False
+) -> Optional[TreeNodeMetadata]:
+    """
+    Get metadata for a node.
+
+    Accepts either node_id or stable_id - both are resolved transparently.
+
+    Args:
+        tree_id: Tree ID
+        node_id: Node ID or stable_id
+        include_code: Whether to include code snippet
+
+    Returns:
+        TreeNodeMetadata or None if not found
+    """
+    tree = get_tree(tree_id)
+    if not tree:
+        return None
+    node_id = _resolve_node_id(tree, node_id)
+
+    metadata = tree.metadata_map.get(node_id)
+    if not metadata:
+        return None
+
+    if include_code:
+        node = tree.node_map.get(node_id)
+        if node:
+            code: Optional[str] = None
+            try:
+                code = tree.module.code_for_node(node)
+            except Exception:
+                try:
+                    source_lines = tree.module.code.splitlines(keepends=True)
+                    start = (metadata.start_line or 1) - 1
+                    end = metadata.end_line or len(source_lines)
+                    code = "".join(source_lines[start:end])
+                except Exception:
+                    code = None
+            if code is not None:
+                return TreeNodeMetadata(
+                    node_id=metadata.node_id,
+                    stable_id=metadata.stable_id,
+                    type=metadata.type,
+                    kind=metadata.kind,
+                    name=metadata.name,
+                    qualname=metadata.qualname,
+                    start_line=metadata.start_line,
+                    start_col=metadata.start_col,
+                    end_line=metadata.end_line,
+                    end_col=metadata.end_col,
+                    children_count=metadata.children_count,
+                    children_ids=metadata.children_ids,
+                    parent_id=metadata.parent_id,
+                    code=code,
+                )
+
+    return metadata
+
+
+def get_node_children(
+    tree_id: str, node_id: str, include_code: bool = False
+) -> List[TreeNodeMetadata]:
+    """
+    Get children of a node.
+
+    Accepts either node_id or stable_id.
+
+    Args:
+        tree_id: Tree ID
+        node_id: Node ID or stable_id
+        include_code: Whether to include code snippets
+
+    Returns:
+        List of TreeNodeMetadata for children
+    """
+    tree = get_tree(tree_id)
+    if not tree:
+        return []
+    node_id = _resolve_node_id(tree, node_id)
+
+    metadata = tree.metadata_map.get(node_id)
+    if not metadata:
+        return []
+
+    children = []
+    for child_id in metadata.children_ids:
+        child_meta = get_node_metadata(tree_id, child_id, include_code=include_code)
+        if child_meta:
+            children.append(child_meta)
+    return children
+
+
+def get_node_descendants(
+    tree_id: str,
+    node_id: str,
+    max_depth: int = 1,
+    include_code: bool = False,
+) -> List[Tuple[TreeNodeMetadata, int]]:
+    """
+    Get descendants of a node up to max_depth.
+
+    Accepts either node_id or stable_id.
+
+    Args:
+        tree_id: Tree ID
+        node_id: Node ID or stable_id
+        max_depth: Maximum depth (0 = unlimited)
+        include_code: Whether to include code snippets
+
+    Returns:
+        List of (TreeNodeMetadata, depth) tuples
+    """
+    tree = get_tree(tree_id)
+    if not tree:
+        return []
+    node_id = _resolve_node_id(tree, node_id)
+
+    result: List[Tuple[TreeNodeMetadata, int]] = []
+
+    def _collect(nid: str, depth: int) -> None:
+        if max_depth > 0 and depth > max_depth:
+            return
+        meta = get_node_metadata(tree_id, nid, include_code=include_code)
+        if not meta:
+            return
+        result.append((meta, depth))
+        for child_id in meta.children_ids:
+            _collect(child_id, depth + 1)
+
+    metadata = tree.metadata_map.get(node_id)
+    if not metadata:
+        return []
+    for child_id in metadata.children_ids:
+        _collect(child_id, 1)
+    return result
+
+
+def get_node_parent(tree_id: str, node_id: str) -> Optional[TreeNodeMetadata]:
+    """
+    Get parent of a node.
+
+    Accepts either node_id or stable_id.
+
+    Args:
+        tree_id: Tree ID
+        node_id: Node ID or stable_id
+
+    Returns:
+        TreeNodeMetadata of parent or None
+    """
+    tree = get_tree(tree_id)
+    if not tree:
+        return None
+    node_id = _resolve_node_id(tree, node_id)
+
+    parent_id = tree.parent_map.get(node_id)
+    if not parent_id:
+        return None
+    return get_node_metadata(tree_id, parent_id)

@@ -43,6 +43,7 @@ from code_analysis.core.docs_indexing_config_load import (
 from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from code_analysis.core.docs_indexing_eligibility import is_docs_markdown_eligible
 from code_analysis.core.database.file_edit_lock import editing_lock_holder_is_alive
+from code_analysis.core.runtime_lock_sessions import register_runtime_session
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         config_path=cfg_path,
                     )
                     database.connect()
+                    register_runtime_session(database, role="indexing_worker")
                     try:
                         database.execute(
                             "SELECT 1",

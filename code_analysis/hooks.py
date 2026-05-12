@@ -82,6 +82,10 @@ register_auto_import_module("code_analysis.commands.universal_file_read_command"
 register_auto_import_module(
     "code_analysis.commands.project_file_transfer_by_id_commands"
 )
+register_auto_import_module(
+    "code_analysis.commands.project_file_advisory_lock_batch_command"
+)
+register_auto_import_module("code_analysis.commands.project_file_lock_status_command")
 register_auto_import_module("code_analysis.commands.universal_file_save_command")
 register_auto_import_module("code_analysis.commands.universal_file_replace_command")
 register_auto_import_module("code_analysis.commands.universal_file_delete_command")
@@ -94,3 +98,4 @@ register_auto_import_module("code_analysis.commands.json_find_node_command")
 register_auto_import_module("code_analysis.commands.json_get_node_info_command")
 register_auto_import_module("code_analysis.commands.list_json_blocks_command")
 register_auto_import_module("code_analysis.commands.qa_sleep_command")
+register_auto_import_module("code_analysis.core.transfer_lock_registry")

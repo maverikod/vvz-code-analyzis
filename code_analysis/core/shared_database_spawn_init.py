@@ -28,6 +28,7 @@ from .shared_database import (
     is_shared_database_current_process,
     set_shared_database,
 )
+from .runtime_lock_sessions import register_runtime_session
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def ensure_shared_database_for_current_process() -> None:
         auto_analyze=False,
     )
     set_shared_database(db)
+    register_runtime_session(db, role="spawn_child")
     logger.info("Shared database initialized for child process")
 
 

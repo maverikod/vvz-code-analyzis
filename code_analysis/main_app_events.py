@@ -25,6 +25,7 @@ from code_analysis.commands.base_mcp_command_open_db import (
     open_database_from_config_impl,
 )
 from code_analysis.core.constants import DEFAULT_SHUTDOWN_GRACE_TIMEOUT
+from code_analysis.core.runtime_lock_sessions import register_runtime_session
 from code_analysis.core.shared_database import (
     close_shared_database,
     set_shared_database,
@@ -93,6 +94,19 @@ def register_startup_shutdown_events(
                         auto_analyze=False,
                     )
                     set_shared_database(db)
+                    listener_url = None
+                    try:
+                        host = str(app_config.get("host") or "").strip()
+                        port = app_config.get("port")
+                        if host and port:
+                            listener_url = f"http://{host}:{int(port)}"
+                    except Exception:
+                        listener_url = None
+                    register_runtime_session(
+                        db,
+                        role="daemon",
+                        listener_url=listener_url,
+                    )
                     logger.info(
                         "✅ [BACKGROUND] Long-lived database connection set (shared)"
                     )

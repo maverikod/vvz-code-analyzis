@@ -266,6 +266,7 @@ async def _run_roundtrip(
             "file_id": src_id,
             "compression": "identity",
             "include_backup_history": False,
+            "lock_mode": "block_write",
         },
     )
     dl_payload = _unwrap_command_payload(cast(Dict[str, Any], dl_begin))
@@ -305,6 +306,8 @@ async def _run_roundtrip(
                 "transfer_id": up_receipt.transfer_id,
                 "backup": True,
                 "dry_run": False,
+                "unlock_after_write": True,
+                "lock_mode": "full",
             },
         )
         save_payload = _unwrap_command_payload(cast(Dict[str, Any], save_raw))
@@ -320,6 +323,7 @@ async def _run_roundtrip(
                 "file_id": dst_id,
                 "compression": "identity",
                 "include_backup_history": False,
+                "lock_mode": "block_write",
             },
         )
         data2 = _unwrap_command_payload(cast(Dict[str, Any], dl2))

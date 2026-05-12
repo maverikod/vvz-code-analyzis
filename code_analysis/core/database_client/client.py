@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from .client_api_ast_cst import _ClientAPIASTCSTMixin
 from .client_api_attributes import _ClientAPIAttributesMixin
@@ -81,6 +81,8 @@ class DatabaseClient(
         if (socket_path is not None) == (rpc_client is not None):
             raise ValueError("Provide exactly one of socket_path or rpc_client")
         self._driver_type = driver_type
+        #: Merged driver dict ``{type, config}`` from server config (set by factory when applicable).
+        self.driver_config: Optional[Dict[str, Any]] = None
         if rpc_client is not None:
             self.rpc_client = rpc_client
         else:

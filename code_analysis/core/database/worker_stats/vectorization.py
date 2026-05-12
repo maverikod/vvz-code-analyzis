@@ -11,8 +11,22 @@ import uuid
 from typing import Any, Dict, Optional
 
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+from code_analysis.core.vector_search_backend import (
+    VectorSearchBackend,
+    ann_pending_sql_fragment,
+    ann_ready_sql_fragment,
+    effective_vector_search_backend,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _vector_ann_backend(self: Any) -> VectorSearchBackend:
+    dc = getattr(self, "driver_config", None) or {}
+    dt = str(dc.get("type") or "")
+    inner = dc.get("config") or {}
+    vsb = inner.get("vector_search_backend")
+    return effective_vector_search_backend(dt, vsb)
 
 
 def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
@@ -42,10 +56,12 @@ def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
         (cycle_start_time,),
     )
 
-    # Get total chunks count at start (not vectorized; exclude skipped)
+    ann = _vector_ann_backend(self)
+    chunk_pending = ann_pending_sql_fragment("code_chunks", ann)
+    # Total chunks count at start (not ANN-indexed; exclude skipped)
     result = self._fetchone(
-        """SELECT COUNT(*) as count FROM code_chunks
-           WHERE vector_id IS NULL
+        f"""SELECT COUNT(*) as count FROM code_chunks
+           WHERE {chunk_pending}
              AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)"""
     )
     chunks_total_at_start = result["count"] if result else 0
@@ -56,14 +72,14 @@ def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
     )
     files_total_at_start = files_result["count"] if files_result else 0
 
-    # Get vectorized files count (files with at least one chunk that has vector_id)
+    cc_ready = ann_ready_sql_fragment("cc", ann)
     vectorized_files_result = self._fetchone(
         f"""
         SELECT COUNT(DISTINCT f.id) as count
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
         WHERE {WHERE_FILES_ACTIVE_F}
-        AND cc.vector_id IS NOT NULL
+        AND {cc_ready}
         """
     )
     files_vectorized = (
@@ -154,14 +170,15 @@ def update_vectorization_stats(
         (cycle_id,),
     )
 
-    # Update files_vectorized count (recalculate from database)
+    ann_u = _vector_ann_backend(self)
+    cc_ready_u = ann_ready_sql_fragment("cc", ann_u)
     vectorized_files_result = self._fetchone(
         f"""
         SELECT COUNT(DISTINCT f.id) as count
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
         WHERE {WHERE_FILES_ACTIVE_F}
-        AND cc.vector_id IS NOT NULL
+        AND {cc_ready_u}
         """
     )
     files_vectorized = (

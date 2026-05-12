@@ -31,6 +31,35 @@ def get_tables_core() -> Dict[str, Any]:
             "unique_constraints": [],
             "check_constraints": [],
         },
+        "runtime_lock_sessions": {
+            "columns": [
+                {
+                    "name": "session_id",
+                    "type": "UUID",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {"name": "pid", "type": "INTEGER", "not_null": True},
+                {"name": "listener_url", "type": "TEXT", "not_null": False},
+                {"name": "role", "type": "TEXT", "not_null": True},
+                {"name": "hostname", "type": "TEXT", "not_null": False},
+                {
+                    "name": "started_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+                {
+                    "name": "updated_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+            ],
+            "foreign_keys": [],
+            "unique_constraints": [{"columns": ["pid"]}],
+            "check_constraints": [],
+        },
         "watch_dirs": {
             "columns": [
                 {
@@ -201,6 +230,53 @@ def get_tables_core() -> Dict[str, Any]:
             ],
             "unique_constraints": [{"columns": ["project_id", "path"]}],
             "check_constraints": [],
+        },
+        "file_advisory_lock_leases": {
+            "columns": [
+                {"name": "session_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
+                {"name": "file_path", "type": "TEXT", "not_null": True},
+                {"name": "lock_mode", "type": "TEXT", "not_null": True},
+                {
+                    "name": "locked_since",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+                {
+                    "name": "updated_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+                {
+                    "name": "refcount",
+                    "type": "INTEGER",
+                    "not_null": True,
+                    "default": "1",
+                },
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["session_id"],
+                    "references_table": "runtime_lock_sessions",
+                    "references_columns": ["session_id"],
+                    "on_delete": "CASCADE",
+                },
+                {
+                    "columns": ["project_id"],
+                    "references_table": "projects",
+                    "references_columns": ["id"],
+                    "on_delete": "CASCADE",
+                },
+            ],
+            "unique_constraints": [
+                {"columns": ["session_id", "project_id", "file_path", "lock_mode"]}
+            ],
+            "check_constraints": [
+                "lock_mode IN ('exclusive', 'shared')",
+                "refcount > 0",
+            ],
         },
         "classes": {
             "columns": [

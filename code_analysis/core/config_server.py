@@ -77,6 +77,39 @@ class DocsIndexingConfig(BaseModel):
     )
 
 
+class FileLockConfig(BaseModel):
+    """Cooperative project-file advisory lock settings."""
+
+    model_config = {"extra": "forbid"}
+
+    timeout_seconds: float = Field(
+        default=30.0,
+        description="Maximum seconds to wait for a sidecar flock before failing.",
+    )
+    poll_interval_seconds: float = Field(
+        default=0.05,
+        description="Sleep interval between non-blocking flock attempts.",
+    )
+    default_read_mode: Literal["full", "block_write"] = Field(
+        default="full",
+        description="Default advisory mode for read commands: full=exclusive, block_write=shared.",
+    )
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def validate_timeout_seconds(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("file_lock.timeout_seconds must be >= 0")
+        return float(v)
+
+    @field_validator("poll_interval_seconds")
+    @classmethod
+    def validate_poll_interval_seconds(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("file_lock.poll_interval_seconds must be > 0")
+        return float(v)
+
+
 class ServerConfig(BaseModel):
     """MCP server configuration."""
 
@@ -141,6 +174,10 @@ class ServerConfig(BaseModel):
     allow_line_commands_on_healthy_files: bool = Field(
         default=False,
         description="If true, get_file_lines and replace_file_lines are allowed on files that parse successfully. If false (default), those commands return an error for healthy files and the client should use cst_load_file / cst_modify_tree / cst_save_tree instead.",
+    )
+    file_lock: FileLockConfig = Field(
+        default_factory=FileLockConfig,
+        description="Cooperative project-file advisory lock settings.",
     )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {

@@ -77,6 +77,18 @@ def get_project_file_transfer_download_begin_schema() -> Dict[str, Any]:
                     "(same as BackupManager.list_versions). When false, omit that list."
                 ),
             },
+            "lock_mode": {
+                "type": "string",
+                "enum": ["none", "block_write", "full"],
+                "default": "none",
+                "description": (
+                    "Optional advisory transfer lock. ``none`` preserves legacy behavior. "
+                    "``block_write`` takes a shared sidecar flock so cooperative writers block. "
+                    "``full`` takes an exclusive sidecar flock. Non-none locks are held until "
+                    "the adapter reports the download completed (or transfer ack/expiry/error "
+                    "cleanup releases them)."
+                ),
+            },
             "job_id": {
                 "type": "string",
                 "description": (
@@ -189,6 +201,23 @@ def get_project_file_transfer_upload_save_schema() -> Dict[str, Any]:
                 "description": (
                     "Optional CST ``tree_id`` for Python saves when the handler accepts an "
                     "in-memory tree (same semantics as ``universal_file_save``)."
+                ),
+            },
+            "unlock_after_write": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "When true (default), release any runtime transfer lock for this "
+                    "transfer/file after a successful non-dry-run save."
+                ),
+            },
+            "lock_mode": {
+                "type": "string",
+                "enum": ["none", "block_write", "full"],
+                "default": "none",
+                "description": (
+                    "Optional advisory lock acquired around the save when no prior transfer "
+                    "lock was taken. ``block_write`` is shared; ``full`` is exclusive."
                 ),
             },
         },

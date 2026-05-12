@@ -17,6 +17,26 @@ def run_create_schema(db: Any) -> None:
     """Create database schema if it doesn't exist."""
     # All operations use driver interface - no direct connection access
 
+    db._execute(
+        """
+            CREATE TABLE IF NOT EXISTS runtime_lock_sessions (
+                session_id TEXT PRIMARY KEY,
+                pid INTEGER NOT NULL UNIQUE,
+                listener_url TEXT,
+                role TEXT NOT NULL,
+                hostname TEXT,
+                started_at REAL DEFAULT (julianday('now')),
+                updated_at REAL DEFAULT (julianday('now'))
+            )
+        """
+    )
+    db._execute(
+        """
+            CREATE INDEX IF NOT EXISTS idx_runtime_lock_sessions_pid
+            ON runtime_lock_sessions(pid)
+        """
+    )
+
     # Create watch_dirs table first (projects reference it)
     db._execute(
         """
@@ -114,6 +134,36 @@ def run_create_schema(db: Any) -> None:
         )
     except Exception:
         pass  # Index might already exist
+    db._execute(
+        """
+            CREATE TABLE IF NOT EXISTS file_advisory_lock_leases (
+                session_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                lock_mode TEXT NOT NULL,
+                locked_since REAL DEFAULT (julianday('now')),
+                updated_at REAL DEFAULT (julianday('now')),
+                refcount INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (session_id, project_id, file_path, lock_mode),
+                FOREIGN KEY (session_id) REFERENCES runtime_lock_sessions(session_id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                CHECK (lock_mode IN ('exclusive', 'shared')),
+                CHECK (refcount > 0)
+            )
+        """
+    )
+    db._execute(
+        """
+            CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_file
+            ON file_advisory_lock_leases(project_id, file_path)
+        """
+    )
+    db._execute(
+        """
+            CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_session
+            ON file_advisory_lock_leases(session_id)
+        """
+    )
     db._execute(
         """
             CREATE TABLE IF NOT EXISTS classes (

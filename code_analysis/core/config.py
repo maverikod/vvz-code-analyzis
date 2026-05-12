@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from .config_models import ProjectDir, SVOServiceConfig
 from .config_server import ServerConfig
@@ -74,6 +74,11 @@ def generate_config(
         "host": host,
         "port": port,
         "dirs": config_dirs,
+        "file_lock": {
+            "timeout_seconds": 30.0,
+            "poll_interval_seconds": 0.05,
+            "default_read_mode": "full",
+        },
     }
     if log:
         log_path = Path(log)
@@ -247,8 +252,9 @@ def get_driver_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if db_path:
         from .database.base import create_driver_config_for_worker
 
-        return create_driver_config_for_worker(
-            Path(db_path), driver_type="sqlite_proxy"
+        return cast(
+            Dict[str, Any],
+            create_driver_config_for_worker(Path(db_path), driver_type="sqlite_proxy"),
         )
 
     return None

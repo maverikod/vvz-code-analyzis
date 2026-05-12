@@ -271,10 +271,8 @@ class TestASTCSTChunksVerification:
         files_needing_chunking = test_db.get_files_needing_chunking(
             project_id, limit=10
         )
-        file_paths_needing_chunking = [f["path"] for f in files_needing_chunking]
-        assert (
-            str(file_path) in file_paths_needing_chunking
-        ), "File should be marked for chunking"
+        file_ids_needing_chunking = [f["id"] for f in files_needing_chunking]
+        assert file_id in file_ids_needing_chunking, "File should be marked for chunking"
 
     def test_ast_cst_updated_after_file_modification(
         self, test_db, test_file_with_content, test_project
@@ -670,7 +668,5 @@ def new_function():
         files_needing_chunking = test_db.get_files_needing_chunking(
             test_project, limit=10
         )
-        file_paths = [f["path"] for f in files_needing_chunking]
-        assert (
-            str(test_file) in file_paths
-        ), "File should be marked for chunking after modification"
+        file_ids = [f["id"] for f in files_needing_chunking]
+        assert file_id in file_ids, "File should be marked for chunking after modification"

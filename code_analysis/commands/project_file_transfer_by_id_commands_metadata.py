@@ -39,7 +39,11 @@ def get_project_file_transfer_download_begin_metadata(
             "that project-relative path (timestamps, backup UUIDs, commands), matching what "
             "``BackupManager`` records for local saves.\n\n"
             "**Safety:** Read-only with respect to project files and DB file rows; only creates "
-            "a short-lived transfer session and optional gzip staging on the adapter side."
+            "a short-lived transfer session and optional gzip staging on the adapter side. "
+            "When ``lock_mode`` is not ``none``, the daemon registers a runtime lock session, "
+            "takes a cooperative sidecar advisory lock before creating the transfer, binds it "
+            "to ``transfer_id``, and releases it from adapter hooks when the download reaches "
+            "COMPLETED (also best-effort on ack, expiry, and terminal transfer errors)."
         ),
         "parameters": {
             "project_id": {
@@ -91,6 +95,16 @@ def get_project_file_transfer_download_begin_metadata(
                 "required": False,
                 "default": True,
             },
+            "lock_mode": {
+                "description": (
+                    "Optional transfer advisory lock: none, block_write (shared flock), or "
+                    "full (exclusive flock)."
+                ),
+                "type": "string",
+                "required": False,
+                "default": "none",
+                "enum": ["none", "block_write", "full"],
+            },
             "job_id": {
                 "description": "Optional queue job id for adapter/WebSocket correlation.",
                 "type": "string",
@@ -129,6 +143,8 @@ def get_project_file_transfer_download_begin_metadata(
                     "file_id": "``files.id`` when known (indexed); null for path-only unindexed.",
                     "project_id": "Effective project UUID (from the request or from the ``files`` row).",
                     "file_path": "Project-relative POSIX path used for disk read.",
+                    "lock_mode": "Requested lock mode.",
+                    "lock_session_id": "Runtime lock session that owns a non-none transfer lock.",
                     "backup_history": (
                         "List of dicts (uuid, timestamp, size_bytes, size_lines, command, "
                         "comment, related_files) when include_backup_history is true; else omitted."
@@ -288,6 +304,7 @@ def get_project_file_transfer_download_begin_metadata(
             "Use include_backup_history when auditing which old_code backup matches a baseline.",
             "Prefer gzip on large text files to save bandwidth; identity for already-compressed blobs.",
             "Do not cache transfer_id long; sessions expire per adapter configuration.",
+            "Use lock_mode=block_write when clients need a stable read while cooperative writers use file_lock.",
         ],
     }
 
@@ -321,7 +338,11 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             "**Scope:** The target path is always under the resolved project root (from "
             "``project_id`` in path mode, or from the ``files`` row when only ``file_id`` is sent). "
             "``file_id`` mode uses the path from the index row. ``file_path`` mode uses the "
-            "literal relative path (new files follow ``universal_file_save`` rules)."
+            "literal relative path (new files follow ``universal_file_save`` rules).\n\n"
+            "**Transfer locks:** ``unlock_after_write`` defaults to true. After a successful "
+            "non-dry-run save the command releases any runtime lock bound to ``transfer_id``. "
+            "``lock_mode`` can also acquire a save-scoped lock when no earlier transfer lock "
+            "exists; that lock is released after the successful save or on save failure."
         ),
         "parameters": {
             "project_id": {
@@ -400,6 +421,24 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                 "type": "string",
                 "required": False,
             },
+            "unlock_after_write": {
+                "description": (
+                    "Release the transfer/file runtime lock after successful non-dry-run save."
+                ),
+                "type": "boolean",
+                "required": False,
+                "default": True,
+            },
+            "lock_mode": {
+                "description": (
+                    "Optional save-scoped advisory lock: none, block_write (shared), or full "
+                    "(exclusive)."
+                ),
+                "type": "string",
+                "required": False,
+                "default": "none",
+                "enum": ["none", "block_write", "full"],
+            },
         },
         "return_value": {
             "success": {
@@ -419,6 +458,8 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                     "dry_run": "Whether this was a preview run.",
                     "backup_uuid": "Present when a backup was created (handler-dependent).",
                     "diff": "Unified diff string when diff=true and supported.",
+                    "lock_mode": "Requested save-scoped lock mode.",
+                    "lock_released": "True when unlock_after_write cleanup ran after a save.",
                 },
                 "example": {
                     "success": True,
@@ -565,5 +606,6 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             "Keep backup=true so old_code history stays consistent with local saves.",
             "Verify with universal_file_read or project_file_transfer_download_begin after write.",
             "Omit commit_message unless git integration is desired for this change.",
+            "Keep unlock_after_write=true unless a caller deliberately manages the runtime lease.",
         ],
     }

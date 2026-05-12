@@ -35,6 +35,8 @@ def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
 
     class _FakeDB:
         rpc_client = rpc
+        _driver_type = "postgres"
+        driver_config = {"type": "postgres", "config": {}}
 
         def execute_batch(self, ops):  # noqa: ANN001, ANN201
             return _minimal_status_batch_results()
@@ -42,6 +44,7 @@ def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
     result = build_database_status_result(
         _FakeDB(), Path("/nonexistent/pg"), driver_type="postgres"
     )
+    assert result["vector_ann_backend"] == "pgvector"
     assert result["pg_write_pool_in_use"] == 2
     assert result["pg_write_pool_idle"] == 1
     assert result["pg_write_pool_waiters"] == 0

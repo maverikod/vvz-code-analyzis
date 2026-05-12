@@ -136,21 +136,33 @@ def test_restart_stops_drains_then_starts(
 ) -> None:
     seq: list[str] = []
 
+    def fake_stop(_cp: str) -> int:
+        seq.append("stop")
+        return 0
+
+    def fake_drain(*_a: object, **_kw: object) -> bool:
+        seq.append("drain")
+        return True
+
+    def fake_start(_cp: str) -> int:
+        seq.append("start")
+        return 0
+
     monkeypatch.setattr(
         server_manager_cli,
         "_cmd_stop",
-        lambda cp: seq.append("stop") or 0,
+        fake_stop,
     )
     monkeypatch.setattr(
         server_manager_cli,
         "_wait_until_no_daemons",
-        lambda *_a, **_kw: seq.append("drain") or True,
+        fake_drain,
     )
     monkeypatch.setattr(server_manager_cli.time, "sleep", lambda _s: None)
     monkeypatch.setattr(
         server_manager_cli,
         "_cmd_start",
-        lambda cp: seq.append("start") or 0,
+        fake_start,
     )
 
     rc = server_manager_cli._cmd_restart(str(config_path))
@@ -201,6 +213,35 @@ def test_status_running_daemon_without_pidfile(
     assert capsys.readouterr().out.strip() == "running pid=42 (pidfile missing)"
 
 
+def test_status_reports_and_logs_stale_daemon_children(
+    config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_find_stale_daemon_child_pids",
+        lambda _cfg: [101, 102],
+    )
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_append_manager_log",
+        lambda _cfg, level, message: log_calls.append((level, message)),
+    )
+
+    rc = server_manager_cli._cmd_status(str(config_path))
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == (
+        "stopped (stale daemon child processes: 101,102)"
+    )
+    assert log_calls
+    assert log_calls[0][0] == "WARNING"
+    assert "daemon root is absent" in log_calls[0][1]
+
+
 def test_status_removes_stale_pidfile(
     config_path: Path,
     pidfile: Path,
@@ -216,6 +257,53 @@ def test_status_removes_stale_pidfile(
     assert rc == 0
     assert "stale pidfile" in capsys.readouterr().out
     assert not pidfile.exists()
+
+
+def test_start_cleans_stale_daemon_children_before_spawn(
+    config_path: Path,
+    pidfile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    killed: list[int] = []
+    log_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_find_stale_daemon_child_pids",
+        lambda _cfg: [101, 102],
+    )
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+    monkeypatch.setattr(server_manager_cli, "_is_zombie", lambda _pid: False)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_kill_process_group",
+        lambda pid, timeout_s: killed.append(pid),
+    )
+    monkeypatch.setattr(server_manager_cli.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_append_manager_log",
+        lambda _cfg, level, message: log_calls.append((level, message)),
+    )
+
+    def fake_spawn(_config_path: str, pf: Path) -> int:
+        pf.write_text("4242", encoding="utf-8")
+        return 4242
+
+    monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fake_spawn)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_wait_until_daemon_stable_or_dead",
+        lambda *_a, **_kw: True,
+    )
+
+    rc = server_manager_cli._cmd_start(str(config_path))
+
+    assert rc == 0
+    assert killed == [101, 102]
+    assert "started pid=4242" in capsys.readouterr().out
+    assert any("cleaning stale daemon" in msg for _level, msg in log_calls)
 
 
 def test_resolve_config_cli_over_env(

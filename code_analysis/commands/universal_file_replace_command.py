@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .anchor_check import AnchorMismatch, check_text_anchor
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
 from .registration import (
@@ -55,11 +56,12 @@ logger = logging.getLogger(__name__)
 
 # Distinct from JSON null / Python None passed as value for YAML replace
 _MISSING_VALUE = object()
+TextReplacementTriple = Tuple[int, int, List[str], Optional[str], Optional[str]]
 
 
 def _sort_text_replacements_bottom_up(
-    triples: List[Tuple[int, int, List[str]]],
-) -> List[Tuple[int, int, List[str]]]:
+    triples: List[TextReplacementTriple],
+) -> List[TextReplacementTriple]:
     """
     Order text replacement ranges for sequential application without line drift.
 
@@ -98,9 +100,9 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
 
 def _normalize_text_replacement_triples(
     replacements: List[Any],
-) -> Union[List[Tuple[int, int, List[str]]], str]:
-    """Return triples for TextFileHandler or an error message."""
-    out: List[Tuple[int, int, List[str]]] = []
+) -> Union[List[TextReplacementTriple], str]:
+    """Return text replacement triples plus optional anchors, or an error message."""
+    out: List[TextReplacementTriple] = []
     for i, item in enumerate(replacements):
         if isinstance(item, dict):
             try:
@@ -114,8 +116,19 @@ def _normalize_text_replacement_triples(
                 )
             if not isinstance(nl_raw, list):
                 return f"replacements[{i}].new_lines must be a list of strings"
+            anchor_head = item.get("anchor_head")
+            anchor_tail = item.get("anchor_tail")
+            if (anchor_head is None) != (anchor_tail is None):
+                return (
+                    f"replacements[{i}].anchor_head and anchor_tail must be "
+                    "supplied together"
+                )
+            if anchor_head is not None and not isinstance(anchor_head, str):
+                return f"replacements[{i}].anchor_head must be a string"
+            if anchor_tail is not None and not isinstance(anchor_tail, str):
+                return f"replacements[{i}].anchor_tail must be a string"
             nl = [str(x) for x in nl_raw]
-            out.append((a, b, nl))
+            out.append((a, b, nl, anchor_head, anchor_tail))
         elif isinstance(item, (list, tuple)):
             if len(item) != 3:
                 return (
@@ -124,7 +137,7 @@ def _normalize_text_replacement_triples(
                 )
             try:
                 a, b, nl_raw = item[0], item[1], item[2]
-                out.append((int(a), int(b), list(nl_raw)))
+                out.append((int(a), int(b), list(nl_raw), None, None))
             except (TypeError, ValueError) as e:
                 return f"replacements[{i}]: invalid triple ({e})"
         else:
@@ -162,12 +175,42 @@ def _validate_text_replace_local(
                     )
                 a, b, nl = item[0], item[1], item[2]
                 triples.append((int(a), int(b), list(nl)))
+            for a, b, anchor_head, anchor_tail in extra.get(
+                "replacement_anchor_checks", []
+            ):
+                check_text_anchor(
+                    all_lines,
+                    int(a),
+                    int(b),
+                    anchor_head,
+                    anchor_tail,
+                )
             compute_replace_lines_multi(all_lines, triples)
         else:
             sl = int(extra["start_line"])
             el = int(extra["end_line"])
             nl = list(extra["new_lines"])
+            check_text_anchor(
+                all_lines,
+                sl,
+                el,
+                extra.get("anchor_head"),
+                extra.get("anchor_tail"),
+            )
             compute_replace_lines_single_range(all_lines, sl, el, nl)
+    except AnchorMismatch as e:
+        return FileHandlerResult(
+            success=False,
+            handler_id=req.handler_id,
+            operation=req.operation,
+            file_path=req.file_path,
+            project_id=req.project_id,
+            dry_run=req.dry_run,
+            changed=False,
+            message=str(e),
+            code="ANCHOR_MISMATCH",
+            details=e.details,
+        )
     except (ValueError, KeyError, TypeError) as e:
         return FileHandlerResult(
             success=False,
@@ -191,13 +234,53 @@ def _validate_replace_payload_for_handler(
     end_line: Optional[int],
     new_lines: Optional[List[str]],
     replacements: Optional[List[Any]],
+    anchor_head: Optional[str],
+    anchor_tail: Optional[str],
+    anchor_node_id: Optional[str],
     operations: Optional[List[Any]],
     yaml_path: Optional[str],
     value: Any,
     value_provided: bool,
     ops: Optional[List[Any]],
 ) -> Optional[ErrorResult]:
+    has_anchor = (
+        anchor_head is not None or anchor_tail is not None or anchor_node_id is not None
+    )
+    if handler_id != HANDLER_TEXT and has_anchor:
+        return ErrorResult(
+            message="anchor fields are only supported for text line-range replace",
+            code="VALIDATION_ERROR",
+            details={
+                "handler_id": handler_id,
+                "fields": ["anchor_head", "anchor_tail", "anchor_node_id"],
+            },
+        )
+
     if handler_id == HANDLER_TEXT:
+        if anchor_node_id is not None:
+            return ErrorResult(
+                message="anchor_node_id is only valid for Python files (.py/.pyi/.pyw)",
+                code="VALIDATION_ERROR",
+                details={"field": "anchor_node_id"},
+            )
+        if (anchor_head is None) != (anchor_tail is None):
+            return ErrorResult(
+                message="anchor_head and anchor_tail must be supplied together",
+                code="VALIDATION_ERROR",
+                details={"fields": ["anchor_head", "anchor_tail"]},
+            )
+        if anchor_head is not None and not isinstance(anchor_head, str):
+            return ErrorResult(
+                message="anchor_head must be a string",
+                code="VALIDATION_ERROR",
+                details={"field": "anchor_head"},
+            )
+        if anchor_tail is not None and not isinstance(anchor_tail, str):
+            return ErrorResult(
+                message="anchor_tail must be a string",
+                code="VALIDATION_ERROR",
+                details={"field": "anchor_tail"},
+            )
         has_single = (
             start_line is not None or end_line is not None or new_lines is not None
         )
@@ -224,6 +307,16 @@ def _validate_replace_payload_for_handler(
                     message=err,
                     code="VALIDATION_ERROR",
                     details={"field": "replacements"},
+                )
+            if anchor_head is not None or anchor_tail is not None:
+                return ErrorResult(
+                    message=(
+                        "top-level anchor_head/anchor_tail are only valid for "
+                        "single-range text replace; use per-replacement anchors "
+                        "with replacements"
+                    ),
+                    code="VALIDATION_ERROR",
+                    details={"fields": ["anchor_head", "anchor_tail"]},
                 )
             return None
         if has_single:
@@ -298,7 +391,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
     """Replace regions in project files via handler registry."""
 
     name = "universal_file_replace"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Partial replace using the universal handler registry. "
         "Unsupported extensions fail with UNSUPPORTED_FILE_EXTENSION before any backup or write. "
@@ -395,11 +488,36 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                     "items": {"type": "string"},
                     "description": "Text: replacement lines for single-range replace.",
                 },
+                "anchor_head": {
+                    "type": "string",
+                    "description": (
+                        "Text single-range only: first 5 non-whitespace chars "
+                        "of the first line in [start_line, end_line]. Server "
+                        "rejects the write if actual content differs."
+                    ),
+                },
+                "anchor_tail": {
+                    "type": "string",
+                    "description": (
+                        "Text single-range only: last 5 non-whitespace chars "
+                        "of the last line in [start_line, end_line]. Server "
+                        "rejects the write if actual content differs."
+                    ),
+                },
+                "anchor_node_id": {
+                    "type": "string",
+                    "description": (
+                        "Python files only: stable_id (UUID4) of the CST node "
+                        "at start_line. Mutually exclusive with "
+                        "anchor_head/anchor_tail."
+                    ),
+                },
                 "replacements": {
                     "type": "array",
                     "description": (
                         "Text: multiple disjoint ranges. Each item: either "
-                        '{"start_line", "end_line", "new_lines"} or '
+                        '{"start_line", "end_line", "new_lines", optional '
+                        '"anchor_head"/"anchor_tail"} or '
                         "[start_line, end_line, new_lines]. Overlapping ranges rejected. "
                         "Application order is bottom-up (by start_line, then end_line); "
                         "the order of items in this array need not match that order."
@@ -464,6 +582,9 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
         new_lines: Optional[List[str]] = None,
+        anchor_head: Optional[str] = None,
+        anchor_tail: Optional[str] = None,
+        anchor_node_id: Optional[str] = None,
         replacements: Optional[List[Any]] = None,
         operations: Optional[List[Any]] = None,
         yaml_path: Optional[str] = None,
@@ -490,6 +611,9 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 end_line=end_line,
                 new_lines=new_lines,
                 replacements=replacements,
+                anchor_head=anchor_head,
+                anchor_tail=anchor_tail,
+                anchor_node_id=anchor_node_id,
                 operations=operations,
                 yaml_path=yaml_path,
                 value=value,
@@ -538,12 +662,22 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 if replacements is not None:
                     triples = _normalize_text_replacement_triples(replacements)
                     assert isinstance(triples, list)
+                    extra["replacement_anchor_checks"] = [
+                        (a, b, ah, at)
+                        for a, b, _nl, ah, at in triples
+                        if ah is not None or at is not None
+                    ]
                     ordered = _sort_text_replacements_bottom_up(triples)
-                    extra["replacements"] = [[a, b, nl] for a, b, nl in ordered]
+                    extra["replacements"] = [
+                        [a, b, nl] for a, b, nl, _ah, _at in ordered
+                    ]
                 else:
                     extra["start_line"] = int(start_line)  # type: ignore[arg-type]
                     extra["end_line"] = int(end_line)  # type: ignore[arg-type]
                     extra["new_lines"] = list(new_lines or [])
+                    if anchor_head is not None or anchor_tail is not None:
+                        extra["anchor_head"] = anchor_head
+                        extra["anchor_tail"] = anchor_tail
 
             elif handler_id == HANDLER_JSON:
                 extra["operations"] = list(operations or [])

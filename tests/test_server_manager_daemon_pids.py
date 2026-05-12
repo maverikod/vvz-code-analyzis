@@ -157,12 +157,79 @@ def test_root_daemon_pids_only_drops_fork_children_with_same_cmdline(
 ) -> None:
     """Children keep parent's argv until exec; only session roots must count."""
 
-    def ppid_of(pid: int) -> str | None:
+    def ppid_of(pid: int) -> int | None:
         return {100: 1, 101: 100, 102: 100}.get(pid)
 
     monkeypatch.setattr(server_manager_cli, "_read_ppid", ppid_of)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_read_pgid",
+        lambda pid: 100,
+    )
 
     assert server_manager_cli._root_daemon_pids_only([100, 101, 102]) == [100]
+
+
+def test_find_daemon_pids_excludes_orphaned_daemon_group_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Workers inherited daemon argv, but their dead group leader was the real daemon."""
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}", encoding="utf-8")
+    cfg_res = str(cfg.resolve())
+    (tmp_path / ".code-analysis-server.pid").write_text("1000", encoding="utf-8")
+    ps_line = (
+        f"1001 python -m code_analysis.main --config {cfg_res} --daemon\n"
+        f"1002 python -m code_analysis.main --config {cfg_res} --daemon\n"
+    )
+    monkeypatch.setattr(
+        server_manager_cli.subprocess,
+        "check_output",
+        lambda *_a, **_kw: ps_line,
+    )
+    monkeypatch.setattr(server_manager_cli, "_is_zombie", lambda _pid: False)
+    monkeypatch.setattr(server_manager_cli, "_read_ppid", lambda _pid: 1)
+    monkeypatch.setattr(server_manager_cli, "_read_pgid", lambda _pid: 1000)
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda pid: pid != 1000)
+
+    assert server_manager_cli._find_daemon_pids(cfg_res) == []
+    assert server_manager_cli._find_stale_daemon_child_pids(cfg_res) == [1001, 1002]
+
+
+def test_find_daemon_pids_excludes_known_worker_pid_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"server": {"log_dir": "logs"}}', encoding="utf-8")
+    cfg_res = str(cfg.resolve())
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "indexing_worker.pid").write_text("2001", encoding="utf-8")
+    ps_line = (
+        f"2000 python -m code_analysis.main --config {cfg_res} --daemon\n"
+        f"2001 python -m code_analysis.main --config {cfg_res} --daemon\n"
+    )
+    monkeypatch.setattr(
+        server_manager_cli.subprocess,
+        "check_output",
+        lambda *_a, **_kw: ps_line,
+    )
+    monkeypatch.setattr(server_manager_cli, "_is_zombie", lambda _pid: False)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_read_ppid",
+        lambda pid: 1 if pid == 2000 else 2000,
+    )
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_read_pgid",
+        lambda pid: 2000,
+    )
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+
+    assert server_manager_cli._find_daemon_pids(cfg_res) == [2000]
+    assert server_manager_cli._find_stale_daemon_child_pids(cfg_res) == [2001]
 
 
 def test_find_daemon_pids_does_not_match_other_basename_only(

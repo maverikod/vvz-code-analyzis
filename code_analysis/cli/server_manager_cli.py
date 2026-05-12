@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
@@ -222,6 +223,21 @@ def _read_pid(pidfile: Path) -> Optional[int]:
         return None
 
 
+def _append_manager_log(config_path: str, level: str, message: str) -> None:
+    """Append a casmgr diagnostic line to the daemon log when possible."""
+
+    log_path = _daemon_log_file(config_path)
+    if log_path is None:
+        return
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ts} | {level.upper():<7} | casmgr | {message}\n")
+    except OSError:
+        return
+
+
 def _resolved_config_path_for_daemon_pid(pid: int, cfg_argv: str) -> Optional[str]:
     """
     Resolve the on-disk config path for a daemon given its ``--config`` argv.
@@ -385,10 +401,71 @@ def _find_daemon_pids(config_path: str) -> list[int]:
         List of matching PIDs.
     """
 
-    # We cannot rely on exact string match because the running process may have
-    # `--config config.json` (relative) while our config_path can be absolute.
-    #
-    # Use `ps` output and parse argv as a robust fallback.
+    # Zombies still appear in ``ps`` and answer ``kill(0)``; they are not daemons.
+    living = _matching_daemon_argv_pids(config_path)
+    return _root_daemon_pids_only(
+        living,
+        pidfile_pid=_read_pid(_default_pidfile_path(config_path)),
+        known_worker_pids=_known_worker_pids(config_path),
+    )
+
+
+def _read_ppid(pid: int) -> Optional[int]:
+    """Return parent PID from ``/proc`` (Linux only)."""
+
+    if sys.platform != "linux":
+        return None
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("PPid:"):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _read_pgid(pid: int) -> Optional[int]:
+    """Return process group id, or None when unavailable."""
+
+    try:
+        return os.getpgid(pid)
+    except (OSError, ProcessLookupError):
+        return None
+
+
+def _worker_pid_files(config_path: str) -> list[Path]:
+    """Known worker PID files under the configured log directory."""
+
+    log_path = _daemon_log_file(config_path)
+    if log_path is None:
+        return []
+    log_dir = log_path.parent
+    return [
+        log_dir / "indexing_worker.pid",
+        log_dir / "vectorization_worker.pid",
+        log_dir / "file_watcher_worker.pid",
+        log_dir / "database_driver.pid",
+    ]
+
+
+def _known_worker_pids(config_path: str) -> set[int]:
+    """Return live worker PIDs recorded in worker PID files."""
+
+    out: set[int] = set()
+    for pid_file in _worker_pid_files(config_path):
+        pid = _read_pid(pid_file)
+        if pid is not None and _is_alive(pid) and not _is_zombie(pid):
+            out.add(pid)
+    return out
+
+
+def _matching_daemon_argv_pids(config_path: str) -> list[int]:
+    """Find live PIDs whose argv looks like this config's daemon command."""
+
     cfg_resolved = str(Path(config_path).resolve())
 
     try:
@@ -429,36 +506,21 @@ def _find_daemon_pids(config_path: str) -> list[int]:
         if resolved == cfg_resolved:
             pids.append(pid)
 
-    # Zombies still appear in ``ps`` and answer ``kill(0)``; they are not daemons.
-    living = [p for p in sorted(set(pids)) if not _is_zombie(p)]
-    return _root_daemon_pids_only(living)
+    return [p for p in sorted(set(pids)) if not _is_zombie(p)]
 
 
-def _read_ppid(pid: int) -> Optional[int]:
-    """Return parent PID from ``/proc`` (Linux only)."""
-
-    if sys.platform != "linux":
-        return None
-    try:
-        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in status.splitlines():
-        if line.startswith("PPid:"):
-            try:
-                return int(line.split()[1])
-            except (IndexError, ValueError):
-                return None
-    return None
-
-
-def _root_daemon_pids_only(pids: list[int]) -> list[int]:
+def _root_daemon_pids_only(
+    pids: list[int],
+    *,
+    pidfile_pid: Optional[int] = None,
+    known_worker_pids: Optional[set[int]] = None,
+) -> list[int]:
     """
     Keep only top-level PIDs when several processes share the same argv.
 
     Forked children inherit ``code_analysis.main --config … --daemon`` in
     ``/proc/pid/cmdline`` until exec; they must not be counted as separate
-    daemons for status/stop.
+    daemons for status/start.
     """
 
     if not pids:
@@ -467,12 +529,45 @@ def _root_daemon_pids_only(pids: list[int]) -> list[int]:
         return sorted(pids)
 
     s = set(pids)
+    known_workers = known_worker_pids or set()
     roots: list[int] = []
     for pid in sorted(s):
+        if pid in known_workers:
+            continue
         ppid = _read_ppid(pid)
-        if ppid is None or ppid not in s:
-            roots.append(pid)
+        if ppid is not None and ppid in s:
+            continue
+
+        pgid = _read_pgid(pid)
+        if pgid is not None and pid != pgid:
+            if pgid in s:
+                continue
+            if (
+                pidfile_pid is not None
+                and pgid == pidfile_pid
+                and not _is_alive(pidfile_pid)
+            ):
+                continue
+            if len(s) > 1:
+                continue
+
+        roots.append(pid)
     return roots
+
+
+def _find_stale_daemon_child_pids(config_path: str) -> list[int]:
+    """Return daemon-argv PIDs that are not the actual root daemon."""
+
+    candidates = _matching_daemon_argv_pids(config_path)
+    pidfile_pid = _read_pid(_default_pidfile_path(config_path))
+    roots = set(
+        _root_daemon_pids_only(
+            candidates,
+            pidfile_pid=pidfile_pid,
+            known_worker_pids=_known_worker_pids(config_path),
+        )
+    )
+    return [pid for pid in candidates if pid not in roots]
 
 
 def _daemon_log_file(config_path: str) -> Path | None:
@@ -573,6 +668,7 @@ def _cmd_status(config_path: str) -> int:
     pidfile = _default_pidfile_path(config_path)
     pf_pid = _read_pid(pidfile)
     daemons = _find_daemon_pids(config_path)
+    stale_children = _find_stale_daemon_child_pids(config_path)
 
     if daemons:
         if len(daemons) == 1:
@@ -585,6 +681,33 @@ def _cmd_status(config_path: str) -> int:
                 print(f"running pid={d} (pidfile pid={pf_pid} does not match)")
         else:
             print(f"running multiple pids={','.join(str(p) for p in daemons)}")
+            _append_manager_log(
+                config_path,
+                "WARNING",
+                "multiple root daemon processes discovered: "
+                + ",".join(str(p) for p in daemons),
+            )
+        if stale_children:
+            _append_manager_log(
+                config_path,
+                "WARNING",
+                "stale daemon child/worker processes also present: "
+                + ",".join(str(p) for p in stale_children),
+            )
+        return 0
+
+    if stale_children:
+        print(
+            "stopped (stale daemon child processes: "
+            + ",".join(str(p) for p in stale_children)
+            + ")"
+        )
+        _append_manager_log(
+            config_path,
+            "WARNING",
+            "daemon root is absent but stale child/worker processes remain: "
+            + ",".join(str(p) for p in stale_children),
+        )
         return 0
 
     if pf_pid is None:
@@ -592,6 +715,11 @@ def _cmd_status(config_path: str) -> int:
         return 0
     if not _is_alive(pf_pid):
         print("stopped (stale pidfile)")
+        _append_manager_log(
+            config_path,
+            "WARNING",
+            f"stale pidfile removed: {pidfile} pid={pf_pid} is not alive",
+        )
         try:
             pidfile.unlink(missing_ok=True)
         except OSError:
@@ -600,6 +728,11 @@ def _cmd_status(config_path: str) -> int:
     print(
         f"stopped (pidfile pid={pf_pid} alive but no daemon for this config; "
         "pidfile likely stale)"
+    )
+    _append_manager_log(
+        config_path,
+        "WARNING",
+        f"pidfile pid={pf_pid} is alive but is not this config's daemon",
     )
     return 0
 
@@ -624,10 +757,14 @@ def _cmd_stop(config_path: str) -> int:
     for _ in range(_STOP_MAX_ROUNDS):
         pid = _read_pid(pidfile)
         discovered = _find_daemon_pids(config_path)
+        stale_children = _find_stale_daemon_child_pids(config_path)
         merged: list[int] = []
         if pid is not None:
             merged.append(pid)
         for p in discovered:
+            if p not in merged:
+                merged.append(p)
+        for p in stale_children:
             if p not in merged:
                 merged.append(p)
 
@@ -635,6 +772,11 @@ def _cmd_stop(config_path: str) -> int:
         if not alive:
             break
 
+        _append_manager_log(
+            config_path,
+            "WARNING",
+            "stopping daemon process group(s); pids=" + ",".join(str(p) for p in alive),
+        )
         for p in alive:
             _kill_process_group(p, timeout_s=grace)
         time.sleep(_STOP_ROUND_DELAY_S)
@@ -675,6 +817,7 @@ def _cmd_start(config_path: str) -> int:
 
     pidfile = _default_pidfile_path(config_path)
     daemons = _find_daemon_pids(config_path)
+    stale_children = _find_stale_daemon_child_pids(config_path)
 
     if len(daemons) > 1:
         print(
@@ -682,9 +825,22 @@ def _cmd_start(config_path: str) -> int:
             "run stop first",
             file=sys.stderr,
         )
+        _append_manager_log(
+            config_path,
+            "ERROR",
+            "refusing start because multiple root daemons are present: "
+            + ",".join(str(p) for p in daemons),
+        )
         return 1
 
     if len(daemons) == 1:
+        if stale_children:
+            _append_manager_log(
+                config_path,
+                "WARNING",
+                "daemon is running but stale child/worker processes also remain: "
+                + ",".join(str(p) for p in stale_children),
+            )
         try:
             pidfile.write_text(str(daemons[0]), encoding="utf-8")
         except OSError as e:
@@ -692,6 +848,19 @@ def _cmd_start(config_path: str) -> int:
             return 1
         print(f"already running pid={daemons[0]}")
         return 0
+
+    if stale_children:
+        _append_manager_log(
+            config_path,
+            "WARNING",
+            "cleaning stale daemon child/worker processes before start: "
+            + ",".join(str(p) for p in stale_children),
+        )
+        grace = _read_shutdown_grace_seconds(config_path)
+        for p in stale_children:
+            if _is_alive(p) and not _is_zombie(p):
+                _kill_process_group(p, timeout_s=grace)
+        time.sleep(_RESTART_SETTLE_S)
 
     try:
         pidfile.unlink(missing_ok=True)

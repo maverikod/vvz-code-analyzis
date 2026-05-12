@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .anchor_check import AnchorMismatch, check_cst_anchor, check_text_anchor
 from .base_mcp_command import BaseMCPCommand
 from .base_mcp_command_resolve_path import resolve_under_project_root
 from .project_text_file_guard import reject_if_write_under_project_venv
@@ -33,7 +34,7 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
     """Replace a range of lines in a project file; backup on disk; no index update."""
 
     name = "replace_file_lines"
-    version = "1.1.0"
+    version = "1.2.0"
     descr = (
         "Replace a range of lines in a file (1-based). Use to fix syntax errors "
         "when cst_load_file fails. Mandatory version backup under project ``old_code`` "
@@ -75,6 +76,30 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                     "type": "boolean",
                     "default": True,
                     "description": "Whether to create backup before replace",
+                },
+                "anchor_head": {
+                    "type": "string",
+                    "description": (
+                        "First 5 non-whitespace chars of the first line in "
+                        "[start_line, end_line]. Server rejects the write if "
+                        "actual content differs."
+                    ),
+                },
+                "anchor_tail": {
+                    "type": "string",
+                    "description": (
+                        "Last 5 non-whitespace chars of the last line in "
+                        "[start_line, end_line]. Server rejects the write if "
+                        "actual content differs."
+                    ),
+                },
+                "anchor_node_id": {
+                    "type": "string",
+                    "description": (
+                        "Python files only: stable_id (UUID4) of the CST node "
+                        "at start_line. Mutually exclusive with "
+                        "anchor_head/anchor_tail."
+                    ),
                 },
             },
             "required": [
@@ -130,6 +155,76 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                 return blocked_venv
 
             text = absolute_path.read_text(encoding="utf-8", errors="replace")
+            all_lines = text.splitlines(keepends=False)
+
+            anchor_head = kwargs.get("anchor_head")
+            anchor_tail = kwargs.get("anchor_tail")
+            anchor_node_id = kwargs.get("anchor_node_id")
+            if anchor_node_id is not None and (
+                anchor_head is not None or anchor_tail is not None
+            ):
+                return ErrorResult(
+                    message=(
+                        "anchor_node_id is mutually exclusive with "
+                        "anchor_head/anchor_tail"
+                    ),
+                    code="VALIDATION_ERROR",
+                    details={
+                        "fields": ["anchor_node_id", "anchor_head", "anchor_tail"]
+                    },
+                )
+            if (anchor_head is None) != (anchor_tail is None):
+                return ErrorResult(
+                    message="anchor_head and anchor_tail must be supplied together",
+                    code="VALIDATION_ERROR",
+                    details={"fields": ["anchor_head", "anchor_tail"]},
+                )
+            if anchor_node_id is not None:
+                if not isinstance(anchor_node_id, str):
+                    return ErrorResult(
+                        message="anchor_node_id must be a string",
+                        code="VALIDATION_ERROR",
+                        details={"field": "anchor_node_id"},
+                    )
+                if absolute_path.suffix.lower() not in {".py", ".pyi", ".pyw"}:
+                    return ErrorResult(
+                        message=(
+                            "anchor_node_id is only valid for Python files "
+                            "(.py/.pyi/.pyw)"
+                        ),
+                        code="VALIDATION_ERROR",
+                        details={"file_path": file_path},
+                    )
+                try:
+                    check_cst_anchor(absolute_path, start_line, anchor_node_id)
+                except AnchorMismatch as e:
+                    return ErrorResult(
+                        message=str(e),
+                        code="ANCHOR_MISMATCH",
+                        details=e.details,
+                    )
+            elif anchor_head is not None or anchor_tail is not None:
+                if not isinstance(anchor_head, str) or not isinstance(anchor_tail, str):
+                    return ErrorResult(
+                        message="anchor_head and anchor_tail must be strings",
+                        code="VALIDATION_ERROR",
+                        details={"fields": ["anchor_head", "anchor_tail"]},
+                    )
+                try:
+                    check_text_anchor(
+                        all_lines,
+                        start_line,
+                        end_line,
+                        anchor_head,
+                        anchor_tail,
+                    )
+                except AnchorMismatch as e:
+                    return ErrorResult(
+                        message=str(e),
+                        code="ANCHOR_MISMATCH",
+                        details=e.details,
+                    )
+
             config_data = self._get_raw_config()
             allow_on_healthy = config_data.get("code_analysis", {}).get(
                 "allow_line_commands_on_healthy_files", False
@@ -152,7 +247,6 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                         ],
                     },
                 )
-            all_lines = text.splitlines(keepends=False)
             total = len(all_lines)
             if total == 0:
                 return ErrorResult(

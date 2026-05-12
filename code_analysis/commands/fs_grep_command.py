@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -30,7 +31,7 @@ class FsGrepCommand(BaseMCPCommand):
     """Scan files on disk for a pattern (regex or literal)."""
 
     name = "fs_grep"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Search file contents on disk (grep-style). Does not use the database full-text index; "
         "use ``fulltext_search`` for indexed search. Respects the same walk rules as "
@@ -83,6 +84,14 @@ class FsGrepCommand(BaseMCPCommand):
                     "description": "Stop after this many matching lines (default 500).",
                     "default": 500,
                 },
+                "max_file_bytes": {
+                    "type": "integer",
+                    "description": (
+                        "Skip individual files larger than this many bytes before opening them. "
+                        "Use 0 to disable the guard. Default: 5242880 (5 MiB)."
+                    ),
+                    "default": 5242880,
+                },
                 "show_venv": {"type": "boolean", "default": False},
                 "python_only": {"type": "boolean", "default": False},
                 "include_venv_ignore_exceptions": {"type": "boolean", "default": False},
@@ -101,6 +110,7 @@ class FsGrepCommand(BaseMCPCommand):
         file_pattern: Optional[str] = None,
         glob: Optional[str] = None,
         max_matches: int = 500,
+        max_file_bytes: int = 5 * 1024 * 1024,
         show_venv: bool = False,
         python_only: bool = False,
         include_venv_ignore_exceptions: bool = False,
@@ -119,7 +129,14 @@ class FsGrepCommand(BaseMCPCommand):
                 code="INVALID_LIMIT",
                 details={"max_matches": max_matches},
             )
+        if max_file_bytes < 0:
+            return ErrorResult(
+                message="max_file_bytes must be >= 0",
+                code="INVALID_LIMIT",
+                details={"max_file_bytes": max_file_bytes},
+            )
         try:
+            started_at = perf_counter()
             project_root = self._resolve_project_root(project_id).resolve()
             fs_paths = enumerate_project_paths(
                 project_root,
@@ -138,6 +155,20 @@ class FsGrepCommand(BaseMCPCommand):
                     )
                 ]
 
+            logger.info(
+                "fs_grep start project_id=%s root=%s pattern=%r literal=%s "
+                "case_sensitive=%s file_pattern=%r max_matches=%s max_file_bytes=%s "
+                "candidate_files=%s",
+                project_id,
+                project_root,
+                pattern,
+                literal,
+                case_sensitive,
+                effective_pattern,
+                max_matches,
+                max_file_bytes,
+                len(fs_paths),
+            )
             flags = 0 if case_sensitive else re.IGNORECASE
             needle = pattern
             regex: Optional[re.Pattern[str]] = None
@@ -153,38 +184,68 @@ class FsGrepCommand(BaseMCPCommand):
 
             matches: List[Dict[str, Any]] = []
             files_scanned = 0
+            files_skipped_large = 0
+            files_skipped_io = 0
+            skipped_large_samples: List[Dict[str, Any]] = []
             for abs_path in fs_paths:
                 if len(matches) >= max_matches:
                     break
-                files_scanned += 1
                 rel = canonical_relative_path(project_root, abs_path)
                 try:
-                    data = abs_path.read_text(encoding="utf-8", errors="replace")
+                    size = abs_path.stat().st_size
                 except OSError as e:
+                    files_skipped_io += 1
+                    logger.debug("fs_grep skip stat %s: %s", abs_path, e)
+                    continue
+                if max_file_bytes and size > max_file_bytes:
+                    files_skipped_large += 1
+                    if len(skipped_large_samples) < 20:
+                        skipped_large_samples.append(
+                            {"relative_path": rel, "size_bytes": size}
+                        )
+                    continue
+                files_scanned += 1
+                try:
+                    with abs_path.open("r", encoding="utf-8", errors="replace") as fh:
+                        for i, line in enumerate(fh, start=1):
+                            if len(matches) >= max_matches:
+                                break
+                            if "\0" in line:
+                                break
+                            line = line.rstrip("\r\n")
+                            ok = False
+                            if literal:
+                                hay = line if case_sensitive else line.lower()
+                                nd = needle if case_sensitive else needle.lower()
+                                ok = nd in hay
+                            else:
+                                assert regex is not None
+                                ok = regex.search(line) is not None
+                            if ok:
+                                matches.append(
+                                    {
+                                        "relative_path": rel,
+                                        "line": i,
+                                        "text": line,
+                                    }
+                                )
+                except OSError as e:
+                    files_skipped_io += 1
                     logger.debug("fs_grep skip read %s: %s", abs_path, e)
                     continue
-                if "\0" in data:
-                    continue
-                for i, line in enumerate(data.splitlines(), start=1):
-                    if len(matches) >= max_matches:
-                        break
-                    ok = False
-                    if literal:
-                        hay = line if case_sensitive else line.lower()
-                        nd = needle if case_sensitive else needle.lower()
-                        ok = nd in hay
-                    else:
-                        assert regex is not None
-                        ok = regex.search(line) is not None
-                    if ok:
-                        matches.append(
-                            {
-                                "relative_path": rel,
-                                "line": i,
-                                "text": line,
-                            }
-                        )
 
+            elapsed = perf_counter() - started_at
+            logger.info(
+                "fs_grep done project_id=%s elapsed=%.3fs matches=%s "
+                "files_scanned=%s files_skipped_large=%s files_skipped_io=%s truncated=%s",
+                project_id,
+                elapsed,
+                len(matches),
+                files_scanned,
+                files_skipped_large,
+                files_skipped_io,
+                len(matches) >= max_matches,
+            )
             return SuccessResult(
                 data={
                     "success": True,
@@ -194,6 +255,9 @@ class FsGrepCommand(BaseMCPCommand):
                     "matches": matches,
                     "match_count": len(matches),
                     "files_scanned": files_scanned,
+                    "files_skipped_large": files_skipped_large,
+                    "files_skipped_io": files_skipped_io,
+                    "skipped_large_samples": skipped_large_samples,
                     "truncated": len(matches) >= max_matches,
                 }
             )
@@ -210,11 +274,59 @@ class FsGrepCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "Walks the project tree like ``list_project_files``, reads each file as UTF-8 "
-                "(with replacement), skips binary-looking content (NUL byte), and collects "
-                "matching lines. For corpus-wide indexed search use ``fulltext_search``."
+                "Walks the project tree like ``list_project_files``, streams each file as UTF-8 "
+                "(with replacement), skips files larger than ``max_file_bytes`` before opening "
+                "them, skips binary-looking content (NUL byte), and collects matching lines. "
+                "For corpus-wide indexed search use ``fulltext_search``."
             ),
-            "parameters": {},
+            "parameters": {
+                "project_id": {
+                    "description": "Project UUID from create_project or list_projects.",
+                    "type": "string",
+                    "required": True,
+                },
+                "pattern": {
+                    "description": "Literal substring or Python regular expression to search.",
+                    "type": "string",
+                    "required": True,
+                },
+                "literal": {
+                    "description": "When true, match pattern as a plain substring.",
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "case_sensitive": {
+                    "description": "When false, perform case-insensitive matching.",
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "file_pattern": {
+                    "description": "Optional project-relative listing pattern.",
+                    "type": "string",
+                    "required": False,
+                },
+                "glob": {
+                    "description": "Alias for file_pattern; file_pattern wins when both are set.",
+                    "type": "string",
+                    "required": False,
+                },
+                "max_matches": {
+                    "description": "Stop after this many matching lines.",
+                    "type": "integer",
+                    "required": False,
+                    "default": 500,
+                },
+                "max_file_bytes": {
+                    "description": (
+                        "Skip files larger than this limit before opening them. Use 0 to disable."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 5242880,
+                },
+            },
             "return_value": {
                 "success": {
                     "description": "Matches and scan stats.",
@@ -228,9 +340,26 @@ class FsGrepCommand(BaseMCPCommand):
                 },
             },
             "usage_examples": [],
-            "error_cases": {},
+            "error_cases": {
+                "INVALID_PATTERN": {
+                    "description": "The pattern is empty or whitespace only.",
+                    "message": "pattern must be non-empty",
+                    "solution": "Pass a non-empty search string.",
+                },
+                "INVALID_LIMIT": {
+                    "description": "max_matches or max_file_bytes is outside the supported range.",
+                    "message": "max_matches must be >= 1 or max_file_bytes must be >= 0",
+                    "solution": "Use max_matches >= 1 and max_file_bytes >= 0.",
+                },
+                "INVALID_REGEX": {
+                    "description": "literal=false and pattern is not valid Python regex syntax.",
+                    "message": "Invalid regex: {details}",
+                    "solution": "Fix the regular expression or set literal=true.",
+                },
+            },
             "best_practices": [
                 "Narrow with file_pattern when possible — scanning huge trees is expensive.",
+                "Keep max_file_bytes enabled for broad searches; skipped files are returned in the result.",
                 "Prefer fulltext_search when the project is indexed and you need docstring/body FTS.",
             ],
         }

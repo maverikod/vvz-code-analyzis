@@ -40,4 +40,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
   description: Returned instead of resolved_node when the stable_id UUID is not found
     in the current CST.
-atomic_steps: []
+atomic_steps:
+- A-001

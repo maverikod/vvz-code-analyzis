@@ -77,4 +77,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
   description: Returned instead of resolved_node when the infrastructure cannot resolve
     the provided identifier.
-atomic_steps: []
+atomic_steps:
+- A-001

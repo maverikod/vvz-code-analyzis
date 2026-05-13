@@ -3,8 +3,10 @@ parent_global_step: G-002
 name: Block handler — five rendering rules
 status: draft
 concepts:
-- C-008
 - C-004
+- C-005
+- C-008
+- C-013
 description: "Define the BlockHandler (C-008) as the set of five rendering rules,\
   \ one per NodeKind (C-004). The BlockHandler is chosen by the block's own NodeKind,\
   \ not by the parent focus node's NodeKind. The set is closed under this plan: a\

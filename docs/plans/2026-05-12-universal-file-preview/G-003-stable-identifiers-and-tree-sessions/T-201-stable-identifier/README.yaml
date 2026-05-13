@@ -31,4 +31,5 @@ outputs:
   type: StableIdentifier (C-009)
   description: The validated identifier in the file handler's native format, ready
     to be passed to the FileHandler for node resolution.
-atomic_steps: []
+atomic_steps:
+- A-001

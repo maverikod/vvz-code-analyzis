@@ -14,7 +14,7 @@ concepts:
 status: draft
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\n\
-  The handlers/ package __init__.py already exists (created by A-000 of this TS).\n\
+  The handlers/ package __init__.py already exists as a prerequisite.\n\
   \nFile-level docstring (required):\n  \"\"\"\n  PythonFileHandler — FileHandler\
   \ for .py, .pyi, .pyw files (C-016).\n\n  Opens Python source via the project's\
   \ cst_load_file infrastructure.\n  Root NodeKind is tree_node with type label 'Module'.\n\

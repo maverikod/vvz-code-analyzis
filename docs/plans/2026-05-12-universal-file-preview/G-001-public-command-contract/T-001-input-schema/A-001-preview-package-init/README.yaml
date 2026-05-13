@@ -17,8 +17,8 @@ prompt: "Create a new Python package init file.\n\nTarget file (create_file — 
   \ (required):\n  \"\"\"\n  universal_file_preview — package for the universal_file_preview\
   \ MCP command.\n\n  Exposes UniversalFilePreviewCommand as the single public entry\
   \ point.\n\n  Author: Vasiliy Zdanovskiy\n  email: vasilyvz@gmail.com\n  \"\"\"\n\
-  \nImports:\n  from .universal_file_preview_command import UniversalFilePreviewCommand\n\
   \nImports:\n  from ..universal_file_preview_command import UniversalFilePreviewCommand\n\
+  \nExports:\n  __all__ = [\"UniversalFilePreviewCommand\"]\n\nNo other content.\n"
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview

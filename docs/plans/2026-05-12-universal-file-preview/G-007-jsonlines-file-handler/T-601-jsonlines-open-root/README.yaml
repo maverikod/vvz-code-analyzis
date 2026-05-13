@@ -7,21 +7,21 @@ concepts:
 - C-004
 - C-019
 description: "Define the opening behaviour of JsonLinesFileHandler (C-019), which\
-  \ extends FileHandler (C-003), for .jsonl and .ndjson files. At the root level,\
-  \ JsonLinesFileHandler composes a lines representation without parsing any JSON\
-  \ content.\nRoot Node: - NodeKind (C-004): lines. - Block set: the ordered sequence\
-  \ of all text lines in the file, in\n  file order. Each line is one Block.\n\nLine\
-  \ Block properties at root level: - NodeKind: scalar. - Value: the raw text of the\
-  \ line, without the trailing newline. - Block set: empty at the root-level view\
-  \ (lines are treated as\n  opaque text until the caller drills in).\n- node_ref:\
-  \ the zero-based index of the line.\nNo JSON parsing at root: JsonLinesFileHandler\
-  \ does NOT parse any JSON at open time or when the Selector operates at the root\
-  \ level. The Selector addresses line indices; each line is returned as a scalar\
-  \ block containing its raw text. This allows efficient navigation of large .jsonl\
-  \ files without parsing all lines.\nFile-structure errors: JsonLinesFileHandler\
-  \ does not validate JSON content at the root level. Any readable file is accepted.\
-  \ Individual line parse errors surface only when the caller drills into a specific\
-  \ line (see T-602).\n"
+  \ extends\nFileHandler (C-003), for .jsonl and .ndjson files. At the root level,\n\
+  JsonLinesFileHandler composes a lines representation without parsing any\nJSON content.\n\
+  \nRoot Node:\n- NodeKind (C-004): lines.\n- Block set: the ordered sequence of all\
+  \ text lines in the file, in\n  file order. Each line is one Block.\n\nLine Block\
+  \ properties at root level:\n- NodeKind: scalar.\n- Value: the raw text of the line,\
+  \ without the trailing newline.\n- Block set: empty at the root-level view (lines\
+  \ are treated as\n  opaque text until the caller drills in).\n- node_ref: the zero-based\
+  \ index of the line.\n\nNo JSON parsing at root:\nJsonLinesFileHandler does NOT\
+  \ parse any JSON at open time or when the\nSelector operates at the root level.\
+  \ The Selector addresses line indices;\neach line is returned as a scalar block\
+  \ containing its raw text. This\nallows efficient navigation of large .jsonl files\
+  \ without parsing all lines.\n\nFile-structure errors: JsonLinesFileHandler does\
+  \ not validate JSON content\nat the root level. Any readable file is accepted. Individual\
+  \ line parse\nerrors surface only when the caller drills into a specific line by\
+  \ passing\nits zero-based index as node_ref.\n"
 inputs:
 - name: file_path
   type: string

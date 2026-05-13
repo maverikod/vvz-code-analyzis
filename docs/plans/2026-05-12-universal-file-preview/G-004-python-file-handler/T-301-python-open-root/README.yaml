@@ -39,4 +39,5 @@ outputs:
   type: ErrorClassification (C-014) FILE_STRUCTURE_ERROR
   description: Returned instead of root_node when the Python file cannot be parsed.
     Carries parser name 'libcst' and line range when available.
-atomic_steps: []
+atomic_steps:
+- A-001

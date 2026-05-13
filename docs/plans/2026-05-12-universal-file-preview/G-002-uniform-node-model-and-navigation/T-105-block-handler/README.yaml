@@ -40,4 +40,5 @@ outputs:
   description: 'The compact rendering of the block according to its NodeKind rule:
     scalar (truncated value), lines (count + first line), sequence (count + kind set),
     mapping (key count + key names), tree_node (type + name + attributes + child count).'
-atomic_steps: []
+atomic_steps:
+- A-001

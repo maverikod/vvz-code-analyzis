@@ -41,4 +41,5 @@ outputs:
     error code (deterministic per condition), and class-specific payload (line range
     for file-structure; handler name for handler-internal; violated rule for input
     errors).'
-atomic_steps: []
+atomic_steps:
+- A-001

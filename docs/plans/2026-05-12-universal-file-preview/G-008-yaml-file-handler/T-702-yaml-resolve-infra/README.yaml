@@ -9,27 +9,54 @@ concepts:
 - C-014
 - C-020
 description: 'Define the identifier-resolution behaviour of YamlFileHandler (C-020)
-  when the project''s YAML tree infrastructure is present. This mode applies when
-  the project has a registered YAML tree infrastructure that produces and tracks StableIdentifier
-  (C-009) values for YAML nodes.
 
-  Precondition: The project YAML tree infrastructure is present. YamlFileHandler detects
-  this at open time by checking whether the infrastructure is registered for the target
-  file. When the infrastructure is present, this resolution mode is always used in
-  preference to the JSON-pointer fallback (T-703).
+  when the project''s YAML tree infrastructure is present. This mode applies
 
-  Identifier format: The StableIdentifier (C-009) for YAML files in this mode is whatever
-  identifier format the project YAML tree infrastructure produces. This format is
-  opaque to the HandlerDispatcher and to the NavigationProcedure.
+  when the project has a registered YAML tree infrastructure that produces
 
-  Resolution process: YamlFileHandler passes the node_ref value to the YAML tree infrastructure
-  within the open or transiently-opened TreeSession (C-011). The infrastructure resolves
-  the identifier to the specific YAML Node and returns it with its NodeKind (C-004),
-  block set, and node_ref.
+  and tracks StableIdentifier (C-009) values for YAML nodes.
 
-  Resolution failure: If the identifier is not found (the node was removed, or the
-  identifier is invalid for this infrastructure), YamlFileHandler signals an UNKNOWN_NODE_REF
-  condition surfaced as an ErrorClassification (C-014) input error.
+
+  Precondition:
+
+  The project YAML tree infrastructure is present. YamlFileHandler detects
+
+  this at open time by checking whether the infrastructure is registered for
+
+  the target file. When the infrastructure is present, this resolution mode
+
+  is always used.
+
+
+  Identifier format:
+
+  The StableIdentifier (C-009) for YAML files in this mode is whatever
+
+  identifier format the project YAML tree infrastructure produces. This
+
+  format is opaque to the HandlerDispatcher and to the NavigationProcedure.
+
+
+  Resolution process:
+
+  YamlFileHandler passes the node_ref value to the YAML tree infrastructure
+
+  within the open or transiently-opened TreeSession (C-011). The
+
+  infrastructure resolves the identifier to the specific YAML Node and
+
+  returns it with its NodeKind (C-004), block set, and node_ref.
+
+
+  Resolution failure:
+
+  If the identifier is not found (the node was removed, or the identifier
+
+  is invalid for this infrastructure), YamlFileHandler signals an
+
+  UNKNOWN_NODE_REF condition surfaced as an ErrorClassification (C-014)
+
+  input error.
 
   '
 inputs:

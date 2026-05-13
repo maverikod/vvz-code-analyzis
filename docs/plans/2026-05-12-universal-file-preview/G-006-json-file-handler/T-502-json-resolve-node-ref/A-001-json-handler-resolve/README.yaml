@@ -1,11 +1,10 @@
 step_id: A-001
 parent_tactical_step: T-502
-name: Verify JsonFileHandler.resolve_node_ref handles both node_id and JSON Pointer
+name: Fix JsonFileHandler.resolve_node_ref to dispatch on JSON Pointer vs opaque id
 target_file: code_analysis/commands/universal_file_preview/handlers/json_handler.py
 operation: modify_file
-priority: 2
-depends_on:
-- A-001
+priority: 1
+depends_on: []
 concepts:
 - C-004
 - C-009
@@ -14,29 +13,37 @@ concepts:
 - C-018
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/json_handler.py\n\
-  \nCurrent content after A-001 (T-501) has been applied:\n  The file contains JsonFileHandler\
-  \ with resolve_node_ref treating any\n  string that does not start with '/' as None\
-  \ (invalid). This misses\n  node_id strings produced by list_json_blocks (opaque\
-  \ UUIDs).\n\nChange to make:\n  Replace the body of resolve_node_ref to also accept\
-  \ opaque node_id\n  strings by attempting a BFS scan of the document for a matching\n\
-  \  list_json_blocks-style id. Specifically:\n\n  Replace the existing body with:\n\
-  \n    doc = getattr(self, '_doc', None)\n    if doc is None:\n        return input_error(INPUT_ERROR_UNKNOWN_NODE_REF,\n\
-  \                           'open_root must be called before resolve_node_ref.')\n\
-  \    # Try JSON Pointer first (empty string is valid root pointer)\n    if node_ref\
-  \ == '' or node_ref.startswith('/'):\n        result = _resolve_json_pointer(doc,\
-  \ node_ref)\n        if result is None:\n            return input_error(\n     \
-  \           INPUT_ERROR_UNKNOWN_NODE_REF,\n                f'JSON Pointer {node_ref!r}\
-  \ does not exist in document.',\n                details={'node_ref': node_ref},\n\
-  \            )\n        value, pointer = result\n        return _json_value_to_node(value,\
-  \ pointer)\n    # Opaque node_id: not supported in this implementation (no list_json_blocks\
-  \ index).\n    # Return UNKNOWN_NODE_REF with a clear message.\n    return input_error(\n\
+  \nCurrent content of the file as it exists after T-501 has been fully applied\n\
+  (created by T-501/A-001). The file contains the full JsonFileHandler class\nwith\
+  \ these members already defined:\n\n  - supported_extensions property -> frozenset({'.json'})\n\
+  \  - open_root(self, file_path, session) -> Node | PreviewError\n    (parses JSON,\
+  \ stores self._last_file_path and self._doc, returns root Node)\n  - resolve_node_ref(self,\
+  \ node_ref, session) -> Node | PreviewError\n    (current body: calls _resolve_json_pointer\
+  \ for all strings; strings that\n     do not start with '/' and are not '' are treated\
+  \ as None -> UNKNOWN_NODE_REF)\n  Plus module-level private functions:\n    _json_value_to_node,\
+  \ _json_pair_to_node, _resolve_json_pointer\n\nThe current resolve_node_ref already\
+  \ handles JSON Pointers correctly.\nThe fix is to make the dispatch explicit and\
+  \ add a clear message for\nopaque node_ids that are not JSON Pointers.\n\nChange\
+  \ to make:\n  Replace the body of resolve_node_ref with:\n\n    doc = getattr(self,\
+  \ '_doc', None)\n    if doc is None:\n        return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \            'open_root must be called before resolve_node_ref.',\n            details={'node_ref':\
+  \ node_ref},\n        )\n    # Dispatch: JSON Pointer strings start with '/' or\
+  \ are the empty string.\n    if node_ref == '' or node_ref.startswith('/'):\n  \
+  \      result = _resolve_json_pointer(doc, node_ref)\n        if result is None:\n\
+  \            return input_error(\n                INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \                f'JSON Pointer {node_ref!r} does not exist in document.',\n   \
+  \             details={'node_ref': node_ref},\n            )\n        value, pointer\
+  \ = result\n        return _json_value_to_node(value, pointer)\n    # Opaque node_id\
+  \ (not a JSON Pointer): inform caller to use JSON Pointer.\n    return input_error(\n\
   \        INPUT_ERROR_UNKNOWN_NODE_REF,\n        f'Opaque node_id {node_ref!r} is\
-  \ not a JSON Pointer. '\n        'Pass a JSON Pointer (e.g. \\'\\'/foo/bar\\') to\
-  \ address nodes.',\n        details={'node_ref': node_ref},\n    )\n\n  No other\
-  \ changes to the file.\n"
+  \ not a JSON Pointer. '\n        \"Pass a JSON Pointer (e.g. '' for root, '/key/0'\
+  \ for a nested node).\",\n        details={'node_ref': node_ref},\n    )\n\n  No\
+  \ other changes to the file.\n  Imports already present: input_error, INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \  _resolve_json_pointer, _json_value_to_node.\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview/handlers/json_handler.py
-  expected: resolve_node_ref dispatches on node_ref.startswith('/') or node_ref=='';
-    returns UNKNOWN_NODE_REF for opaque non-pointer strings with an informative message;
-    no bare exceptions propagate.
+  expected: resolve_node_ref dispatches on node_ref == '' or node_ref.startswith('/');
+    returns _json_value_to_node result for valid JSON Pointers; returns UNKNOWN_NODE_REF
+    with an informative message for opaque non-pointer strings; no bare exceptions
+    propagate.

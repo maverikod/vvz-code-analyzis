@@ -1,12 +1,10 @@
 step_id: A-001
 parent_tactical_step: T-703
-name: Verify _resolve_yaml_pointer covers all T-703 edge cases
+name: Harden _resolve_yaml_pointer with full RFC-6901 edge case handling
 target_file: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
 operation: modify_file
-priority: 3
-depends_on:
-- A-001
-- A-002
+priority: 1
+depends_on: []
 concepts:
 - C-004
 - C-009
@@ -14,29 +12,43 @@ concepts:
 - C-020
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/yaml_handler.py\n\
-  \nCurrent content after A-001 (T-701) and A-001 (T-702) have been applied:\n  The\
-  \ file contains _resolve_yaml_pointer and _try_infra_resolve.\n  _resolve_yaml_pointer\
-  \ returns None for non-'/' strings, covering the\n  common case but missing the\
-  \ T-703 requirement that root is addressed\n  by the empty string '' explicitly.\n\
-  \nChange to make:\n  Update _resolve_yaml_pointer to explicitly handle all T-703\
-  \ cases:\n\n  Replace the body of _resolve_yaml_pointer with:\n\n    # Root addressed\
-  \ by empty string (T-703 requirement)\n    if pointer == '':\n        return (doc,\
-  \ '')\n    # Non-RFC-6901 strings (no leading '/') are invalid in T-703 fallback\
-  \ mode.\n    if not pointer.startswith('/'):\n        return None\n    parts = [p.replace('~1',\
-  \ '/').replace('~0', '~')\n             for p in pointer[1:].split('/')]\n    current,\
-  \ path = doc, ''\n    for part in parts:\n        path = f'{path}/{part}'\n    \
-  \    if isinstance(current, dict):\n            # YAML keys may be non-string; coerce\
-  \ part to match\n            if part in current:\n                current = current[part]\n\
-  \            else:\n                # Try integer key\n                try:\n  \
-  \                  current = current[int(part)]\n                except (ValueError,\
-  \ KeyError, TypeError):\n                    return None\n        elif isinstance(current,\
-  \ list):\n            try:\n                current = current[int(part)]\n     \
-  \       except (ValueError, IndexError):\n                return None\n        else:\n\
-  \            return None  # scalar: can't descend further\n    return (current,\
-  \ path)\n\n  No other changes to the file.\n"
+  \nCurrent content of the file as it exists after T-701 and T-702 have both\nbeen\
+  \ fully applied. After T-701/A-001 created the file and T-702/A-001\nadded _try_infra_resolve,\
+  \ the file now contains:\n\n  YamlFileHandler class with:\n    - _try_infra_resolve(self,\
+  \ node_ref, session)\n        tries to import code_analysis.core.yaml_tree;\n  \
+  \      returns None on ImportError;\n        returns Node or PreviewError when infra\
+  \ is present\n    - supported_extensions property -> frozenset({'.yaml', '.yml'})\n\
+  \    - open_root(self, file_path, session) -> Node | PreviewError\n        parses\
+  \ via yaml.safe_load, stores self._doc; returns root Node\n    - resolve_node_ref(self,\
+  \ node_ref, session) -> Node | PreviewError\n        calls _try_infra_resolve first,\
+  \ then falls back to\n        _resolve_yaml_pointer(self._doc, node_ref)\n  Module-level\
+  \ private functions:\n    - _yaml_value_to_node(value, pointer) -> Node\n    - _resolve_yaml_pointer(doc,\
+  \ pointer) -> tuple[Any, str] | None\n        current body: handles '' and '/' prefix\
+  \ but does not cover\n        integer fallback for YAML dict keys or integer list\
+  \ indexing\n        edge cases fully.\n\nChange to make:\n  Replace the body of\
+  \ the module-level function _resolve_yaml_pointer\n  with the following complete\
+  \ implementation that handles all T-703\n  edge cases:\n\n    # Root addressed by\
+  \ the empty string (RFC 6901 convention)\n    if pointer == '':\n        return\
+  \ (doc, '')\n    # Non-RFC-6901 strings (no leading '/') are invalid in fallback\
+  \ mode.\n    if not pointer.startswith('/'):\n        return None\n    parts = [\n\
+  \        p.replace('~1', '/').replace('~0', '~')\n        for p in pointer[1:].split('/')\n\
+  \    ]\n    current: Any = doc\n    path: str = ''\n    for part in parts:\n   \
+  \     path = f'{path}/{part}'\n        if isinstance(current, dict):\n         \
+  \   if part in current:\n                current = current[part]\n            else:\n\
+  \                # Try integer key (YAML keys are sometimes integers)\n        \
+  \        try:\n                    current = current[int(part)]\n              \
+  \  except (ValueError, KeyError, TypeError):\n                    return None\n\
+  \        elif isinstance(current, list):\n            try:\n                current\
+  \ = current[int(part)]\n            except (ValueError, IndexError):\n         \
+  \       return None\n        else:\n            # Scalar cannot be descended into\n\
+  \            return None\n    return (current, path)\n\n  The function signature\
+  \ stays unchanged:\n    def _resolve_yaml_pointer(doc: Any, pointer: str) -> tuple[Any,\
+  \ str] | None\n\n  No other changes to the file.\n  Import Any is already present\
+  \ at the top of the file (from typing import Any).\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
-  expected: _resolve_yaml_pointer handles empty string (root), non-'/' string (None),
-    integer fallback for dict keys, and list index; returns None on missing keys or
-    out-of-range indices.
+  expected: _resolve_yaml_pointer handles the empty string (returns (doc, '')); handles
+    non-'/' strings (returns None); handles integer fallback for dict keys; handles
+    list integer indexing; returns None on missing keys or out-of-range indices; returns
+    None when attempting to descend into a scalar.

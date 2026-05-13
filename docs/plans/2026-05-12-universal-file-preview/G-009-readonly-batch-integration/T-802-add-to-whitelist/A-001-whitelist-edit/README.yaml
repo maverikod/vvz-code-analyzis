@@ -1,0 +1,41 @@
+step_id: A-001
+parent_tactical_step: T-802
+name: Add universal_file_preview to READ_ONLY_BATCH_WHITELIST
+target_file: code_analysis/commands/read_only_batch_whitelist.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-015
+status: draft
+prompt: "Modify an existing Python file.\n\nPRECONDITION: This step must only be executed\
+  \ after the T-801 stability\ngate has been confirmed (all criteria TRUE). Do not\
+  \ execute before that.\n\nTarget file (modify_file):\n  code_analysis/commands/read_only_batch_whitelist.py\n\
+  \nCurrent content of the file (as of the last known state):\n  Lines 1-30 contain\
+  \ the module docstring, imports, and the\n  READ_ONLY_BATCH_WHITELIST frozenset\
+  \ literal:\n\n    READ_ONLY_BATCH_WHITELIST: frozenset[str] = frozenset(\n     \
+  \   {\n            \"ast_statistics\",\n            \"find_classes\",\n        \
+  \    \"find_dependencies\",\n            \"find_usages\",\n            \"fulltext_search\"\
+  ,\n            \"get_ast\",\n            \"get_class_hierarchy\",\n            \"\
+  get_code_entity_info\",\n            \"get_entity_dependencies\",\n            \"\
+  get_entity_dependents\",\n            \"list_class_methods\",\n            \"list_code_entities\"\
+  ,\n        }\n    )\n\nChange to make:\n  Add the string \"universal_file_preview\"\
+  \ as a new entry in the\n  READ_ONLY_BATCH_WHITELIST frozenset literal, in alphabetical\
+  \ order\n  (after \"list_code_entities\", before the closing brace).\n\n  The resulting\
+  \ frozenset literal must contain exactly these entries\n  (in any order inside the\
+  \ literal, but alphabetically sorted for\n  readability):\n    \"ast_statistics\"\
+  \n    \"find_classes\"\n    \"find_dependencies\"\n    \"find_usages\"\n    \"fulltext_search\"\
+  \n    \"get_ast\"\n    \"get_class_hierarchy\"\n    \"get_code_entity_info\"\n \
+  \   \"get_entity_dependencies\"\n    \"get_entity_dependents\"\n    \"list_class_methods\"\
+  \n    \"list_code_entities\"\n    \"universal_file_preview\"\n\n  No other changes\
+  \ to the file. The ERROR_CODE_NOT_WHITELISTED constant\n  and the validate_command\
+  \ function remain unchanged.\n\nAfter the change, the test in tests/test_read_only_batch_whitelist.py\n\
+  asserts len(READ_ONLY_BATCH_WHITELIST) >= 8 which will still pass\n(new count is\
+  \ 13).\n"
+verification:
+  type: pytest
+  target: tests/test_read_only_batch_whitelist.py
+  expected: All existing tests in test_read_only_batch_whitelist.py pass; 'universal_file_preview'
+    is in READ_ONLY_BATCH_WHITELIST; validate_command('universal_file_preview') returns
+    (True, None).

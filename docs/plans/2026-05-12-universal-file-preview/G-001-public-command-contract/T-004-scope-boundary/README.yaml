@@ -1,7 +1,7 @@
 step_id: T-004
 parent_global_step: G-001
 name: Scope boundary invariants
-status: draft
+status: frozen
 concepts:
 - C-001
 - C-014

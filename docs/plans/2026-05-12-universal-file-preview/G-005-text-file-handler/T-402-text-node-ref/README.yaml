@@ -4,6 +4,7 @@ name: Text file handler — node_ref as line index
 status: draft
 concepts:
 - C-004
+- C-014
 - C-017
 description: "Define the node_ref addressing scheme of TextFileHandler (C-017) for\
   \ .md, .txt, .rst, and .adoc files. TextFileHandler uses zero-based integer line\

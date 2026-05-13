@@ -1,0 +1,36 @@
+step_id: A-001
+parent_tactical_step: T-302
+name: Add resolve_node_ref via stable_id UUID to PythonFileHandler
+target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-004
+- C-009
+- C-011
+- C-014
+- C-016
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  \nCurrent content after A-001 (T-301) has been applied:\n  The file contains PythonFileHandler\
+  \ with supported_extensions,\n  open_root, and resolve_node_ref already drafted.\
+  \ The resolve_node_ref\n  body uses code_analysis.core.cst_tree.tree_metadata.get_node_by_stable_id\n\
+  \  which may not exist yet.\n\nChange to make:\n  Replace the body of resolve_node_ref\
+  \ with a robust implementation\n  that handles the case where the project has a\
+  \ different API for\n  stable_id lookup. The contract is:\n\n  1. Accept node_ref\
+  \ as a stable_id UUID string.\n  2. If session is None, try to find the node by\
+  \ walking open_root\n     (best-effort scan); if not found return UNKNOWN_NODE_REF.\n\
+  \  3. Use a try/except import of get_node_by_stable_id from\n     code_analysis.core.cst_tree.tree_metadata;\
+  \ if the import fails,\n     fall back to a linear scan of the CST tree looking\
+  \ for a node\n     whose _stable_id attribute equals node_ref.\n  4. If the node\
+  \ is found return _cst_node_to_node(cst_node, node_ref).\n  5. If not found return\
+  \ input_error(INPUT_ERROR_UNKNOWN_NODE_REF, ...).\n\n  No other changes to the file.\n\
+  \nType annotations to preserve: all existing annotations unchanged.\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+  expected: resolve_node_ref has a try/except import block and a fallback linear scan;
+    it returns Node or PreviewError(UNKNOWN_NODE_REF) with no bare exceptions propagating
+    out of the method.

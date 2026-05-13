@@ -27,4 +27,5 @@ outputs:
   type: modified READ_ONLY_BATCH_WHITELIST constant
   description: The READ_ONLY_BATCH_WHITELIST frozenset with 'universal_file_preview'
     added. The constant is updated in code_analysis/commands/read_only_batch_whitelist.py.
-atomic_steps: []
+atomic_steps:
+- A-001

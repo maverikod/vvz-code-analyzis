@@ -16,8 +16,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview/handlers/text_handler.py
 
-  Current content of the file as it exists after T-401 has been fully applied
-  (created by T-401/A-001):
+  Current content of the file (text_handler.py) after T-401 has been fully applied:
 
     """
     TextFileHandler -- FileHandler for .md, .txt, .rst, .adoc files (C-017).

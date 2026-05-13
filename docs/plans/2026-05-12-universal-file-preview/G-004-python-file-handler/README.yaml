@@ -30,4 +30,4 @@ depends_on:
 tactical_steps:
 - T-301
 - T-302
-status: draft
+status: frozen

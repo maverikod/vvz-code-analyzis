@@ -137,6 +137,20 @@ class DocstringChunker:
         self.embedding_model = embedding_model
         self.log_timing = log_timing
         self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+    @staticmethod
+    def _chunker_params_for_items(items: List[_DocItem]) -> Dict[str, Any]:
+        """Return explicit non-SV chunker preset params for known document profiles."""
+        is_markdown_doc = any(
+            item.source_type == DOCS_MARKDOWN_SOURCE_TYPE
+            or item.ast_node_type == "MarkdownDoc"
+            for item in items
+        )
+        return {
+            "type": "DocBlock",
+            "chunk_set": "technical_text" if is_markdown_doc else "docstring",
+            "use_sv": False,
+            "language": "en",
+        }
 
     def _file_still_exists_and_not_deleted(self, file_id: str, project_id: str) -> bool:
         """

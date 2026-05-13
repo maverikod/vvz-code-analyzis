@@ -1,7 +1,7 @@
 step_id: T-001
 parent_global_step: G-001
 name: Input schema of PreviewCommand
-status: draft
+status: frozen
 concepts:
 - C-001
 - C-014

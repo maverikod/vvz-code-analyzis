@@ -34,4 +34,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF error
   description: Returned instead of focus_node when the FileHandler cannot resolve
     the provided node_ref value.
-atomic_steps: []
+atomic_steps:
+- A-001

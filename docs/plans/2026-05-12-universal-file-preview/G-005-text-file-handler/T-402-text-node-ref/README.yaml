@@ -36,4 +36,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
   description: Returned instead of focus_line_node when node_ref_value is out of range
     [0, total_line_count).
-atomic_steps: []
+atomic_steps:
+- A-001

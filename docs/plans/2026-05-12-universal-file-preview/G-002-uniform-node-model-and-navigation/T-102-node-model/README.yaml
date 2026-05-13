@@ -34,4 +34,5 @@ outputs:
   type: node with NodeKind (C-004) assigned
   description: The same node with its NodeKind determined and its block set available
     for enumeration by the NavigationProcedure.
-atomic_steps: []
+atomic_steps:
+- A-001

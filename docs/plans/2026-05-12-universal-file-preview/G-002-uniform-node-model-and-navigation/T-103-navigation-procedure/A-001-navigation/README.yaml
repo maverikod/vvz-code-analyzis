@@ -24,21 +24,21 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \  from .errors import PreviewError, handler_error\n  from .models import Block,\
   \ NavigationResult, Node, NodeKind\n  from .selector import apply_selector\n  from\
   \ .session import resolve_session\n\nThe imported functions and classes have these\
-  \ signatures (defined in\nother files created within this plan):\n\n  # From .session\
-  \ (created by T-203/A-001):\n  def resolve_session(\n      handler: FileHandler,\n\
+  \ signatures (defined in\nother files in this package):\n\n  # From .session:\n\
+  \  def resolve_session(\n      handler: FileHandler,\n\
   \      params: dict[str, Any],\n  ) -> tuple[Any | None, str, str | None] | PreviewError:\n\
   \      \"\"\"\n      Resolve the TreeSession for the request.\n      Returns (session,\
   \ session_origin, tree_id) or PreviewError.\n        session_origin: 'caller_owned'\
   \ | 'command_created' | 'none'\n        tree_id: UUID string when session_origin\
-  \ == 'command_created', else None.\n      \"\"\"\n\n  # From .block_handlers (created\
-  \ by T-105/A-001):\n  def render_block(node: Node, value_preview_len: int) -> dict[str,\
+  \ == 'command_created', else None.\n      \"\"\"\n\n  # From .block_handlers:\n  def render_block(node: Node, value_preview_len: int) -> dict[str,\
   \ Any]:\n      \"\"\"Render a Node using its NodeKind's BlockHandler rule.\"\"\"\
-  \n\n  # From .selector (created by T-104/A-001):\n  def apply_selector(\n      raw:\
+  \n\n  # From .selector:\n  def apply_selector(\n      raw:\
   \ str | list | None,\n      block_set: list[Node],\n      preview_lines: int,\n\
   \  ) -> list[Node] | PreviewError:\n      \"\"\"Apply selector to block_set; returns\
-  \ selected nodes or PreviewError.\"\"\"\n\n  # From .budget (created by T-106/A-001):\n\
+  \ selected nodes or PreviewError.\"\"\"\n\n  # From .budget:\n\
   \  @dataclass\n  class PreviewBudget:\n      preview_lines: int       # cap when\
   \ selector is omitted\n      value_preview_len: int   # cap on inline scalar/name\
+  \ length\n\n  # From .models:\n  @dataclass\n  class Node:\n\
   \ length\n\n  # From .models (created by T-102/A-001):\n  @dataclass\n  class Node:\n\
   \      node_kind: NodeKind\n      node_ref: str\n      type_label: str | None\n\
   \      name: str | None\n      attributes: dict[str, Any]\n      # .children property\

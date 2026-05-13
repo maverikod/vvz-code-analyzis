@@ -3,6 +3,7 @@ parent_global_step: G-002
 name: Node model — NodeKind and Block
 status: draft
 concepts:
+- C-003
 - C-004
 - C-005
 description: "Define NodeKind (C-004) as the complete closed enumeration of node classifications,\

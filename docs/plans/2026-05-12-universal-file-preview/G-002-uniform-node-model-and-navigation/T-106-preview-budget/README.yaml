@@ -1,7 +1,7 @@
 step_id: T-106
 parent_global_step: G-002
 name: Preview budget — response size caps
-status: draft
+status: frozen
 concepts:
 - C-013
 description: "Define the PreviewBudget (C-013) as the two numeric caps that bound\

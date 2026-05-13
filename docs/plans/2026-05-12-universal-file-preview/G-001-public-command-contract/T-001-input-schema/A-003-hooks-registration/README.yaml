@@ -1,6 +1,6 @@
 step_id: A-003
 parent_tactical_step: T-001
-name: Register UniversalFilePreviewCommand in hooks_register_part2 and hooks
+name: Register UniversalFilePreviewCommand in hooks_register_part2
 target_file: code_analysis/hooks_register_part2.py
 operation: modify_file
 priority: 3
@@ -10,26 +10,29 @@ depends_on:
 concepts:
 - C-001
 status: draft
-prompt: "Modify two existing Python files to register the new command.\n\n=== File\
-  \ 1: code_analysis/hooks_register_part2.py ===\n\nCurrent state: file exists, contains\
-  \ register_commands_part2(reg) function\nwith several try/except import blocks.\n\
-  \nChange to make:\n  Add a new try/except import block at the END of register_commands_part2,\n\
-  \  before the final return (or as the last block if no return):\n\n    try:\n  \
-  \      from .commands.universal_file_preview_command import (\n            UniversalFilePreviewCommand,\n\
-  \        )\n\n        reg.register(UniversalFilePreviewCommand, \"custom\")\n  \
-  \      logger.info(\"\\u2705 Registered universal_file_preview command\")\n    except\
-  \ ImportError as e:\n        logger.warning(\"Failed to import universal_file_preview\
-  \ command: %s\", e)\n    except Exception as e:\n        logger.error(\n       \
-  \     \"Failed to register universal_file_preview command: %s\", e, exc_info=True\n\
-  \        )\n\n=== File 2: code_analysis/hooks.py ===\n\nCurrent state: file exists,\
-  \ contains a list of register_auto_import_module()\ncalls at the bottom.\n\nChange\
-  \ to make:\n  Add the following line at the end of the existing\n  register_auto_import_module()\
-  \ block, after the last existing call:\n\n    register_auto_import_module(\n   \
-  \     \"code_analysis.commands.universal_file_preview_command\"\n    )\n\n  Place\
-  \ it after the last existing register_auto_import_module() call\n  and before any\
-  \ blank lines or comments that follow.\n\nNo other changes to either file.\n"
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/hooks_register_part2.py\n\
+  \nCurrent content of the file (lines 1-204, key structure):\n  - Module docstring\n\
+  \  - import logging, from mcp_proxy_adapter... import registry\n  - logger = logging.getLogger(__name__)\n\
+  \  - def register_commands_part2(reg: registry) -> None:\n      with multiple try/except\
+  \ import blocks registering commands.\n  The function ends at line 204 with:\n \
+  \     logger.warning(\"Failed to import project management commands: %s\", e)\n\
+  \    except Exception as e:\n      logger.error(\n          \"Failed to register\
+  \ project management commands: %s\", e, exc_info=True\n      )\n  (no return statement\
+  \ after the last except block)\n\nChange to make:\n  Append a new try/except block\
+  \ AFTER the last except block of\n  register_commands_part2 (after line 204), as\
+  \ a new block at the same\n  indentation level (4 spaces) inside the function:\n\
+  \n      try:\n          from .commands.universal_file_preview_command import (\n\
+  \              UniversalFilePreviewCommand,\n          )\n\n          reg.register(UniversalFilePreviewCommand,\
+  \ \"custom\")\n          logger.info(\"✅ Registered universal_file_preview command\"\
+  )\n      except ImportError as e:\n          logger.warning(\n              \"Failed\
+  \ to import universal_file_preview command: %s\", e\n          )\n      except Exception\
+  \ as e:\n          logger.error(\n              \"Failed to register universal_file_preview\
+  \ command: %s\",\n              e,\n              exc_info=True,\n          )\n\n\
+  No other changes to the file.\n\nRequired imports already present: logging, registry.\
+  \ No new imports needed.\n"
 verification:
   type: import
-  target: code_analysis.hooks
-  expected: Both files import without error; after register_code_analysis_commands(reg)
-    is called, 'universal_file_preview' is in reg._commands.
+  target: code_analysis.hooks_register_part2
+  expected: Module imports without error; register_commands_part2 contains a try/except
+    block that imports UniversalFilePreviewCommand from .commands.universal_file_preview_command
+    and calls reg.register.

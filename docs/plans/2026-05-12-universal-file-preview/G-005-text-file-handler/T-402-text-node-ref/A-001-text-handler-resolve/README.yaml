@@ -120,7 +120,6 @@ prompt: |
                 )
             # Read just that line to avoid full-file load
             root_result = self.open_root(self._last_file_path, session)
-            root_result = self.open_root(file_path, session)
             if isinstance(root_result, PreviewError):
                 return root_result
             lines = root_result.children

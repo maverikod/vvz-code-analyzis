@@ -353,9 +353,9 @@ class CheckVectorsCommand(BaseMCPCommand):
             ErrorResult with code "CHECK_VECTORS_ERROR" for other errors
         """
         try:
-            from ...core.config import get_driver_config
-            from ...core.storage_paths import load_raw_config
-            from ...core.vector_search_backend import effective_vector_search_backend
+            from ..core.config import get_driver_config
+            from ..core.storage_paths import load_raw_config
+            from ..core.vector_search_backend import effective_vector_search_backend
 
             root_path = self._resolve_project_root(project_id)
             config_path = self._resolve_config_path()

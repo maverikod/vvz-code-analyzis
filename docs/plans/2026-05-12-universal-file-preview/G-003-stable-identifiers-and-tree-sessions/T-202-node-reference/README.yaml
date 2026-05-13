@@ -23,12 +23,8 @@ description: "Define the NodeReference (C-010) as the optional caller-supplied p
 inputs:
 - name: node_ref_param
   type: string or integer or null
-  description: The node_ref parameter value from the validated input, or null when
-    the caller omitted it.
-- name: file_handler
-  type: FileHandler (C-003) instance
-  description: The FileHandler selected for the target file extension, which will
-    resolve node_ref to a Node.
+  description: The node_ref parameter value from the validated input, in the StableIdentifier
+    (C-009) format for the target file type, or null when the caller omitted it.
 outputs:
 - name: focus_node
   type: Node

@@ -1,0 +1,12 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Create universal_file_preview package __init__
+target_file: code_analysis/commands/universal_file_preview/__init__.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-002
+- C-003
+status: draft

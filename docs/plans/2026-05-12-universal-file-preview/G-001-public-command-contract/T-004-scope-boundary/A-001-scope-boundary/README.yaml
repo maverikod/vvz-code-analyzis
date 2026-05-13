@@ -1,35 +1,50 @@
 step_id: A-001
 parent_tactical_step: T-004
-name: Scope boundary — doc-level verification note in command class
+name: Add _SCOPE_INVARIANTS constant to universal_file_preview_command module
 target_file: code_analysis/commands/universal_file_preview_command.py
 operation: modify_file
-priority: 2
-depends_on:
-- A-002
+priority: 1
+depends_on: []
 concepts:
 - C-001
 - C-021
 - C-014
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview_command.py\n\
-  \nCurrent content of the file after A-002 (T-001) has been applied:\n  The file\
-  \ contains UniversalFilePreviewCommand with name, get_schema,\n  validate_params,\
-  \ and execute already defined (as authored in A-002 of T-001).\n\nChange to make:\n\
-  \  Add a module-level constant _SCOPE_INVARIANTS after the existing module-level\n\
-  \  constants block, documenting the four ScopeBoundary (C-021) negative invariants\n\
-  \  as an immutable tuple:\n\n    _SCOPE_INVARIANTS: tuple[str, ...] = (\n      \
-  \  \"NO_WRITES: command never writes to files, database, or tree sessions\"\n  \
-  \      \" it did not create\",\n        \"NO_RAW_BYTES: response never contains\
-  \ raw file bytes; all output is\"\n        \" structured JSON\",\n        \"SINGLE_FILE:\
-  \ file_path is a single literal path; globs and wildcards\"\n        \" are rejected\
-  \ as GLOB_IN_FILE_PATH\",\n        \"NO_XML_HTML: no FileHandler is registered for\
-  \ .xml, .html, .htm;\"\n        \" requests produce UNKNOWN_EXTENSION\",\n    )\n\
-  \n  The constant must appear after the existing _GLOB_CHARS, _PREVIEW_LINES_DEFAULT,\n\
-  \  and _VALUE_PREVIEW_LEN_DEFAULT constants and before the class definition.\n \
-  \ No other changes to the file.\n\nType annotation: tuple[str, ...]\n"
+  \nCurrent content of the file as it exists after T-001 has been fully applied\n\
+  (i.e. after A-001, A-002, A-003, A-004 of T-001 have been executed).\nThe file was\
+  \ created by T-001/A-002. Its current structure is:\n\n  \"\"\"\n  MCP command:\
+  \ universal_file_preview\n\n  Uniform structured preview of any project file node.\n\
+  \  Read-only; never writes to files, database, or tree sessions\n  the command did\
+  \ not create.\n\n  Author: Vasiliy Zdanovskiy\n  email: vasilyvz@gmail.com\n  \"\
+  \"\"\n  from __future__ import annotations\n  import logging\n  from typing import\
+  \ Any\n  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult\n\
+  \  from .base_mcp_command import BaseMCPCommand\n  from .universal_file_preview.dispatcher\
+  \ import HandlerDispatcher\n  from .universal_file_preview.budget import PreviewBudget\n\
+  \  from .universal_file_preview.navigation import navigate\n  from .universal_file_preview.response\
+  \ import build_envelope\n  from .universal_file_preview.errors import (\n      INPUT_ERROR_GLOB_IN_FILE_PATH,\n\
+  \      INPUT_ERROR_INVALID_SELECTOR_FORM,\n      INPUT_ERROR_MIXED_SELECTOR_LIST,\n\
+  \      INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY,\n  )\n\n  _GLOB_CHARS = frozenset(\"\
+  *?[\")\n  _PREVIEW_LINES_DEFAULT = 20\n  _VALUE_PREVIEW_LEN_DEFAULT = 120\n  logger\
+  \ = logging.getLogger(__name__)\n\n  class UniversalFilePreviewCommand(BaseMCPCommand):\n\
+  \      ...\n      (name, version, descr, category, author, email, use_queue,\n \
+  \      get_schema, validate_params, execute)\n\nChange to make:\n  Insert the following\
+  \ constant AFTER the existing three module-level\n  constants (_GLOB_CHARS, _PREVIEW_LINES_DEFAULT,\
+  \ _VALUE_PREVIEW_LEN_DEFAULT)\n  and BEFORE the logger assignment and the class\
+  \ definition.\n  Insert it between _VALUE_PREVIEW_LEN_DEFAULT and logger:\n\n  \
+  \  _SCOPE_INVARIANTS: tuple[str, ...] = (\n        \"NO_WRITES: command never writes\
+  \ to files, database, or tree sessions\"\n        \" it did not create\",\n    \
+  \    \"NO_RAW_BYTES: response never contains raw file bytes; all output is\"\n \
+  \       \" structured JSON\",\n        \"SINGLE_FILE: file_path is a single literal\
+  \ path; globs and wildcards\"\n        \" are rejected as GLOB_IN_FILE_PATH\",\n\
+  \        \"NO_XML_HTML: no FileHandler is registered for .xml, .html, .htm;\"\n\
+  \        \" requests produce UNKNOWN_EXTENSION\",\n    )\n\n  Type annotation: tuple[str,\
+  \ ...]\n  Four string elements, each as a string literal (not f-string).\n  No other\
+  \ changes to the file.\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview_command.py
-  expected: _SCOPE_INVARIANTS is a module-level tuple[str, ...] with exactly four
-    string elements documenting the NO_WRITES, NO_RAW_BYTES, SINGLE_FILE, and NO_XML_HTML
-    invariants.
+  expected: _SCOPE_INVARIANTS is a module-level constant of type tuple[str, ...] with
+    exactly four string elements documenting NO_WRITES, NO_RAW_BYTES, SINGLE_FILE,
+    and NO_XML_HTML; it appears between _VALUE_PREVIEW_LEN_DEFAULT and logger; all
+    other content of the file is unchanged.

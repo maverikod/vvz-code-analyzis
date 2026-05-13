@@ -33,7 +33,7 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \ == 'command_created', else None.\n      \"\"\"\n\n  # From .block_handlers:\n\
   \  def render_block(node: Node, value_preview_len: int) -> dict[str,\
   \ Any]:\n      \"\"\"Render a Node using its NodeKind's BlockHandler rule.\"\"\"\
-  \n\n  # From .selector (created by T-104/A-001):\n  def apply_selector(\n      raw:\
+  \n\n  # From .selector:\n  def apply_selector(\n      raw:\
   \ str | list | None,\n      block_set: list[Node],\n      preview_lines: int,\n\
   \  ) -> list[Node] | PreviewError:\n      \"\"\"Apply selector to block_set; returns\
   \ selected nodes or PreviewError.\"\"\"\n\n  # From .budget (created by T-106/A-001):\n\

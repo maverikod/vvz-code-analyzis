@@ -1,11 +1,10 @@
 step_id: A-001
 parent_tactical_step: T-302
-name: Add resolve_node_ref via stable_id UUID to PythonFileHandler
+name: Harden PythonFileHandler.resolve_node_ref with try/except import fallback
 target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
 operation: modify_file
-priority: 2
-depends_on:
-- A-001
+priority: 1
+depends_on: []
 concepts:
 - C-004
 - C-009
@@ -14,23 +13,50 @@ concepts:
 - C-016
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
-  \nCurrent content after A-001 (T-301) has been applied:\n  The file contains PythonFileHandler\
-  \ with supported_extensions,\n  open_root, and resolve_node_ref already drafted.\
-  \ The resolve_node_ref\n  body uses code_analysis.core.cst_tree.tree_metadata.get_node_by_stable_id\n\
-  \  which may not exist yet.\n\nChange to make:\n  Replace the body of resolve_node_ref\
-  \ with a robust implementation\n  that handles the case where the project has a\
-  \ different API for\n  stable_id lookup. The contract is:\n\n  1. Accept node_ref\
-  \ as a stable_id UUID string.\n  2. If session is None, try to find the node by\
-  \ walking open_root\n     (best-effort scan); if not found return UNKNOWN_NODE_REF.\n\
-  \  3. Use a try/except import of get_node_by_stable_id from\n     code_analysis.core.cst_tree.tree_metadata;\
-  \ if the import fails,\n     fall back to a linear scan of the CST tree looking\
-  \ for a node\n     whose _stable_id attribute equals node_ref.\n  4. If the node\
-  \ is found return _cst_node_to_node(cst_node, node_ref).\n  5. If not found return\
-  \ input_error(INPUT_ERROR_UNKNOWN_NODE_REF, ...).\n\n  No other changes to the file.\n\
-  \nType annotations to preserve: all existing annotations unchanged.\n"
+  \nCurrent content of the file as it exists after T-301 has been fully applied\n\
+  (created by T-301/A-001). The file contains the full PythonFileHandler\nclass with\
+  \ these methods already defined:\n  - supported_extensions property -> frozenset({'.py',\
+  \ '.pyi', '.pyw'})\n  - open_root(self, file_path, session) -> Node | PreviewError\n\
+  \    (parses via libcst, builds Module root Node lazily)\n  - resolve_node_ref(self,\
+  \ node_ref, session) -> Node | PreviewError\n    (current body: uses get_node_by_stable_id\
+  \ from\n     code_analysis.core.cst_tree.tree_metadata; returns UNKNOWN_NODE_REF\n\
+  \     if session is None or node not found)\n  Plus private module-level functions:\n\
+  \    _cst_statements_to_nodes, _classify_cst_node, _cst_node_to_node\n\nChange to\
+  \ make:\n  Replace the body of resolve_node_ref with a robust implementation\n \
+  \ that handles the case where the project API for stable_id lookup\n  differs. The\
+  \ new body:\n\n    if session is None:\n        # No active session: attempt a linear\
+  \ scan by opening the file\n        # This is a best-effort fallback; if file_path\
+  \ is not available\n        # on self, return UNKNOWN_NODE_REF immediately.\n  \
+  \      fp = getattr(self, '_last_file_path', None)\n        if fp is None:\n   \
+  \         return input_error(\n                INPUT_ERROR_UNKNOWN_NODE_REF,\n \
+  \               'No active CST session and no cached file_path to scan.',\n    \
+  \            details={'node_ref': node_ref},\n            )\n        open_result\
+  \ = self.open_root(fp, None)\n        if isinstance(open_result, PreviewError):\n\
+  \            return open_result\n        # Fall through to scan the newly-opened\
+  \ session\n        session = getattr(self, '_last_session', None)\n        if session\
+  \ is None:\n            return input_error(\n                INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \                'Could not open CST session for stable_id scan.',\n           \
+  \     details={'node_ref': node_ref},\n            )\n\n    try:\n        from code_analysis.core.cst_tree.tree_metadata\
+  \ import (\n            get_node_by_stable_id,\n        )\n        cst_node = get_node_by_stable_id(session,\
+  \ node_ref)\n    except ImportError:\n        # Fallback: linear scan for _stable_id\
+  \ attribute\n        cst_node = _find_by_stable_id(session, node_ref)\n\n    if\
+  \ cst_node is None:\n        return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \            f'stable_id {node_ref!r} not found in current CST.',\n            details={'node_ref':\
+  \ node_ref},\n        )\n    return _cst_node_to_node(cst_node, node_ref)\n\n  Also\
+  \ add a new private module-level function after _cst_node_to_node:\n\n    def _find_by_stable_id(tree:\
+  \ Any, stable_id: str) -> Any | None:\n        \"\"\"Linear scan of a CST tree for\
+  \ a node with _stable_id == stable_id.\"\"\"\n        import libcst as cst\n\n \
+  \       class _Finder(cst.CSTVisitor):\n            found: Any = None\n\n      \
+  \      def on_visit(self, node: cst.CSTNode) -> bool:  # type: ignore[override]\n\
+  \                if getattr(node, '_stable_id', None) == stable_id:\n          \
+  \          _Finder.found = node\n                    return False  # stop traversal\n\
+  \                return True\n\n        finder = _Finder()\n        if hasattr(tree,\
+  \ 'walk'):\n            tree.walk(finder)\n        return finder.found\n\n  No other\
+  \ changes to the file.\n  Required imports already present: input_error, INPUT_ERROR_UNKNOWN_NODE_REF.\n\
+  \  New import needed inside the function only: already inside try/except.\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview/handlers/python_handler.py
-  expected: resolve_node_ref has a try/except import block and a fallback linear scan;
-    it returns Node or PreviewError(UNKNOWN_NODE_REF) with no bare exceptions propagating
-    out of the method.
+  expected: resolve_node_ref body contains a try/except ImportError block for get_node_by_stable_id
+    with a _find_by_stable_id fallback; _find_by_stable_id is a private module-level
+    function; no bare exceptions propagate out of resolve_node_ref.

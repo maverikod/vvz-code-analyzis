@@ -31,4 +31,5 @@ outputs:
   type: PreviewBudget (C-013)
   description: A resolved pair of (preview_lines, value_preview_len) integers ready
     for consumption by the NavigationProcedure and BlockHandler.
-atomic_steps: []
+atomic_steps:
+- A-001

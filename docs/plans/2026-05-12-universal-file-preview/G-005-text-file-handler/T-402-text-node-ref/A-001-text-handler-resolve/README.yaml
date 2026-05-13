@@ -131,9 +131,9 @@ prompt: |
                 )
             return lines[idx]
 
-    # Note: resolve_node_ref above references `file_path` which is not in scope.
-    # The bug is that the ABC signature only provides (self, node_ref, session).
-    # Fix: store self._last_file_path in open_root, read it in resolve_node_ref.
+  Change to make:
+    Three additions to the class:
+
 
   Change to make:
     Three additions to the class:

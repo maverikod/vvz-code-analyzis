@@ -18,8 +18,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview/handlers/python_handler.py
 
-  Current content of the file as it exists after T-301 has been fully applied
-  (created by T-301/A-001, which depends on T-301/A-000):
+  Current content of the file (python_handler.py) after T-301 has been fully applied:
 
     """
     PythonFileHandler -- FileHandler for .py, .pyi, .pyw files (C-016).

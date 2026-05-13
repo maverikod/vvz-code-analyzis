@@ -1,29 +1,37 @@
 step_id: A-001
 parent_tactical_step: T-602
-name: Confirm JsonLinesFileHandler drill-in delegates to JSON parsing (already in
-  T-601 AS)
+name: Add delegation comment to JsonLinesFileHandler confirming no-duplicate-parser
+  contract
 target_file: code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py
 operation: modify_file
-priority: 2
-depends_on:
-- A-001
+priority: 1
+depends_on: []
 concepts:
 - C-004
 - C-014
 - C-019
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py\n\
-  \nCurrent content after A-001 (T-601) has been applied:\n  The file contains JsonLinesFileHandler\
-  \ with open_root and resolve_node_ref.\n  resolve_node_ref already implements the\
-  \ drill-in: reads line N, parses as\n  JSON, calls _json_value_to_node. This covers\
-  \ T-602 entirely.\n\nChange to make:\n  Add a module-level docstring note confirming\
-  \ the delegation contract,\n  by inserting a NOTE comment block before _json_value_to_node\
-  \ import line:\n\n    # NOTE: drill-in JSON parsing delegates to json_handler._json_value_to_node\n\
-  \    # (C-019 requirement: no duplicate JSON parser; same NodeKind structure\n \
-  \   # as a standalone .json file of the same JSON value type).\n\n  No other changes\
-  \ to the file.\n"
+  \nCurrent content of the file as it exists after T-601 has been fully applied\n\
+  (created by T-601/A-001). The file contains the full JsonLinesFileHandler\nclass\
+  \ with these members already defined:\n\n  - supported_extensions property -> frozenset({'.jsonl',\
+  \ '.ndjson'})\n  - open_root(self, file_path, session) -> Node | PreviewError\n\
+  \    (reads file line-by-line, returns lines root Node without JSON parsing,\n \
+  \    stores self._last_file_path)\n  - resolve_node_ref(self, node_ref, session)\
+  \ -> Node | PreviewError\n    (parses line N as JSON by calling json.loads and _json_value_to_node,\n\
+  \     returns FILE_STRUCTURE_ERROR for invalid JSON lines,\n     returns UNKNOWN_NODE_REF\
+  \ for out-of-range index)\n  Module-level import at top:\n    from .json_handler\
+  \ import _json_value_to_node\n\nThe resolve_node_ref already delegates JSON parsing\
+  \ to _json_value_to_node\nfrom json_handler, satisfying the T-602 no-duplicate-parser\
+  \ requirement.\n\nChange to make:\n  Add a module-level comment block IMMEDIATELY\
+  \ BEFORE the import line:\n    from .json_handler import _json_value_to_node\n\n\
+  \  Insert these two comment lines immediately before that import:\n\n    # Drill-in\
+  \ delegates JSON parsing to json_handler._json_value_to_node\n    # (C-019: no duplicate\
+  \ JSON parser; same NodeKind structure as a\n    # standalone .json file of the\
+  \ same JSON value type).\n\n  No other changes to the file.\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py
-  expected: The comment block exists before the _json_value_to_node import; no other
-    content changed; no bare exceptions propagate from resolve_node_ref.
+  expected: The three comment lines appear immediately before the 'from .json_handler
+    import _json_value_to_node' import; all other file content is unchanged; file
+    imports without error.

@@ -39,7 +39,7 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \ selected nodes or PreviewError.\"\"\"\n\n  # From .budget:\n\
   \  @dataclass\n  class PreviewBudget:\n      preview_lines: int       # cap when\
   \ selector is omitted\n      value_preview_len: int   # cap on inline scalar/name\
-  \ length\n\n  # From .models (created by T-102/A-001):\n  @dataclass\n  class Node:\n\
+  \ length\n\n  # From .models:\n  @dataclass\n  class Node:\n\
   \      node_kind: NodeKind\n      node_ref: str\n      type_label: str | None\n\
   \      name: str | None\n      attributes: dict[str, Any]\n      # .children property\
   \ -> list[Node] (lazy)\n\n  @dataclass\n  class Block:\n      node_kind: NodeKind\n\

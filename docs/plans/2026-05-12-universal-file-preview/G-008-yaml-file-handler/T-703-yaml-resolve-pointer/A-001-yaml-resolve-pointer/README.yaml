@@ -1,0 +1,42 @@
+step_id: A-001
+parent_tactical_step: T-703
+name: Verify _resolve_yaml_pointer covers all T-703 edge cases
+target_file: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
+operation: modify_file
+priority: 3
+depends_on:
+- A-001
+- A-002
+concepts:
+- C-004
+- C-009
+- C-014
+- C-020
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/yaml_handler.py\n\
+  \nCurrent content after A-001 (T-701) and A-001 (T-702) have been applied:\n  The\
+  \ file contains _resolve_yaml_pointer and _try_infra_resolve.\n  _resolve_yaml_pointer\
+  \ returns None for non-'/' strings, covering the\n  common case but missing the\
+  \ T-703 requirement that root is addressed\n  by the empty string '' explicitly.\n\
+  \nChange to make:\n  Update _resolve_yaml_pointer to explicitly handle all T-703\
+  \ cases:\n\n  Replace the body of _resolve_yaml_pointer with:\n\n    # Root addressed\
+  \ by empty string (T-703 requirement)\n    if pointer == '':\n        return (doc,\
+  \ '')\n    # Non-RFC-6901 strings (no leading '/') are invalid in T-703 fallback\
+  \ mode.\n    if not pointer.startswith('/'):\n        return None\n    parts = [p.replace('~1',\
+  \ '/').replace('~0', '~')\n             for p in pointer[1:].split('/')]\n    current,\
+  \ path = doc, ''\n    for part in parts:\n        path = f'{path}/{part}'\n    \
+  \    if isinstance(current, dict):\n            # YAML keys may be non-string; coerce\
+  \ part to match\n            if part in current:\n                current = current[part]\n\
+  \            else:\n                # Try integer key\n                try:\n  \
+  \                  current = current[int(part)]\n                except (ValueError,\
+  \ KeyError, TypeError):\n                    return None\n        elif isinstance(current,\
+  \ list):\n            try:\n                current = current[int(part)]\n     \
+  \       except (ValueError, IndexError):\n                return None\n        else:\n\
+  \            return None  # scalar: can't descend further\n    return (current,\
+  \ path)\n\n  No other changes to the file.\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
+  expected: _resolve_yaml_pointer handles empty string (root), non-'/' string (None),
+    integer fallback for dict keys, and list index; returns None on missing keys or
+    out-of-range indices.

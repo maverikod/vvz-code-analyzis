@@ -16,8 +16,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py
 
-  Current content of the file as it exists after T-601 has been fully applied
-  (created by T-601/A-001):
+  Current content of the file (jsonl_handler.py) after T-601 has been fully applied:
 
     """
     JsonLinesFileHandler -- FileHandler for .jsonl, .ndjson files (C-019).

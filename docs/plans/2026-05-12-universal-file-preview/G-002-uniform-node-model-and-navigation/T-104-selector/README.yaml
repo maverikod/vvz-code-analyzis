@@ -3,7 +3,10 @@ parent_global_step: G-002
 name: Selector — three forms and rejection rules
 status: draft
 concepts:
+- C-005
 - C-007
+- C-013
+- C-014
 description: "Define the Selector (C-007) as the single optional parameter that picks\
   \ a subset of the focus node's block set. The Selector has exactly three forms,\
   \ dispatched by the value's runtime type and shape, not by a separate parameter.\n\

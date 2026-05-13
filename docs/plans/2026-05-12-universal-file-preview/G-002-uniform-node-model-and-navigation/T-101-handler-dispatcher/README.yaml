@@ -5,6 +5,7 @@ status: draft
 concepts:
 - C-002
 - C-003
+- C-014
 description: "Define the HandlerDispatcher (C-002) as the single routing entity that\
   \ selects a FileHandler (C-003) for a given file based solely on its extension.\n\
   Dispatch rules: - The dispatch key is the file extension extracted from file_path\n\

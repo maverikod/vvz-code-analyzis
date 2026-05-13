@@ -31,4 +31,5 @@ outputs:
   type: n/a
   description: ScopeBoundary produces no output artifact. Its realisation is the absence
     of the prohibited behaviours in the implemented command.
-atomic_steps: []
+atomic_steps:
+- A-001

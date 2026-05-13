@@ -18,8 +18,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview/handlers/json_handler.py
 
-  Current content of the file as it exists after T-501 has been fully applied
-  (created by T-501/A-001):
+  Current content of the file (json_handler.py) after T-501 has been fully applied:
 
     """
     JsonFileHandler -- FileHandler for .json files (C-018).

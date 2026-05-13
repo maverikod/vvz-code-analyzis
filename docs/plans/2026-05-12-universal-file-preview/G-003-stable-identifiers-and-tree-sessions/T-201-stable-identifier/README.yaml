@@ -1,7 +1,7 @@
 step_id: T-201
 parent_global_step: G-003
 name: Stable identifier — per-handler formats
-status: draft
+status: frozen
 concepts:
 - C-009
 description: "Define the StableIdentifier (C-009) as the identifier of a node inside\

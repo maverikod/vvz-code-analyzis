@@ -8,7 +8,7 @@ depends_on: []
 concepts:
 - C-004
 - C-005
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/models.py\n\nFile-level docstring\
   \ (required):\n  \"\"\"\n  Domain models for universal_file_preview.\n\n  Defines\

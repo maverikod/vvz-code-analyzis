@@ -58,13 +58,7 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \    if idx < 0 or idx >= len(lines):\n        return input_error(\n           \
   \ INPUT_ERROR_UNKNOWN_NODE_REF,\n            f'Line index {idx} out of range [0,\
   \ {len(lines)}).',\n            details={'node_ref': node_ref, 'total_lines': len(lines)},\n\
-  \        )\n    return lines[idx]\n\n  Note: the resolve_node_ref body uses `file_path`\
-  \ which is not in scope.\n  Fix: add file_path parameter to the private _load_lines\
-  \ closure by\n  capturing it from the outer open_root scope; resolve_node_ref must\n\
-  \  also take file_path. The ABC signature is (self, node_ref, session);\n  TextFileHandler\
-  \ stores file_path on the instance or passes it via\n  a wrapper. Solution: store\
-  \ self._last_file_path in open_root, read\n  it in resolve_node_ref. This is safe\
-  \ because the command calls\n  open_root before resolve_node_ref in the same request.\n"
+  \        )\n    return lines[idx]\n\nIn open_root, add self._last_file_path = file_path\nbefore the return statement, so resolve_node_ref can access it.\n"
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.handlers.text_handler

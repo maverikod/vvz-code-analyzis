@@ -104,8 +104,25 @@ prompt: |
 
         def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
             """Validate and normalise raw MCP call parameters."""
-            # (body as defined in T-001/A-002 prompt)
-            ...
+            file_path = params["file_path"]
+            if any(c in file_path for c in _GLOB_CHARS):
+                raise ValueError(INPUT_ERROR_GLOB_IN_FILE_PATH)
+            node_ref = params.get("node_ref")
+            selector = params.get("selector")
+            if isinstance(selector, str):
+                if ":" not in selector and not selector.startswith("-"):
+                    raise ValueError(INPUT_ERROR_INVALID_SELECTOR_FORM)
+            elif isinstance(selector, list) and selector:
+                if not (all(isinstance(x, int) for x in selector) or all(isinstance(x, str) for x in selector)):
+                    raise ValueError(INPUT_ERROR_MIXED_SELECTOR_LIST)
+                if len(selector) != len(set(map(str, selector))):
+                    raise ValueError(INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY)
+            preview_lines = params.get("preview_lines", _PREVIEW_LINES_DEFAULT)
+            value_preview_len = params.get("value_preview_len", _VALUE_PREVIEW_LEN_DEFAULT)
+            tree_id = params.get("tree_id")
+            return {"file_path": file_path, "node_ref": node_ref, "selector": selector,
+                    "preview_lines": preview_lines, "value_preview_len": value_preview_len,
+                    "tree_id": tree_id}
 
         def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
             """
@@ -117,8 +134,22 @@ prompt: |
             Returns:
                 SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
             """
-            # (body as defined in T-001/A-002 prompt)
-            ...
+            try:
+                dispatcher = HandlerDispatcher()
+                handler_result = dispatcher.dispatch(kwargs["file_path"])
+                if isinstance(handler_result, PreviewError):
+                    return ErrorResult(code=handler_result.code, message=handler_result.message)
+                budget = PreviewBudget(preview_lines=kwargs["preview_lines"],
+                                       value_preview_len=kwargs["value_preview_len"])
+                navigation_result = navigate(handler_result, kwargs, budget)
+                if isinstance(navigation_result, PreviewError):
+                    return ErrorResult(code=navigation_result.code, message=navigation_result.message)
+                session_origin = 'command_created' if navigation_result.tree_id is not None else ('caller_owned' if kwargs.get('tree_id') else 'none')
+                envelope = build_envelope(navigation_result, kwargs.get("selector"), session_origin)
+                return SuccessResult(data=envelope)
+            except Exception as exc:
+                logger.error("universal_file_preview failed: %s", exc, exc_info=True)
+                return ErrorResult(code="HANDLER_ERROR", message=str(exc))
 
   Change to make:
     Insert the following constant AFTER the three module-level constants

@@ -33,4 +33,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_EXTENSION error
   description: Returned instead of selected_handler when the extension has no registered
     FileHandler.
-atomic_steps: []
+atomic_steps:
+- A-001

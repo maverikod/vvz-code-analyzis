@@ -1,0 +1,93 @@
+step_id: A-001
+parent_tactical_step: T-301
+name: Create PythonFileHandler — open_root produces tree_node Module
+target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-003
+- C-004
+- C-014
+- C-016
+status: draft
+prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
+  \  code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\n\
+  Also create (if not present) an empty __init__.py in the same directory:\n  code_analysis/commands/universal_file_preview/handlers/__init__.py\n\
+  \  (content: empty module, with docstring '\"\"\"File handlers for universal_file_preview.\\\
+  n\\nAuthor: Vasiliy Zdanovskiy\\nemail: vasilyvz@gmail.com\\n\"\"\"')\n\nFile-level\
+  \ docstring (required):\n  \"\"\"\n  PythonFileHandler — FileHandler for .py, .pyi,\
+  \ .pyw files (C-016).\n\n  Opens Python source via the project's cst_load_file infrastructure.\n\
+  \  Root NodeKind is tree_node with type label 'Module'.\n  Identifier format: stable_id\
+  \ UUID from cst_load_file outline_nodes.\n\n  Author: Vasiliy Zdanovskiy\n  email:\
+  \ vasilyvz@gmail.com\n  \"\"\"\n\nImports:\n  from __future__ import annotations\n\
+  \  import logging\n  from typing import Any\n  from ..base_handler import FileHandler\n\
+  \  from ..errors import (\n      PreviewError, file_structure_error, input_error,\n\
+  \      INPUT_ERROR_UNKNOWN_NODE_REF,\n  )\n  from ..models import Node, NodeKind\n\
+  \nModule-level:\n  logger = logging.getLogger(__name__)\n\nClass: PythonFileHandler(FileHandler)\n\
+  Docstring:\n  \"\"\"\n  FileHandler for Python files (.py, .pyi, .pyw) (C-016).\n\
+  \n  Root NodeKind: tree_node (Module).\n  Interior nodes: tree_node for ClassDef\
+  \ and FunctionDef;\n  tree_node or scalar for other statements; scalar for leaf\
+  \ values.\n  Identifier source: cst_load_file outline_nodes stable_id UUID.\n  Lazy\
+  \ materialisation: only root and requested children are loaded.\n\n  Attributes:\n\
+  \      supported_extensions: Frozenset of .py, .pyi, .pyw.\n  \"\"\"\n\nProperty:\
+  \ supported_extensions(self) -> frozenset[str]\n  Docstring: \"Frozenset of lowercase\
+  \ extensions this handler supports.\"\n  Body: return frozenset({'.py', '.pyi',\
+  \ '.pyw'})\n\nMethod: open_root(\n    self,\n    file_path: str,\n    session: Any\
+  \ | None,\n  ) -> Node | PreviewError\n  Docstring:\n    \"\"\"\n    Parse the Python\
+  \ file and return a tree_node Module root Node.\n\n    Uses cst_load_file infrastructure\
+  \ (project's CST core). If the file\n    fails to parse, returns a FILE_STRUCTURE_ERROR\
+  \ with parser 'libcst'.\n    The root's children are the top-level CST statements,\
+  \ loaded lazily.\n\n    Args:\n        file_path: Project-relative path to the .py/.pyi/.pyw\
+  \ file.\n        session: Existing CST TreeSession or None.\n\n    Returns:\n  \
+  \      Module root Node (tree_node) or PreviewError.\n    \"\"\"\n  Body:\n    try:\n\
+  \        from code_analysis.core.cst_tree.tree_builder import load_file_to_tree\n\
+  \        from pathlib import Path\n        import libcst as cst\n\n        # load\
+  \ or reuse session\n        if session is not None:\n            tree = session\n\
+  \        else:\n            abs_path = Path(file_path)  # handler receives project-relative;\
+  \ caller resolves\n            source = abs_path.read_text(encoding='utf-8', errors='replace')\n\
+  \            tree = cst.parse_module(source)\n\n        # Build root Node lazily\n\
+  \        def _load_children() -> list[Node]:\n            return _cst_statements_to_nodes(tree.body)\n\
+  \n        return Node(\n            node_kind=NodeKind.TREE_NODE,\n            node_ref='',\
+  \  # root has empty node_ref\n            type_label='Module',\n            name=None,\n\
+  \            attributes={},\n            _children_loader=_load_children,\n    \
+  \    )\n    except cst.ParserSyntaxError as exc:\n        return file_structure_error(\n\
+  \            parser='libcst',\n            message=str(exc),\n            line_start=exc.raw_line\
+  \ if hasattr(exc, 'raw_line') else None,\n        )\n    except Exception as exc:\n\
+  \        return file_structure_error(parser='libcst', message=str(exc))\n\nMethod:\
+  \ resolve_node_ref(\n    self,\n    node_ref: str,\n    session: Any | None,\n \
+  \ ) -> Node | PreviewError\n  Docstring:\n    \"\"\"\n    Resolve a stable_id UUID\
+  \ to the CST Node it addresses (C-009).\n\n    Looks up the UUID in the CST node\
+  \ index. Returns UNKNOWN_NODE_REF\n    if the UUID is not found in the current tree.\n\
+  \n    Args:\n        node_ref: stable_id UUID string from cst_load_file outline_nodes.\n\
+  \        session: CST TreeSession containing the index.\n\n    Returns:\n      \
+  \  Resolved Node or PreviewError(UNKNOWN_NODE_REF).\n    \"\"\"\n  Body:\n    if\
+  \ session is None:\n        return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \            'No active CST session to resolve node_ref.',\n            details={'node_ref':\
+  \ node_ref},\n        )\n    # Use project's tree metadata to find node by stable_id\n\
+  \    from code_analysis.core.cst_tree.tree_metadata import get_node_by_stable_id\n\
+  \    cst_node = get_node_by_stable_id(session, node_ref)\n    if cst_node is None:\n\
+  \        return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n      \
+  \      f'stable_id {node_ref!r} not found in current CST.',\n            details={'node_ref':\
+  \ node_ref},\n        )\n    return _cst_node_to_node(cst_node, node_ref)\n\nPrivate\
+  \ function: _cst_statements_to_nodes(stmts: Any) -> list[Node]\nDocstring: \"Convert\
+  \ a sequence of CST statement nodes to preview Nodes lazily.\"\nBody: return a list\
+  \ of Node objects for each stmt in stmts, with\n      node_kind determined by _classify_cst_node(stmt),\n\
+  \      node_ref set to getattr(stmt, '_stable_id', '') or '',\n      type_label\
+  \ = type(stmt).__name__,\n      name = getattr(stmt, 'name', {}).value if hasattr(getattr(stmt,'name',None),'value')\
+  \ else None,\n      attributes = {},\n      _children_loader set to a closure that\
+  \ calls _cst_statements_to_nodes(stmt.body.body) for ClassDef/FunctionDef.\n\nPrivate\
+  \ function: _classify_cst_node(node: Any) -> NodeKind\nDocstring: \"Return NodeKind\
+  \ for a CST node.\"\nBody:\n  import libcst as cst\n  if isinstance(node, (cst.ClassDef,\
+  \ cst.FunctionDef, cst.Module)):\n      return NodeKind.TREE_NODE\n  # scalar fallback\
+  \ for leaves and simple statements\n  return NodeKind.SCALAR\n\nPrivate function:\
+  \ _cst_node_to_node(cst_node: Any, node_ref: str) -> Node\nDocstring: \"Convert\
+  \ a CST node to a preview Node.\"\nBody: return Node(\n        node_kind=_classify_cst_node(cst_node),\n\
+  \        node_ref=node_ref,\n        type_label=type(cst_node).__name__,\n     \
+  \   name=getattr(getattr(cst_node, 'name', None), 'value', None),\n        attributes={},\n\
+  \      )\n"
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.handlers.python_handler
+  expected: Module imports without error; PythonFileHandler instantiates; supported_extensions
+    == frozenset({'.py', '.pyi', '.pyw'}).

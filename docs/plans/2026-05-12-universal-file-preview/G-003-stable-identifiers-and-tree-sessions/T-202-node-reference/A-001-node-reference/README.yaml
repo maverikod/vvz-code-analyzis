@@ -1,0 +1,39 @@
+step_id: A-001
+parent_tactical_step: T-202
+name: Add resolve_node_ref contract to FileHandler (already in base_handler)
+target_file: code_analysis/commands/universal_file_preview/base_handler.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-009
+- C-010
+- C-014
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/base_handler.py\n\
+  \nCurrent content after A-001 (T-201) has been applied:\n  The file contains FileHandler(abc.ABC)\
+  \ with abstract methods\n  open_root and resolve_node_ref, and abstract property\
+  \ supported_extensions.\n  All methods are already defined as abstract (no body\
+  \ beyond 'raise\n  NotImplementedError' or '...').\n\nChange to make:\n  Add a concrete\
+  \ helper method default_focus on FileHandler that encapsulates\n  the NodeReference\
+  \ (C-010) logic: when node_ref is None return the root\n  from open_root; when node_ref\
+  \ is provided call resolve_node_ref.\n\n  Insert after the resolve_node_ref abstract\
+  \ method:\n\n  def default_focus(\n      self,\n      file_path: str,\n      node_ref:\
+  \ str | None,\n      session: Any | None,\n  ) -> Node | PreviewError:\n      \"\
+  \"\"\n      Resolve the focus Node from file_path and optional node_ref (C-010).\n\
+  \n      When node_ref is None the focus is the file root (open_root).\n      When\
+  \ node_ref is provided the focus is the specific node resolved\n      by resolve_node_ref.\
+  \ On any error returns a PreviewError.\n\n      Args:\n          file_path: Project-relative\
+  \ path to the file.\n          node_ref: StableIdentifier (C-009) or None.\n   \
+  \       session: In-memory tree session or None.\n\n      Returns:\n          Focus\
+  \ Node or PreviewError.\n      \"\"\"\n      if node_ref is None:\n          return\
+  \ self.open_root(file_path, session)\n      root_result = self.open_root(file_path,\
+  \ session)\n      if isinstance(root_result, PreviewError):\n          return root_result\n\
+  \      return self.resolve_node_ref(node_ref, session)\n\n  No other changes to\
+  \ the file.\n"
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.base_handler
+  expected: Module imports without error; FileHandler has concrete method default_focus(file_path,
+    node_ref, session) that returns Node | PreviewError.

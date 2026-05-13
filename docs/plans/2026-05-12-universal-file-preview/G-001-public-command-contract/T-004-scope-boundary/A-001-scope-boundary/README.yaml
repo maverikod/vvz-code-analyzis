@@ -10,37 +10,136 @@ concepts:
 - C-021
 - C-014
 status: draft
-prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview_command.py\n\
-  \nCurrent content of the file as it exists after T-001 has been fully applied\n\
-  (i.e. after A-001, A-002, A-003, A-004 of T-001 have been executed).\nThe file was\
-  \ created by T-001/A-002. Its current structure is:\n\n  \"\"\"\n  MCP command:\
-  \ universal_file_preview\n\n  Uniform structured preview of any project file node.\n\
-  \  Read-only; never writes to files, database, or tree sessions\n  the command did\
-  \ not create.\n\n  Author: Vasiliy Zdanovskiy\n  email: vasilyvz@gmail.com\n  \"\
-  \"\"\n  from __future__ import annotations\n  import logging\n  from typing import\
-  \ Any\n  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult\n\
-  \  from .base_mcp_command import BaseMCPCommand\n  from .universal_file_preview.dispatcher\
-  \ import HandlerDispatcher\n  from .universal_file_preview.budget import PreviewBudget\n\
-  \  from .universal_file_preview.navigation import navigate\n  from .universal_file_preview.response\
-  \ import build_envelope\n  from .universal_file_preview.errors import (\n      INPUT_ERROR_GLOB_IN_FILE_PATH,\n\
-  \      INPUT_ERROR_INVALID_SELECTOR_FORM,\n      INPUT_ERROR_MIXED_SELECTOR_LIST,\n\
-  \      INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY,\n  )\n\n  _GLOB_CHARS = frozenset(\"\
-  *?[\")\n  _PREVIEW_LINES_DEFAULT = 20\n  _VALUE_PREVIEW_LEN_DEFAULT = 120\n  logger\
-  \ = logging.getLogger(__name__)\n\n  class UniversalFilePreviewCommand(BaseMCPCommand):\n\
-  \      ...\n      (name, version, descr, category, author, email, use_queue,\n \
-  \      get_schema, validate_params, execute)\n\nChange to make:\n  Insert the following\
-  \ constant AFTER the existing three module-level\n  constants (_GLOB_CHARS, _PREVIEW_LINES_DEFAULT,\
-  \ _VALUE_PREVIEW_LEN_DEFAULT)\n  and BEFORE the logger assignment and the class\
-  \ definition.\n  Insert it between _VALUE_PREVIEW_LEN_DEFAULT and logger:\n\n  \
-  \  _SCOPE_INVARIANTS: tuple[str, ...] = (\n        \"NO_WRITES: command never writes\
-  \ to files, database, or tree sessions\"\n        \" it did not create\",\n    \
-  \    \"NO_RAW_BYTES: response never contains raw file bytes; all output is\"\n \
-  \       \" structured JSON\",\n        \"SINGLE_FILE: file_path is a single literal\
-  \ path; globs and wildcards\"\n        \" are rejected as GLOB_IN_FILE_PATH\",\n\
-  \        \"NO_XML_HTML: no FileHandler is registered for .xml, .html, .htm;\"\n\
-  \        \" requests produce UNKNOWN_EXTENSION\",\n    )\n\n  Type annotation: tuple[str,\
-  \ ...]\n  Four string elements, each as a string literal (not f-string).\n  No other\
-  \ changes to the file.\n"
+prompt: |
+  Modify an existing Python file.
+
+  Target file (modify_file):
+    code_analysis/commands/universal_file_preview_command.py
+
+  Current content of the file as it exists after T-001 has been fully applied
+  (i.e. after A-001, A-002, A-003, A-004 of T-001 have been executed).
+  The file was created by T-001/A-002 with exactly this content:
+
+    """
+    MCP command: universal_file_preview
+
+    Uniform structured preview of any project file node.
+    Read-only; never writes to files, database, or tree sessions
+    the command did not create.
+
+    Author: Vasiliy Zdanovskiy
+    email: vasilyvz@gmail.com
+    """
+    from __future__ import annotations
+
+    import logging
+    from typing import Any
+
+    from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+    from .base_mcp_command import BaseMCPCommand
+    from .universal_file_preview.dispatcher import HandlerDispatcher
+    from .universal_file_preview.budget import PreviewBudget
+    from .universal_file_preview.navigation import navigate
+    from .universal_file_preview.response import build_envelope
+    from .universal_file_preview.errors import (
+        INPUT_ERROR_GLOB_IN_FILE_PATH,
+        INPUT_ERROR_INVALID_SELECTOR_FORM,
+        INPUT_ERROR_MIXED_SELECTOR_LIST,
+        INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY,
+    )
+
+    _GLOB_CHARS = frozenset("*?[")
+    _PREVIEW_LINES_DEFAULT = 20
+    _VALUE_PREVIEW_LEN_DEFAULT = 120
+    logger = logging.getLogger(__name__)
+
+    class UniversalFilePreviewCommand(BaseMCPCommand):
+        """
+        MCP command that returns a structured preview of any project file node.
+
+        Supports .py, .pyi, .pyw (Python), .md, .txt, .rst, .adoc (text),
+        .json (JSON), .jsonl, .ndjson (JSON Lines), .yaml, .yml (YAML).
+        XML and HTML are out of scope.
+
+        Attributes:
+            name: Command name identifier.
+            version: Command version string.
+            descr: Human-readable command description.
+            category: Command category.
+            author: Author name.
+            email: Author email.
+            use_queue: Whether to use async queue for execution.
+        """
+
+        name = "universal_file_preview"
+        version = "1.0.0"
+        descr = "Uniform structured preview of any project file node"
+        category = "preview"
+        author = "Vasiliy Zdanovskiy"
+        email = "vasilyvz@gmail.com"
+        use_queue = False
+
+        @classmethod
+        def get_schema(cls) -> dict[str, Any]:
+            """Return JSON Schema for the command input parameters."""
+            return {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "Project UUID."},
+                    "file_path": {"type": "string", "description": "Project-relative path to one file. No globs."},
+                    "node_ref": {"type": "string", "description": "StableIdentifier in file handler native format. Omit for file root.", "nullable": True},
+                    "selector": {
+                        "description": "Picks a subset of the focus node block set. String (slice form), list[int] (explicit indices), or list[str] (block identifiers). Omit to get first preview_lines blocks.",
+                        "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "integer"}}, {"type": "array", "items": {"type": "string"}}],
+                        "nullable": True,
+                    },
+                    "preview_lines": {"type": "integer", "minimum": 1, "description": "Cap on blocks returned when selector is omitted.", "nullable": True},
+                    "value_preview_len": {"type": "integer", "minimum": 1, "description": "Cap on inline scalar/name length.", "nullable": True},
+                    "tree_id": {"type": "string", "description": "UUID of an existing in-memory TreeSession.", "nullable": True},
+                },
+                "required": ["project_id", "file_path"],
+                "additionalProperties": False,
+            }
+
+        def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+            """Validate and normalise raw MCP call parameters."""
+            # (body as defined in T-001/A-002 prompt)
+            ...
+
+        def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+            """
+            Execute the preview command.
+
+            Args:
+                **kwargs: Validated parameters from validate_params.
+
+            Returns:
+                SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
+            """
+            # (body as defined in T-001/A-002 prompt)
+            ...
+
+  Change to make:
+    Insert the following constant AFTER the three module-level constants
+    (_GLOB_CHARS, _PREVIEW_LINES_DEFAULT, _VALUE_PREVIEW_LEN_DEFAULT)
+    and BEFORE the logger assignment.
+    Insert between _VALUE_PREVIEW_LEN_DEFAULT and logger:
+
+      _SCOPE_INVARIANTS: tuple[str, ...] = (
+          "NO_WRITES: command never writes to files, database, or tree sessions"
+          " it did not create",
+          "NO_RAW_BYTES: response never contains raw file bytes; all output is"
+          " structured JSON",
+          "SINGLE_FILE: file_path is a single literal path; globs and wildcards"
+          " are rejected as GLOB_IN_FILE_PATH",
+          "NO_XML_HTML: no FileHandler is registered for .xml, .html, .htm;"
+          " requests produce UNKNOWN_EXTENSION",
+      )
+
+    Type annotation: tuple[str, ...]
+    Four string elements, each as a string literal (not f-string).
+    No other changes to the file.
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview_command.py

@@ -8,7 +8,7 @@ depends_on: []
 concepts:
 - C-003
 - C-009
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/base_handler.py\n\nFile-level docstring\
   \ (required):\n  \"\"\"\n  FileHandler ABC for universal_file_preview.\n\n  Defines\

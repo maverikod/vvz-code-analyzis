@@ -13,7 +13,7 @@ concepts:
 - C-013
 - C-014
 - C-021
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview_command.py\n\nFile-level docstring\
   \ (required):\n  \"\"\"\n  MCP command: universal_file_preview\n\n  Uniform structured\
@@ -79,9 +79,10 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \ 3. budget = PreviewBudget(\n         preview_lines=kwargs[\"preview_lines\"],\n\
   \         value_preview_len=kwargs[\"value_preview_len\"],\n       )\n    4. Call\
   \ navigate(handler, kwargs, budget) — returns navigation_result\n       or ErrorResult.\n\
-  \    5. session_origin = 'command_created' if navigation_result.tree_id is not None else ('caller_owned' if kwargs.get('tree_id') else 'none')\n\
-  \    6. envelope = build_envelope(navigation_result, kwargs.get(\"selector\"),\n\
-  \                                 session_origin)\n    7. return SuccessResult(data=envelope)\n\
+  \    5. session_origin = 'command_created' if navigation_result.tree_id is not None\
+  \ else ('caller_owned' if kwargs.get('tree_id') else 'none')\n    6. envelope =\
+  \ build_envelope(navigation_result, kwargs.get(\"selector\"),\n                \
+  \                 session_origin)\n    7. return SuccessResult(data=envelope)\n\
   \    Wrap all handler exceptions in try/except; return appropriate ErrorResult.\n"
 verification:
   type: import

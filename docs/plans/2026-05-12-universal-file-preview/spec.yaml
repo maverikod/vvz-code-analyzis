@@ -295,7 +295,6 @@ concepts:
   properties:
   - 'supported extensions: .yaml, .yml'
   - 'root NodeKind: mapping, sequence, or scalar'
-  - 'multi-document file: root is a sequence of document roots'
   - 'identifier source: reused from project YAML infra when present, else JSON-pointer-style
     path'
   source_ranges:

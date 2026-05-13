@@ -1,7 +1,7 @@
 step_id: T-301
 parent_global_step: G-004
 name: Python file handler — open and produce root Node
-status: draft
+status: frozen
 concepts:
 - C-003
 - C-004

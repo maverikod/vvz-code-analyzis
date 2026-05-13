@@ -288,8 +288,8 @@ concepts:
     end: 167
 - concept_id: C-020
   name: YamlFileHandler
-  definition: 'File handler for .yaml, .yml files. Root NodeKind depends on the document;
-    multi-document files produce a sequence of document roots.
+  definition: 'File handler for .yaml, .yml files. Root NodeKind depends on the document
+    type.
 
     '
   properties:

@@ -9,10 +9,9 @@ concepts:
 - C-009
 - C-010
 - C-014
-status: draft
+status: done
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/base_handler.py\n\
-  \nCurrent content of the file (base_handler.py) is exactly:\n\
-  \n  \"\"\"\n  FileHandler\
+  \nCurrent content of the file (base_handler.py) is exactly:\n\n  \"\"\"\n  FileHandler\
   \ ABC for universal_file_preview.\n\n  Defines the abstract interface (C-003) that\
   \ every file handler must\n  implement. Each handler opens one family of files and\
   \ produces the\n  uniform Node representation. StableIdentifier (C-009) format is\n\

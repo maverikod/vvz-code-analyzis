@@ -374,7 +374,7 @@ class DocstringChunker:
             return [(item, 0, item.text, None, None, tc if tc else None)]
         try:
             t0_one = time.time()
-            chunks = await mgr.get_chunks(text=item.text, **self._chunker_params_for_items([item]))
+            chunks = await mgr.get_chunks(text=item.text, type="DocBlock")
             log_operation_timing(
                 getattr(self, "log_timing", False),
                 logger,

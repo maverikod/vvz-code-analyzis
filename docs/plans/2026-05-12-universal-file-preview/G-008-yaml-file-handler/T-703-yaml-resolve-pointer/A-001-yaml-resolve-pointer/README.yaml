@@ -17,9 +17,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
 
-  Current content of the file as it exists after T-701 and T-702 have both been
-  fully applied (T-701/A-001 created the file; T-702/A-001 added _try_infra_resolve
-  and updated resolve_node_ref):
+  Current content of the file (yaml_handler.py) after T-701 and T-702 have both been fully applied:
 
     """
     YamlFileHandler -- FileHandler for .yaml, .yml files (C-020).

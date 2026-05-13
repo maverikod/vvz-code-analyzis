@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from typing import Optional
+
 READ_ONLY_BATCH_WHITELIST: frozenset[str] = frozenset(
     {
         "ast_statistics",
@@ -22,6 +23,7 @@ READ_ONLY_BATCH_WHITELIST: frozenset[str] = frozenset(
         "get_entity_dependents",
         "list_class_methods",
         "list_code_entities",
+        "universal_file_preview",
     }
 )
 
@@ -68,4 +70,3 @@ def _make_error_payload(command: str, message: str) -> dict:
         "command": command,
         "message": message,
     }
-

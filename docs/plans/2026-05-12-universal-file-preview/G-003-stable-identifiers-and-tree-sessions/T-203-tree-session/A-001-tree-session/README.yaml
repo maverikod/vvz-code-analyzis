@@ -32,8 +32,9 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \      handler: The FileHandler that will use the session.\n      params: Validated\
   \ parameter dict, may contain 'tree_id'.\n\n  Returns:\n      3-tuple or PreviewError.\n\
   \  \"\"\"\nBody:\n  tree_id_param = params.get('tree_id')\n  if tree_id_param is\
-  \ not None:\n      # Caller-owned: look up from global session registry\n      from\
-  \ ..core.cst_tree.tree_registry import get_tree  # noqa: PLC0415\n      session\
+  \ not None:\n      # Caller-owned: look up via get_tree (global in-memory CST registry,\
+  \ same as other CST commands)\n      from ...core.cst_tree.tree_builder import get_tree\
+  \  # noqa: PLC0415\n      session\
   \ = get_tree(tree_id_param)\n      if session is None:\n          # Unknown tree_id\
   \ — treat as CONFLICTING_PARAMETERS\n          from .errors import input_error,\
   \ INPUT_ERROR_CONFLICTING_PARAMETERS\n          return input_error(\n          \

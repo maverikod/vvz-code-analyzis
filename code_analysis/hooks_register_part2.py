@@ -202,3 +202,19 @@ def register_commands_part2(reg: registry) -> None:
         logger.error(
             "Failed to register project management commands: %s", e, exc_info=True
         )
+
+    try:
+        from .commands.universal_file_preview_command import (
+            UniversalFilePreviewCommand,
+        )
+
+        reg.register(UniversalFilePreviewCommand, "custom")
+        logger.info("✅ Registered universal_file_preview command")
+    except ImportError as e:
+        logger.warning("Failed to import universal_file_preview command: %s", e)
+    except Exception as e:
+        logger.error(
+            "Failed to register universal_file_preview command: %s",
+            e,
+            exc_info=True,
+        )

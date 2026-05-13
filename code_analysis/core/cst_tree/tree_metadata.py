@@ -4,12 +4,30 @@ CST tree metadata utilities.
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
+
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
+
+import libcst as cst
 
 from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeNodeMetadata
 from .tree_builder import get_tree
+
+
+def get_node_by_stable_id(session: Any, stable_id: str) -> Optional[cst.CSTNode]:
+    """
+    Resolve ``stable_id`` to the LibCST node from a :class:`CSTTree` session.
+
+    When ``session`` is not a :class:`CSTTree` (e.g. a bare :class:`cst.Module`
+    from :func:`libcst.parse_module`), returns ``None``.
+    """
+    if not isinstance(session, CSTTree):
+        return None
+    meta = session.find_by_stable_id(stable_id)
+    if meta is None:
+        return None
+    return session.node_map.get(meta.node_id)
 
 
 def _resolve_node_id(tree: Optional[CSTTree], node_id: str) -> str:

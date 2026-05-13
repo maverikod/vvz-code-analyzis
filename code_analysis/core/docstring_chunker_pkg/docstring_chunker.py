@@ -44,6 +44,17 @@ logger = logging.getLogger(__name__)
 # Max docstring texts per single ``get_chunks_batch`` RPC (multi-file prepared path).
 DOCSTRING_CHUNK_BATCH_MAX_TEXTS = 128
 
+# Mirrors svo_client.client.CHUNK_SET_PRESETS — keep in sync with svo_client.
+VALID_CHUNK_SET_PRESETS: tuple[str, ...] = (
+    "plain_text",
+    "technical_text",
+    "docstring",
+    "scientific_text",
+    "fiction",
+    "chat",
+    "log",
+)
+
 
 def _chunk_text_from_svo(chunk: Any) -> str:
     """Get text/body from svo_client chunk (SemanticChunk)."""
@@ -115,6 +126,7 @@ class DocstringChunker:
         embedding_model: Optional[str] = None,
         log_timing: bool = False,
         docs_markdown_embeddings_enabled: bool = True,
+        chunk_set_overrides: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         Initialize docstring chunker.
@@ -128,6 +140,12 @@ class DocstringChunker:
             log_timing: When True, log every operation with duration for bottleneck analysis.
             docs_markdown_embeddings_enabled: When False, Markdown docs use local text rows
                 without chunker/embed RPC (``docs_indexing.vectorize=false`` gate).
+            chunk_set_overrides: Per-source-type chunk_set preset override.
+                Keys: source_type string (``"docstring"``, ``"docs_markdown"``).
+                Values: preset name; must be one of ``VALID_CHUNK_SET_PRESETS`` (aligned with
+                ``CHUNK_SET_PRESETS`` in svo_client). When absent for a source_type, default
+                logic in ``_chunker_params_for_items`` applies. Invalid values are logged and
+                ignored.
         """
 
         self.database = database
@@ -137,6 +155,20 @@ class DocstringChunker:
         self.embedding_model = embedding_model
         self.log_timing = log_timing
         self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+        self._chunk_set_overrides: Dict[str, str] = {}
+        if chunk_set_overrides:
+            for src_key, preset in chunk_set_overrides.items():
+                preset_s = str(preset).strip()
+                if preset_s not in VALID_CHUNK_SET_PRESETS:
+                    logger.warning(
+                        "Ignoring invalid chunk_set preset %r for source_type %r "
+                        "(must be one of: %s)",
+                        preset,
+                        src_key,
+                        ", ".join(VALID_CHUNK_SET_PRESETS),
+                    )
+                    continue
+                self._chunk_set_overrides[str(src_key)] = preset_s
 
     def _file_still_exists_and_not_deleted(self, file_id: str, project_id: str) -> bool:
         """
@@ -334,14 +366,15 @@ class DocstringChunker:
             await asyncio.to_thread(execute_batch, ops)
 
     def _chunker_params_for_items(self, items: List[_DocItem]) -> Dict[str, Any]:
-        if any(
+        is_markdown = any(
             it.source_type == DOCS_MARKDOWN_SOURCE_TYPE
             or it.ast_node_type == "MarkdownDoc"
             for it in items
-        ):
-            chunk_set = "technical_text"
-        else:
-            chunk_set = "docstring"
+        )
+        source_type_key = DOCS_MARKDOWN_SOURCE_TYPE if is_markdown else "docstring"
+        chunk_set = self._chunk_set_overrides.get(source_type_key) or (
+            "technical_text" if is_markdown else "docstring"
+        )
         return {
             "chunk_set": chunk_set,
             "use_sv": False,

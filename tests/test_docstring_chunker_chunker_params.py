@@ -48,6 +48,39 @@ def test_chunker_params_docstring_items() -> None:
     }
 
 
+def test_chunker_params_docstring_override_plain_text() -> None:
+    chunker = DocstringChunker(
+        database=Mock(),
+        svo_client_manager=None,
+        chunk_set_overrides={"docstring": "plain_text"},
+    )
+    p = chunker._chunker_params_for_items([_doc_item()])
+    assert p["chunk_set"] == "plain_text"
+
+
+def test_chunker_params_markdown_override_plain_text() -> None:
+    chunker = DocstringChunker(
+        database=Mock(),
+        svo_client_manager=None,
+        chunk_set_overrides={"docs_markdown": "plain_text"},
+    )
+    item = _doc_item(source_type=DOCS_MARKDOWN_SOURCE_TYPE)
+    p = chunker._chunker_params_for_items([item])
+    assert p["chunk_set"] == "plain_text"
+
+
+def test_chunk_set_override_invalid_logs_and_uses_default(caplog) -> None:
+    with caplog.at_level("WARNING"):
+        chunker = DocstringChunker(
+            database=Mock(),
+            svo_client_manager=None,
+            chunk_set_overrides={"docstring": "INVALID"},
+        )
+    assert "Ignoring invalid chunk_set" in caplog.text
+    p = chunker._chunker_params_for_items([_doc_item()])
+    assert p["chunk_set"] == "docstring"
+
+
 @pytest.mark.parametrize(
     "item",
     [

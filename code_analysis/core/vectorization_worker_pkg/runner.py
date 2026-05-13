@@ -203,6 +203,20 @@ def run_vectorization_worker(
     except Exception:
         docs_md_embeddings_enabled = True
 
+    chunk_set_overrides: Optional[Dict[str, str]] = None
+    try:
+        from ..storage_paths import load_raw_config as _load_raw_for_chunk_sets
+
+        _raw_cso = _load_raw_for_chunk_sets(cfg_path_resolved)
+        _ca_cso = _raw_cso.get("code_analysis", _raw_cso)
+        _vec_cso = _ca_cso.get("vectorization") or {}
+        if isinstance(_vec_cso, dict):
+            raw_cso = _vec_cso.get("chunk_set_overrides")
+            if isinstance(raw_cso, dict) and raw_cso:
+                chunk_set_overrides = {str(k): str(v) for k, v in raw_cso.items()}
+    except Exception:
+        chunk_set_overrides = None
+
     # Check if database exists, create if not (SQLite file chain only; not PostgreSQL)
     if not is_postgres and not db_path_obj.exists():
         logger.info(f"Database file not found, creating new database at {db_path}")
@@ -413,6 +427,7 @@ def run_vectorization_worker(
         status_file_path=status_file_path,
         log_timing=log_timing,
         docs_markdown_embeddings_enabled=docs_md_embeddings_enabled,
+        chunk_set_overrides=chunk_set_overrides,
         vector_ann_backend=vector_ann_backend,  # type: ignore[arg-type]
     )
 

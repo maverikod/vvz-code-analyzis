@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Dict, Literal, Optional
 
 if TYPE_CHECKING:
     from ..svo_client_manager import SVOClientManager
@@ -39,6 +39,7 @@ class VectorizationWorker:
         status_file_path: Optional[Path] = None,
         log_timing: bool = False,
         docs_markdown_embeddings_enabled: bool = True,
+        chunk_set_overrides: Optional[Dict[str, str]] = None,
         vector_ann_backend: Literal["faiss", "pgvector"] = "faiss",
     ):
         """
@@ -66,6 +67,8 @@ class VectorizationWorker:
             docs_markdown_embeddings_enabled: When False and ``docs_indexing`` disables
                 vectorization, Markdown docs chunks are persisted without embeddings
                 or FAISS (see ``docs_markdown_vector_gate``).
+            chunk_set_overrides: Optional ``code_analysis.vectorization.chunk_set_overrides``
+                mapping (source_type → SVO chunk_set preset) for ``DocstringChunker``.
             vector_ann_backend: ``faiss`` (SQLite / optional Postgres) or ``pgvector``
                 (PostgreSQL ``embedding_vec`` + HNSW).
         """
@@ -84,6 +87,9 @@ class VectorizationWorker:
         self.status_file_path = Path(status_file_path) if status_file_path else None
         self.log_timing = log_timing
         self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+        self.chunk_set_overrides: Optional[Dict[str, str]] = (
+            dict(chunk_set_overrides) if chunk_set_overrides else None
+        )
         self.vector_ann_backend: Literal["faiss", "pgvector"] = vector_ann_backend
         self._stop_event = multiprocessing.Event()
 

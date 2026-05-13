@@ -31,4 +31,5 @@ outputs:
   type: boolean
   description: True when all stability criteria are met and the whitelist edit may
     proceed. False halts the integration step.
-atomic_steps: []
+atomic_steps:
+- A-001

@@ -1,7 +1,7 @@
 step_id: T-203
 parent_global_step: G-003
 name: Tree session — ownership and lifecycle
-status: draft
+status: frozen
 concepts:
 - C-011
 description: "Define the TreeSession (C-011) as the in-memory parsed tree of a file,\

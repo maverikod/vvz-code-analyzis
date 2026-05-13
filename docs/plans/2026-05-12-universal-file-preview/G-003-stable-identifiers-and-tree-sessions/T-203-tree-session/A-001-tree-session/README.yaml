@@ -7,7 +7,7 @@ priority: 1
 depends_on: []
 concepts:
 - C-011
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/session.py\n\nFile-level docstring\
   \ (required):\n  \"\"\"\n  TreeSession (C-011) ownership and lifecycle for universal_file_preview.\n\
@@ -34,15 +34,15 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \  \"\"\"\nBody:\n  tree_id_param = params.get('tree_id')\n  if tree_id_param is\
   \ not None:\n      # Caller-owned: look up via get_tree (global in-memory CST registry,\
   \ same as other CST commands)\n      from ...core.cst_tree.tree_builder import get_tree\
-  \  # noqa: PLC0415\n      session\
-  \ = get_tree(tree_id_param)\n      if session is None:\n          # Unknown tree_id\
-  \ — treat as CONFLICTING_PARAMETERS\n          from .errors import input_error,\
-  \ INPUT_ERROR_CONFLICTING_PARAMETERS\n          return input_error(\n          \
-  \    INPUT_ERROR_CONFLICTING_PARAMETERS,\n              f'tree_id {tree_id_param!r}\
-  \ not found in session registry.',\n              details={'tree_id': tree_id_param},\n\
-  \          )\n      return (session, 'caller_owned', None)\n  # Command-owned transient\
-  \ session: defer to handler's open_root; no pre-open.\n  # The handler is responsible\
-  \ for opening its own session internally if needed.\n  return (None, 'none', None)\n"
+  \  # noqa: PLC0415\n      session = get_tree(tree_id_param)\n      if session is\
+  \ None:\n          # Unknown tree_id — treat as CONFLICTING_PARAMETERS\n       \
+  \   from .errors import input_error, INPUT_ERROR_CONFLICTING_PARAMETERS\n      \
+  \    return input_error(\n              INPUT_ERROR_CONFLICTING_PARAMETERS,\n  \
+  \            f'tree_id {tree_id_param!r} not found in session registry.',\n    \
+  \          details={'tree_id': tree_id_param},\n          )\n      return (session,\
+  \ 'caller_owned', None)\n  # Command-owned transient session: defer to handler's\
+  \ open_root; no pre-open.\n  # The handler is responsible for opening its own session\
+  \ internally if needed.\n  return (None, 'none', None)\n"
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.session

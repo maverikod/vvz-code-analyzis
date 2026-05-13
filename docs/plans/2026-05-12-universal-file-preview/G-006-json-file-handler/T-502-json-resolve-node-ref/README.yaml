@@ -42,4 +42,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
   description: Returned instead of resolved_node when the identifier is not found
     or the JSON Pointer is malformed.
-atomic_steps: []
+atomic_steps:
+- A-001

@@ -8,7 +8,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -27,16 +26,22 @@ from .tree_modifier_ops_insert import (
 
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    class_or_function_snippet_needs_full_replace,
     parse_annotation_snippet,
     parse_code_snippet,
     parse_code_snippet_or_comment,
     parse_param_snippet,
 )
 
-from .tree_modifier_ops_replace import replace_node, replace_node_header_only, replace_range
+from .tree_modifier_ops_replace import (
+    replace_node,
+    replace_node_header_only,
+    replace_range,
+)
 
 __all__ = [
     "FINE_GRAINED_REPLACE_NODE_TYPES",
+    "class_or_function_snippet_needs_full_replace",
     "parse_annotation_snippet",
     "parse_code_snippet",
     "parse_code_snippet_or_comment",

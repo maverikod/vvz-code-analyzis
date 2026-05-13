@@ -64,14 +64,12 @@ class CSTModifyTreeCommand(BaseMCPCommand):
     def get_schema(cls) -> Dict[str, Any]:
         return get_cst_modify_tree_schema()
 
-
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate params and reject unknown project_id when present."""
         params = super().validate_params(params)
         if params.get("project_id"):
             BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
-
 
     async def execute(
         self,
@@ -128,6 +126,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             tree_operations = tree_operations_list
 
             original_code = original_tree.module.code
+            index_snapshot = dict(original_tree.metadata_map)
             logger.info(
                 "[TIMING] command=cst_modify_tree step=convert_ops elapsed_sec=%.4f",
                 time.perf_counter() - t0,
@@ -139,21 +138,25 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             pre_modify_metadata_snapshot: Optional[Dict[str, TreeNodeMetadata]] = None
             if will_combined_save:
                 pre_modify_metadata_snapshot = dict(original_tree.metadata_map)
-            modified_tree = modify_tree(tree_id, tree_operations)
-            modified_code = modified_tree.module.code
-            logger.info(
-                "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
-                time.perf_counter() - t_mod,
-                time.perf_counter() - t_start,
-            )
-
-            # If preview mode, return changes without persisting edits to the in-memory tree.
-            # modify_tree mutates the live tree; without rollback, a later call with the same
-            # ops (preview=false) would apply twice (e.g. duplicate module-level inserts).
             if preview:
                 from difflib import unified_diff
 
+                from .cst_modify_tree_preview_guard import (
+                    diff_span_exceeds_guard,
+                    original_changed_line_span,
+                )
+
+                preview_err: Optional[ErrorResult] = None
+                preview_data: Optional[Dict[str, Any]] = None
                 try:
+                    modified_tree = modify_tree(tree_id, tree_operations)
+                    modified_code = modified_tree.module.code
+                    logger.info(
+                        "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                        time.perf_counter() - t_mod,
+                        time.perf_counter() - t_start,
+                    )
+
                     diff_lines = list(
                         unified_diff(
                             original_code.splitlines(keepends=True),
@@ -165,7 +168,6 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     )
                     diff = "".join(diff_lines)
 
-                    # Validate modified code
                     validation_result: Dict[str, Any] = {
                         "syntax_valid": True,
                         "compiles": True,
@@ -182,33 +184,92 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             "offset": e.offset if e.offset is not None else None,
                         }
 
-                    data: Dict[str, Any] = {
-                        "success": True,
-                        "preview": True,
-                        "preview_only": True,
-                        "file_written": False,
-                        "tree_id": tree_id,  # Return original tree_id in preview
-                        "operations_count": len(operations),
-                        "changes": [
-                            {
-                                "operation": op_dict.get("action"),
-                                "node_id": op_dict.get("node_id")
-                                or op_dict.get("start_node_id"),
-                                "description": f"{op_dict.get('action')} operation",
-                            }
-                            for op_dict in operations
-                        ],
-                        "diff": diff,
-                        "validation": validation_result,
-                    }
-
-                    return SuccessResult(data=data)
+                    replace_targets = tuple(
+                        op.node_id
+                        for op in tree_operations
+                        if op.action == TreeOperationType.REPLACE and op.node_id
+                    )
+                    unsafe_msg = diff_span_exceeds_guard(
+                        original_code,
+                        modified_code,
+                        original_tree,
+                        replace_targets,
+                        slack_lines=1,
+                    )
+                    if unsafe_msg:
+                        preview_err = ErrorResult(
+                            message=unsafe_msg,
+                            code="DIFF_SPAN_EXCEEDS_GUARD",
+                            details={
+                                "tree_id": tree_id,
+                                "hint": "Preview refused: diff touches lines outside the "
+                                "enclosing statement for the replace target(s).",
+                            },
+                        )
+                    else:
+                        ch_span = original_changed_line_span(
+                            original_code, modified_code
+                        )
+                        preview_data = {
+                            "success": True,
+                            "preview": True,
+                            "preview_only": True,
+                            "file_written": False,
+                            "tree_id": tree_id,
+                            "operations_count": len(operations),
+                            "changes": [
+                                {
+                                    "operation": op_dict.get("action"),
+                                    "node_id": op_dict.get("node_id")
+                                    or op_dict.get("start_node_id"),
+                                    "description": f"{op_dict.get('action')} operation",
+                                }
+                                for op_dict in operations
+                            ],
+                            "diff": diff,
+                            "validation": validation_result,
+                            "changed_span": (
+                                {
+                                    "original_start_line": ch_span[0],
+                                    "original_end_line": ch_span[1],
+                                }
+                                if ch_span is not None
+                                else None
+                            ),
+                        }
+                except ValueError as e:
+                    preview_err = ErrorResult(
+                        message=f"Invalid operation: {e}",
+                        code="INVALID_OPERATION",
+                        details={"tree_id": tree_id, "error": str(e)},
+                    )
                 finally:
-                    if not rollback_tree_to_code(tree_id, original_code):
+                    if not rollback_tree_to_code(
+                        tree_id,
+                        original_code,
+                        index_metadata_for_code=index_snapshot,
+                    ):
                         logger.error(
                             "cst_modify_tree preview: failed to restore in-memory tree %s",
                             tree_id,
                         )
+                if preview_err is not None:
+                    return preview_err
+                if preview_data is None:
+                    return ErrorResult(
+                        message="cst_modify_tree preview produced no result data",
+                        code="CST_MODIFY_ERROR",
+                        details={"tree_id": tree_id},
+                    )
+                return SuccessResult(data=preview_data)
+
+            modified_tree = modify_tree(tree_id, tree_operations)
+            modified_code = modified_tree.module.code
+            logger.info(
+                "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                time.perf_counter() - t_mod,
+                time.perf_counter() - t_start,
+            )
 
             # Build modified_nodes for verification (when multiple nodes affected)
             modified_nodes: List[Dict[str, Any]] = []
@@ -252,7 +313,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     )
                     project = database.get_project(project_id)
                     if not project:
-                        rollback_tree_to_code(tree_id, original_code)
+                        rollback_tree_to_code(
+                            tree_id,
+                            original_code,
+                            index_metadata_for_code=index_snapshot,
+                        )
                         return ErrorResult(
                             message=f"Project {project_id} not found",
                             code="PROJECT_NOT_FOUND",
@@ -263,7 +328,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         absolute_file_path, project_root
                     )
                     if blocked_venv is not None:
-                        rollback_tree_to_code(tree_id, original_code)
+                        rollback_tree_to_code(
+                            tree_id,
+                            original_code,
+                            index_metadata_for_code=index_snapshot,
+                        )
                         return blocked_venv
                     try:
                         save_result = await asyncio.to_thread(
@@ -280,7 +349,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             pre_modify_metadata_map=pre_modify_metadata_snapshot,
                         )
                     except SaveVerificationError as save_exc:
-                        rollback_tree_to_code(tree_id, original_code)
+                        rollback_tree_to_code(
+                            tree_id,
+                            original_code,
+                            index_metadata_for_code=index_snapshot,
+                        )
                         data["modify_applied"] = False
                         data["save_applied"] = False
                         data["file_written"] = False
@@ -295,7 +368,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             data["save_error_details"] = dict(save_exc.details)
                         return SuccessResult(data=data)
                     except Exception as save_exc:
-                        rollback_tree_to_code(tree_id, original_code)
+                        rollback_tree_to_code(
+                            tree_id,
+                            original_code,
+                            index_metadata_for_code=index_snapshot,
+                        )
                         data["modify_applied"] = False
                         data["save_applied"] = False
                         data["file_written"] = False
@@ -303,7 +380,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         data["save_error_cause"] = str(save_exc)
                         return SuccessResult(data=data)
                     if not save_result.get("success"):
-                        rollback_tree_to_code(tree_id, original_code)
+                        rollback_tree_to_code(
+                            tree_id,
+                            original_code,
+                            index_metadata_for_code=index_snapshot,
+                        )
                         save_err = save_result.get("error", "Save failed")
                         data["modify_applied"] = False
                         data["save_applied"] = False
@@ -363,7 +444,6 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             return ErrorResult(
                 message=f"cst_modify_tree failed: {e}", code="CST_MODIFY_ERROR"
             )
-
 
     @classmethod
     def metadata(cls: type["CSTModifyTreeCommand"]) -> Dict[str, Any]:

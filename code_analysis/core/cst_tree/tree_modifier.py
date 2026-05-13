@@ -37,7 +37,10 @@ from .tree_modifier_ops import (
     replace_range,
 )
 
-from .tree_modifier_ops_parse import FINE_GRAINED_REPLACE_NODE_TYPES
+from .tree_modifier_ops_parse import (
+    FINE_GRAINED_REPLACE_NODE_TYPES,
+    class_or_function_snippet_needs_full_replace,
+)
 
 from .tree_modifier_validate import _validate_operation
 
@@ -114,6 +117,9 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
         meta = tree.metadata_map.get(nid)
         if meta is None:
             continue
+        node_obj = tree.node_map.get(nid)
+        if node_obj is not None and isinstance(node_obj, cst.BaseExpression):
+            return False
         node_type = getattr(meta, "type", "")
         if node_type and node_type in FINE_GRAINED_REPLACE_NODE_TYPES:
             return False
@@ -254,8 +260,6 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
         raise
 
 
-
-
 def _sort_operations_for_batch(
     operations: List[TreeOperation], tree: CSTTree
 ) -> List[TreeOperation]:
@@ -295,8 +299,6 @@ def _sort_operations_for_batch(
         + [op for (_, _, op) in inserts]
         + others
     )
-
-
 
 
 def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:
@@ -341,8 +343,6 @@ def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) 
         tree.parent_map.pop(nid, None)
 
 
-
-
 def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
     """
     Find the nearest ancestor node_id that has an insertable statement body.
@@ -385,6 +385,8 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
         current_id = current_meta.parent_id
 
     return None
+
+
 def _replace_node_header(
     module: cst.Module,
     tree: CSTTree,
@@ -432,7 +434,9 @@ def _replace_node_header(
             keywords=new_node_raw.keywords,
             decorators=new_node_raw.decorators,
         )
-    elif isinstance(old_node, cst.FunctionDef) and isinstance(new_node_raw, cst.FunctionDef):
+    elif isinstance(old_node, cst.FunctionDef) and isinstance(
+        new_node_raw, cst.FunctionDef
+    ):
         patched = old_node.with_changes(
             name=new_node_raw.name,
             params=new_node_raw.params,
@@ -474,6 +478,8 @@ def _replace_node_header(
     # Update node_map so subsequent operations see the new node
     tree.node_map[resolved_id] = patched
     return new_module
+
+
 def _apply_operation(
     module: cst.Module, tree: CSTTree, operation: TreeOperation
 ) -> cst.Module:
@@ -488,8 +494,14 @@ def _apply_operation(
             raise ValueError("code or code_lines required for replace operation")
         if not operation.replace_all_child_nodes:
             _nid = tree.node_id_aliases.get(operation.node_id, operation.node_id)
-            _meta = tree.metadata_map.get(_nid) or tree.metadata_map.get(operation.node_id)
-            if _meta and _meta.type in ("ClassDef", "FunctionDef"):
+            _meta = tree.metadata_map.get(_nid) or tree.metadata_map.get(
+                operation.node_id
+            )
+            if (
+                _meta
+                and _meta.type in ("ClassDef", "FunctionDef")
+                and not class_or_function_snippet_needs_full_replace(code)
+            ):
                 return _replace_node_header(module, tree, operation.node_id, code)
         return replace_node(module, tree, operation.node_id, code)
     elif operation.action == TreeOperationType.REPLACE_RANGE:
@@ -580,8 +592,6 @@ def _apply_operation(
         )
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")
-
-
 
 
 def _validate_module(module: cst.Module) -> None:

@@ -14,11 +14,11 @@ import libcst as cst
 from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
 from .tree_metadata import _resolve_node_id as resolve_parent_id
 from .tree_modifier_ops import (
-    FINE_GRAINED_REPLACE_NODE_TYPES,
     parse_annotation_snippet,
     parse_code_snippet,
     parse_param_snippet,
 )
+from .tree_modifier_ops_parse import class_or_function_snippet_needs_full_replace
 
 
 def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
@@ -46,40 +46,35 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
         if not operation.code and not operation.code_lines:
             raise ValueError("code or code_lines required for replace operation")
         meta = tree.metadata_map.get(operation.node_id)
+        node = tree.node_map.get(operation.node_id)
+        text = (
+            "\n".join(operation.code_lines)
+            if operation.code_lines
+            else (operation.code or "")
+        )
         try:
-            if meta and meta.type in FINE_GRAINED_REPLACE_NODE_TYPES:
-                if meta.type == "Name":
-                    text = (
-                        "\n".join(operation.code_lines)
-                        if operation.code_lines
-                        else (operation.code or "")
-                    )
-                    cst.parse_expression(text.strip())
-                elif meta.type == "Annotation":
-                    parse_annotation_snippet(
-                        code=operation.code, code_lines=operation.code_lines
-                    )
-                elif meta.type == "Param":
-                    parse_param_snippet(
-                        code=operation.code, code_lines=operation.code_lines
-                    )
-                else:
-                    raise ValueError(
-                        f"Unexpected fine-grained replace type: {meta.type!r}"
-                    )
+            if isinstance(node, cst.BaseExpression):
+                cst.parse_expression(text.strip())
+            elif meta and meta.type == "Annotation":
+                parse_annotation_snippet(
+                    code=operation.code, code_lines=operation.code_lines
+                )
+            elif meta and meta.type == "Param":
+                parse_param_snippet(
+                    code=operation.code, code_lines=operation.code_lines
+                )
             elif (
                 not operation.replace_all_child_nodes
                 and meta
                 and meta.type in ("ClassDef", "FunctionDef")
             ):
-                # Header-only replace: validate by parsing with stub body
-                _header_code = (
-                    "\n".join(operation.code_lines)
-                    if operation.code_lines
-                    else (operation.code or "")
-                )
-                _stub = _header_code.rstrip().rstrip(":") + ":\n    pass\n"
-                cst.parse_module(_stub)
+                if class_or_function_snippet_needs_full_replace(text):
+                    parse_code_snippet(
+                        code=operation.code, code_lines=operation.code_lines
+                    )
+                else:
+                    _stub = text.rstrip().rstrip(":") + ":\n    pass\n"
+                    cst.parse_module(_stub)
             else:
                 parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:

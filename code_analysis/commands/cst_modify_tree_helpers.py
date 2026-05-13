@@ -10,6 +10,8 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
+import libcst as cst
+
 from ..core.cst_tree.models import ROOT_NODE_ID_SENTINEL
 from ..core.cst_tree.node_id_markers import build_exact_key_to_id_from_metadata
 from ..core.cst_tree.tree_modifier_ops_parse import FINE_GRAINED_REPLACE_NODE_TYPES
@@ -83,11 +85,14 @@ def _resolve_to_replaceable_node_id(tree: Any, node_id: str) -> str:
     Resolve node_id to the replaceable ancestor (direct child of Module or
     IndentedBlock) for statement-level replace/delete.
 
-    Fine-grained nodes (Param, Name) keep their node_id so the modifier can
-    replace the exact indexed node without promoting to the enclosing
-    FunctionDef or statement.
+    LibCST expression nodes (``Call``, ``Await``, ``Attribute``, …) and
+    fine-grained leaves (``Param``, ``Name``, ``Annotation``) keep their
+    ``node_id`` so the modifier replaces the exact indexed node.
     """
     meta = tree.metadata_map.get(node_id)
+    node = tree.node_map.get(node_id)
+    if node is not None and isinstance(node, cst.BaseExpression):
+        return node_id
     if meta and (getattr(meta, "type", "") or "") in FINE_GRAINED_REPLACE_NODE_TYPES:
         return node_id
     if not meta or not getattr(meta, "parent_id", None):

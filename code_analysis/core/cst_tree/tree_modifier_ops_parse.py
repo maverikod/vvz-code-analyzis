@@ -16,6 +16,20 @@ import libcst as cst
 FINE_GRAINED_REPLACE_NODE_TYPES = frozenset({"Annotation", "Name", "Param"})
 
 
+def class_or_function_snippet_needs_full_replace(code: str) -> bool:
+    """
+    True when replacement text for a ClassDef/FunctionDef includes a body
+    (must use full replace_node), not header-only (_replace_node_header).
+    """
+    lines = code.splitlines()
+    if len([ln for ln in lines if ln.strip()]) > 1:
+        return True
+    return any(
+        i > 0 and (ln.startswith((" ", "\t")) or not ln.strip())
+        for i, ln in enumerate(lines)
+    )
+
+
 def _snippet_as_string(code: Optional[str], code_lines: Optional[List[str]]) -> str:
     if code_lines is not None:
         if code is not None:

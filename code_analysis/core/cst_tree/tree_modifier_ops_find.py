@@ -331,7 +331,11 @@ def find_leaf_node_in_module_by_position(
         def on_visit(self, node: cst.CSTNode) -> bool:
             self._depth += 1
             kind = type(node).__name__
-            if kind in FINE_GRAINED_REPLACE_NODE_TYPES:
+            include = isinstance(node, cst.BaseExpression) or kind in (
+                "Param",
+                "Annotation",
+            )
+            if include:
                 pos = positions.get(node)
                 if pos is not None and hasattr(pos, "start") and hasattr(pos, "end"):
                     if (
@@ -350,7 +354,7 @@ def find_leaf_node_in_module_by_position(
     if not matches:
         return None
     candidates = matches
-    if preferred_type is not None and preferred_type in FINE_GRAINED_REPLACE_NODE_TYPES:
+    if preferred_type is not None:
         typed = [(n, d) for n, d in matches if type(n).__name__ == preferred_type]
         if typed:
             candidates = typed

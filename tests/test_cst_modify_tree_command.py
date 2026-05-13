@@ -1148,3 +1148,120 @@ class TestPreviewDoesNotLeaveMutatedTree:
             assert final.module.code.count(marker) == 1
         finally:
             remove_tree(tree_id)
+
+
+SOURCE_AWAIT_CALL = """class C:
+    async def f(self, mgr, item):
+        chunks = await mgr.get_chunks(text=item.text, type="DocBlock")
+        return chunks
+"""
+
+
+def _find_type_on_line(tree_id: str, node_type: str, line: int) -> str:
+    t = get_tree(tree_id)
+    assert t is not None
+    for nid, m in t.metadata_map.items():
+        if m.type == node_type and m.start_line == line:
+            return str(nid)
+    pytest.fail(f"No {node_type} on line {line}")
+
+
+class TestPreviewExpressionReplace:
+    """Regression: preview replace on Call/Await must not corrupt tree or node_ids."""
+
+    @pytest.mark.asyncio
+    async def test_preview_call_replace_keeps_node_ids_and_rollback(self, tmp_path):
+        path = str(tmp_path / "await_call.py")
+        tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
+        tree_id = tree.tree_id
+        baseline = tree.module.code
+        call_id = _find_type_on_line(tree_id, "Call", 3)
+        parent_await = get_tree(tree_id).metadata_map[call_id].parent_id
+        assert get_tree(tree_id).metadata_map[parent_await].type == "Await"
+        cmd = CSTModifyTreeCommand()
+        try:
+            r = await cmd.execute(
+                tree_id=tree_id,
+                operations=[
+                    {
+                        "action": "replace",
+                        "node_id": call_id,
+                        "code": "mgr.get_chunks(text=item.text, **self._chunker_params_for_items([item]))",
+                    }
+                ],
+                preview=True,
+            )
+            assert isinstance(r, SuccessResult)
+            assert r.data.get("preview_only") is True
+            assert r.data.get("changed_span") is not None
+            assert r.data["changed_span"]["original_start_line"] == 3
+            assert r.data["changed_span"]["original_end_line"] == 3
+            diff = r.data.get("diff", "")
+            assert "--- original" in diff or "@@" in diff
+            assert "mgr.get_chunks" in diff
+            t = get_tree(tree_id)
+            assert t is not None
+            assert t.module.code == baseline
+            assert call_id in t.metadata_map
+            assert parent_await in t.metadata_map
+        finally:
+            remove_tree(tree_id)
+
+    @pytest.mark.asyncio
+    async def test_preview_await_replace_validates_in_function(self, tmp_path):
+        path = str(tmp_path / "await_call2.py")
+        tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
+        tree_id = tree.tree_id
+        baseline = tree.module.code
+        await_id = _find_type_on_line(tree_id, "Await", 3)
+        cmd = CSTModifyTreeCommand()
+        try:
+            r = await cmd.execute(
+                tree_id=tree_id,
+                operations=[
+                    {
+                        "action": "replace",
+                        "node_id": await_id,
+                        "code": "await foo()",
+                    }
+                ],
+                preview=True,
+            )
+            assert isinstance(r, SuccessResult)
+            assert r.data.get("validation", {}).get("syntax_valid") is True
+            t = get_tree(tree_id)
+            assert t is not None
+            assert t.module.code == baseline
+            assert await_id in t.metadata_map
+        finally:
+            remove_tree(tree_id)
+
+    @pytest.mark.asyncio
+    async def test_preview_invalid_expression_returns_error_tree_restored(
+        self, tmp_path
+    ):
+        path = str(tmp_path / "await_call3.py")
+        tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
+        tree_id = tree.tree_id
+        baseline = tree.module.code
+        call_id = _find_type_on_line(tree_id, "Call", 3)
+        cmd = CSTModifyTreeCommand()
+        try:
+            r = await cmd.execute(
+                tree_id=tree_id,
+                operations=[
+                    {
+                        "action": "replace",
+                        "node_id": call_id,
+                        "code": "def not_an_expression(): pass",
+                    }
+                ],
+                preview=True,
+            )
+            assert isinstance(r, ErrorResult)
+            t = get_tree(tree_id)
+            assert t is not None
+            assert t.module.code == baseline
+            assert call_id in t.metadata_map
+        finally:
+            remove_tree(tree_id)

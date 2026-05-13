@@ -333,6 +333,22 @@ class DocstringChunker:
         else:
             await asyncio.to_thread(execute_batch, ops)
 
+    def _chunker_params_for_items(self, items: List[_DocItem]) -> Dict[str, Any]:
+        if any(
+            it.source_type == DOCS_MARKDOWN_SOURCE_TYPE
+            or it.ast_node_type == "MarkdownDoc"
+            for it in items
+        ):
+            chunk_set = "technical_text"
+        else:
+            chunk_set = "docstring"
+        return {
+            "chunk_set": chunk_set,
+            "use_sv": False,
+            "language": "en",
+            "type": "DocBlock",
+        }
+
     async def _fetch_rows_for_item_with_get_chunks(self, item: _DocItem) -> List[
         Tuple[
             _DocItem,
@@ -360,7 +376,9 @@ class DocstringChunker:
             return [(item, 0, item.text, None, None, tc if tc else None)]
         try:
             t0_one = time.time()
-            chunks = await mgr.get_chunks(text=item.text, type="DocBlock")
+            chunks = await mgr.get_chunks(
+                text=item.text, **self._chunker_params_for_items([item])
+            )
             log_operation_timing(
                 getattr(self, "log_timing", False),
                 logger,
@@ -442,7 +460,9 @@ class DocstringChunker:
             batch_results: Optional[List[Any]] = None
             try:
                 t0_batch = time.time()
-                batch_results = await get_batch(texts, type="DocBlock")
+                batch_results = await get_batch(
+                    texts, **self._chunker_params_for_items([it for _, it in seg])
+                )
                 log_operation_timing(
                     getattr(self, "log_timing", False),
                     logger,
@@ -550,7 +570,9 @@ class DocstringChunker:
                     for attempt in range(2):
                         try:
                             t0_batch = time.time()
-                            batch_results = await get_batch(texts, type="DocBlock")
+                            batch_results = await get_batch(
+                                texts, **self._chunker_params_for_items(items)
+                            )
                             log_operation_timing(
                                 getattr(self, "log_timing", False),
                                 logger,
@@ -625,7 +647,8 @@ class DocstringChunker:
                         try:
                             t0_one = time.time()
                             chunks = await self.svo_client_manager.get_chunks(
-                                text=item.text, type="DocBlock"
+                                text=item.text,
+                                **self._chunker_params_for_items([item]),
                             )
                             log_operation_timing(
                                 getattr(self, "log_timing", False),

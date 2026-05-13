@@ -35,7 +35,12 @@ def replace_node(
     # available (after prior ops tree.node_map may point at stale module nodes).
     node: Optional[cst.CSTNode] = None
     if metadata and hasattr(metadata, "start_line"):
-        if metadata.type in FINE_GRAINED_REPLACE_NODE_TYPES:
+        _resolved_id = tree.node_id_aliases.get(node_id, node_id)
+        _cand = tree.node_map.get(_resolved_id) or tree.node_map.get(node_id)
+        _use_leaf = (_cand is not None and isinstance(_cand, cst.BaseExpression)) or (
+            (getattr(metadata, "type", "") or "") in FINE_GRAINED_REPLACE_NODE_TYPES
+        )
+        if _use_leaf:
             node = find_leaf_node_in_module_by_position(
                 module,
                 metadata.start_line,
@@ -79,6 +84,11 @@ def replace_node(
         replacements_list = [parse_param_snippet(code=new_code)]
     elif isinstance(node, cst.Annotation):
         replacements_list = [parse_annotation_snippet(code=new_code)]
+    elif isinstance(node, cst.BaseExpression):
+        try:
+            replacements_list = [cst.parse_expression(stripped)]
+        except cst.ParserSyntaxError as exc:
+            raise ValueError(f"Invalid expression syntax for replace: {exc}") from exc
     else:
         replacements_list = cast(List[cst.CSTNode], list(parse_code_snippet(new_code)))
 
@@ -337,6 +347,8 @@ def replace_range(
             f"Parent type: {parent_type}, {line_range}.{hint}"
         )
     return result
+
+
 def replace_node_header_only(
     module: cst.Module,
     tree: CSTTree,

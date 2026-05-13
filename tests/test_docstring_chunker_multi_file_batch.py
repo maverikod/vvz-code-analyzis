@@ -110,9 +110,12 @@ async def test_process_prepared_files_single_ws_batch_two_files(
     assert not mock_db_execute_batch.execute_batch_calls
     mgr.get_chunks_batch.assert_awaited_once()
     call_kw = mgr.get_chunks_batch.await_args
-    texts = call_kw[0][0]
+    texts = call_kw.args[0]
     assert texts == [items_a[0].text, items_b[0].text]
-    assert call_kw[1].get("type") == "DocBlock"
+    assert call_kw.kwargs.get("type") == "DocBlock"
+    assert call_kw.kwargs.get("chunk_set") == "docstring"
+    assert call_kw.kwargs.get("use_sv") is False
+    assert call_kw.kwargs.get("language") == "en"
 
 
 @pytest.mark.asyncio

@@ -560,6 +560,7 @@ def rollback_tree_to_code(
     node_types: Optional[List[str]] = None,
     max_depth: Optional[int] = None,
     include_children: bool = True,
+    index_metadata_for_code: Optional[Dict[str, TreeNodeMetadata]] = None,
 ) -> bool:
     """
     Restore in-memory tree to the given source code (rollback after failed save).
@@ -578,6 +579,10 @@ def rollback_tree_to_code(
         node_types: Optional filter for index (same as load)
         max_depth: Optional max depth for index
         include_children: Whether to index children
+        index_metadata_for_code: Optional snapshot of ``metadata_map`` that matches
+            ``code`` (e.g. ``dict(tree.metadata_map)`` taken before ``modify_tree``).
+            When provided, node_id stability is preserved across rollback; when omitted,
+            the current in-memory map is used (legacy behavior).
 
     Returns:
         True if tree was found and rolled back, False if tree not found
@@ -587,7 +592,13 @@ def rollback_tree_to_code(
         return False
     logical_source, persisted_node_ids = strip_persisted_node_ids(code)
     logical_source = strip_inline_node_id_lines_from_source(logical_source)
-    previous_metadata_map = dict(tree.metadata_map)
+    # Must use metadata for the same source as ``code`` (typically pre-mutate
+    # snapshot). Using the current tree.metadata_map after a failed or preview
+    # mutate rebuilds UUIDs incorrectly and invalidates node_id stability.
+    if index_metadata_for_code is not None:
+        previous_metadata_map = index_metadata_for_code
+    else:
+        previous_metadata_map = dict(tree.metadata_map)
     module = cst.parse_module(logical_source)
     _finalize_cst_tree(
         tree,

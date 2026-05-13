@@ -31,4 +31,5 @@ outputs:
   type: Node with NodeKind lines (C-004)
   description: The lines root Node whose block set is the ordered sequence of scalar
     line Nodes, each carrying its raw text and zero-based line index as node_ref.
-atomic_steps: []
+atomic_steps:
+- A-001

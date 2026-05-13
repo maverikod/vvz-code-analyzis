@@ -1,0 +1,40 @@
+step_id: T-701
+parent_global_step: G-008
+name: YAML file handler — open and produce root Node
+status: draft
+concepts:
+- C-003
+- C-004
+- C-014
+- C-020
+description: "Define the opening behaviour of YamlFileHandler (C-020), which extends\
+  \ FileHandler (C-003), for .yaml and .yml files. When invoked to open a YAML file,\
+  \ YamlFileHandler parses it and produces a root Node whose NodeKind (C-004) depends\
+  \ on the top-level YAML value type.\nRoot Node NodeKind by document type: - YAML\
+  \ mapping: NodeKind mapping. Block set is the ordered sequence\n  of key-value pairs.\
+  \ Each pair is one self-contained Block carrying\n  both the key and the value.\n\
+  - YAML sequence: NodeKind sequence. Block set is the ordered sequence\n  of sequence\
+  \ elements, each with its own NodeKind.\n- YAML bare scalar (string, number, boolean,\
+  \ null): NodeKind scalar.\n  Block set is empty.\n\nInterior node structure: - YAML\
+  \ values are mapped recursively: nested mappings become mapping\n  Nodes, nested\
+  \ sequences become sequence Nodes, scalar values become\n  scalar Nodes.\n- YAML\
+  \ anchors and aliases are resolved before producing the node\n  tree; the resulting\
+  \ tree is alias-free.\n\nLazy materialisation: YamlFileHandler materialises only\
+  \ the root and the children needed by the current NavigationProcedure request.\n\
+  File-structure errors: if the file is not valid YAML, YamlFileHandler returns a\
+  \ FILE_STRUCTURE_ERROR of class ErrorClassification (C-014) carrying the parser\
+  \ name ('yaml') and, when available, the line and column of the syntax error.\n"
+inputs:
+- name: file_path
+  type: string
+  description: Project-relative path to the .yaml or .yml file to open.
+outputs:
+- name: root_node
+  type: Node with NodeKind mapping | sequence | scalar (C-004)
+  description: The root Node produced from the parsed YAML file. Its NodeKind is determined
+    by the top-level YAML value type.
+- name: file_structure_error
+  type: ErrorClassification (C-014) FILE_STRUCTURE_ERROR
+  description: Returned instead of root_node when the file is not valid YAML. Carries
+    parser name 'yaml' and position when available.
+atomic_steps: []

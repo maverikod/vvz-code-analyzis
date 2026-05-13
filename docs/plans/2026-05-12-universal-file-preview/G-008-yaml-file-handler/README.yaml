@@ -1,0 +1,34 @@
+step_id: G-008
+name: YAML file handler
+description: 'YamlFileHandler is the FileHandler family for .yaml, .yml files. It
+  opens a YAML file and produces a root Node whose NodeKind depends on the document
+  root: mapping for YAML mappings, sequence for YAML sequences, scalar for bare scalars.
+  A multi-document YAML file (separated by "---") produces a sequence root whose elements
+  are the document roots. The handler resolves node_ref values using the project''s
+  existing YAML tree infrastructure when present; if such infrastructure is not present,
+  it accepts JSON-pointer-style paths derived from the loaded YAML document.
+
+  '
+concepts:
+- C-020
+relations:
+- from_concept: C-020
+  to_concept: C-003
+  type: extends
+- from_concept: C-020
+  to_concept: C-004
+  type: produces
+- from_concept: C-020
+  to_concept: C-009
+  type: depends_on
+source_ranges:
+- start: 163
+  end: 167
+depends_on:
+- G-002
+- G-003
+tactical_steps:
+- T-701
+- T-702
+- T-703
+status: draft

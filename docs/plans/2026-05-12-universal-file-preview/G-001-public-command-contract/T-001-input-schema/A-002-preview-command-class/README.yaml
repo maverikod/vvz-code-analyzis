@@ -79,8 +79,11 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \ 3. budget = PreviewBudget(\n         preview_lines=kwargs[\"preview_lines\"],\n\
   \         value_preview_len=kwargs[\"value_preview_len\"],\n       )\n    4. Call\
   \ navigate(handler, kwargs, budget) — returns navigation_result\n       or ErrorResult.\n\
-  \    5. envelope = build_envelope(navigation_result, kwargs.get(\"selector\"),\n\
-  \                                 session_origin)\n    6. return SuccessResult(data=envelope)\n\
+  \    5. session_origin = 'command_created' if navigation_result.tree_id is not None\n\
+  \       else ('caller_owned' if kwargs.get('tree_id') else 'none')\n\
+  \    6. envelope = build_envelope(navigation_result, kwargs.get(\"selector\"),\n\
+  \                                 session_origin)\n    7. return SuccessResult(data=envelope)\n\
+  \    Wrap all handler exceptions in try/except; return appropriate ErrorResult.\n"
   \    Wrap all handler exceptions in try/except; return appropriate ErrorResult.\n"
 verification:
   type: import

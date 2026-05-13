@@ -1,43 +1,51 @@
 step_id: A-001
 parent_tactical_step: T-402
-name: Fix TextFileHandler.resolve_node_ref — integer index with file_path capture
+name: Add __init__ and fix resolve_node_ref in TextFileHandler for _last_file_path
 target_file: code_analysis/commands/universal_file_preview/handlers/text_handler.py
 operation: modify_file
-priority: 2
-depends_on:
-- A-001
+priority: 1
+depends_on: []
 concepts:
 - C-004
 - C-014
 - C-017
 status: draft
 prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/text_handler.py\n\
-  \nCurrent content after A-001 (T-401) has been applied:\n  The file contains TextFileHandler\
-  \ with open_root storing self._last_file_path\n  and resolve_node_ref referencing\
-  \ self._last_file_path. The note at the\n  end of the A-001 prompt already described\
-  \ the fix needed.\n\nChange to make:\n  Ensure open_root stores the file_path on\
-  \ self (_last_file_path: str | None = None)\n  and that resolve_node_ref uses self._last_file_path\
-  \ to re-open if needed.\n  Specifically:\n\n  1. Add class-level attribute initialisation\
-  \ in __init__:\n       def __init__(self) -> None:\n           \"\"\"Initialise\
-  \ TextFileHandler state.\"\"\"\n           self._last_file_path: str | None = None\n\
-  \n  2. In open_root, add as first line after docstring:\n       self._last_file_path\
-  \ = file_path\n\n  3. Replace resolve_node_ref body with:\n       try:\n       \
-  \    idx = int(node_ref)\n       except ValueError:\n           return input_error(\n\
-  \               INPUT_ERROR_UNKNOWN_NODE_REF,\n               f'node_ref {node_ref!r}\
-  \ is not a valid integer line index.',\n               details={'node_ref': node_ref},\n\
-  \           )\n       fp = self._last_file_path\n       if fp is None:\n       \
-  \    return input_error(\n               INPUT_ERROR_UNKNOWN_NODE_REF,\n       \
-  \        'open_root must be called before resolve_node_ref.',\n               details={'node_ref':\
+  \nCurrent content of the file as it exists after T-401 has been fully applied\n\
+  (created by T-401/A-001). The file contains the full TextFileHandler class\nwith\
+  \ these members already defined:\n\n  - supported_extensions property -> frozenset({'.md',\
+  \ '.txt', '.rst', '.adoc'})\n  - open_root(self, file_path, session) -> Node | PreviewError\n\
+  \    (reads file, returns lines root Node with lazy _children_loader)\n  - resolve_node_ref(self,\
+  \ node_ref, session) -> Node | PreviewError\n    (current body: calls int(node_ref),\
+  \ then calls self.open_root(file_path,...)\n     BUT file_path is not in scope because\
+  \ the ABC signature only provides\n     node_ref and session)\n\nThe resolve_node_ref\
+  \ method as written in T-401 references a local `file_path`\nvariable that is not\
+  \ in scope within resolve_node_ref's body. This is the bug.\n\nChange to make:\n\
+  \  Three additions to the class:\n\n  1. Add __init__ to initialise _last_file_path\
+  \ before open_root is first called:\n\n       def __init__(self) -> None:\n    \
+  \       \"\"\"Initialise TextFileHandler state.\"\"\"\n           self._last_file_path:\
+  \ str | None = None\n\n  2. In open_root, add as the FIRST statement of the method\
+  \ body\n     (after the docstring, before the _load_lines closure definition):\n\
+  \n       self._last_file_path = file_path\n\n  3. Replace the body of resolve_node_ref\
+  \ with:\n\n       try:\n           idx = int(node_ref)\n       except ValueError:\n\
+  \           return input_error(\n               INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \               f'node_ref {node_ref!r} is not a valid integer line index.',\n \
+  \              details={'node_ref': node_ref},\n           )\n       fp = self._last_file_path\n\
+  \       if fp is None:\n           return input_error(\n               INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \               'open_root must be called before resolve_node_ref '\n          \
+  \     '(TextFileHandler needs the file path).',\n               details={'node_ref':\
   \ node_ref},\n           )\n       root_result = self.open_root(fp, session)\n \
   \      if isinstance(root_result, PreviewError):\n           return root_result\n\
   \       lines = root_result.children\n       if idx < 0 or idx >= len(lines):\n\
   \           return input_error(\n               INPUT_ERROR_UNKNOWN_NODE_REF,\n\
   \               f'Line index {idx} out of range [0, {len(lines)}).',\n         \
   \      details={'node_ref': node_ref, 'total_lines': len(lines)},\n           )\n\
-  \       return lines[idx]\n\n  No other changes to the file.\n"
+  \       return lines[idx]\n\n  No other changes to the file.\n  Imports already\
+  \ present: input_error, INPUT_ERROR_UNKNOWN_NODE_REF, PreviewError.\n"
 verification:
   type: static_analysis
   target: code_analysis/commands/universal_file_preview/handlers/text_handler.py
   expected: TextFileHandler has __init__ initialising _last_file_path to None; open_root
-    assigns self._last_file_path = file_path; resolve_node_ref reads self._last_file_path
-    and handles None with UNKNOWN_NODE_REF; no bare exceptions propagate.
+    assigns self._last_file_path = file_path as its first statement; resolve_node_ref
+    uses self._last_file_path and returns UNKNOWN_NODE_REF when it is None; no bare
+    exceptions propagate.

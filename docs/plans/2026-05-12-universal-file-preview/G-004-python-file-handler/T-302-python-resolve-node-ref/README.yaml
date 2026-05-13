@@ -3,7 +3,10 @@ parent_global_step: G-004
 name: Python file handler — resolve node_ref
 status: draft
 concepts:
+- C-004
 - C-009
+- C-011
+- C-014
 - C-016
 description: "Define the identifier-resolution behaviour of PythonFileHandler (C-016)\
   \ for .py, .pyi, and .pyw files. When the caller supplies a node_ref, PythonFileHandler\

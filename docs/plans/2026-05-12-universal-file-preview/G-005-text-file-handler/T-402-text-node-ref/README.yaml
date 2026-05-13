@@ -1,7 +1,7 @@
 step_id: T-402
 parent_global_step: G-005
 name: Text file handler — node_ref as line index
-status: draft
+status: frozen
 concepts:
 - C-004
 - C-014

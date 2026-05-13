@@ -16,9 +16,7 @@ prompt: |
   Target file (modify_file):
     code_analysis/commands/universal_file_preview_command.py
 
-  Current content of the file as it exists after T-001 has been fully applied
-  (i.e. after A-001, A-002, A-003, A-004 of T-001 have been executed).
-  The file was created by T-001/A-002 with exactly this content:
+  The file content after all T-001 atomic steps have been applied is exactly:
 
     """
     MCP command: universal_file_preview

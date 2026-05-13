@@ -1,7 +1,7 @@
 step_id: T-501
 parent_global_step: G-006
 name: JSON file handler — open and produce root Node
-status: draft
+status: frozen
 concepts:
 - C-003
 - C-004

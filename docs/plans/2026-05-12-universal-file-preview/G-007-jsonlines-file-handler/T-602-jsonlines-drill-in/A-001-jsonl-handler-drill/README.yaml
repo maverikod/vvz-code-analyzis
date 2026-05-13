@@ -1,0 +1,29 @@
+step_id: A-001
+parent_tactical_step: T-602
+name: Confirm JsonLinesFileHandler drill-in delegates to JSON parsing (already in
+  T-601 AS)
+target_file: code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-004
+- C-014
+- C-019
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py\n\
+  \nCurrent content after A-001 (T-601) has been applied:\n  The file contains JsonLinesFileHandler\
+  \ with open_root and resolve_node_ref.\n  resolve_node_ref already implements the\
+  \ drill-in: reads line N, parses as\n  JSON, calls _json_value_to_node. This covers\
+  \ T-602 entirely.\n\nChange to make:\n  Add a module-level docstring note confirming\
+  \ the delegation contract,\n  by inserting a NOTE comment block before _json_value_to_node\
+  \ import line:\n\n    # NOTE: drill-in JSON parsing delegates to json_handler._json_value_to_node\n\
+  \    # (C-019 requirement: no duplicate JSON parser; same NodeKind structure\n \
+  \   # as a standalone .json file of the same JSON value type).\n\n  No other changes\
+  \ to the file.\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py
+  expected: The comment block exists before the _json_value_to_node import; no other
+    content changed; no bare exceptions propagate from resolve_node_ref.

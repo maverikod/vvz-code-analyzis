@@ -45,4 +45,5 @@ outputs:
   description: Focus node metadata (node_kind, node_ref, type, name, attributes),
     total block count, and the ordered list of rendered block summaries ready for
     assembly into the ResponseEnvelope.
-atomic_steps: []
+atomic_steps:
+- A-001

@@ -1,0 +1,59 @@
+step_id: A-001
+parent_tactical_step: T-702
+name: Add YAML tree infrastructure detection stub to YamlFileHandler
+target_file: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-004
+- C-009
+- C-011
+- C-014
+- C-020
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview/handlers/yaml_handler.py\n\
+  \nCurrent content after A-001 (T-701) has been applied:\n  The file contains YamlFileHandler\
+  \ with open_root and resolve_node_ref\n  implementing T-703 (JSON-pointer-style\
+  \ fallback). T-702 requires\n  detecting and using project YAML tree infrastructure\
+  \ when present.\n\nChange to make:\n  Add a private method _try_infra_resolve to\
+  \ YamlFileHandler that\n  attempts T-702 resolution (project YAML tree infra) and\
+  \ falls back\n  to T-703 (JSON-pointer path) when the infrastructure is absent.\n\
+  \  Then update resolve_node_ref to call _try_infra_resolve first.\n\n  Insert after\
+  \ the class docstring and before open_root:\n\n    def _try_infra_resolve(\n   \
+  \     self,\n        node_ref: str,\n        session: Any | None,\n    ) -> Node\
+  \ | PreviewError | None:\n        \"\"\"\n        Attempt resolution via project\
+  \ YAML tree infrastructure (T-702).\n\n        Returns a Node or PreviewError when\
+  \ the infrastructure is present\n        and handles this identifier. Returns None\
+  \ when the infrastructure\n        is absent, signalling the caller to use the JSON-pointer\
+  \ fallback.\n\n        Args:\n            node_ref: StableIdentifier in infrastructure-native\
+  \ format.\n            session: TreeSession with YAML infrastructure active, or\
+  \ None.\n\n        Returns:\n            Node, PreviewError, or None (infra absent).\n\
+  \        \"\"\"\n        # Infrastructure detection: attempt import of project YAML\
+  \ tree module.\n        try:\n            from code_analysis.core.yaml_tree import\
+  \ resolve_yaml_node  # noqa\n            if session is None:\n                return\
+  \ None  # infra present but no active session\n            result = resolve_yaml_node(session,\
+  \ node_ref)\n            if result is None:\n                from ..errors import\
+  \ input_error, INPUT_ERROR_UNKNOWN_NODE_REF\n                return input_error(\n\
+  \                    INPUT_ERROR_UNKNOWN_NODE_REF,\n                    f'YAML tree\
+  \ infra could not resolve {node_ref!r}.',\n                    details={'node_ref':\
+  \ node_ref},\n                )\n            # Convert infrastructure result to\
+  \ Node\n            return _yaml_value_to_node(result, node_ref)\n        except\
+  \ ImportError:\n            return None  # infrastructure absent — use fallback\n\
+  \n  Replace the body of resolve_node_ref with:\n\n    infra_result = self._try_infra_resolve(node_ref,\
+  \ session)\n    if infra_result is not None:\n        return infra_result  # infrastructure\
+  \ handled it (Node or PreviewError)\n    # T-703 fallback: JSON-pointer-style path\n\
+  \    doc = getattr(self, '_doc', None)\n    if doc is None:\n        return input_error(INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \                           'open_root must be called before resolve_node_ref.')\n\
+  \    result = _resolve_yaml_pointer(doc, node_ref)\n    if result is None:\n   \
+  \     return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n         \
+  \   f'Path {node_ref!r} does not exist in YAML document.',\n            details={'node_ref':\
+  \ node_ref},\n        )\n    value, pointer = result\n    return _yaml_value_to_node(value,\
+  \ pointer)\n\n  No other changes to the file.\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
+  expected: _try_infra_resolve uses try/except ImportError to detect infrastructure;
+    resolve_node_ref calls _try_infra_resolve then falls back to JSON-pointer; no
+    bare exceptions propagate.

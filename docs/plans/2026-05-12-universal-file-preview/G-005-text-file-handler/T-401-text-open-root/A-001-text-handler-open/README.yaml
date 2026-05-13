@@ -9,7 +9,7 @@ concepts:
 - C-003
 - C-004
 - C-017
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/handlers/text_handler.py\n\nFile-level\
   \ docstring (required):\n  \"\"\"\n  TextFileHandler — FileHandler for .md, .txt,\
@@ -58,7 +58,8 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \    if idx < 0 or idx >= len(lines):\n        return input_error(\n           \
   \ INPUT_ERROR_UNKNOWN_NODE_REF,\n            f'Line index {idx} out of range [0,\
   \ {len(lines)}).',\n            details={'node_ref': node_ref, 'total_lines': len(lines)},\n\
-  \        )\n    return lines[idx]\n\nIn open_root, add self._last_file_path = file_path\nbefore the return statement, so resolve_node_ref can access it.\n"
+  \        )\n    return lines[idx]\n\nIn open_root, add self._last_file_path = file_path\n\
+  before the return statement, so resolve_node_ref can access it.\n"
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.handlers.text_handler

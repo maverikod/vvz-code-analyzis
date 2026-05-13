@@ -3,7 +3,11 @@ parent_global_step: G-002
 name: Navigation procedure — three phases
 status: draft
 concepts:
+- C-004
 - C-006
+- C-007
+- C-008
+- C-013
 description: "Define the NavigationProcedure (C-006) as the single procedure that\
   \ the command executes on every request. The procedure is shared across all NodeKind\
   \ values and all file types; it operates on one focus Node per request and runs\

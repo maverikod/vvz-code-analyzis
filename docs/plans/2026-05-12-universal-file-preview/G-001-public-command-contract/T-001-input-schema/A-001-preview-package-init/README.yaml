@@ -10,3 +10,17 @@ concepts:
 - C-002
 - C-003
 status: draft
+prompt: "Create a new Python package init file.\n\nTarget file (create_file — file\
+  \ does not exist):\n  code_analysis/commands/universal_file_preview/__init__.py\n\
+  \nThe file is the __init__.py of the package\ncode_analysis/commands/universal_file_preview/.\
+  \ It exposes the public\nsurface of the package to importers.\n\nFile-level docstring\
+  \ (required):\n  \"\"\"\n  universal_file_preview — package for the universal_file_preview\
+  \ MCP command.\n\n  Exposes UniversalFilePreviewCommand as the single public entry\
+  \ point.\n\n  Author: Vasiliy Zdanovskiy\n  email: vasilyvz@gmail.com\n  \"\"\"\n\
+  \nImports:\n  from .universal_file_preview_command import UniversalFilePreviewCommand\n\
+  \nExports:\n  __all__ = [\"UniversalFilePreviewCommand\"]\n\nNo other content.\n"
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview
+  expected: Module imports without error; UniversalFilePreviewCommand is importable
+    from code_analysis.commands.universal_file_preview.

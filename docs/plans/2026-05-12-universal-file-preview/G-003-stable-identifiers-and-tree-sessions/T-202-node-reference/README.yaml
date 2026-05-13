@@ -1,7 +1,7 @@
 step_id: T-202
 parent_global_step: G-003
 name: Node reference — focus parameter
-status: draft
+status: frozen
 concepts:
 - C-009
 - C-010

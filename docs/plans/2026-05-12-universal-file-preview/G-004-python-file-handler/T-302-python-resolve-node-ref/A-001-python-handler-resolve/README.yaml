@@ -118,8 +118,7 @@ prompt: |
             Resolve a stable_id UUID to the CST Node it addresses (C-009).
 
             Looks up the UUID in the CST node index. Returns UNKNOWN_NODE_REF if
-            the UUID is not found. This method will be hardened by T-302/A-001;
-            the body here is the initial implementation.
+            the UUID is not found.
 
             Args:
                 node_ref: stable_id UUID string from cst_load_file outline_nodes.

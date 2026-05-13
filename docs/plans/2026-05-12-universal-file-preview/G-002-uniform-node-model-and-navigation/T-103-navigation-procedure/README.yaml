@@ -1,7 +1,7 @@
 step_id: T-103
 parent_global_step: G-002
 name: Navigation procedure — three phases
-status: draft
+status: frozen
 concepts:
 - C-004
 - C-006

@@ -1,7 +1,7 @@
 step_id: T-101
 parent_global_step: G-002
 name: Handler dispatcher
-status: draft
+status: frozen
 concepts:
 - C-002
 - C-003

@@ -40,4 +40,5 @@ outputs:
   description: Returned instead of root_node when the Python file cannot be parsed.
     Carries parser name 'libcst' and line range when available.
 atomic_steps:
+- A-000
 - A-001

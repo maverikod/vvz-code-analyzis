@@ -37,4 +37,5 @@ outputs:
   type: ErrorClassification (C-014) FILE_STRUCTURE_ERROR
   description: Returned instead of root_node when the file is not valid YAML. Carries
     parser name 'yaml' and position when available.
-atomic_steps: []
+atomic_steps:
+- A-001

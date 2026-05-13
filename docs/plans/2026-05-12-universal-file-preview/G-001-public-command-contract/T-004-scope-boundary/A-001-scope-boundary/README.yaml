@@ -1,0 +1,35 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: Scope boundary — doc-level verification note in command class
+target_file: code_analysis/commands/universal_file_preview_command.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-002
+concepts:
+- C-001
+- C-021
+- C-014
+status: draft
+prompt: "Modify an existing Python file.\n\nTarget file (modify_file):\n  code_analysis/commands/universal_file_preview_command.py\n\
+  \nCurrent content of the file after A-002 (T-001) has been applied:\n  The file\
+  \ contains UniversalFilePreviewCommand with name, get_schema,\n  validate_params,\
+  \ and execute already defined (as authored in A-002 of T-001).\n\nChange to make:\n\
+  \  Add a module-level constant _SCOPE_INVARIANTS after the existing module-level\n\
+  \  constants block, documenting the four ScopeBoundary (C-021) negative invariants\n\
+  \  as an immutable tuple:\n\n    _SCOPE_INVARIANTS: tuple[str, ...] = (\n      \
+  \  \"NO_WRITES: command never writes to files, database, or tree sessions\"\n  \
+  \      \" it did not create\",\n        \"NO_RAW_BYTES: response never contains\
+  \ raw file bytes; all output is\"\n        \" structured JSON\",\n        \"SINGLE_FILE:\
+  \ file_path is a single literal path; globs and wildcards\"\n        \" are rejected\
+  \ as GLOB_IN_FILE_PATH\",\n        \"NO_XML_HTML: no FileHandler is registered for\
+  \ .xml, .html, .htm;\"\n        \" requests produce UNKNOWN_EXTENSION\",\n    )\n\
+  \n  The constant must appear after the existing _GLOB_CHARS, _PREVIEW_LINES_DEFAULT,\n\
+  \  and _VALUE_PREVIEW_LEN_DEFAULT constants and before the class definition.\n \
+  \ No other changes to the file.\n\nType annotation: tuple[str, ...]\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_preview_command.py
+  expected: _SCOPE_INVARIANTS is a module-level tuple[str, ...] with exactly four
+    string elements documenting the NO_WRITES, NO_RAW_BYTES, SINGLE_FILE, and NO_XML_HTML
+    invariants.

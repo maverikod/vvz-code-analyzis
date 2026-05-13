@@ -119,7 +119,7 @@ prompt: |
                     details={'node_ref': node_ref},
                 )
             # Read just that line to avoid full-file load
-            # (lazy: just reuse open_root children for correctness)
+            root_result = self.open_root(self._last_file_path, session)
             root_result = self.open_root(file_path, session)
             if isinstance(root_result, PreviewError):
                 return root_result

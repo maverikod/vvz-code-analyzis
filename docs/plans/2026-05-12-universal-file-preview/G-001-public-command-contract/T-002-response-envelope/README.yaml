@@ -43,4 +43,5 @@ outputs:
   type: ResponseEnvelope (C-012)
   description: Fully populated envelope ready for serialisation and return to the
     MCP caller.
-atomic_steps: []
+atomic_steps:
+- A-001

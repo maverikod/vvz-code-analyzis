@@ -10,7 +10,7 @@ concepts:
 - C-007
 - C-013
 - C-014
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/selector.py\n\nFile-level docstring\
   \ (required):\n  \"\"\"\n  Selector (C-007) — three-form block-set picker for universal_file_preview.\n\

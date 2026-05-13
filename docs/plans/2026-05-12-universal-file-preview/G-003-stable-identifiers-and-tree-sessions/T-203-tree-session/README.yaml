@@ -42,4 +42,5 @@ outputs:
   description: Indicates whether the session was provided by the caller or created
     by the command. The ResponseEnvelope includes tree_id only when session_origin
     is command_created.
-atomic_steps: []
+atomic_steps:
+- A-001

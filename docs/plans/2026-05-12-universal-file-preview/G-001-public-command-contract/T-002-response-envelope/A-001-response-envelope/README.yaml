@@ -18,7 +18,7 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \ on every successful request.\n\n  Author: Vasiliy Zdanovskiy\n  email: vasilyvz@gmail.com\n\
   \  \"\"\"\n\nImports:\n  from __future__ import annotations\n  from typing import\
   \ Any\n  from .models import Node, Block, NavigationResult\n\nThe imported classes\
-  \ (defined in models.py, created by T-102/A-001) have\nthese signatures relevant\
+  \ (defined in models.py) have\nthese signatures relevant\
   \ to this file:\n\n  @dataclass\n  class Node:\n      node_kind: NodeKind      \
   \ # enum with .value (str): scalar|lines|mapping|sequence|tree_node\n      node_ref:\
   \ str             # StableIdentifier string\n      type_label: str | None    # optional\

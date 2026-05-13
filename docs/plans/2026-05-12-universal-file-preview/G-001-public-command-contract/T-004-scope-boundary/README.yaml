@@ -5,19 +5,20 @@ status: draft
 concepts:
 - C-001
 - C-021
-description: "Define the ScopeBoundary (C-021) as the complete set of negative invariants\
-  \ that PreviewCommand (C-001) must never violate, expressed as verifiable constraints.\n\
-  Negative invariants: 1. No writes: the command writes nothing to files, the project\
+description: "Define the ScopeBoundary (C-021) as the complete set of negative invariants\n\
+  that PreviewCommand (C-001) must never violate, expressed as verifiable\nconstraints.\n\
+  \nNegative invariants:\n1. No writes: the command writes nothing to files, the project\
   \ database,\n   or any external tree session. Read-only behaviour is unconditional;\n\
   \   no parameter combination can trigger a write.\n2. No raw bytes: the response\
   \ never contains raw file bytes. All output\n   is structured JSON conforming to\
   \ ResponseEnvelope.\n3. Single file per call: file_path is a single literal path.\
-  \ Globs,\n   wildcards, and multi-path values are rejected as input errors (see\n\
-  \   ErrorClassification T-003).\n4. No XML or HTML: the command has no registered\
-  \ FileHandler for .xml,\n   .html, or .htm extensions. Requests for these extensions\
-  \ return\n   UNKNOWN_EXTENSION input error.\n\nThese invariants are not enforced\
-  \ by the caller; they are structural properties of the command implementation and\
-  \ must hold regardless of the parameters supplied.\n"
+  \ Globs,\n   wildcards, and multi-path values are rejected as input errors of\n\
+  \   class ErrorClassification (C-014), specifically GLOB_IN_FILE_PATH.\n4. No XML\
+  \ or HTML: the command has no registered FileHandler for .xml,\n   .html, or .htm\
+  \ extensions. Requests for these extensions produce an\n   input error of class\
+  \ ErrorClassification (C-014), specifically\n   UNKNOWN_EXTENSION.\n\nThese invariants\
+  \ are not enforced by the caller; they are structural\nproperties of the command\
+  \ implementation and must hold regardless of\nthe parameters supplied.\n"
 inputs:
 - name: none
   type: n/a

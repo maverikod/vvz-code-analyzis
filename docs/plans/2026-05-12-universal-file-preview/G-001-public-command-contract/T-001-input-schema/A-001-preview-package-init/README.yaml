@@ -9,7 +9,7 @@ concepts:
 - C-001
 - C-002
 - C-003
-status: draft
+status: done
 prompt: |-
   Create a new Python package init file.
 

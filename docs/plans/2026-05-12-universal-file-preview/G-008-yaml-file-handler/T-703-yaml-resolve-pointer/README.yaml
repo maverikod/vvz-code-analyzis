@@ -1,0 +1,51 @@
+step_id: T-703
+parent_global_step: G-008
+name: YAML file handler — resolve node_ref via JSON-pointer-style path
+status: draft
+concepts:
+- C-004
+- C-009
+- C-014
+- C-020
+description: 'Define the identifier-resolution fallback behaviour of YamlFileHandler
+  (C-020) when the project''s YAML tree infrastructure is absent. In this mode, node_ref
+  values are JSON-pointer-style paths derived from the loaded YAML document structure.
+
+  Precondition: The project YAML tree infrastructure is NOT present for the target
+  file. YamlFileHandler detects this at open time. When the infrastructure is absent,
+  this fallback mode is used for all node_ref resolution.
+
+  Identifier format (StableIdentifier C-009): A JSON-pointer-style path derived from
+  the YAML document structure. The format follows RFC 6901 conventions applied to
+  YAML: - Root is addressed by the empty string ''''. - Mapping keys are addressed
+  by ''/key_name''. - Sequence elements are addressed by ''/index'' (zero-based integer).
+  - Nested paths are composed by concatenation: ''/outer/inner/0''.
+
+  Resolution process: YamlFileHandler traverses the loaded YAML document following
+  the path segments of the JSON-pointer-style node_ref. If each segment resolves successfully,
+  the addressed YAML value is returned as a Node with its NodeKind (C-004) and block
+  set.
+
+  Resolution failure: If any path segment does not exist in the document (missing
+  key, index out of range, or attempting to index a scalar), YamlFileHandler signals
+  an UNKNOWN_NODE_REF condition surfaced as an ErrorClassification (C-014) input error.
+
+  No external infrastructure: In this mode, YamlFileHandler resolves identifiers directly
+  from the parsed YAML document. No external tree infrastructure calls are made.
+
+  '
+inputs:
+- name: node_ref_value
+  type: string (JSON-pointer-style path)
+  description: A StableIdentifier (C-009) in JSON-pointer-style path format derived
+    from the YAML document structure (e.g. '', '/key', '/list/0/nested').
+outputs:
+- name: resolved_node
+  type: Node with NodeKind (C-004) assigned
+  description: The YAML Node addressed by the path, with its NodeKind (mapping, sequence,
+    or scalar), block set, and node_ref.
+- name: resolution_error
+  type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
+  description: Returned instead of resolved_node when any path segment cannot be resolved
+    in the YAML document.
+atomic_steps: []

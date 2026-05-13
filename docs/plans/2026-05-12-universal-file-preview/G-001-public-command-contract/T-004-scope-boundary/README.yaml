@@ -4,6 +4,7 @@ name: Scope boundary invariants
 status: draft
 concepts:
 - C-001
+- C-014
 - C-021
 description: "Define the ScopeBoundary (C-021) as the complete set of negative invariants\n\
   that PreviewCommand (C-001) must never violate, expressed as verifiable\nconstraints.\n\

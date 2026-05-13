@@ -51,4 +51,5 @@ outputs:
 - name: selector_error
   type: ErrorClassification (C-014) input error
   description: Returned instead of selected_blocks when any rejection rule fires.
-atomic_steps: []
+atomic_steps:
+- A-001

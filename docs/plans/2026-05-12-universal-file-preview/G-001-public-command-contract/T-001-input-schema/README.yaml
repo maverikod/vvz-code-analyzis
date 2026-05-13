@@ -4,6 +4,7 @@ name: Input schema of PreviewCommand
 status: draft
 concepts:
 - C-001
+- C-014
 description: "Define the input schema of PreviewCommand (C-001) as the complete set\
   \ of caller-visible parameters with their types, optionality, and validation rules.\
   \ The schema is fixed: adding a new file handler does not change it.\nParameters:\

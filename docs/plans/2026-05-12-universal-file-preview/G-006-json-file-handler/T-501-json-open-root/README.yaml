@@ -37,4 +37,5 @@ outputs:
   type: ErrorClassification (C-014) FILE_STRUCTURE_ERROR
   description: Returned instead of root_node when the file is not valid JSON. Carries
     parser name 'json' and position information when available.
-atomic_steps: []
+atomic_steps:
+- A-001

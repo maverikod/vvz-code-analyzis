@@ -30,8 +30,8 @@ prompt: "Create a new Python file.\n\nTarget file (create_file — file does not
   \      \"\"\"\n      Resolve the TreeSession for the request.\n      Returns (session,\
   \ session_origin, tree_id) or PreviewError.\n        session_origin: 'caller_owned'\
   \ | 'command_created' | 'none'\n        tree_id: UUID string when session_origin\
-  \ == 'command_created', else None.\n      \"\"\"\n\n  # From .block_handlers (created\
-  \ by T-105/A-001):\n  def render_block(node: Node, value_preview_len: int) -> dict[str,\
+  \ == 'command_created', else None.\n      \"\"\"\n\n  # From .block_handlers:\n\
+  \  def render_block(node: Node, value_preview_len: int) -> dict[str,\
   \ Any]:\n      \"\"\"Render a Node using its NodeKind's BlockHandler rule.\"\"\"\
   \n\n  # From .selector (created by T-104/A-001):\n  def apply_selector(\n      raw:\
   \ str | list | None,\n      block_set: list[Node],\n      preview_lines: int,\n\

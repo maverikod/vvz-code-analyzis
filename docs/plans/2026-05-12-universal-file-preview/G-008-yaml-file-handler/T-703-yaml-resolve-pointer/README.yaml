@@ -48,4 +48,5 @@ outputs:
   type: ErrorClassification (C-014) UNKNOWN_NODE_REF input error
   description: Returned instead of resolved_node when any path segment cannot be resolved
     in the YAML document.
-atomic_steps: []
+atomic_steps:
+- A-001

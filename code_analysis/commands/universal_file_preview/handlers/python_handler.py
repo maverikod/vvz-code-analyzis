@@ -44,7 +44,6 @@ class PythonFileHandler(FileHandler):
     def supported_extensions(self) -> frozenset[str]:
         """Frozenset of lowercase extensions this handler supports."""
         return frozenset({".py", ".pyi", ".pyw"})
-
     def open_root(self, file_path: str, session: Any | None) -> Node | PreviewError:
         """
         Parse the Python file and return a tree_node Module root Node.
@@ -59,7 +58,7 @@ class PythonFileHandler(FileHandler):
 
         Returns:
             Module root Node (NodeKind.TREE_NODE) or PreviewError.
-        """
+    """
         try:
             from pathlib import Path
 
@@ -67,15 +66,17 @@ class PythonFileHandler(FileHandler):
 
             if session is not None:
                 tree = session
+                module = tree.module
             else:
                 source = Path(file_path).read_text(encoding="utf-8", errors="replace")
-                tree = cst.parse_module(source)
+                module = cst.parse_module(source)
+                tree = module
 
             self._last_file_path = file_path
             self._last_session = tree
 
             def _load_children() -> list[Node]:
-                return _cst_statements_to_nodes(tree.body)
+                return _cst_statements_to_nodes(module.body)
 
             return Node(
                 node_kind=NodeKind.TREE_NODE,

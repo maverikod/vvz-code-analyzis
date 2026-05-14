@@ -9,10 +9,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
-
 from __future__ import annotations
-
 
 
 import logging
@@ -21,9 +18,7 @@ import logging
 from typing import Any
 
 
-
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
-
 
 
 from .base_mcp_command import BaseMCPCommand
@@ -50,7 +45,6 @@ from .universal_file_preview.navigation import navigate
 from .universal_file_preview.response import build_envelope
 
 
-
 _GLOB_CHARS = frozenset("*?[")
 
 
@@ -74,54 +68,43 @@ _SCOPE_INVARIANTS: tuple[str, ...] = (
 
 logger = logging.getLogger(__name__)
 
+
 class UniversalFilePreviewCommand:
-    
-    
-    
-    
     """
-            MCP command that returns a structured preview of any project file node.
-        
-            Supports .py, .pyi, .pyw (Python), .md, .txt, .rst, .adoc (text),
-            .json (JSON), .jsonl, .ndjson (JSON Lines), .yaml, .yml (YAML).
-            XML and HTML are out of scope.
-        
-            Attributes:
-                name: Command name identifier.
-                version: Command version string.
-                descr: Human-readable command description.
-                category: Command category.
-                author: Author name.
-                email: Author email.
-                use_queue: Whether to use async queue for execution.
-            """
-    
-    
-    
+    MCP command that returns a structured preview of any project file node.
+
+    Supports .py, .pyi, .pyw (Python), .md, .txt, .rst, .adoc (text),
+    .json (JSON), .jsonl, .ndjson (JSON Lines), .yaml, .yml (YAML).
+    XML and HTML are out of scope.
+
+    Attributes:
+        name: Command name identifier.
+        version: Command version string.
+        descr: Human-readable command description.
+        category: Command category.
+        author: Author name.
+        email: Author email.
+        use_queue: Whether to use async queue for execution.
+    """
+
     name = "universal_file_preview"
-    
-    
+
     version = "1.0.0"
-    
-    
+
     descr = "Uniform structured preview of any project file node"
-    
-    
+
     category = "preview"
-    
-    
+
     author = "Vasiliy Zdanovskiy"
-    
-    
+
     email = "vasilyvz@gmail.com"
-    
-    
+
     use_queue = False
-    
+
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
         """Return JSON Schema for the command input parameters.
-    
+
         Returns:
             JSON Schema dict describing accepted parameters.
         """
@@ -184,25 +167,25 @@ class UniversalFilePreviewCommand:
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
-    
+
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Validate and normalise raw MCP call parameters.
-    
+
         Args:
             params: Raw parameter dict from the MCP call.
-    
+
         Returns:
             Normalised parameter dict with defaults applied.
         """
         params = super().validate_params(params)
-    
+
         project_id = params["project_id"]
         file_path = params["file_path"]
         if any(c in file_path for c in _GLOB_CHARS):
             raise ValueError(INPUT_ERROR_GLOB_IN_FILE_PATH)
-    
+
         node_ref = params.get("node_ref")
-    
+
         selector = params.get("selector")
         if isinstance(selector, str):
             if ":" not in selector and not selector.startswith("-"):
@@ -215,21 +198,21 @@ class UniversalFilePreviewCommand:
                 raise ValueError(INPUT_ERROR_MIXED_SELECTOR_LIST)
             if len(selector) != len(set(map(str, selector))):
                 raise ValueError(INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY)
-    
+
         preview_lines = params.get("preview_lines")
         if preview_lines is None:
             preview_lines = _PREVIEW_LINES_DEFAULT
-    
+
         value_preview_len = params.get("value_preview_len")
         if value_preview_len is None:
             value_preview_len = _VALUE_PREVIEW_LEN_DEFAULT
-    
+
         full_text_max_lines = params.get("full_text_max_lines")
         if full_text_max_lines is None:
             full_text_max_lines = _FULL_TEXT_MAX_LINES_DEFAULT
-    
+
         tree_id = params.get("tree_id")
-    
+
         return {
             "project_id": project_id,
             "file_path": file_path,
@@ -240,18 +223,19 @@ class UniversalFilePreviewCommand:
             "full_text_max_lines": full_text_max_lines,
             "tree_id": tree_id,
         }
+
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
         """Execute the preview command.
 
-    Resolves the project-relative file_path to an absolute path using
-    project_id before dispatching to the file handler.
+        Resolves the project-relative file_path to an absolute path using
+        project_id before dispatching to the file handler.
 
-    Args:
-        **kwargs: Validated parameters from validate_params.
+        Args:
+            **kwargs: Validated parameters from validate_params.
 
-    Returns:
-        SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
-    """
+        Returns:
+            SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
+        """
         try:
             project_root = self._resolve_project_root(kwargs["project_id"])
             abs_file_path = str(project_root / kwargs["file_path"])
@@ -291,12 +275,8 @@ class UniversalFilePreviewCommand:
             )
             return SuccessResult(data=envelope)
         except Exception as exc:
-            logger.error(
-                "universal_file_preview failed: %s", exc, exc_info=True
-            )
+            logger.error("universal_file_preview failed: %s", exc, exc_info=True)
             return ErrorResult(
                 message=str(exc),
                 code="HANDLER_ERROR",
             )
-    
-

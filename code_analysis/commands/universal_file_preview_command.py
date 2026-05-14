@@ -58,6 +58,7 @@ _PREVIEW_LINES_DEFAULT = 20
 
 
 _VALUE_PREVIEW_LEN_DEFAULT = 120
+_FULL_TEXT_MAX_LINES_DEFAULT = 200
 
 _SCOPE_INVARIANTS: tuple[str, ...] = (
     "NO_WRITES: command never writes to files, database, or tree sessions"
@@ -239,24 +240,22 @@ class UniversalFilePreviewCommand:
             "full_text_max_lines": full_text_max_lines,
             "tree_id": tree_id,
         }
-    
-    
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
         """Execute the preview command.
-        
-            Resolves the project-relative file_path to an absolute path using
-            project_id before dispatching to the file handler.
-        
-            Args:
-                **kwargs: Validated parameters from validate_params.
-        
-            Returns:
-                SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
-            """
+
+    Resolves the project-relative file_path to an absolute path using
+    project_id before dispatching to the file handler.
+
+    Args:
+        **kwargs: Validated parameters from validate_params.
+
+    Returns:
+        SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
+    """
         try:
             project_root = self._resolve_project_root(kwargs["project_id"])
             abs_file_path = str(project_root / kwargs["file_path"])
-        
+
             dispatcher = HandlerDispatcher()
             handler_result = dispatcher.dispatch(kwargs["file_path"])
             if isinstance(handler_result, PreviewError):
@@ -266,10 +265,11 @@ class UniversalFilePreviewCommand:
                     details=handler_result.details or {},
                 )
             handler = handler_result
-        
+
             budget = PreviewBudget(
                 preview_lines=int(kwargs["preview_lines"]),
                 value_preview_len=int(kwargs["value_preview_len"]),
+                full_text_max_lines=int(kwargs["full_text_max_lines"]),
             )
             nav_kwargs = {**kwargs, "file_path": abs_file_path}
             navigation_result = navigate(handler, nav_kwargs, budget)

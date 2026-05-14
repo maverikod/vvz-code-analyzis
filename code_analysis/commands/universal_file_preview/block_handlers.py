@@ -47,11 +47,9 @@ def render_block(node: Node, value_preview_len: int) -> dict[str, Any]:
     if kind is NodeKind.TREE_NODE:
         return _render_tree_node(node, vpl)
     raise ValueError(f"Unhandled NodeKind: {kind!r}")
-
-
 def _render_scalar(node: Node, vpl: int) -> dict[str, Any]:
     """Rule 1: truncated value. No children content."""
-    value = node.attributes.get("value") or node.name or ""
+    value = node.attributes.get("value") or node.name or node.type_label or ""
     return {"value": value[:vpl]}
 
 

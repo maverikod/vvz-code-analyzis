@@ -10,22 +10,30 @@ email: vasilyvz@gmail.com
 """
 
 
+
 from __future__ import annotations
+
 
 
 import logging
 
+
 from typing import Any
+
 
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
+
 from .base_mcp_command import BaseMCPCommand
+
 
 from .universal_file_preview.budget import PreviewBudget
 
+
 from .universal_file_preview.dispatcher import HandlerDispatcher
+
 
 from .universal_file_preview.errors import (
     INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY,
@@ -35,16 +43,22 @@ from .universal_file_preview.errors import (
     PreviewError,
 )
 
+
 from .universal_file_preview.navigation import navigate
+
 
 from .universal_file_preview.response import build_envelope
 
 
+
 _GLOB_CHARS = frozenset("*?[")
+
 
 _PREVIEW_LINES_DEFAULT = 20
 
+
 _VALUE_PREVIEW_LEN_DEFAULT = 120
+
 _SCOPE_INVARIANTS: tuple[str, ...] = (
     "NO_WRITES: command never writes to files, database, or tree sessions"
     " it did not create",
@@ -56,39 +70,50 @@ _SCOPE_INVARIANTS: tuple[str, ...] = (
     " requests produce UNKNOWN_EXTENSION",
 )
 
+
 logger = logging.getLogger(__name__)
-class UniversalFilePreviewCommand(BaseMCPCommand):
+
+class UniversalFilePreviewCommand:
+    
+    
     
     
     """
-        MCP command that returns a structured preview of any project file node.
+            MCP command that returns a structured preview of any project file node.
+        
+            Supports .py, .pyi, .pyw (Python), .md, .txt, .rst, .adoc (text),
+            .json (JSON), .jsonl, .ndjson (JSON Lines), .yaml, .yml (YAML).
+            XML and HTML are out of scope.
+        
+            Attributes:
+                name: Command name identifier.
+                version: Command version string.
+                descr: Human-readable command description.
+                category: Command category.
+                author: Author name.
+                email: Author email.
+                use_queue: Whether to use async queue for execution.
+            """
     
-        Supports .py, .pyi, .pyw (Python), .md, .txt, .rst, .adoc (text),
-        .json (JSON), .jsonl, .ndjson (JSON Lines), .yaml, .yml (YAML).
-        XML and HTML are out of scope.
-    
-        Attributes:
-            name: Command name identifier.
-            version: Command version string.
-            descr: Human-readable command description.
-            category: Command category.
-            author: Author name.
-            email: Author email.
-            use_queue: Whether to use async queue for execution.
-        """
     
     
     name = "universal_file_preview"
     
+    
     version = "1.0.0"
+    
     
     descr = "Uniform structured preview of any project file node"
     
+    
     category = "preview"
+    
     
     author = "Vasiliy Zdanovskiy"
     
+    
     email = "vasilyvz@gmail.com"
+    
     
     use_queue = False
     
@@ -137,6 +162,16 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "type": "integer",
                     "minimum": 1,
                     "description": "Cap on inline scalar/name length.",
+                    "nullable": True,
+                },
+                "full_text_max_lines": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Python handler: when the file has fewer lines than this "
+                        "threshold, return the entire file as a single text block. "
+                        "Default 200. Set to 0 to disable full-text fallback."
+                    ),
                     "nullable": True,
                 },
                 "tree_id": {
@@ -188,6 +223,10 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
         if value_preview_len is None:
             value_preview_len = _VALUE_PREVIEW_LEN_DEFAULT
     
+        full_text_max_lines = params.get("full_text_max_lines")
+        if full_text_max_lines is None:
+            full_text_max_lines = _FULL_TEXT_MAX_LINES_DEFAULT
+    
         tree_id = params.get("tree_id")
     
         return {
@@ -197,25 +236,27 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             "selector": selector,
             "preview_lines": preview_lines,
             "value_preview_len": value_preview_len,
+            "full_text_max_lines": full_text_max_lines,
             "tree_id": tree_id,
         }
     
+    
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
         """Execute the preview command.
-    
-        Resolves the project-relative file_path to an absolute path using
-        project_id before dispatching to the file handler.
-    
-        Args:
-            **kwargs: Validated parameters from validate_params.
-    
-        Returns:
-            SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
-        """
+        
+            Resolves the project-relative file_path to an absolute path using
+            project_id before dispatching to the file handler.
+        
+            Args:
+                **kwargs: Validated parameters from validate_params.
+        
+            Returns:
+                SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
+            """
         try:
             project_root = self._resolve_project_root(kwargs["project_id"])
             abs_file_path = str(project_root / kwargs["file_path"])
-    
+        
             dispatcher = HandlerDispatcher()
             handler_result = dispatcher.dispatch(kwargs["file_path"])
             if isinstance(handler_result, PreviewError):
@@ -225,7 +266,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     details=handler_result.details or {},
                 )
             handler = handler_result
-    
+        
             budget = PreviewBudget(
                 preview_lines=int(kwargs["preview_lines"]),
                 value_preview_len=int(kwargs["value_preview_len"]),
@@ -257,4 +298,5 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 message=str(exc),
                 code="HANDLER_ERROR",
             )
+    
 

@@ -198,8 +198,6 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     if not remover.removed:
         raise ValueError(f"Node {node_id} was not removed")
     return result
-
-
 def find_node_in_module_by_position(
     module: cst.Module,
     start_line: int,
@@ -213,6 +211,10 @@ def find_node_in_module_by_position(
     Returns the statement-level node that appears in Module.body when the
     matched node is inside one (e.g. ImportFrom inside SimpleStatementLine),
     so that leave_Module finds it in original_node.body.
+
+    For nodes nested inside a ClassDef body (e.g. methods), returns the node
+    itself -- NOT the containing ClassDef -- so NodeReplacer.leave_IndentedBlock
+    finds it at the correct depth.
     """
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
     positions = wrapper.resolve(PositionProvider)
@@ -275,12 +277,16 @@ def find_node_in_module_by_position(
         if result[0] is not None:
             return result[0]
         return None
-    # When the matched node is inside a SimpleStatementLine (e.g. ImportFrom),
-    # return the statement-level node so leave_Module finds it in module.body.
+    # If found is a direct child of module.body -- return it immediately.
     if any(stmt is found for stmt in module.body):
         return found
-    # Find the statement in module.body whose span contains this position.
-    target_start = (start_line, start_col)
+    # If found is a nested node (e.g. method inside ClassDef), return it as-is.
+    # Do NOT lift to module.body: that would return the containing ClassDef,
+    # causing NodeReplacer to replace the whole class instead of the method.
+    if isinstance(found, (cst.FunctionDef, cst.ClassDef)):
+        return found
+    # For other nested statements: find the module.body statement whose span
+    # contains this position (e.g. ImportFrom inside SimpleStatementLine).
     target_end = (end_line, end_col)
     for stmt in module.body:
         pos = positions.get(stmt)

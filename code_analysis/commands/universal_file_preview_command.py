@@ -45,6 +45,16 @@ _GLOB_CHARS = frozenset("*?[")
 _PREVIEW_LINES_DEFAULT = 20
 
 _VALUE_PREVIEW_LEN_DEFAULT = 120
+_SCOPE_INVARIANTS: tuple[str, ...] = (
+    "NO_WRITES: command never writes to files, database, or tree sessions"
+    " it did not create",
+    "NO_RAW_BYTES: response never contains raw file bytes; all output is"
+    " structured JSON",
+    "SINGLE_FILE: file_path is a single literal path; globs and wildcards"
+    " are rejected as GLOB_IN_FILE_PATH",
+    "NO_XML_HTML: no FileHandler is registered for .xml, .html, .htm;"
+    " requests produce UNKNOWN_EXTENSION",
+)
 
 logger = logging.getLogger(__name__)
 class UniversalFilePreviewCommand(BaseMCPCommand):

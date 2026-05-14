@@ -305,6 +305,13 @@ class ServerConfig(BaseModel):
             "docs eligibility. ``vectorize`` does not affect eligibility."
         ),
     )
+    preview_full_text_max_lines: Optional[int] = Field(
+        default=None,
+        description=(
+            "Maximum lines for full-text preview of Python files. "
+            "None means use the server default (200). Set to 0 to disable full-text preview."
+        ),
+    )
 
     @field_validator("port")
     @classmethod

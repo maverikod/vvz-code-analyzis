@@ -198,8 +198,6 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     if not remover.removed:
         raise ValueError(f"Node {node_id} was not removed")
     return result
-
-
 def find_node_in_module_by_position(
     module: cst.Module,
     start_line: int,
@@ -212,7 +210,7 @@ def find_node_in_module_by_position(
     ops have updated the module so tree.node_map may point at stale nodes).
     Returns the statement-level node that appears in Module.body when the
     matched node is inside one (e.g. ImportFrom inside SimpleStatementLine),
-    so that leave_Module finds it in original_node.body.
+    so that leave_Module finds it in module.body.
     """
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
     positions = wrapper.resolve(PositionProvider)
@@ -275,6 +273,12 @@ def find_node_in_module_by_position(
         if result[0] is not None:
             return result[0]
         return None
+    # KEY FIX: если found — compound statement (FunctionDef, ClassDef и т.д.),
+    # возвращаем его напрямую. Не нужно искать 'родителя' в module.body —
+    # это именно тот узел который нужно заменить. NodeReplacer найдёт его
+    # через leave_IndentedBlock, а не через leave_Module.
+    if isinstance(found, cst.BaseCompoundStatement):
+        return found
     # When the matched node is inside a SimpleStatementLine (e.g. ImportFrom),
     # return the statement-level node so leave_Module finds it in module.body.
     if any(stmt is found for stmt in module.body):

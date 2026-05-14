@@ -144,11 +144,30 @@ def _metadata_children_to_nodes(tree: Any, parent_node_id: str | None) -> list[N
     if parent_meta is None:
         return []
     nodes = []
+    # Types to skip entirely (whitespace, punctuation, empty lines)
+    _SKIP_TYPES = frozenset({
+        "EmptyLine", "TrailingWhitespace", "Newline", "SimpleWhitespace",
+        "MaybeSentinel", "ParenthesizedWhitespace",
+    })
     for child_id in parent_meta.children_ids:
         meta = tree.metadata_map.get(child_id)
         if meta is None:
             continue
         node_type = meta.type
+        # Skip whitespace/empty nodes
+        if node_type in _SKIP_TYPES:
+            continue
+        # SimpleStatementLine: show the inner statement type for readability
+        effective_type = node_type
+        effective_name = meta.name
+        effective_stable_id = meta.stable_id
+        if node_type == "SimpleStatementLine" and meta.children_ids:
+            inner_id = meta.children_ids[0]
+            inner_meta = tree.metadata_map.get(inner_id)
+            if inner_meta and inner_meta.type not in _SKIP_TYPES:
+                effective_type = inner_meta.type
+                effective_name = inner_meta.name or meta.name
+        # Classify
         if node_type in ("ClassDef", "FunctionDef", "Module"):
             kind = NodeKind.TREE_NODE
         else:
@@ -163,9 +182,9 @@ def _metadata_children_to_nodes(tree: Any, parent_node_id: str | None) -> list[N
         nodes.append(
             Node(
                 node_kind=kind,
-                node_ref=meta.stable_id,
-                type_label=node_type,
-                name=meta.name,
+                node_ref=effective_stable_id,
+                type_label=effective_type,
+                name=effective_name,
                 attributes={},
                 _children_loader=_make_loader(child_id) if has_children else None,
             )

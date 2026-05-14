@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -32,16 +32,6 @@ from .universal_file_preview.response import build_envelope
 _GLOB_CHARS = frozenset("*?[")
 _PREVIEW_LINES_DEFAULT = 20
 _VALUE_PREVIEW_LEN_DEFAULT = 120
-_SCOPE_INVARIANTS: tuple[str, ...] = (
-    "NO_WRITES: command never writes to files, database, or tree sessions"
-    " it did not create",
-    "NO_RAW_BYTES: response never contains raw file bytes; all output is"
-    " structured JSON",
-    "SINGLE_FILE: file_path is a single literal path; globs and wildcards"
-    " are rejected as GLOB_IN_FILE_PATH",
-    "NO_XML_HTML: no FileHandler is registered for .xml, .html, .htm;"
-    " requests produce UNKNOWN_EXTENSION",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -184,7 +174,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             if isinstance(handler_result, PreviewError):
                 return ErrorResult(
                     message=handler_result.message,
-                    code=cast(Any, handler_result.code),
+                    code=handler_result.code,
                     details=handler_result.details or {},
                 )
             handler = handler_result
@@ -197,7 +187,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             if isinstance(navigation_result, PreviewError):
                 return ErrorResult(
                     message=navigation_result.message,
-                    code=cast(Any, navigation_result.code),
+                    code=navigation_result.code,
                     details=navigation_result.details or {},
                 )
             session_origin = (
@@ -212,8 +202,11 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             )
             return SuccessResult(data=envelope)
         except Exception as exc:
-            logger.error("universal_file_preview failed: %s", exc, exc_info=True)
+            logger.error(
+                "universal_file_preview failed: %s", exc, exc_info=True
+            )
             return ErrorResult(
                 message=str(exc),
-                code=cast(Any, "HANDLER_ERROR"),
+                code="HANDLER_ERROR",
             )
+

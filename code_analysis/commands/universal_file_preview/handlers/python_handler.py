@@ -46,55 +46,43 @@ class PythonFileHandler(FileHandler):
         return frozenset({".py", ".pyi", ".pyw"})
     def open_root(self, file_path: str, session: Any | None) -> Node | PreviewError:
         """
-        Parse the Python file and return a tree_node Module root Node.
+    Parse the Python file and return a tree_node Module root Node.
 
-        Uses libcst to parse the file. If the file fails to parse, returns a
-        FILE_STRUCTURE_ERROR carrying parser name 'libcst'. The root's
-        children are the top-level CST statements, loaded lazily.
+    When session is None, loads the file via load_file_to_tree to obtain
+    stable_ids for all nodes. When session is a CSTTree, uses it directly.
+    The root's children are the top-level CST statements, loaded lazily.
 
-        Args:
-            file_path: Project-relative path to the .py/.pyi/.pyw file.
-            session: Existing CST TreeSession (parsed Module) or None.
+    Args:
+        file_path: Absolute path to the .py/.pyi/.pyw file.
+        session: Existing CSTTree session or None.
 
-        Returns:
-            Module root Node (NodeKind.TREE_NODE) or PreviewError.
+    Returns:
+        Module root Node (NodeKind.TREE_NODE) or PreviewError.
     """
         try:
-            from pathlib import Path
-
-            import libcst as cst
+            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
 
             if session is not None:
                 tree = session
-                module = tree.module
             else:
-                source = Path(file_path).read_text(encoding="utf-8", errors="replace")
-                module = cst.parse_module(source)
-                tree = module
+                tree = load_file_to_tree(file_path)
 
             self._last_file_path = file_path
             self._last_session = tree
+            self._last_tree_id = tree.tree_id
 
             def _load_children() -> list[Node]:
-                return _cst_statements_to_nodes(module.body)
+                return _metadata_children_to_nodes(tree, tree.root_node_id)
 
             return Node(
                 node_kind=NodeKind.TREE_NODE,
-                node_ref="",
+                node_ref=tree.metadata_map[tree.root_node_id].stable_id if tree.root_node_id else "",
                 type_label="Module",
                 name=None,
                 attributes={},
                 _children_loader=_load_children,
             )
         except Exception as exc:
-            import libcst as cst  # noqa: F811
-
-            if isinstance(exc, cst.ParserSyntaxError):
-                return file_structure_error(
-                    parser="libcst",
-                    message=str(exc),
-                    line_start=getattr(exc, "raw_line", None),
-                )
             return file_structure_error(parser="libcst", message=str(exc))
 
     def resolve_node_ref(
@@ -148,6 +136,41 @@ class PythonFileHandler(FileHandler):
                 details={"node_ref": node_ref},
             )
         return _cst_node_to_node(cst_node, node_ref)
+def _metadata_children_to_nodes(tree: Any, parent_node_id: str | None) -> list[Node]:
+    """Build preview Nodes from CSTTree metadata for direct children of parent_node_id."""
+    if parent_node_id is None:
+        return []
+    parent_meta = tree.metadata_map.get(parent_node_id)
+    if parent_meta is None:
+        return []
+    nodes = []
+    for child_id in parent_meta.children_ids:
+        meta = tree.metadata_map.get(child_id)
+        if meta is None:
+            continue
+        node_type = meta.type
+        if node_type in ("ClassDef", "FunctionDef", "Module"):
+            kind = NodeKind.TREE_NODE
+        else:
+            kind = NodeKind.SCALAR
+
+        def _make_loader(cid: str) -> Any:
+            def _load() -> list[Node]:
+                return _metadata_children_to_nodes(tree, cid)
+            return _load
+
+        has_children = len(meta.children_ids) > 0 and kind == NodeKind.TREE_NODE
+        nodes.append(
+            Node(
+                node_kind=kind,
+                node_ref=meta.stable_id,
+                type_label=node_type,
+                name=meta.name,
+                attributes={},
+                _children_loader=_make_loader(child_id) if has_children else None,
+            )
+        )
+    return nodes
 def _cst_statements_to_nodes(stmts: Any) -> list[Node]:
     """Convert a sequence of top-level CST statements to preview Nodes lazily."""
     nodes = []

@@ -148,33 +148,42 @@ class PythonFileHandler(FileHandler):
                 details={"node_ref": node_ref},
             )
         return _cst_node_to_node(cst_node, node_ref)
-
-
 def _cst_statements_to_nodes(stmts: Any) -> list[Node]:
     """Convert a sequence of top-level CST statements to preview Nodes lazily."""
     nodes = []
     for stmt in stmts:
+        # For SimpleStatementLine, unwrap to get the real inner statement type
+        try:
+            import libcst as cst
+            if isinstance(stmt, cst.SimpleStatementLine) and stmt.body:
+                effective_type = type(stmt.body[0]).__name__
+                stmt_has_body = False
+            else:
+                effective_type = type(stmt).__name__
+                stmt_has_body = hasattr(stmt, "body")
+        except ImportError:
+            effective_type = type(stmt).__name__
+            stmt_has_body = hasattr(stmt, "body")
+
         kind = _classify_cst_node(stmt)
         name_attr = getattr(stmt, "name", None)
         name = getattr(name_attr, "value", None)
-        has_body = hasattr(stmt, "body")
 
         def _make_loader(s: Any) -> Any:
             def _load() -> list[Node]:
                 body = s.body
                 inner = getattr(body, "body", body)
                 return _cst_statements_to_nodes(inner)
-
             return _load
 
         nodes.append(
             Node(
                 node_kind=kind,
                 node_ref=getattr(stmt, "_stable_id", "") or "",
-                type_label=type(stmt).__name__,
+                type_label=effective_type,
                 name=name,
                 attributes={},
-                _children_loader=_make_loader(stmt) if has_body else None,
+                _children_loader=_make_loader(stmt) if stmt_has_body else None,
             )
         )
     return nodes

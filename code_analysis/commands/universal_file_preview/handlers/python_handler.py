@@ -140,53 +140,39 @@ def _metadata_children_to_nodes(tree: Any, parent_node_id: str | None) -> list[N
     """Build preview Nodes from CSTTree metadata for direct children of parent_node_id."""
     if parent_node_id is None:
         return []
-    parent_meta = tree.metadata_map.get(parent_node_id)
-    if parent_meta is None:
-        return []
+    # Use outline_nodes: iterate metadata_map and find nodes with parent == parent_node_id
+    # that have a meaningful kind (import, class, function, smallstmt)
+    _MEANINGFUL_KINDS = frozenset({"import", "class", "function", "method", "smallstmt"})
+    _TREE_NODE_KINDS = frozenset({"class", "function", "method"})
+    nodes_by_line: list[tuple[int, Any]] = []
+    for nid, meta in tree.metadata_map.items():
+        if meta.parent_id != parent_node_id:
+            continue
+        kind = getattr(meta, "kind", "") or ""
+        if kind not in _MEANINGFUL_KINDS:
+            continue
+        nodes_by_line.append((meta.start_line or 0, meta))
+    nodes_by_line.sort(key=lambda x: x[0])
     nodes = []
-    # Types to skip entirely (whitespace, punctuation, empty lines)
-    _SKIP_TYPES = frozenset({
-        "EmptyLine", "TrailingWhitespace", "Newline", "SimpleWhitespace",
-        "MaybeSentinel", "ParenthesizedWhitespace",
-    })
-    for child_id in parent_meta.children_ids:
-        meta = tree.metadata_map.get(child_id)
-        if meta is None:
-            continue
+    for _, meta in nodes_by_line:
         node_type = meta.type
-        # Skip whitespace/empty nodes
-        if node_type in _SKIP_TYPES:
-            continue
-        # SimpleStatementLine: show the inner statement type for readability
-        effective_type = node_type
-        effective_name = meta.name
-        effective_stable_id = meta.stable_id
-        if node_type == "SimpleStatementLine" and meta.children_ids:
-            inner_id = meta.children_ids[0]
-            inner_meta = tree.metadata_map.get(inner_id)
-            if inner_meta and inner_meta.type not in _SKIP_TYPES:
-                effective_type = inner_meta.type
-                effective_name = inner_meta.name or meta.name
-        # Classify
-        if node_type in ("ClassDef", "FunctionDef", "Module"):
-            kind = NodeKind.TREE_NODE
-        else:
-            kind = NodeKind.SCALAR
+        kind_str = getattr(meta, "kind", "") or ""
+        preview_kind = NodeKind.TREE_NODE if kind_str in _TREE_NODE_KINDS else NodeKind.SCALAR
 
-        def _make_loader(cid: str) -> Any:
+        def _make_loader(nid: str) -> Any:
             def _load() -> list[Node]:
-                return _metadata_children_to_nodes(tree, cid)
+                return _metadata_children_to_nodes(tree, nid)
             return _load
 
-        has_children = len(meta.children_ids) > 0 and kind == NodeKind.TREE_NODE
+        has_children = preview_kind == NodeKind.TREE_NODE
         nodes.append(
             Node(
-                node_kind=kind,
-                node_ref=effective_stable_id,
-                type_label=effective_type,
-                name=effective_name,
+                node_kind=preview_kind,
+                node_ref=meta.stable_id,
+                type_label=node_type,
+                name=meta.name,
                 attributes={},
-                _children_loader=_make_loader(child_id) if has_children else None,
+                _children_loader=_make_loader(meta.node_id) if has_children else None,
             )
         )
     return nodes

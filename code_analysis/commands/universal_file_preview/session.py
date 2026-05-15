@@ -49,10 +49,17 @@ def resolve_session(
     """
     tree_id_param = params.get("tree_id")
     if tree_id_param is not None:
-        # Caller-owned: look up via get_tree (global in-memory CST registry)
-        from ...core.cst_tree.tree_builder import get_tree  # noqa: PLC0415
+        # Caller-owned: CST session registry first, then YAML tree session.
+        from ...core.cst_tree.tree_builder import (
+            get_tree as cst_get_tree,
+        )  # noqa: PLC0415
+        from ...core.yaml_tree.tree_builder import (
+            get_tree as yaml_get_tree,
+        )  # noqa: PLC0415
 
-        session = get_tree(tree_id_param)
+        session = cst_get_tree(tree_id_param)
+        if session is None:
+            session = yaml_get_tree(tree_id_param)
         if session is None:
             # Unknown tree_id — treat as CONFLICTING_PARAMETERS
             from .errors import (

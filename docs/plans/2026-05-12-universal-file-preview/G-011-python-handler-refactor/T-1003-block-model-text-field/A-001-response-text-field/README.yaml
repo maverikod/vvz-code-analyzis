@@ -9,7 +9,7 @@ concepts:
 - C-005
 - C-008
 - C-012
-status: draft
+status: done
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.response

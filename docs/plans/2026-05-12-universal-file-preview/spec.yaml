@@ -1,7 +1,7 @@
 meta:
   plan_name: universal_file_preview
   source_spec: source_spec.md
-  status: draft
+  status: done
 concepts:
 - concept_id: C-001
   name: PreviewCommand

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 
-from typing import Any
+from typing import Any, cast
 
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -69,7 +69,7 @@ _SCOPE_INVARIANTS: tuple[str, ...] = (
 logger = logging.getLogger(__name__)
 
 
-class UniversalFilePreviewCommand:
+class UniversalFilePreviewCommand(BaseMCPCommand):
     """
     MCP command that returns a structured preview of any project file node.
 
@@ -224,7 +224,7 @@ class UniversalFilePreviewCommand:
             "tree_id": tree_id,
         }
 
-    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         """Execute the preview command.
 
         Resolves the project-relative file_path to an absolute path using
@@ -245,7 +245,7 @@ class UniversalFilePreviewCommand:
             if isinstance(handler_result, PreviewError):
                 return ErrorResult(
                     message=handler_result.message,
-                    code=handler_result.code,
+                    code=cast(Any, handler_result.code),
                     details=handler_result.details or {},
                 )
             handler = handler_result
@@ -260,7 +260,7 @@ class UniversalFilePreviewCommand:
             if isinstance(navigation_result, PreviewError):
                 return ErrorResult(
                     message=navigation_result.message,
-                    code=navigation_result.code,
+                    code=cast(Any, navigation_result.code),
                     details=navigation_result.details or {},
                 )
             session_origin = (
@@ -278,5 +278,5 @@ class UniversalFilePreviewCommand:
             logger.error("universal_file_preview failed: %s", exc, exc_info=True)
             return ErrorResult(
                 message=str(exc),
-                code="HANDLER_ERROR",
+                code=cast(Any, "HANDLER_ERROR"),
             )

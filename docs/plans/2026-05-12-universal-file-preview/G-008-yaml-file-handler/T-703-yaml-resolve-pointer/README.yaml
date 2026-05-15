@@ -1,39 +1,36 @@
 step_id: T-703
 parent_global_step: G-008
 name: YAML file handler — resolve node_ref via JSON-pointer-style path
-status: draft
+status: done
 concepts:
 - C-004
 - C-009
 - C-014
 - C-020
-description: 'Define the identifier-resolution fallback behaviour of YamlFileHandler
-  (C-020) when the project''s YAML tree infrastructure is absent. In this mode, node_ref
-  values are JSON-pointer-style paths derived from the loaded YAML document structure.
+description: |
+  Define the identifier-resolution fallback behaviour of YamlFileHandler (C-020) when the
+  project YAML tree infrastructure is absent or does not resolve the reference (see T-702).
+  node_ref values are JSON Pointer-style paths (RFC 6901-style) derived from the loaded
+  YAML document structure.
 
-  Precondition: The project YAML tree infrastructure is NOT present for the target
-  file. YamlFileHandler detects this at open time. When the infrastructure is absent,
-  this fallback mode is used for all node_ref resolution.
+  Path syntax: root is the empty string ''. Segments use '/' separators: '/key' for
+  mapping keys, '/index' for zero-based sequence indices. Escape sequences ~0 and ~1
+  represent literal '~' and '/' inside keys.
 
-  Identifier format (StableIdentifier C-009): A JSON-pointer-style path derived from
-  the YAML document structure. The format follows RFC 6901 conventions applied to
-  YAML: - Root is addressed by the empty string ''''. - Mapping keys are addressed
-  by ''/key_name''. - Sequence elements are addressed by ''/index'' (zero-based integer).
-  - Nested paths are composed by concatenation: ''/outer/inner/0''.
+  Dict traversal tries a string key first, then falls back to an integer key when the
+  segment is numeric, so YAML keys stored as numeric strings still resolve.
 
-  Resolution process: YamlFileHandler traverses the loaded YAML document following
-  the path segments of the JSON-pointer-style node_ref. If each segment resolves successfully,
-  the addressed YAML value is returned as a Node with its NodeKind (C-004) and block
-  set.
+  Resolution process: YamlFileHandler traverses the loaded YAML document following path
+  segments. If each segment resolves, the addressed value is returned as a Node with its
+  NodeKind (C-004) and block set.
 
-  Resolution failure: If any path segment does not exist in the document (missing
-  key, index out of range, or attempting to index a scalar), YamlFileHandler signals
-  an UNKNOWN_NODE_REF condition surfaced as an ErrorClassification (C-014) input error.
+  Resolution failure: UNKNOWN_NODE_REF as ErrorClassification (C-014) input error when any
+  segment is missing, out of range, or when descending into a scalar. If open_root has not
+  run and the in-memory document (`_doc`) is unset, resolution fails with UNKNOWN_NODE_REF and
+  a message that open_root must run first.
 
-  No external infrastructure: In this mode, YamlFileHandler resolves identifiers directly
-  from the parsed YAML document. No external tree infrastructure calls are made.
-
-  '
+  No external infrastructure: identifiers are resolved directly from the parsed YAML
+  document without tree-infra calls.
 inputs:
 - name: node_ref_value
   type: string (JSON-pointer-style path)

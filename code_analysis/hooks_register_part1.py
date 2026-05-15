@@ -140,6 +140,16 @@ def register_commands_part1(reg: registry) -> None:
         logger.error("Failed to register JSON tree commands: %s", e, exc_info=True)
 
     try:
+        from .commands.list_yaml_blocks_command import ListYamlBlocksCommand
+
+        reg.register(ListYamlBlocksCommand, "custom")
+        logger.info("✅ Registered list_yaml_blocks")
+    except ImportError as e:
+        logger.warning("Failed to import list_yaml_blocks command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register list_yaml_blocks: %s", e, exc_info=True)
+
+    try:
         from .commands.ast_mcp_commands import (
             ASTStatisticsMCPCommand,
             ExportGraphMCPCommand,

@@ -19,7 +19,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ....core.json_tree.tree_builder import build_tree_from_data
+
 from ..base_handler import FileHandler
+from ..budget import PreviewBudget
 from ..errors import (
     INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
@@ -35,9 +38,10 @@ class JsonFileHandler(FileHandler):
     """
     FileHandler for JSON files (.json) (C-018).
 
-    Root NodeKind: mapping (object), sequence (array), or scalar.
-    Identifier source: JSON Pointer (RFC 6901) path string.
-    Lazy materialisation: only root and needed children are produced.
+        Root NodeKind: mapping (object), sequence (array), or scalar.
+        Identifier source: JSON Pointer (RFC 6901) or opaque node_id from
+        list_json_blocks (same index as TreeSession metadata).
+        Lazy materialisation: only root and needed children are produced.
     FILE_STRUCTURE_ERROR on invalid JSON with parser name 'json'.
 
     Attributes:
@@ -52,6 +56,7 @@ class JsonFileHandler(FileHandler):
         self,
         file_path: str,
         session: Any | None,
+        budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
         """
         Parse the JSON file and return the root Node.
@@ -74,6 +79,14 @@ class JsonFileHandler(FileHandler):
                 raw = Path(file_path).read_text(encoding="utf-8", errors="replace")
                 doc = json.loads(raw)
             self._doc = doc
+            # Same node_id ⇄ JSON Pointer mapping as list_json_blocks / JSONTree.
+            self._pointer_by_node_id = dict(
+                build_tree_from_data(
+                    str(Path(file_path).resolve()),
+                    doc,
+                    register=False,
+                ).pointer_by_id
+            )
             return _json_value_to_node(doc, "")
         except json.JSONDecodeError as exc:
             return file_structure_error(
@@ -122,13 +135,27 @@ class JsonFileHandler(FileHandler):
                 )
             value, pointer = result
             return _json_value_to_node(value, pointer)
-        # Opaque node_id (not a JSON Pointer): inform caller to use JSON Pointer.
-        return input_error(
-            INPUT_ERROR_UNKNOWN_NODE_REF,
-            f"Opaque node_id {node_ref!r} is not a JSON Pointer. "
-            "Pass a JSON Pointer (e.g. '' for root, '/key/0' for a nested node).",
-            details={"node_ref": node_ref},
-        )
+        # Opaque node_id (matches list_json_blocks): resolve via open-time index.
+        ptr_map_raw = getattr(self, "_pointer_by_node_id", None)
+        pointer_map: dict[str, str] = dict(ptr_map_raw) if ptr_map_raw else {}
+        pointer_opt = pointer_map.get(node_ref)
+        if pointer_opt is None:
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                f"Unknown node_ref {node_ref!r}: not a JSON Pointer in this document "
+                "and not a listed node_id.",
+                details={"node_ref": node_ref},
+            )
+        result = _resolve_json_pointer(doc, pointer_opt)
+        if result is None:
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                f"node_id {node_ref!r} mapped to stale pointer {pointer_opt!r}; "
+                "re-open the preview.",
+                details={"node_ref": node_ref},
+            )
+        value, canon_pointer = result
+        return _json_value_to_node(value, canon_pointer)
 
 
 def _json_value_to_node(value: Any, pointer: str) -> Node:

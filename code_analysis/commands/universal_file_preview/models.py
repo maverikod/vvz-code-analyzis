@@ -78,11 +78,14 @@ class Block:
         node_kind: NodeKind of this block.
         node_ref: StableIdentifier for drill-down.
         summary: Rendered compact summary from BlockHandler.
+        text: Optional pre-rendered structured text from PythonNodeRenderer (C-022).
+              When present, callers should use this instead of generic summary fields.
     """
 
     node_kind: NodeKind
     node_ref: str
     summary: dict[str, Any] = field(default_factory=dict)
+    text: str | None = None
 
 
 @dataclass

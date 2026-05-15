@@ -22,16 +22,18 @@ from .tree_builder import (
     _read_logical_py_source_sync_disk,
     create_tree_from_code,
     get_tree,
+    reload_tree_from_file,
     remove_tree,
 )
 from .tree_sidecar import write_sidecar_atomic
 from .tree_save_verification import (
+    FILE_CHANGED_SINCE_LOAD,
     WRITE_VERIFY_FAILED,
     SaveVerificationError,
-    assert_disk_matches_tree_snapshot,
     assert_file_bytes_match,
     assert_replay_matches,
     assert_tree_module_integrity,
+    disk_matches_tree_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,7 +167,30 @@ def save_tree_to_file(
             disk_source_for_replay = ""
             if target_path.exists():
                 if tree.disk_source_sha256_hex is not None:
-                    assert_disk_matches_tree_snapshot(target_path, tree)
+                    if not disk_matches_tree_snapshot(target_path, tree):
+                        logger.warning(
+                            "CST save: %s no longer matches snapshot on tree %s; "
+                            "reloading from disk and aborting save.",
+                            target_path,
+                            tree_id,
+                        )
+                        if reload_tree_from_file(tree_id) is None:
+                            raise SaveVerificationError(
+                                code=FILE_CHANGED_SINCE_LOAD,
+                                details={
+                                    "target_path": str(target_path),
+                                    "tree_id": tree_id,
+                                    "reason": "disk_drift_reload_failed_tree_missing",
+                                },
+                            )
+                        raise SaveVerificationError(
+                            code=FILE_CHANGED_SINCE_LOAD,
+                            details={
+                                "target_path": str(target_path),
+                                "tree_id": tree_id,
+                                "resynced_tree_from_disk": True,
+                            },
+                        )
                 disk_source_for_replay = target_path.read_text(encoding="utf-8")
                 if validate:
                     try:

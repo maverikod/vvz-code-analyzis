@@ -141,7 +141,13 @@ produced by the project's existing tree infrastructure:
 - For YAML files, the stable identifier scheme depends on whether the project
   already has a YAML tree infrastructure. If it does, those identifiers are
   reused. If it does not, the YAML handler accepts JSON-pointer-style paths
-  derived from the loaded YAML document.
+  derived from the loaded YAML document. Planned YAML tree integration under
+  `code_analysis.core.yaml_tree` aligns RFC 6901 JSON Pointer paths on the loaded
+  document with opaque stable ids via `stable_node_id_for_pointer`, preserving
+  the same interchange between pointer strings and `node_id` values as for JSON.
+  The optional MCP command `list_yaml_blocks` mirrors `list_json_blocks` for
+  `.yaml` and `.yml` files so callers can discover those pairs before focusing
+  with `node_ref`.
 - For text files (`.md`, `.txt`, `.rst`, `.adoc`) and JSONL files (`.jsonl`,
   `.ndjson`), the root is a `lines` node. Children are addressed by their
   zero-based index in the file. No separate identifier scheme is needed.

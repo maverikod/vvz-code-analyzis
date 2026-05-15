@@ -10,7 +10,7 @@ concepts:
 - C-004
 - C-014
 - C-020
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/handlers/yaml_handler.py\n\nFile-level\
   \ docstring (required):\n  \"\"\"\n  YamlFileHandler — FileHandler for .yaml, .yml\

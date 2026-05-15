@@ -2,10 +2,11 @@ step_id: T-1004
 parent_global_step: G-011
 name: Smoke test full round-trip
 description: 'Call universal_file_preview on three test cases and verify output: (1)
-  small file (<200 lines) — expect full text fallback; (2) large file (>200 lines)
-  without node_ref — expect module overview with imports, classes, functions; (3)
-  large file with node_ref pointing to a FunctionDef — expect signature + docstring
-  + first-level body. Fix any issues found before marking G-011 done.
+  budget.py (<200 lines) — full text fallback; (2) python_visualizer.py (>200 lines;
+  not handlers/python_handler.py) without node_ref — module overview; (3) same large
+  file with node_ref to a top-level FunctionDef (stable_id from preview blocks or
+  metadata). project_id from repository root projectid. After code changes, restart
+  the server before MCP smoke. Fix any issues found before marking G-011 done.
 
   '
 concepts:
@@ -21,4 +22,4 @@ outputs:
   description: all three cases produce expected text preview
 atomic_steps:
 - A-001
-status: draft
+status: done

@@ -10,7 +10,7 @@ concepts:
 - C-009
 - C-016
 - C-022
-status: draft
+status: done
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.python_visualizer

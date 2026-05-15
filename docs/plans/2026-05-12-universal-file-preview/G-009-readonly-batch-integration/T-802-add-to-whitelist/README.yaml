@@ -1,7 +1,7 @@
 step_id: T-802
 parent_global_step: G-009
 name: Add command name to read-only batch whitelist
-status: draft
+status: done
 concepts:
 - C-001
 - C-015

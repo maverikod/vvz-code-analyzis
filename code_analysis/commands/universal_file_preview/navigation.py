@@ -50,7 +50,7 @@ def navigate(
         return session_result
     session, session_origin, tree_id = session_result
 
-    open_result = handler.open_root(params["file_path"], session)
+    open_result = handler.open_root(params["file_path"], session, budget=budget)
     if isinstance(open_result, PreviewError):
         return open_result
     focus_node: Node = open_result
@@ -72,11 +72,14 @@ def navigate(
     selected_blocks: list[Block] = []
     for node in selected_nodes:
         summary = render_block(node, budget.value_preview_len)
+        raw_text = (node.attributes or {}).get("text")
+        block_text = raw_text if isinstance(raw_text, str) else None
         selected_blocks.append(
             Block(
                 node_kind=node.node_kind,
                 node_ref=node.node_ref,
                 summary=summary,
+                text=block_text,
             )
         )
 

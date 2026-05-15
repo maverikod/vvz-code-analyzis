@@ -9,7 +9,7 @@ concepts:
 - C-022
 - C-009
 - C-016
-status: draft
+status: obsolete
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.python_visualizer

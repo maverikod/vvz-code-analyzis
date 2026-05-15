@@ -15,6 +15,7 @@ from __future__ import annotations
 import abc
 from typing import Any
 
+from .budget import PreviewBudget
 from .errors import PreviewError
 from .models import Node
 
@@ -42,6 +43,7 @@ class FileHandler(abc.ABC):
         self,
         file_path: str,
         session: Any | None,
+        budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
         """
         Open the file and return the root Node.
@@ -53,6 +55,7 @@ class FileHandler(abc.ABC):
             file_path: Project-relative path to the file.
             session: An existing in-memory tree session (TreeSession C-011),
                      or None when no session is provided by the caller.
+            budget: Optional size caps; handlers that do not use them may ignore.
 
         Returns:
             Root Node or PreviewError.

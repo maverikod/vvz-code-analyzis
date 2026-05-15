@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-analysis-client"
+dynamic = ["version"]
+description = "Async JSON-RPC client for the code-analysis MCP server (mcp-proxy-adapter JsonRpcClient)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Vasiliy Zdanovskiy", email = "vasilyvz@gmail.com" },
+]
+dependencies = [
+    "mcp-proxy-adapter>=8.10.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25.0",
+]
+
+[tool.setuptools.dynamic]
+version = { file = "code_analysis_client/version.txt" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["code_analysis_client*"]
+
+[tool.setuptools.package-data]
+code_analysis_client = ["py.typed", "version.txt"]

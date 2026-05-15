@@ -9,7 +9,7 @@ depends_on:
 concepts:
 - C-016
 - C-022
-status: draft
+status: obsolete
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.handlers.python_handler

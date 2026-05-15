@@ -1,7 +1,7 @@
 step_id: T-602
 parent_global_step: G-007
 name: JSON Lines file handler — drill-in parses line as JSON
-status: draft
+status: done
 concepts:
 - C-004
 - C-014

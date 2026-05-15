@@ -1,7 +1,7 @@
 step_id: T-601
 parent_global_step: G-007
 name: JSON Lines file handler — open and produce lines root
-status: draft
+status: done
 concepts:
 - C-003
 - C-004

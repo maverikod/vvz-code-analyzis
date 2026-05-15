@@ -28,7 +28,8 @@ outputs:
 - name: command_py
   type: file
   description: schema updated with full_text_max_lines key; validate_params passes value to PreviewBudget
-atomic_steps: []
+atomic_steps:
+- A-001
 status: done
 implementation_note: >
   Already implemented in code before AS authoring. budget.py (49 lines) has

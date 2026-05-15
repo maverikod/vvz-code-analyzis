@@ -133,6 +133,11 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     All operations are validated before being applied.
     If any operation fails, all changes are rolled back.
 
+    Persisted ``stable_id`` / sidecar on disk are updated when the session is
+    saved to the ``.py`` file (``cst_save_tree`` / ``save_tree_to_file``), not
+    from this function alone: the on-disk checksum used by :func:`get_tree`
+    still reflects the last loaded file until save refreshes it.
+
     Args:
         tree_id: Tree ID
         operations: List of operations to apply

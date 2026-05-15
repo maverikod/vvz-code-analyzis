@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -57,6 +57,16 @@ def tree_small(tmp_path: Path):
     path = tmp_path / "small.py"
     tree = create_tree_from_code(str(path), code)
     return tree.tree_id, tmp_path, "small.py"
+
+
+@pytest.fixture(autouse=True)
+def _patch_file_edit_lock_acquire() -> None:
+    """MagicMock DB does not return DML affected_rows; sync would always see lock fail."""
+    with patch(
+        "code_analysis.core.database.file_edit_lock.acquire_file_edit_lock_with_retry",
+        return_value=True,
+    ):
+        yield
 
 
 @pytest.fixture

@@ -20,6 +20,7 @@ from code_analysis.core.cst_tree.tree_builder import (
     create_tree_from_code,
     get_tree,
     load_file_to_tree,
+    reload_tree_from_file,
     remove_tree,
 )
 from code_analysis.core.cst_tree.tree_metadata import (
@@ -426,3 +427,54 @@ class TestEdgeCases:
         )
         assert isinstance(result, ErrorResult)
         assert result.code == "NODE_NOT_FOUND"
+
+
+class TestGetTreeDiskResync:
+    """get_tree reloads from disk when file bytes drift from the load snapshot."""
+
+    def test_get_tree_reloads_when_py_file_changed_on_disk(self, tmp_path) -> None:
+        py = tmp_path / "drift.py"
+        py.write_text("x = 1\n", encoding="utf-8")
+        tree = load_file_to_tree(str(py))
+        tid = tree.tree_id
+        try:
+            assert "x = 1" in tree.module.code
+            py.write_text("x = 2\n", encoding="utf-8")
+            t2 = get_tree(tid)
+            assert t2 is not None
+            assert "x = 2" in t2.module.code
+        finally:
+            remove_tree(tid)
+
+
+class TestReloadTreeFromFileChecksumSkip:
+    """reload_tree_from_file avoids full rebuild when disk matches snapshot / module."""
+
+    def test_reload_skips_rebuild_when_disk_unchanged(self, tmp_path) -> None:
+        py = tmp_path / "stable_reload.py"
+        py.write_text("b = 0\n", encoding="utf-8")
+        tree = load_file_to_tree(str(py))
+        tid = tree.tree_id
+        keys_before = sorted(tree.metadata_map.keys())
+        try:
+            r1 = reload_tree_from_file(tid)
+            assert r1 is tree
+            assert sorted(r1.metadata_map.keys()) == keys_before
+            r2 = reload_tree_from_file(tid)
+            assert r2 is tree
+            assert sorted(r2.metadata_map.keys()) == keys_before
+        finally:
+            remove_tree(tid)
+
+    def test_reload_with_node_types_filter_forces_rebuild(self, tmp_path) -> None:
+        py = tmp_path / "filtered_reload.py"
+        py.write_text("def f():\n    pass\n", encoding="utf-8")
+        tree = load_file_to_tree(str(py))
+        tid = tree.tree_id
+        try:
+            n_full = len(tree.metadata_map)
+            reload_tree_from_file(tid, node_types=["FunctionDef"])
+            n_filt = len(tree.metadata_map)
+            assert n_filt < n_full
+        finally:
+            remove_tree(tid)

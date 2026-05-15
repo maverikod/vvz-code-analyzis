@@ -1,0 +1,55 @@
+"""
+Public async client for code-analysis-server (JSON-RPC via mcp-proxy-adapter).
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from code_analysis_client.client import CodeAnalysisAsyncClient
+from code_analysis_client.commands_proxy import ValidatedCommandsProxy
+from code_analysis_client.config import (
+    adapter_settings_from_server_config,
+    adapter_settings_to_jsonrpc_kwargs,
+    load_server_config,
+)
+from code_analysis_client.exceptions import ClientValidationError
+from code_analysis_client.server_schema import (
+    fetch_command_schema_from_server,
+    parse_schema_from_help_payload,
+)
+from code_analysis_client.validation import (
+    prepare_params_for_schema,
+    validate_params_against_schema,
+)
+
+__all__ = [
+    "ClientValidationError",
+    "CodeAnalysisAsyncClient",
+    "ValidatedCommandsProxy",
+    "adapter_settings_from_server_config",
+    "adapter_settings_to_jsonrpc_kwargs",
+    "fetch_command_schema_from_server",
+    "load_server_config",
+    "parse_schema_from_help_payload",
+    "prepare_params_for_schema",
+    "validate_params_against_schema",
+]
+
+
+def _read_package_version() -> str:
+    vf = Path(__file__).resolve().parent / "version.txt"
+    if vf.is_file():
+        return vf.read_text(encoding="utf-8").strip()
+    try:
+        import importlib.metadata as _imd
+
+        return _imd.version("code-analysis-client")
+    except Exception:
+        return "0.0.0"
+
+
+__version__ = _read_package_version()

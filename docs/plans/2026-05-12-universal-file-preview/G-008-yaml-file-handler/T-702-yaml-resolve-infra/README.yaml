@@ -1,64 +1,34 @@
 step_id: T-702
 parent_global_step: G-008
 name: YAML file handler — resolve node_ref via YAML tree infrastructure
-status: draft
+status: done
 concepts:
 - C-004
 - C-009
 - C-011
 - C-014
 - C-020
-description: 'Define the identifier-resolution behaviour of YamlFileHandler (C-020)
+description: |
+  Intended behaviour: the project YAML tree infrastructure produces opaque StableIdentifiers
+  (C-009); YamlFileHandler resolves node_ref via that infrastructure inside a TreeSession
+  (C-011).
 
-  when the project''s YAML tree infrastructure is present. This mode applies
+  Identifier format in this mode is whatever opaque StableIdentifier values the
+  infrastructure emits; it is opaque to HandlerDispatcher and NavigationProcedure.
 
-  when the project has a registered YAML tree infrastructure that produces
+  Resolution process: YamlFileHandler passes node_ref to the YAML tree infrastructure;
+  the infrastructure returns the addressed Node with NodeKind (C-004), block set, and
+  node_ref.
 
-  and tracks StableIdentifier (C-009) values for YAML nodes.
+  Resolution failure: UNKNOWN_NODE_REF surfaced as ErrorClassification (C-014) input error,
+  with details including the attempted node_ref.
 
-
-  Precondition:
-
-  The project YAML tree infrastructure is present. YamlFileHandler detects
-
-  this at open time by checking whether the infrastructure is registered for
-
-  the target file. When the infrastructure is present, this resolution mode
-
-  is always used.
-
-
-  Identifier format:
-
-  The StableIdentifier (C-009) for YAML files in this mode is whatever
-
-  identifier format the project YAML tree infrastructure produces. This
-
-  format is opaque to the HandlerDispatcher and to the NavigationProcedure.
-
-
-  Resolution process:
-
-  YamlFileHandler passes the node_ref value to the YAML tree infrastructure
-
-  within the open or transiently-opened TreeSession (C-011). The
-
-  infrastructure resolves the identifier to the specific YAML Node and
-
-  returns it with its NodeKind (C-004), block set, and node_ref.
-
-
-  Resolution failure:
-
-  If the identifier is not found (the node was removed, or the identifier
-
-  is invalid for this infrastructure), YamlFileHandler signals an
-
-  UNKNOWN_NODE_REF condition surfaced as an ErrorClassification (C-014)
-
-  input error.
-
-  '
+  When infrastructure is absent or yields no resolution, tactical step T-703 JSON Pointer
+  fallback is used.
+implementation_note: >
+  Until code_analysis.core.yaml_tree exists, `_try_infra_resolve` returns None on ImportError;
+  the infra branch runs only when that module imports and the caller passes a non-None
+  session. There is no per-file registration at open time yet.
 inputs:
 - name: node_ref_value
   type: string (infrastructure-native identifier)

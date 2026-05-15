@@ -349,11 +349,16 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             pre_modify_metadata_map=pre_modify_metadata_snapshot,
                         )
                     except SaveVerificationError as save_exc:
-                        rollback_tree_to_code(
-                            tree_id,
-                            original_code,
-                            index_metadata_for_code=index_snapshot,
+                        resynced_from_disk = bool(
+                            save_exc.code == FILE_CHANGED_SINCE_LOAD
+                            and save_exc.details.get("resynced_tree_from_disk")
                         )
+                        if not resynced_from_disk:
+                            rollback_tree_to_code(
+                                tree_id,
+                                original_code,
+                                index_metadata_for_code=index_snapshot,
+                            )
                         data["modify_applied"] = False
                         data["save_applied"] = False
                         data["file_written"] = False

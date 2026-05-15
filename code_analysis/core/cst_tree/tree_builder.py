@@ -59,8 +59,6 @@ def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNode
     return logical, ids
 
 
-
-
 def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     """Record SHA256 + length of disk source and module code snapshot on tree.
 
@@ -75,6 +73,30 @@ def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     tree.module_source_sha256_hex = digest
 
 
+def _on_disk_logical_matches_tree_snapshot(path: Path, tree: CSTTree) -> bool:
+    """Return True when on-disk logical Python matches the tree's disk snapshot or module.
+
+    Uses the same logical pipeline as ``load_file_to_tree`` / ``_attach_disk_snapshot``
+    (strip markers, then UTF-8 SHA256 + length). When ``disk_source_sha256_hex`` is set,
+    compares to that snapshot; otherwise compares on-disk logical bytes to
+    ``tree.module.code`` (in-memory-only sessions).
+    """
+    if not path.is_file():
+        return False
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    logical, _ = strip_persisted_node_ids(raw)
+    logical = strip_inline_node_id_lines_from_source(logical)
+    logical_bytes = logical.encode("utf-8")
+    digest = hashlib.sha256(logical_bytes).hexdigest()
+    length = len(logical_bytes)
+    snap = tree.disk_source_sha256_hex
+    if snap is not None:
+        return digest == snap and length == tree.disk_source_length
+    mod_bytes = tree.module.code.encode("utf-8")
+    return digest == hashlib.sha256(mod_bytes).hexdigest() and length == len(mod_bytes)
 
 
 def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
@@ -225,8 +247,6 @@ def load_file_to_tree(
     return tree
 
 
-
-
 def create_tree_from_code(
     file_path: str,
     source_code: str,
@@ -282,8 +302,6 @@ def create_tree_from_code(
     if register_in_memory:
         _trees[tree.tree_id] = tree
     return tree
-
-
 
 
 def _build_tree_index(
@@ -454,16 +472,27 @@ def _build_tree_index(
                 tree.node_id_aliases[old_uuid] = new_uuid
 
 
-
-
 def get_tree(tree_id: str) -> Optional[CSTTree]:
-    """Get tree by tree_id."""
+    """Return the in-memory CST tree, refreshing from disk when the file drifted.
+
+    When ``disk_source_sha256_hex`` / ``disk_source_length`` were set at load time
+    and the on-disk logical ``.py`` no longer matches that snapshot, the tree is
+    rebuilt from disk (via :func:`reload_tree_from_file`) so ``stable_id`` / index
+    state match the file. Trees without a disk snapshot (e.g. rollback-only
+    in-memory state) are returned as-is.
+    """
     tree = _trees.get(tree_id)
-    if tree is not None:
-        tree.last_accessed_at = time.monotonic()
-    return tree
-
-
+    if tree is None:
+        return None
+    tree.last_accessed_at = time.monotonic()
+    path = Path(tree.file_path)
+    snap = tree.disk_source_sha256_hex
+    if snap is None or not path.is_file():
+        return tree
+    if _on_disk_logical_matches_tree_snapshot(path, tree):
+        return tree
+    reloaded = reload_tree_from_file(tree_id)
+    return reloaded if reloaded is not None else tree
 
 
 def remove_tree(tree_id: str) -> bool:
@@ -472,8 +501,6 @@ def remove_tree(tree_id: str) -> bool:
         del _trees[tree_id]
         return True
     return False
-
-
 
 
 def reload_tree_from_file(
@@ -485,9 +512,12 @@ def reload_tree_from_file(
     """
     Reload tree from file, updating existing tree in memory.
 
-    This function updates an existing tree by reloading it from the file on disk.
+    When the on-disk logical source still matches the tree's disk snapshot (and the
+    caller uses default index parameters), returns the existing tree without
+    reparsing or rebuilding the index. Otherwise reads the file, reparses, and
+    runs a full index rebuild (``node_id_aliases`` are cleared on that path).
+
     The tree_id remains the same, so all references to the tree remain valid.
-    node_id_aliases are cleared on reload since all UUIDs are reassigned from disk.
 
     Args:
         tree_id: Existing tree ID to update
@@ -502,7 +532,7 @@ def reload_tree_from_file(
         FileNotFoundError: If file not found
         ValueError: If file is not a Python file
     """
-    tree = get_tree(tree_id)
+    tree = _trees.get(tree_id)
     if not tree:
         return None
 
@@ -512,6 +542,13 @@ def reload_tree_from_file(
         raise FileNotFoundError(f"File not found: {tree.file_path}")
     if path.suffix != ".py":
         raise ValueError(f"File must be a Python file (.py): {tree.file_path}")
+
+    default_index_params = (
+        node_types is None and max_depth is None and include_children is True
+    )
+    if default_index_params and _on_disk_logical_matches_tree_snapshot(path, tree):
+        tree.last_accessed_at = time.monotonic()
+        return tree
 
     logical_source, persisted_node_ids = _read_logical_py_source_sync_disk(path)
     module = cst.parse_module(logical_source)
@@ -538,8 +575,6 @@ def reload_tree_from_file(
     )
 
     return tree
-
-
 
 
 def rollback_tree_to_code(
@@ -575,7 +610,7 @@ def rollback_tree_to_code(
     Returns:
         True if tree was found and rolled back, False if tree not found
     """
-    tree = get_tree(tree_id)
+    tree = _trees.get(tree_id)
     if not tree:
         return False
     logical_source, persisted_node_ids = strip_persisted_node_ids(code)
@@ -623,8 +658,6 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
         ]
         for tid in expired:
             _trees.pop(tid, None)
-
-
 
 
 def start_cst_tree_ttl_cleanup() -> None:

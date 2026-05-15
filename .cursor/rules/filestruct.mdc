@@ -5,6 +5,8 @@ alwaysApply: true
 
 code_analysis/                    # Корень репозитория
 ├── code_analysis/                # Исходный код проекта (пакеты, модули; индексы code_mapper при наличии)
+├── client/                       # Отдельный PyPI-пакет code-analysis-client (async JSON-RPC клиент)
+│   └── examples/                 # Скрипты-примеры запуска клиента к живому серверу
 ├── docs/                         # Вся документация
 │   ├── reports/                 # Анализы, пояснения, отчёты (архитектура, потоки данных)
 │   ├── plans/                   # ТЗ, планы, дизайн, пошаговые планы (mutable_cst_layer, cst_concept, design)

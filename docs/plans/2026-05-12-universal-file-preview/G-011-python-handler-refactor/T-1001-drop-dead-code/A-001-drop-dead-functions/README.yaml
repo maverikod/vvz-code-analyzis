@@ -7,7 +7,7 @@ priority: 1
 depends_on: []
 concepts:
 - C-016
-status: draft
+status: done
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.handlers.python_handler

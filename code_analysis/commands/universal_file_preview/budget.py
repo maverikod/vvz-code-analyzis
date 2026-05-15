@@ -12,6 +12,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+
 @dataclass
 class PreviewBudget:
     """

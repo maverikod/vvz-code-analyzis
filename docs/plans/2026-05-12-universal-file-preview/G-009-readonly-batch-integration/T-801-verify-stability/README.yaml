@@ -1,7 +1,7 @@
 step_id: T-801
 parent_global_step: G-009
 name: Verify command and handlers are stable
-status: draft
+status: done
 concepts:
 - C-001
 - C-015

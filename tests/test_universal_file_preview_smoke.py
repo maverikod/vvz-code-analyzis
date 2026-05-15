@@ -7,16 +7,23 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
+import pathlib
+from unittest.mock import MagicMock, patch
 
 import pytest
+from mcp_proxy_adapter.commands.result import SuccessResult
 
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.read_only_batch_whitelist import READ_ONLY_BATCH_WHITELIST
 from code_analysis.commands.universal_file_preview import UniversalFilePreviewCommand
+from code_analysis.commands.universal_file_preview.budget import PreviewBudget
 from code_analysis.commands.universal_file_preview.dispatcher import HandlerDispatcher
 from code_analysis.commands.universal_file_preview.errors import (
+    FILE_STRUCTURE_ERROR,
     INPUT_ERROR_CONFLICTING_PARAMETERS,
     INPUT_ERROR_UNKNOWN_EXTENSION,
+    INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
 )
 from code_analysis.commands.universal_file_preview.handlers.json_handler import (
@@ -35,7 +42,35 @@ from code_analysis.commands.universal_file_preview.handlers.yaml_handler import 
     YamlFileHandler,
 )
 from code_analysis.commands.universal_file_preview.models import NodeKind
+from code_analysis.commands.universal_file_preview.python_visualizer import (
+    render_module,
+    render_node,
+)
 from code_analysis.commands.universal_file_preview.session import resolve_session
+from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+from code_analysis.core.json_tree.models import stable_node_id_for_pointer
+from code_analysis.core.yaml_tree.tree_builder import (
+    load_file_to_tree as load_yaml_file_to_tree,
+    remove_tree as remove_yaml_tree,
+)
+
+
+def _universal_preview_pkg_dir() -> pathlib.Path:
+    return (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "code_analysis"
+        / "commands"
+        / "universal_file_preview"
+    )
+
+
+def _repo_root() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parent.parent
+
+
+def _repo_project_id() -> str:
+    raw = (_repo_root() / "projectid").read_text(encoding="utf-8")
+    return str(json.loads(raw)["id"])
 
 
 def test_command_name_and_schema_structure() -> None:
@@ -86,6 +121,40 @@ def test_python_handler_open_root_valid_syntax(tmp_path) -> None:
     assert result.node_kind == NodeKind.TREE_NODE
 
 
+def test_python_resolve_node_ref_drilldown_children_nonempty(tmp_path) -> None:
+    """Resolved class node must expose CST children so preview can slice."""
+    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+
+    src = '''\
+class Outer:
+    def one(self) -> None:
+        """doc1"""
+        pass
+
+    def two(self) -> None:
+        """doc2"""
+        pass
+'''
+    path = tmp_path / "mod.py"
+    path.write_text(src, encoding="utf-8")
+    tree = load_file_to_tree(str(path))
+    class_stable = None
+    for m in tree.metadata_map.values():
+        if m.name == "Outer" and getattr(m, "kind", "") == "class":
+            class_stable = m.stable_id
+            break
+    assert class_stable is not None
+    h = PythonFileHandler()
+    root = h.open_root(str(path), tree)
+    assert not isinstance(root, PreviewError)
+    cls_node = h.resolve_node_ref(class_stable, tree)
+    assert not isinstance(cls_node, PreviewError)
+    kids = cls_node.children
+    assert len(kids) == 2
+    names = sorted(k.name or "" for k in kids)
+    assert names == ["one", "two"]
+
+
 def test_text_handler_open_root_lines_kind(tmp_path) -> None:
     path = tmp_path / "t.md"
     path.write_text("single line\n", encoding="utf-8")
@@ -102,6 +171,70 @@ def test_json_handler_open_root_mapping_kind(tmp_path) -> None:
     assert result.node_kind == NodeKind.MAPPING
 
 
+def test_json_handler_resolve_opaque_node_id_matches_list_json_blocks(tmp_path) -> None:
+    """opaque node_id (uuid5 pointer) resolves like JSON Pointer."""
+    path = tmp_path / "t.json"
+    path.write_text('{"a": 1}', encoding="utf-8")
+    h = JsonFileHandler()
+    opened = h.open_root(str(path), None)
+    assert not isinstance(opened, PreviewError)
+    root_id = stable_node_id_for_pointer("")
+    key_id = stable_node_id_for_pointer("/a")
+    by_root_id = h.resolve_node_ref(root_id, None)
+    assert not isinstance(by_root_id, PreviewError)
+    assert by_root_id.node_kind == NodeKind.MAPPING
+    assert by_root_id.node_ref == ""
+    by_key_id = h.resolve_node_ref(key_id, None)
+    assert not isinstance(by_key_id, PreviewError)
+    assert by_key_id.node_kind == NodeKind.SCALAR
+    assert by_key_id.node_ref == "/a"
+    bad = h.resolve_node_ref("not-a-known-json-node-id", None)
+    assert isinstance(bad, PreviewError)
+    assert bad.code == INPUT_ERROR_UNKNOWN_NODE_REF
+
+
+def test_yaml_handler_resolve_opaque_node_id_matches_stable_pointer(tmp_path) -> None:
+    """opaque node_id (uuid5 pointer) resolves like JSON Pointer for YAML."""
+    pytest.importorskip("yaml")
+    path = tmp_path / "t.yaml"
+    path.write_text("a: 1\n", encoding="utf-8")
+    h = YamlFileHandler()
+    opened = h.open_root(str(path), None)
+    assert not isinstance(opened, PreviewError)
+    root_id = stable_node_id_for_pointer("")
+    key_id = stable_node_id_for_pointer("/a")
+    by_root_id = h.resolve_node_ref(root_id, None)
+    assert not isinstance(by_root_id, PreviewError)
+    assert by_root_id.node_kind == NodeKind.MAPPING
+    assert by_root_id.node_ref == ""
+    by_key_id = h.resolve_node_ref(key_id, None)
+    assert not isinstance(by_key_id, PreviewError)
+    assert by_key_id.node_kind == NodeKind.SCALAR
+    assert by_key_id.node_ref == "/a"
+
+
+def test_resolve_session_finds_yaml_tree_session(tmp_path) -> None:
+    """Caller-owned tree_id may resolve to a registered YAML tree."""
+    pytest.importorskip("yaml")
+    path = tmp_path / "sess.yaml"
+    path.write_text("k: v\n", encoding="utf-8")
+    tree = load_yaml_file_to_tree(str(path))
+    try:
+        out = resolve_session(MagicMock(), {"tree_id": tree.tree_id})
+        assert not isinstance(out, PreviewError)
+        session, origin, _ = out
+        assert origin == "caller_owned"
+        assert session is tree
+    finally:
+        remove_yaml_tree(tree.tree_id)
+
+
+def test_list_yaml_blocks_command_registered_name() -> None:
+    from code_analysis.commands.list_yaml_blocks_command import ListYamlBlocksCommand
+
+    assert ListYamlBlocksCommand.name == "list_yaml_blocks"
+
+
 def test_yaml_handler_open_root_mapping_kind(tmp_path) -> None:
     pytest.importorskip("yaml")
     path = tmp_path / "t.yaml"
@@ -109,6 +242,88 @@ def test_yaml_handler_open_root_mapping_kind(tmp_path) -> None:
     result = YamlFileHandler().open_root(str(path), None)
     assert not isinstance(result, PreviewError)
     assert result.node_kind == NodeKind.MAPPING
+
+
+def test_yaml_handler_open_root_scalar_int(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "scalar.yaml"
+    path.write_text("42\n", encoding="utf-8")
+    result = YamlFileHandler().open_root(str(path), None)
+    assert not isinstance(result, PreviewError)
+    assert result.node_kind == NodeKind.SCALAR
+    assert result.attributes.get("value") == "42"
+
+
+def test_yaml_handler_open_root_scalar_string(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "scalar.yaml"
+    path.write_text("hi\n", encoding="utf-8")
+    result = YamlFileHandler().open_root(str(path), None)
+    assert not isinstance(result, PreviewError)
+    assert result.node_kind == NodeKind.SCALAR
+    assert result.attributes.get("value") == "hi"
+
+
+def test_yaml_handler_open_root_sequence(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "seq.yaml"
+    path.write_text("[1, 2]\n", encoding="utf-8")
+    result = YamlFileHandler().open_root(str(path), None)
+    assert not isinstance(result, PreviewError)
+    assert result.node_kind == NodeKind.SEQUENCE
+
+
+def test_yaml_handler_invalid_yaml_file_structure_error(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "bad.yaml"
+    path.write_text("key: [\n", encoding="utf-8")
+    result = YamlFileHandler().open_root(str(path), None)
+    assert isinstance(result, PreviewError)
+    assert result.code == FILE_STRUCTURE_ERROR
+    assert result.details is not None
+    assert result.details.get("parser") == "yaml"
+
+
+def test_yaml_handler_resolve_node_ref_mapping_key(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "map.yaml"
+    path.write_text("key: 7\n", encoding="utf-8")
+    h = YamlFileHandler()
+    opened = h.open_root(str(path), None)
+    assert not isinstance(opened, PreviewError)
+    resolved = h.resolve_node_ref("/key", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.node_kind == NodeKind.SCALAR
+    assert resolved.node_ref == "/key"
+    assert resolved.attributes.get("value") == "7"
+
+
+def test_yaml_handler_resolve_unknown_path_unknown_node_ref(tmp_path) -> None:
+    pytest.importorskip("yaml")
+    path = tmp_path / "map.yaml"
+    path.write_text("a: 1\n", encoding="utf-8")
+    h = YamlFileHandler()
+    assert not isinstance(h.open_root(str(path), None), PreviewError)
+    err = h.resolve_node_ref("/missing", None)
+    assert isinstance(err, PreviewError)
+    assert err.code == INPUT_ERROR_UNKNOWN_NODE_REF
+
+
+def test_yaml_handler_resolve_pointer_escape_in_key(tmp_path) -> None:
+    """RFC6901 ~1 for / in key, ~0 for literal ~ in key."""
+    pytest.importorskip("yaml")
+    path = tmp_path / "esc.yaml"
+    path.write_text('"a/b": 99\n"wave~tilde": 1\n', encoding="utf-8")
+    h = YamlFileHandler()
+    assert not isinstance(h.open_root(str(path), None), PreviewError)
+    slash_key = h.resolve_node_ref("/a~1b", None)
+    assert not isinstance(slash_key, PreviewError)
+    assert slash_key.node_kind == NodeKind.SCALAR
+    assert slash_key.attributes.get("value") == "99"
+    tilde_key = h.resolve_node_ref("/wave~0tilde", None)
+    assert not isinstance(tilde_key, PreviewError)
+    assert tilde_key.node_kind == NodeKind.SCALAR
+    assert tilde_key.attributes.get("value") == "1"
 
 
 def test_jsonl_handler_open_root_lines_kind(tmp_path) -> None:
@@ -119,6 +334,140 @@ def test_jsonl_handler_open_root_lines_kind(tmp_path) -> None:
     assert result.node_kind == NodeKind.LINES
 
 
+def test_jsonl_handler_open_root_multiline_children(tmp_path) -> None:
+    """Root lines: two children with node_ref 0/1 and raw line text."""
+    path = tmp_path / "multi.jsonl"
+    path.write_text('{"x": 1}\n{"y": 2}\n', encoding="utf-8")
+    result = JsonLinesFileHandler().open_root(str(path), None)
+    assert not isinstance(result, PreviewError)
+    assert result.node_kind == NodeKind.LINES
+    children = result.children
+    assert len(children) == 2
+    assert children[0].node_ref == "0"
+    assert children[0].attributes["value"] == '{"x": 1}'
+    assert children[1].node_ref == "1"
+    assert children[1].attributes["value"] == '{"y": 2}'
+
+
+def test_jsonl_handler_resolve_node_ref_json_object_mapping_child(tmp_path) -> None:
+    """Drill-in parses line as JSON; root matches _json_value_to_node object shape."""
+    path = tmp_path / "doc.jsonl"
+    path.write_text('{"a": 1}\n', encoding="utf-8")
+    h = JsonLinesFileHandler()
+    opened = h.open_root(str(path), None)
+    assert not isinstance(opened, PreviewError)
+    resolved = h.resolve_node_ref("0", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.node_kind == NodeKind.MAPPING
+    assert resolved.node_ref == ""
+    pairs = resolved.children
+    assert len(pairs) == 1
+    assert pairs[0].name == "a"
+    assert pairs[0].attributes.get("value_kind") == "int"
+
+
+def test_jsonl_handler_resolve_invalid_json_line_file_structure_error(tmp_path) -> None:
+    path = tmp_path / "bad.jsonl"
+    path.write_text("not valid json\n", encoding="utf-8")
+    h = JsonLinesFileHandler()
+    assert not isinstance(h.open_root(str(path), None), PreviewError)
+    err = h.resolve_node_ref("0", None)
+    assert isinstance(err, PreviewError)
+    assert err.code == FILE_STRUCTURE_ERROR
+
+
+def test_jsonl_handler_resolve_node_ref_out_of_range_unknown_ref(tmp_path) -> None:
+    path = tmp_path / "one.jsonl"
+    path.write_text("{}\n", encoding="utf-8")
+    h = JsonLinesFileHandler()
+    assert not isinstance(h.open_root(str(path), None), PreviewError)
+    err = h.resolve_node_ref("3", None)
+    assert isinstance(err, PreviewError)
+    assert err.code == INPUT_ERROR_UNKNOWN_NODE_REF
+    assert err.details is not None
+    assert err.details.get("node_ref") == "3"
+
+
+def test_jsonl_handler_resolve_non_integer_node_ref_unknown(tmp_path) -> None:
+    path = tmp_path / "t.jsonl"
+    path.write_text("{}\n", encoding="utf-8")
+    h = JsonLinesFileHandler()
+    assert not isinstance(h.open_root(str(path), None), PreviewError)
+    err = h.resolve_node_ref("abc", None)
+    assert isinstance(err, PreviewError)
+    assert err.code == INPUT_ERROR_UNKNOWN_NODE_REF
+    assert err.details == {"node_ref": "abc"}
+
+
+def test_python_visualizer_budget_py_nonempty() -> None:
+    """Real CST tree: budget.py renders without TreeNodeMetadata field errors."""
+    budget_path = _universal_preview_pkg_dir() / "budget.py"
+    tree = load_file_to_tree(str(budget_path))
+    text = render_module(
+        tree,
+        PreviewBudget(preview_lines=20, value_preview_len=120, full_text_max_lines=200),
+    )
+    assert text.strip()
+
+
+def test_python_visualizer_large_file_overview_nonempty() -> None:
+    """python_visualizer.py is large enough for structured overview, not FILE_STRUCTURE."""
+    viz_path = _universal_preview_pkg_dir() / "python_visualizer.py"
+    tree = load_file_to_tree(str(viz_path))
+    budget = PreviewBudget(
+        preview_lines=20,
+        value_preview_len=120,
+        full_text_max_lines=200,
+    )
+    text = render_module(tree, budget)
+    assert len(text) > 80
+    assert "[" in text
+
+
+def test_python_visualizer_module_level_function_focus_nonempty() -> None:
+    """Focus on one top-level FunctionDef yields non-empty render_node."""
+    viz_path = _universal_preview_pkg_dir() / "python_visualizer.py"
+    tree = load_file_to_tree(str(viz_path))
+    rid = getattr(tree, "root_node_id", None)
+    assert rid is not None
+    fn_stable = next(
+        (
+            m.stable_id
+            for m in tree.metadata_map.values()
+            if m.parent_id == rid and m.type == "FunctionDef"
+        ),
+        None,
+    )
+    assert fn_stable is not None
+    assert render_node(tree, fn_stable).strip()
+
+
 def test_universal_file_preview_whitelisted_for_read_only_batch() -> None:
     """Read-only batch allows universal_file_preview."""
     assert "universal_file_preview" in READ_ONLY_BATCH_WHITELIST
+
+
+@pytest.mark.asyncio
+async def test_universal_file_preview_execute_budget_py_mock_db() -> None:
+    """Call execute with mocked DB: repo root from projectid resolves budget.py."""
+    mock_db = MagicMock()
+    mock_project = MagicMock()
+    mock_project.root_path = str(_repo_root())
+    mock_db.get_project.return_value = mock_project
+
+    cmd = UniversalFilePreviewCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+    ):
+        params = cmd.validate_params(
+            {
+                "project_id": _repo_project_id(),
+                "file_path": "code_analysis/commands/universal_file_preview/budget.py",
+            }
+        )
+        result = await cmd.execute(**params)
+
+    assert isinstance(result, SuccessResult)
+    focus_text = (result.data or {}).get("focus", {}).get("text")
+    assert isinstance(focus_text, str)
+    assert focus_text.strip()

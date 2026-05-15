@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base_handler import FileHandler
+from ..budget import PreviewBudget
 from ..errors import (
     PreviewError,
     file_structure_error,
@@ -57,6 +58,7 @@ class JsonLinesFileHandler(FileHandler):
         self,
         file_path: str,
         session: Any | None,
+        budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
         """
         Read file line-by-line without JSON parsing and return a lines root.
@@ -119,6 +121,7 @@ class JsonLinesFileHandler(FileHandler):
             return input_error(
                 INPUT_ERROR_UNKNOWN_NODE_REF,
                 f"node_ref {node_ref!r} is not a valid integer.",
+                details={"node_ref": node_ref},
             )
         fp = getattr(self, "_last_file_path", None)
         if fp is None:

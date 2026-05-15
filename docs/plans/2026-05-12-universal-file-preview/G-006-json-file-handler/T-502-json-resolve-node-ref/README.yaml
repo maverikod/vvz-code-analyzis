@@ -1,7 +1,7 @@
 step_id: T-502
 parent_global_step: G-006
 name: JSON file handler — resolve node_ref
-status: draft
+status: done
 concepts:
 - C-004
 - C-009

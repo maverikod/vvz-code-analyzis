@@ -9,7 +9,7 @@ concepts:
 - C-003
 - C-004
 - C-019
-status: draft
+status: done
 prompt: "Create a new Python file.\n\nTarget file (create_file — file does not exist):\n\
   \  code_analysis/commands/universal_file_preview/handlers/jsonl_handler.py\n\nFile-level\
   \ docstring (required):\n  \"\"\"\n  JsonLinesFileHandler — FileHandler for .jsonl,\

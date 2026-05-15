@@ -31,4 +31,4 @@ depends_on:
 tactical_steps:
 - T-801
 - T-802
-status: draft
+status: done

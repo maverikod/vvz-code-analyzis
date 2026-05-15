@@ -41,7 +41,7 @@ tactical_steps:
 - T-1001
 - T-1003
 - T-1004
-status: draft
+status: done
 source_ranges:
 - start: 25
   end: 33

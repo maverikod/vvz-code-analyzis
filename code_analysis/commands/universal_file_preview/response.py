@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import Node, Block, NavigationResult
+from .models import NavigationResult
 
 
 def build_envelope(
@@ -25,10 +25,11 @@ def build_envelope(
 
     The envelope shape is constant regardless of NodeKind and selector form.
     Fields always present:
-      focus            - dict with node_kind, node_ref, type, name, attributes
+      focus            - dict with node_kind, node_ref, type, name, attributes;
+                       optional focus.text when pre-rendered text exists (C-022)
       selector_applied - normalised selector or None
       total_blocks     - int: total count of blocks in focus block set
-      blocks           - list of rendered block dicts
+      blocks           - list of rendered block dicts (each may include text when set)
     Field present only when session_origin == 'command_created' and
     navigation_result.tree_id is not None:
       tree_id          - str: UUID for reuse by the caller
@@ -42,26 +43,33 @@ def build_envelope(
         Dict conforming to ResponseEnvelope (C-012).
     """
     focus = navigation_result.focus_node
+    focus_text = focus.attributes.get("text") if focus.attributes else None
     focus_dict = {
         "node_kind": focus.node_kind.value,
         "node_ref": focus.node_ref,
         "type": focus.type_label,
         "name": focus.name,
-        "attributes": focus.attributes or {},
+        "attributes": {
+            k: v for k, v in (focus.attributes or {}).items() if k != "text"
+        },
     }
+    if focus_text is not None:
+        focus_dict["text"] = focus_text
 
     # Normalise selector for echo-back: keep as-is if already str or list;
     # set to None if raw_selector is None.
     selector_applied: str | list | None = raw_selector
 
-    blocks_list = [
-        {
+    blocks_list = []
+    for b in navigation_result.selected_blocks:
+        block_dict: dict[str, Any] = {
             "node_kind": b.node_kind.value,
             "node_ref": b.node_ref,
             "summary": b.summary,
         }
-        for b in navigation_result.selected_blocks
-    ]
+        if b.text is not None:
+            block_dict["text"] = b.text
+        blocks_list.append(block_dict)
 
     envelope: dict[str, Any] = {
         "focus": focus_dict,

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base_handler import FileHandler
+from ..budget import PreviewBudget
 from ..errors import PreviewError, input_error, INPUT_ERROR_UNKNOWN_NODE_REF
 from ..models import Node, NodeKind
 
@@ -49,6 +50,7 @@ class TextFileHandler(FileHandler):
         self,
         file_path: str,
         session: Any | None,
+        budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
         """
         Read the text file and return a lines root Node.

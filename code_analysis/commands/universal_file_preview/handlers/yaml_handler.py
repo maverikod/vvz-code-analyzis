@@ -7,8 +7,8 @@ Root NodeKind depends on the top-level YAML value:
   scalar   -> scalar
 YAML anchors and aliases are resolved before producing the node tree.
 Identifier source:
-  T-702 mode: project YAML tree infrastructure (when present).
-  T-703 mode: JSON-pointer-style path traversal (fallback).
+  YAML tree index (JSON Pointer paths, stable node_id / uuid5 of pointer).
+  JSON-pointer-style path traversal when resolving by path string.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -16,20 +16,23 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
+
 from typing import Any
 
+from ....core.yaml_tree.models import YamlTree
+from ....core.yaml_tree.resolve import resolve_yaml_node
+from ....core.yaml_tree.tree_builder import build_yaml_tree_from_data
+
 from ..base_handler import FileHandler
+from ..budget import PreviewBudget
 from ..errors import (
+    INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
     file_structure_error,
     input_error,
-    INPUT_ERROR_UNKNOWN_NODE_REF,
 )
 from ..models import Node, NodeKind
-
-logger = logging.getLogger(__name__)
 
 
 class YamlFileHandler(FileHandler):
@@ -38,9 +41,8 @@ class YamlFileHandler(FileHandler):
 
     Root NodeKind: mapping, sequence, or scalar.
     Anchors and aliases resolved before tree production.
-    node_ref resolution: JSON-pointer-style path (T-703 fallback always used;
-    T-702 infrastructure mode deferred to a later integration step).
-    FILE_STRUCTURE_ERROR with parser 'yaml' on invalid YAML.
+        node_ref: JSON-pointer-style path (``""``, ``/key``) or opaque node_id
+        from list_yaml_blocks (stable id for the path).
 
         Attributes:
             supported_extensions: frozenset({'.yaml', '.yml'}).
@@ -52,34 +54,31 @@ class YamlFileHandler(FileHandler):
         session: Any | None,
     ) -> "Node | PreviewError | None":
         """
-        Attempt resolution via project YAML tree infrastructure (T-702).
+        Resolve via in-memory :class:`~code_analysis.core.yaml_tree.models.YamlTree`.
 
-        Returns a Node or PreviewError when the infrastructure is present
-        and handles this identifier. Returns None when the infrastructure
-        module is absent (ImportError), signalling the caller to use the
-        JSON-pointer fallback.
-
-        Args:
-            node_ref: StableIdentifier in infrastructure-native format.
-            session: TreeSession with YAML infrastructure active, or None.
-
-        Returns:
-            Node, PreviewError, or None (infrastructure absent).
+        Returns a Node or PreviewError when ``session`` is a registered tree;
+        None when the session is not a YAML tree (caller uses pointer fallback).
         """
-        try:
-            from code_analysis.core.yaml_tree import resolve_yaml_node  # noqa
-        except ImportError:
+        if session is None or not isinstance(session, YamlTree):
             return None
-        if session is None:
-            return None
-        result = resolve_yaml_node(session, node_ref)
-        if result is None:
+        value = resolve_yaml_node(session, node_ref)
+        if value is None:
             return input_error(
                 INPUT_ERROR_UNKNOWN_NODE_REF,
                 f"YAML tree infra could not resolve {node_ref!r}.",
                 details={"node_ref": node_ref},
             )
-        return _yaml_value_to_node(result, node_ref)
+        if node_ref == "" or node_ref.startswith("/"):
+            canon = node_ref
+        else:
+            canon = session.pointer_by_id.get(node_ref)
+            if canon is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"Opaque node_ref {node_ref!r} has no pointer in tree session.",
+                    details={"node_ref": node_ref},
+                )
+        return _yaml_value_to_node(value, canon)
 
     @property
     def supported_extensions(self) -> frozenset[str]:
@@ -90,6 +89,7 @@ class YamlFileHandler(FileHandler):
         self,
         file_path: str,
         session: Any | None,
+        budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
         """
         Parse the YAML file and return the root Node.
@@ -100,7 +100,7 @@ class YamlFileHandler(FileHandler):
 
         Args:
             file_path: Project-relative path to the .yaml/.yml file.
-            session: Existing YAML tree session or None.
+            session: :class:`~code_analysis.core.yaml_tree.models.YamlTree` or None.
 
         Returns:
             Root Node or PreviewError.
@@ -109,13 +109,21 @@ class YamlFileHandler(FileHandler):
             import yaml  # PyYAML
 
             self._last_file_path = file_path
+            resolved_path = str(Path(file_path).resolve())
+
+            if session is not None and isinstance(session, YamlTree):
+                doc = session.root_data
+                self._doc = doc
+                self._pointer_by_node_id = dict(session.pointer_by_id)
+                return _yaml_value_to_node(doc, "")
+
             raw = Path(file_path).read_text(encoding="utf-8", errors="replace")
-            doc = yaml.safe_load(
-                raw
-            )  # resolves anchors/aliases; returns None for empty
+            doc = yaml.safe_load(raw)
             if doc is None:
-                doc = {}  # empty YAML → empty mapping
+                doc = {}
             self._doc = doc
+            tree = build_yaml_tree_from_data(resolved_path, doc, register=False)
+            self._pointer_by_node_id = dict(tree.pointer_by_id)
             return _yaml_value_to_node(doc, "")
         except yaml.YAMLError as exc:
             mark = getattr(exc, "problem_mark", None)
@@ -135,23 +143,17 @@ class YamlFileHandler(FileHandler):
         session: Any | None,
     ) -> Node | PreviewError:
         """
-        Resolve a JSON-pointer-style path to the addressed YAML Node (T-703).
+        Resolve a JSON Pointer or opaque node_id to the addressed YAML Node.
 
-        Path format: '' (root), '/key', '/key/subkey', '/list/0'.
-        RFC-6901 escaping (~0 ~1) is applied.
-        Returns UNKNOWN_NODE_REF when any segment does not exist.
+        Same rules as ``JsonFileHandler`` / ``list_yaml_blocks`` indexing.
 
         Args:
-            node_ref: JSON-pointer-style path string.
-            session: Ignored in T-703 fallback mode.
+            node_ref: JSON Pointer or node_id string.
+            session: Ignored for resolution (index is from ``open_root``).
 
         Returns:
-            Resolved Node or PreviewError.
+            Resolved Node or PreviewError(UNKNOWN_NODE_REF).
         """
-        infra_result = self._try_infra_resolve(node_ref, session)
-        if infra_result is not None:
-            return infra_result
-        # T-703 fallback: JSON-pointer-style path traversal
         doc = getattr(self, "_doc", None)
         if doc is None:
             return input_error(
@@ -159,15 +161,36 @@ class YamlFileHandler(FileHandler):
                 "open_root must be called before resolve_node_ref.",
                 details={"node_ref": node_ref},
             )
-        result = _resolve_yaml_pointer(doc, node_ref)
+        if node_ref == "" or node_ref.startswith("/"):
+            result = _resolve_yaml_pointer(doc, node_ref)
+            if result is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"Path {node_ref!r} does not exist in YAML document.",
+                    details={"node_ref": node_ref},
+                )
+            value, pointer = result
+            return _yaml_value_to_node(value, pointer)
+        ptr_map_raw = getattr(self, "_pointer_by_node_id", None)
+        pointer_map: dict[str, str] = dict(ptr_map_raw) if ptr_map_raw else {}
+        pointer_opt = pointer_map.get(node_ref)
+        if pointer_opt is None:
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                f"Unknown node_ref {node_ref!r}: not a JSON Pointer in this document "
+                "and not a listed node_id.",
+                details={"node_ref": node_ref},
+            )
+        result = _resolve_yaml_pointer(doc, pointer_opt)
         if result is None:
             return input_error(
                 INPUT_ERROR_UNKNOWN_NODE_REF,
-                f"Path {node_ref!r} does not exist in YAML document.",
+                f"node_id {node_ref!r} mapped to stale pointer {pointer_opt!r}; "
+                "re-open the preview.",
                 details={"node_ref": node_ref},
             )
-        value, pointer = result
-        return _yaml_value_to_node(value, pointer)
+        value, canon_pointer = result
+        return _yaml_value_to_node(value, canon_pointer)
 
 
 def _yaml_value_to_node(value: Any, pointer: str) -> Node:
@@ -211,10 +234,8 @@ def _yaml_value_to_node(value: Any, pointer: str) -> Node:
 
 def _resolve_yaml_pointer(doc: Any, pointer: str) -> tuple[Any, str] | None:
     """Traverse YAML doc following JSON-pointer-style path."""
-    # Root addressed by the empty string (RFC 6901 convention)
     if pointer == "":
         return (doc, "")
-    # Non-RFC-6901 strings (no leading '/') are invalid in fallback mode.
     if not pointer.startswith("/"):
         return None
     parts = [p.replace("~1", "/").replace("~0", "~") for p in pointer[1:].split("/")]
@@ -226,7 +247,6 @@ def _resolve_yaml_pointer(doc: Any, pointer: str) -> tuple[Any, str] | None:
             if part in current:
                 current = current[part]
             else:
-                # Try integer key (YAML keys are sometimes integers)
                 try:
                     current = current[int(part)]
                 except (ValueError, KeyError, TypeError):
@@ -237,6 +257,5 @@ def _resolve_yaml_pointer(doc: Any, pointer: str) -> tuple[Any, str] | None:
             except (ValueError, IndexError):
                 return None
         else:
-            # Scalar cannot be descended into
             return None
     return (current, path)

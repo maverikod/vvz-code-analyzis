@@ -47,6 +47,8 @@ def render_block(node: Node, value_preview_len: int) -> dict[str, Any]:
     if kind is NodeKind.TREE_NODE:
         return _render_tree_node(node, vpl)
     raise ValueError(f"Unhandled NodeKind: {kind!r}")
+
+
 def _render_scalar(node: Node, vpl: int) -> dict[str, Any]:
     """Rule 1: truncated value. No children content."""
     value = node.attributes.get("value") or node.name or node.type_label or ""
@@ -75,10 +77,20 @@ def _render_mapping(node: Node, vpl: int) -> dict[str, Any]:
 
 
 def _render_tree_node(node: Node, vpl: int) -> dict[str, Any]:
-    """Rule 5: type, optional name, attributes, child count."""
-    return {
+    """Rule 5: type, optional name, attributes, child count.
+
+    When node.attributes carries a 'text' key (pre-rendered by
+    PythonNodeRenderer C-022), it is promoted to a top-level 'text'
+    field in the summary and excluded from the 'attributes' dict.
+    """
+    text = node.attributes.get("text") if node.attributes else None
+    attrs = {k: v for k, v in (node.attributes or {}).items() if k != "text"}
+    summary: dict[str, Any] = {
         "type": (node.type_label or "")[:vpl],
         "name": node.name[:vpl] if node.name else None,
-        "attributes": node.attributes,
+        "attributes": attrs,
         "child_count": len(node.children),
     }
+    if text is not None:
+        summary["text"] = text
+    return summary

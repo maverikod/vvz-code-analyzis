@@ -31,7 +31,7 @@ outputs:
   type: file
   description: >
     Cleaned file: four dead functions removed, _metadata_children_to_nodes
-    rewritten to filter by depth and non-empty kind.
 atomic_steps:
 - A-001
+- A-002
 status: draft

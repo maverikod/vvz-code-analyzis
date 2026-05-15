@@ -1,11 +1,12 @@
 step_id: G-004
 name: universal_file_edit command
-description: 'Implement the universal_file_edit MCP command. Accept a batch of EditOperations.
-  Apply BatchValidation for sidecar group (forbid ancestor-descendant pairs; reject
-  atomically). Apply operations per format group rules: sidecar via CST pipeline with
-  sidecar write after each op; tree-temp sequentially with draft write after each
-  op; text sorted bottom-up with single draft write. Original file never touched.
-  Return updated state.'
+description: 'The edit command applies a batch of mutation operations to the draft
+  file. The original file is never touched. For the sidecar group, the batch is first
+  validated to forbid ancestor-descendant node pairs; violation rejects the whole
+  batch atomically. Operations are then applied according to group rules: sidecar
+  group applies sequentially and writes the draft after each operation; tree-temp
+  group applies sequentially and writes the draft after each operation; text group
+  sorts by line position descending and writes the draft once after all operations.'
 concepts:
 - C-001
 - C-002
@@ -13,6 +14,7 @@ concepts:
 - C-007
 - C-008
 - C-012
+- C-014
 relations:
 - from_concept: C-006
   to_concept: C-001
@@ -32,9 +34,15 @@ relations:
 - from_concept: C-006
   to_concept: C-012
   type: uses
+- from_concept: C-006
+  to_concept: C-014
+  type: produces
+- from_concept: C-008
+  to_concept: C-007
+  type: consumes
 source_ranges:
 - start: 138
-  end: 172
+  end: 175
 depends_on:
 - G-002
 tactical_steps: []

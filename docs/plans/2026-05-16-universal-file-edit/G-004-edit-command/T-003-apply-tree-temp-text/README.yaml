@@ -1,13 +1,23 @@
 step_id: T-003
 parent_global_step: G-004
 name: Apply operations to tree-temp and text group drafts
-description: Apply a batch of EditOperations (C-007) to tree-temp or text group sessions.
-  For the tree-temp group, operations are applied sequentially to the in-memory tree
-  and the DraftFile (C-003) is written after each operation. For the text group, operations
-  are first sorted by line position descending to avoid address shifts, then applied
-  to an in-memory buffer, and the draft is written once after all operations complete.
-  The original file is not touched in either case. The ExistingInfrastructure (C-012)
-  provides tree mutation, serialisation, and text sort operations.
+description: 'Apply a batch of EditOperations (C-007) to tree-temp or text group sessions
+  using existing infrastructure (C-012).
+
+  Tree-temp group (JSON/YAML): Apply operations sequentially in received order to
+  the in-memory tree (JSONTree or YamlTree from `core/json_tree/tree_builder.py` or
+  `core/yaml_tree/tree_builder.py`). Each operation uses the JSON pointer address
+  (parent_node_id + position) to locate the target. After each operation serialise
+  the updated tree to <file>.draft using json.dumps (JSON) or yaml.dump (YAML). No
+  sorting — tree addresses do not shift.
+
+  Text group (MD, txt, rst, adoc): First sort the operations by start_line descending
+  using the existing `_sort_text_replacements_bottom_up` function from `code_analysis/commands/universal_file_replace_command.py`.
+  Then apply each operation to an in-memory line buffer (list of strings loaded from
+  <file>.draft). Write the entire buffer to <file>.draft once after all operations
+  are applied.
+
+  The original file is not touched in either case.'
 concepts:
 - C-002
 - C-003
@@ -17,14 +27,14 @@ concepts:
 inputs:
 - name: session
   type: EditSession
-  description: Active session for a tree-temp or text group file.
+  description: Active tree-temp or text group session.
 - name: operations
-  type: list of EditOperation
-  description: Batch of operations submitted by the caller.
+  type: list of EditOperation dicts
+  description: Batch submitted by the caller.
 outputs:
 - name: updated_state
-  type: node list or line count
-  description: 'For tree-temp: updated node list. For text: updated line count of
-    the draft after all operations applied.'
+  type: node list (tree-temp) or line count (text)
+  description: 'Tree-temp: updated top-level node list after operations. Text: line
+    count of the draft after operations.'
 atomic_steps: []
 status: draft

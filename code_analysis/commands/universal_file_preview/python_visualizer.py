@@ -224,6 +224,8 @@ def _is_compound_stmt(meta: Any) -> bool:
     """
     typ = getattr(meta, "type", None) or ""
     return typ in _COMPOUND_STMT_TYPES
+
+
 def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
     """Collect direct statement-level child metadata rows for a CST node.
 
@@ -248,13 +250,20 @@ def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
     if node_id is None:
         return []
     # Nodes whose body is wrapped in an IndentedBlock one level down.
-    _BLOCK_WRAPPER_TYPES = frozenset({
-        "FunctionDef", "AsyncFunctionDef", "ClassDef",
-        "If", "For", "While", "Try", "With", "Match",
-    })
-    direct = [
-        m for m in tree.metadata_map.values() if m.parent_id == node_id
-    ]
+    _BLOCK_WRAPPER_TYPES = frozenset(
+        {
+            "FunctionDef",
+            "AsyncFunctionDef",
+            "ClassDef",
+            "If",
+            "For",
+            "While",
+            "Try",
+            "With",
+            "Match",
+        }
+    )
+    direct = [m for m in tree.metadata_map.values() if m.parent_id == node_id]
     parent_meta = tree.metadata_map.get(node_id)
     parent_type = getattr(parent_meta, "type", None) or ""
     if parent_type in _BLOCK_WRAPPER_TYPES:
@@ -265,7 +274,8 @@ def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
         )
         if indented is not None:
             direct = [
-                m for m in tree.metadata_map.values()
+                m
+                for m in tree.metadata_map.values()
                 if m.parent_id == indented.stable_id
                 and getattr(m, "kind", None) == "stmt"
             ]

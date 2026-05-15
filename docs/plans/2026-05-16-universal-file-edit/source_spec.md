@@ -39,13 +39,15 @@ errors that cannot be parsed.
 
 ## 3. Draft file model
 
-Every file being edited has two on-disk artefacts:
+Every file being edited has on-disk artefacts:
 
 - `<file>` — the original file, not modified until `universal_file_write`
-  confirms successfully.
-- `<file>.draft` — the working copy. For tree-structured formats (Python,
-  JSON, YAML) this is the serialised tree. For text formats (md, txt, rst,
-  adoc) this is a byte-for-byte copy of the original.
+  commits successfully.
+- `<file>.draft` — the working copy.
+  - For tree formats (Python, JSON, YAML): the serialised tree. Persists
+    permanently alongside the original; not deleted on close.
+  - For text formats (md, txt, rst, adoc): a byte-for-byte copy of the
+    original. Temporary; deleted on close.
 
 A third artefact is used during the write confirmation protocol:
 
@@ -103,27 +105,35 @@ Address space depends on the format:
 - Text formats (md, txt, rst, adoc): address is
   `(start_line, end_line)` — 1-based inclusive line range.
 
-### 5.3 Batch validation
+### 5.3 Batch rules
 
-Before applying any operation, the full batch is validated:
+**Tree formats:**
 
-1. For tree formats: no operation in the batch may address a node that is
-   an ancestor or descendant of another node addressed in the same batch.
-   Violation produces error `NESTED_BATCH_FORBIDDEN`.
-2. For all formats: operations are sorted and applied bottom-up:
-   - Text: descending by `start_line`.
-   - Tree: descending by node depth (deepest nodes first).
-   This guarantees that earlier operations do not shift the addresses
-   of later ones.
+1. Validate the full batch before applying any operation: no operation may
+   address a node that is an ancestor or descendant of another node
+   addressed in the same batch. Violation produces error
+   `NESTED_BATCH_FORBIDDEN`. Batch is rejected atomically.
+2. Operations are applied sequentially in the order received. After each
+   operation the tree is written to `<file>.draft`. No reordering is
+   performed (tree addresses do not shift between operations).
 
-If validation fails the batch is rejected atomically — no operations are
-applied.
+**Text formats:**
+
+1. Operations are sorted by `start_line` descending before application.
+   This ensures that applying a change to a lower line does not shift
+   the line numbers of changes above it.
+2. Applied sequentially in that sorted order. After all operations
+   `<file>.draft` is written once.
 
 ### 5.4 Effect
 
-Each operation modifies `<file>.draft` on disk. The original `<file>` is
-not touched. After all operations are applied successfully the command
-returns the updated draft state (list of top-level nodes or line count).
+For tree formats: each operation modifies the in-memory tree and
+immediately writes `<file>.draft`. The original `<file>` is not touched.
+
+For text formats: all operations are applied to an in-memory buffer;
+`<file>.draft` is written once after all operations complete.
+
+On success the command returns the updated draft state.
 
 ## 6. universal_file_write
 
@@ -131,13 +141,17 @@ returns the updated draft state (list of top-level nodes or line count).
 
 Inputs: `project_id`, `session_id`.
 
-### 6.1 First call (lockfile absent)
+### 6.1 First call (lockfile absent or PID mismatch)
 
 1. Generate code from `<file>.draft` (for tree formats: serialise tree
    to source; for text formats: the draft is already source).
 2. Compute diff between `<file>` (original) and the generated code.
 3. Write `<file>.write` containing the current server process PID.
 4. Return the diff to the caller. Nothing is written to `<file>`.
+
+If `<file>.write` exists but its PID does not match the current server
+process PID: treat as first call (stale lock from a dead process).
+Overwrite `<file>.write` with current PID and return a fresh diff.
 
 ### 6.2 Second call (lockfile present, PID matches)
 
@@ -146,22 +160,12 @@ process PID AND `<file>.write` mtime is newer than `<file>.draft` mtime.
 
 1. Create backup of `<file>` (code) and `<file>.draft` (tree) atomically.
    The backup pair is one entry in backup history.
-2. Write generated code to `<file>` (rename from temp).
-3. Delete `<file>.write`.
-4. If git is configured: create a git commit.
-5. Return success.
-
-### 6.3 Lockfile PID mismatch
-
-If `<file>.write` exists but its PID does not match the current server
-process PID: treat as a first call (stale lock from a dead process).
-Overwrite `<file>.write` with current PID and return a fresh diff.
-
-### 6.4 Write failure
-
-If writing `<file>` fails after backup was created: restore `<file>` from
-the backup just created. Return error. `<file>.draft` is left intact so
-the session can retry.
+2. Generate code from `<file>.draft` to a temp file.
+3. If generation or write fails: restore `<file>` from the backup just
+   created. Return error. `<file>.draft` is left intact.
+4. If success: rename temp to `<file>`. Delete `<file>.write`.
+5. If git is configured: create a git commit.
+6. Return success with the diff.
 
 ## 7. universal_file_close
 
@@ -169,19 +173,22 @@ the session can retry.
 
 Inputs: `project_id`, `session_id`.
 
-Behaviour:
+**Text formats:**
 
-1. If `<file>.draft` does not exist: session is already clean, return
-   success.
-2. Compute checksum of the tree represented by `<file>.draft` and the
-   checksum of `<file>` on disk.
-3. If checksums match: delete `<file>.draft`, delete `<file>.write` if
-   present, release session. Return success.
-4. If checksums do not match: the file on disk is newer or different
-   (e.g. written externally or write was not called). Rebuild
-   `<file>.draft` from `<file>` (re-parse). Do NOT create a backup.
-   Delete `<file>.write` if present. Release session. Return success
-   with flag `draft_rebuilt: true`.
+1. Delete `<file>.draft` if it exists.
+2. Delete `<file>.write` if it exists.
+3. Release session. Return success.
+
+**Tree formats:**
+
+1. `<file>.draft` is never deleted (persists as the permanent tree file).
+2. Compute checksum of `<file>.draft` and checksum of `<file>`.
+3. Checksums match: leave `<file>.draft` as is. Delete `<file>.write`
+   if present. Release session. Return success.
+4. Checksums do not match (file changed externally or write not called):
+   rebuild `<file>.draft` from `<file>` (re-parse). Do NOT create a
+   backup. Delete `<file>.write` if present. Release session.
+   Return success with flag `draft_rebuilt: true`.
 
 ## 8. Reuse of universal_file_preview handlers
 
@@ -203,7 +210,7 @@ A session is an in-memory record keyed by `session_id` (UUID). It stores:
 
 - `file_path` — project-relative path to the file.
 - `draft_path` — absolute path to `<file>.draft`.
-- `format` — one of: `python`, `json`, `yaml`, `text`.
+- `format` — one of: `tree`, `text`.
 - `tree_id` — UUID of the in-memory tree (for tree formats), or None.
 
 Sessions are stored in a module-level registry (dict) in the server
@@ -214,8 +221,8 @@ the client must call `universal_file_open` again.
 
 - `SESSION_NOT_FOUND` — session_id unknown.
 - `DRAFT_NOT_FOUND` — `<file>.draft` missing when expected.
-- `NESTED_BATCH_FORBIDDEN` — batch contains ancestor-descendant pair.
-- `LOCK_CONFLICT` — reserved (not used; PID mismatch is handled silently).
+- `NESTED_BATCH_FORBIDDEN` — batch contains ancestor-descendant pair
+  (tree formats only).
 - `WRITE_FAILED` — code generation or file write failed; backup restored.
 - `UNKNOWN_FORMAT` — file extension not supported.
 - `PARSE_ERROR` — file could not be parsed on open.

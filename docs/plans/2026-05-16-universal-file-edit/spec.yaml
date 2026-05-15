@@ -10,24 +10,25 @@ concepts:
     reference.
   properties:
   - identified by session_id (UUID)
-  - stores file_path, draft_path, format, tree_id
+  - stores file_path, draft_path, format (tree or text), tree_id
   - stored in a module-level registry in the server process
   - not persisted across server restarts
   source_ranges:
-  - start: 97
-    end: 113
+  - start: 107
+    end: 121
 - concept_id: C-002
   name: DraftFile
-  definition: On-disk working copy of the file being edited. Never renamed to the
-    original until universal_file_write commits successfully.
+  definition: On-disk working copy of the file being edited. For tree formats persists
+    permanently alongside the original. For text formats is temporary and deleted
+    on close.
   properties:
   - path is <file>.draft
-  - for tree formats contains the serialised tree
-  - for text formats is a byte-for-byte copy of the original
-  - created by universal_file_open, deleted by universal_file_close
+  - tree formats: contains serialised tree; persists after close
+  - text formats: byte-for-byte copy of original; deleted on close
+  - created by universal_file_open
   source_ranges:
   - start: 35
-    end: 48
+    end: 50
 - concept_id: C-003
   name: WriteLockfile
   definition: On-disk lockfile that records the server PID of the process that initiated
@@ -38,10 +39,10 @@ concepts:
   - contains the server process PID as text
   - created on first universal_file_write call
   - deleted on successful commit or on universal_file_open
-  - PID mismatch means stale lock from a dead process
+  - PID mismatch means stale lock from a dead process; treated as first call
   source_ranges:
-  - start: 49
-    end: 56
+  - start: 52
+    end: 58
 - concept_id: C-004
   name: OpenCommand
   definition: MCP command that starts an editing session. Cleans up stale artefacts,
@@ -53,21 +54,22 @@ concepts:
   - creates initial backup if file has no backup history
   - returns session_id and list of available operations for the format
   source_ranges:
-  - start: 58
-    end: 79
+  - start: 60
+    end: 81
 - concept_id: C-005
   name: EditCommand
-  definition: MCP command that applies a validated batch of mutation operations to
-    <file>.draft. The original file is never touched.
+  definition: MCP command that applies a batch of mutation operations to <file>.draft.
+    The original file is never touched.
   properties:
   - accepts insert, delete, replace operations
-  - validates the full batch before applying any operation
-  - rejects batches containing ancestor-descendant node pairs for tree formats
-  - applies operations bottom-up to avoid address shift errors
-  - modifies <file>.draft on disk after successful validation
+  - tree formats: validates batch then applies sequentially; writes draft after each
+      op
+  - text formats: sorts by start_line descending then applies; writes draft once
+  - tree batch rejection is atomic on NESTED_BATCH_FORBIDDEN
+  - original file is never modified
   source_ranges:
-  - start: 81
-    end: 131
+  - start: 83
+    end: 133
 - concept_id: C-006
   name: EditOperation
   definition: Single mutation instruction inside an edit batch. One of insert, delete,
@@ -78,22 +80,21 @@ concepts:
   - text format address is (start_line, end_line) 1-based inclusive
   - content field required for insert and replace; absent for delete
   source_ranges:
-  - start: 93
-    end: 107
+  - start: 89
+    end: 103
 - concept_id: C-007
   name: BatchValidation
-  definition: Pre-application check of all operations in one edit batch. Ensures no
-    ancestor-descendant conflicts and enforces bottom-up ordering.
+  definition: Pre-application check applied to tree format batches only. Ensures no
+    ancestor-descendant conflicts. Text format uses sort-then-apply without pre-validation.
   properties:
-  - runs before any operation is applied
-  - rejects batch atomically on any violation
-  - for tree formats forbids ancestor-descendant pairs in same batch
-  - text sort order is start_line descending
-  - tree sort order is node depth descending
-  - error code NESTED_BATCH_FORBIDDEN on violation
+  - tree only: runs before any operation is applied
+  - tree only: rejects batch atomically on ancestor-descendant pair
+  - tree only: error code NESTED_BATCH_FORBIDDEN on violation
+  - text only: sort by start_line descending before application
+  - text only: no ancestor-descendant concept applies
   source_ranges:
-  - start: 108
-    end: 124
+  - start: 105
+    end: 127
 - concept_id: C-008
   name: WriteCommand
   definition: Two-phase MCP command. First call shows a diff and creates the lockfile.
@@ -106,20 +107,20 @@ concepts:
   - PID mismatch on second call is treated as first call (stale lock)
   - write failure after backup restores original from backup
   source_ranges:
-  - start: 133
-    end: 181
+  - start: 135
+    end: 183
 - concept_id: C-009
   name: CloseCommand
-  definition: MCP command that ends an editing session. Compares checksums of the
-    draft and the original. Rebuilds the draft from the original if they differ.
+  definition: MCP command that ends an editing session. Behaviour differs by format.
   properties:
-  - if draft absent returns clean success
-  - if checksums match deletes draft and lockfile and releases session
-  - if checksums differ rebuilds draft from original without backup and releases session
+  - text formats: deletes <file>.draft and <file>.write, releases session
+  - tree formats: <file>.draft is never deleted
+  - tree formats: if checksums match leaves draft as is, releases session
+  - tree formats: if checksums differ rebuilds draft from original without backup
   - returns draft_rebuilt flag when rebuild occurred
   source_ranges:
-  - start: 183
-    end: 207
+  - start: 185
+    end: 211
 - concept_id: C-010
   name: BackupPair
   definition: Atomic backup of the original file and its draft created together as
@@ -130,10 +131,10 @@ concepts:
   - one entry in backup history per commit
   - initial backup created by universal_file_open when file has no history
   source_ranges:
-  - start: 68
-    end: 72
-  - start: 153
-    end: 163
+  - start: 70
+    end: 74
+  - start: 157
+    end: 167
 - concept_id: C-011
   name: HandlerReuse
   definition: The four new commands reuse the handler infrastructure of universal_file_preview
@@ -145,8 +146,8 @@ concepts:
   - imports Node and NodeKind from universal_file_preview/models.py
   - imports concrete handlers from universal_file_preview/handlers/
   source_ranges:
-  - start: 209
-    end: 222
+  - start: 213
+    end: 226
 - concept_id: C-012
   name: RegistrationCleanup
   definition: Removal of the legacy editing command zoo from hooks.py registration.

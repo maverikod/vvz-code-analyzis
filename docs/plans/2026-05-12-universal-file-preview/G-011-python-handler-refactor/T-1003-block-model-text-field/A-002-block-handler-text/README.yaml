@@ -1,6 +1,6 @@
 step_id: A-002
 parent_tactical_step: T-1003
-name: Update tree_node BlockHandler to pass text through
+name: Update _render_tree_node to promote text from attributes
 target_file: code_analysis/commands/universal_file_preview/block_handlers.py
 operation: modify_file
 priority: 2
@@ -13,64 +13,137 @@ status: draft
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.block_handlers
-  expected: 'Module imports without error. render_block for a TREE_NODE node that
-    carries ''text'' in attributes returns a summary dict with ''text'' key.
+  expected: >
+    Module imports without error. render_block for a TREE_NODE node that
+    carries 'text' in attributes returns a summary dict with 'text' key
+    and attributes dict without 'text'.
+prompt: |
+  ## Task
 
-    '
-prompt: "## Task\n\nModify an existing file.\n\nTarget file: code_analysis/commands/universal_file_preview/block_handlers.py\n\
-  Operation: modify_file\n\n## Current file content\n\n\"\"\"\nBlockHandler (C-008)\
-  \ — five rendering rules, one per NodeKind (C-004).\n\nChosen by the block's own\
-  \ NodeKind, not the parent's kind.\nA BlockHandler never includes the block's own\
-  \ children's content.\nSet is closed under this plan: five rules only.\n\nAuthor:\
-  \ Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com\n\"\"\"\n\nfrom __future__ import\
-  \ annotations\nfrom typing import Any\nfrom .models import Node, NodeKind\n\n\n\
-  def render_block(node: Node, value_preview_len: int) -> dict[str, Any]:\n    \"\"\
-  \"Render a Node using the BlockHandler rule for its own NodeKind (C-008).\n\n  \
-  \  Args:\n        node: The block node to render.\n        value_preview_len: Max\
-  \ length for any inline scalar value or name\n                         (from PreviewBudget\
-  \ C-013).\n\n    Returns:\n        Compact summary dict. Keys depend on NodeKind:\n\
-  \          scalar    -> {value: str (truncated)}\n          lines     -> {line_count:\
-  \ int, first_line: str (truncated)}\n          sequence  -> {element_count: int,\
-  \ element_kinds: list[str]}\n          mapping   -> {key_count: int, key_names:\
-  \ list[str] (each truncated)}\n          tree_node -> {type: str, name: str|None,\
-  \ attributes: dict,\n                        child_count: int}\n    \"\"\"\n   \
-  \ vpl = value_preview_len\n    kind = node.node_kind\n    if kind is NodeKind.SCALAR:\n\
-  \        return _render_scalar(node, vpl)\n    if kind is NodeKind.LINES:\n    \
-  \    return _render_lines(node, vpl)\n    if kind is NodeKind.SEQUENCE:\n      \
-  \  return _render_sequence(node, vpl)\n    if kind is NodeKind.MAPPING:\n      \
-  \  return _render_mapping(node, vpl)\n    if kind is NodeKind.TREE_NODE:\n     \
-  \   return _render_tree_node(node, vpl)\n    raise ValueError(f\"Unhandled NodeKind:\
-  \ {kind!r}\")\n\n\ndef _render_scalar(node: Node, vpl: int) -> dict[str, Any]:\n\
-  \    \"\"\"Rule 1: truncated value. No children content.\"\"\"\n    value = node.attributes.get(\"\
-  value\") or node.name or node.type_label or \"\"\n    return {\"value\": value[:vpl]}\n\
-  \n\ndef _render_lines(node: Node, vpl: int) -> dict[str, Any]:\n    \"\"\"Rule 2:\
-  \ total line count and first line truncated.\"\"\"\n    children = node.children\n\
-  \    first = children[0].attributes.get(\"value\", \"\") if children else \"\"\n\
-  \    return {\"line_count\": len(children), \"first_line\": first[:vpl]}\n\n\ndef\
-  \ _render_sequence(node: Node, vpl: int) -> dict[str, Any]:  # noqa: ARG001\n  \
-  \  \"\"\"Rule 3: element count and coarse element-kind summary.\"\"\"\n    children\
-  \ = node.children\n    kinds = sorted({c.node_kind.value for c in children})\n \
-  \   return {\"element_count\": len(children), \"element_kinds\": kinds}\n\n\ndef\
-  \ _render_mapping(node: Node, vpl: int) -> dict[str, Any]:\n    \"\"\"Rule 4: key\
-  \ count and key name list, each truncated. No values.\"\"\"\n    children = node.children\n\
-  \    keys = [c.name[:vpl] if c.name else \"\" for c in children]\n    return {\"\
-  key_count\": len(children), \"key_names\": keys}\n\n\ndef _render_tree_node(node:\
-  \ Node, vpl: int) -> dict[str, Any]:\n    \"\"\"Rule 5: type, optional name, attributes,\
-  \ child count.\"\"\"\n    return {\n        \"type\": (node.type_label or \"\")[:vpl],\n\
-  \        \"name\": node.name[:vpl] if node.name else None,\n        \"attributes\"\
-  : node.attributes,\n        \"child_count\": len(node.children),\n    }\n\n## What\
-  \ to change\n\nModify _render_tree_node to pass the pre-rendered text through when\
-  \ available.\nWhen node.attributes contains a 'text' key, include it in the summary\
-  \ and\nexclude it from the generic attributes dict:\n\n    def _render_tree_node(node:\
-  \ Node, vpl: int) -> dict[str, Any]:\n        \"\"\"Rule 5: type, optional name,\
-  \ attributes, child count.\n\n        When node.attributes carries a 'text' key\
-  \ (pre-rendered by\n        PythonNodeRenderer C-022), it is promoted to a top-level\
-  \ 'text'\n        field in the summary and excluded from the 'attributes' dict.\n\
-  \        \"\"\"\n        text = node.attributes.get(\"text\") if node.attributes\
-  \ else None\n        attrs = {k: v for k, v in (node.attributes or {}).items() if\
-  \ k != \"text\"}\n        summary: dict[str, Any] = {\n            \"type\": (node.type_label\
-  \ or \"\")[:vpl],\n            \"name\": node.name[:vpl] if node.name else None,\n\
-  \            \"attributes\": attrs,\n            \"child_count\": len(node.children),\n\
-  \        }\n        if text is not None:\n            summary[\"text\"] = text\n\
-  \        return summary\n\nDo not change any other function.\n\n## Constraints\n\
-  \nProduce the full new file content.\nFile must not exceed 110 lines after the change.\n"
+  Modify an existing file by rewriting one private function.
+
+  Target file: code_analysis/commands/universal_file_preview/block_handlers.py
+  Operation: modify_file
+
+  ## Current file content (84 lines)
+
+  ---
+  """
+  BlockHandler (C-008) — five rendering rules, one per NodeKind (C-004).
+
+  Chosen by the block's own NodeKind, not the parent's kind.
+  A BlockHandler never includes the block's own children's content.
+  Set is closed under this plan: five rules only.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+  from typing import Any
+  from .models import Node, NodeKind
+
+
+  def render_block(node: Node, value_preview_len: int) -> dict[str, Any]:
+      """
+      Render a Node using the BlockHandler rule for its own NodeKind (C-008).
+
+      Args:
+          node: The block node to render.
+          value_preview_len: Max length for any inline scalar value or name
+                           (from PreviewBudget C-013).
+
+      Returns:
+          Compact summary dict. Keys depend on NodeKind:
+            scalar    -> {value: str (truncated)}
+            lines     -> {line_count: int, first_line: str (truncated)}
+            sequence  -> {element_count: int, element_kinds: list[str]}
+            mapping   -> {key_count: int, key_names: list[str] (each truncated)}
+            tree_node -> {type: str, name: str|None, attributes: dict,
+                          child_count: int}
+      """
+      vpl = value_preview_len
+      kind = node.node_kind
+      if kind is NodeKind.SCALAR:
+          return _render_scalar(node, vpl)
+      if kind is NodeKind.LINES:
+          return _render_lines(node, vpl)
+      if kind is NodeKind.SEQUENCE:
+          return _render_sequence(node, vpl)
+      if kind is NodeKind.MAPPING:
+          return _render_mapping(node, vpl)
+      if kind is NodeKind.TREE_NODE:
+          return _render_tree_node(node, vpl)
+      raise ValueError(f"Unhandled NodeKind: {kind!r}")
+
+  def _render_scalar(node: Node, vpl: int) -> dict[str, Any]:
+      """Rule 1: truncated value. No children content."""
+      value = node.attributes.get("value") or node.name or node.type_label or ""
+      return {"value": value[:vpl]}
+
+
+  def _render_lines(node: Node, vpl: int) -> dict[str, Any]:
+      """Rule 2: total line count and first line truncated."""
+      children = node.children
+      first = children[0].attributes.get("value", "") if children else ""
+      return {"line_count": len(children), "first_line": first[:vpl]}
+
+
+  def _render_sequence(node: Node, vpl: int) -> dict[str, Any]:  # noqa: ARG001
+      """Rule 3: element count and coarse element-kind summary."""
+      children = node.children
+      kinds = sorted({c.node_kind.value for c in children})
+      return {"element_count": len(children), "element_kinds": kinds}
+
+
+  def _render_mapping(node: Node, vpl: int) -> dict[str, Any]:
+      """Rule 4: key count and key name list, each truncated. No values."""
+      children = node.children
+      keys = [c.name[:vpl] if c.name else "" for c in children]
+      return {"key_count": len(children), "key_names": keys}
+
+
+  def _render_tree_node(node: Node, vpl: int) -> dict[str, Any]:
+      """Rule 5: type, optional name, attributes, child count."""
+      return {
+          "type": (node.type_label or "")[:vpl],
+          "name": node.name[:vpl] if node.name else None,
+          "attributes": node.attributes,
+          "child_count": len(node.children),
+      }
+  ---
+
+  ## What to change
+
+  Modify _render_tree_node to promote pre-rendered text from attributes.
+  When node.attributes contains a 'text' key (placed there by PythonNodeRenderer
+  C-022), promote it to a top-level 'text' field in the summary and exclude it
+  from the 'attributes' dict.
+
+  Replace the entire _render_tree_node function with:
+
+      def _render_tree_node(node: Node, vpl: int) -> dict[str, Any]:
+          """Rule 5: type, optional name, attributes, child count.
+
+          When node.attributes carries a 'text' key (pre-rendered by
+          PythonNodeRenderer C-022), it is promoted to a top-level 'text'
+          field in the summary and excluded from the 'attributes' dict.
+          """
+          text = node.attributes.get("text") if node.attributes else None
+          attrs = {k: v for k, v in (node.attributes or {}).items() if k != "text"}
+          summary: dict[str, Any] = {
+              "type": (node.type_label or "")[:vpl],
+              "name": node.name[:vpl] if node.name else None,
+              "attributes": attrs,
+              "child_count": len(node.children),
+          }
+          if text is not None:
+              summary["text"] = text
+          return summary
+
+  Do not change any other function.
+
+  ## Constraints
+
+  Produce the full new file content.
+  File must not exceed 110 lines after the change.

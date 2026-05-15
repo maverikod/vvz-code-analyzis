@@ -15,8 +15,8 @@ concepts:
   - stored in module-level _sessions dict in the server process
   - not persisted across server restarts
   source_ranges:
-  - start: 178
-    end: 195
+  - start: 247
+    end: 263
 - concept_id: C-002
   name: FormatGroup
   definition: Classification of a file into one of three groups that determines draft
@@ -25,21 +25,21 @@ concepts:
   - sidecar (Python): draft is <file>.cst_sidecar; persists after close
   - tree-temp (JSON, YAML): draft is <file>.draft; deleted after close
   - text (MD, txt, rst, adoc): draft is <file>.draft copy; deleted after close
-  - group resolved by registry.resolve_handler(ext)
+  - group resolved from file extension
   source_ranges:
-  - start: 35
+  - start: 41
     end: 73
 - concept_id: C-003
   name: DraftFile
   definition: On-disk working copy written after every mutation. Format and persistence
     depend on the format group.
   properties:
-  - sidecar group: <file>.cst_sidecar via write_sidecar_atomic; persists
+  - sidecar group: <file>.cst_sidecar; persists after close
   - tree-temp group: <file>.draft serialised tree; deleted on close
   - text group: <file>.draft byte copy; deleted on close
-  - written after each mutation, not only on write
+  - written after each mutation
   source_ranges:
-  - start: 35
+  - start: 41
     end: 73
 - concept_id: C-004
   name: WriteLockfile
@@ -47,25 +47,25 @@ concepts:
     protocol.
   properties:
   - path is <file>.write
-  - contains os.getpid() as text
+  - contains server process PID as text
   - absent means first write call; present with matching PID means second
-  - PID mismatch means stale lock; treated as first call
+  - PID mismatch treated as first call
   - deleted on successful commit or on universal_file_open
   source_ranges:
-  - start: 74
+  - start: 75
     end: 79
 - concept_id: C-005
   name: OpenCommand
   definition: MCP command that starts an editing session. Cleans stale artefacts,
     creates draft, creates initial backup when file has no history.
   properties:
-  - deletes stale <file>.write and <file>.draft (not cst_sidecar) on entry
-  - resolves format group via registry.resolve_handler
+  - deletes stale lockfile and draft (not sidecar) on entry
+  - resolves format group from file extension
   - creates draft appropriate for format group
-  - creates initial backup if BackupManager.list_versions returns empty
+  - creates initial backup if file has no backup history
   - returns session_id and available operations for the format
   source_ranges:
-  - start: 113
+  - start: 116
     end: 136
 - concept_id: C-006
   name: EditCommand
@@ -81,7 +81,7 @@ concepts:
   - NESTED_BATCH_FORBIDDEN on ancestor-descendant violation (sidecar only)
   source_ranges:
   - start: 138
-    end: 172
+    end: 175
 - concept_id: C-007
   name: EditOperation
   definition: Single mutation in an edit batch. Type, address, and content depend
@@ -93,8 +93,8 @@ concepts:
   - text address: start_line + end_line (1-based inclusive)
   - content required for insert and replace; absent for delete
   source_ranges:
-  - start: 138
-    end: 155
+  - start: 142
+    end: 148
 - concept_id: C-008
   name: BatchValidation
   definition: Pre-application check for sidecar group batches only. Forbids ancestor-descendant
@@ -106,82 +106,77 @@ concepts:
   - error code NESTED_BATCH_FORBIDDEN
   - tree-temp and text groups have no batch validation
   source_ranges:
-  - start: 156
-    end: 165
+  - start: 151
+    end: 154
 - concept_id: C-009
   name: WriteCommand
   definition: Two-phase MCP command. First call returns diff and writes lockfile.
     Second call (PID matches) commits with backup.
   properties:
   - first call: generate code from draft, compute diff, write lockfile, return diff
-  - second call: backup pair + rename temp to original + delete lockfile + git commit
-  - PID mismatch: treat as first call
-  - write failure after backup: restore_file from backup
+  - second call: backup pair then rename temp to original then delete lockfile then
+      git commit
+  - PID mismatch treated as first call
+  - write failure after backup restores original from backup
   source_ranges:
-  - start: 174
-    end: 210
+  - start: 177
+    end: 213
 - concept_id: C-010
   name: CloseCommand
   definition: MCP command that ends the session. Behaviour differs by format group.
   properties:
-  - sidecar: verify_sidecar_against_source; mismatch rebuilds sidecar; sidecar not
-      deleted
+  - sidecar: checksum verify; mismatch rebuilds sidecar; sidecar not deleted
   - tree-temp: sha256 compare draft vs original; mismatch rebuilds draft; draft deleted
-      on match
+      on match; in-memory tree freed
   - text: delete draft; always clean
   - lockfile deleted in all cases
   - draft_rebuilt flag returned when rebuild occurred
   source_ranges:
-  - start: 212
-    end: 245
+  - start: 215
+    end: 244
 - concept_id: C-011
   name: BackupPair
   definition: Atomic backup of original file and draft created together as one history
     entry on successful write commit.
   properties:
   - created only on successful second write call
-  - initial backup created by open when BackupManager.list_versions is empty
-  - uses BackupManager.create_backup from core/backup_manager.py
-  - restore via BackupManager.restore_file on write failure
+  - initial backup created by open when file has no backup history
+  - restore from backup on write failure
   source_ranges:
-  - start: 100
-    end: 104
-  - start: 195
-    end: 203
+  - start: 105
+    end: 108
+  - start: 197
+    end: 205
 - concept_id: C-012
   name: ExistingInfrastructure
-  definition: Existing code reused by the four new commands without modification.
+  definition: Set of existing project components that the four new commands reuse
+    without modification.
   properties:
-  - core/file_handlers/registry.py: resolve_handler, HANDLER_IDS
-  - core/file_handlers/python_handler.py: PythonFileHandler.save, replace via run_ops_mode
-  - core/file_handlers/diff_support.py: diff computation
-  - core/file_handlers/text_ranges.py: text range operations
-  - core/cst_tree/tree_sidecar.py: sidecar_path_for_py, write_sidecar_atomic, verify_sidecar_against_source
-  - core/cst_tree/tree_builder.py: get_tree, load
-  - core/json_tree/tree_builder.py: load_file_to_tree, get_tree, remove_tree
-  - core/yaml_tree/tree_builder.py: load_file_to_tree, get_tree, remove_tree
-  - core/backup_manager.py: BackupManager.create_backup, list_versions, restore_file
-  - core/git_integration.py: commit_after_write
-  - core/file_lock.py: file_lock
-  - universal_file_replace_command.py: _sort_text_replacements_bottom_up
-  - commands/universal_file_preview/: HandlerDispatcher, FileHandler, Node, NodeKind
+  - handler registry resolves file extension to format group and handler
+  - file handlers implement read, save, replace, delete per format
+  - sidecar infrastructure manages Python tree persistence and sync check
+  - JSON and YAML tree builders manage in-memory trees
+  - backup manager creates, lists, and restores file backups
+  - git integration commits after successful write
+  - file lock provides advisory locking
+  - text sort utility orders text operations bottom-up
+  - preview handlers provide read-only node navigation
   source_ranges:
   - start: 82
-    end: 111
+    end: 113
 - concept_id: C-013
   name: RegistrationCleanup
-  definition: Removal of legacy editing commands from hooks.py. Code not deleted;
+  definition: Removal of legacy editing commands from registration. Code not deleted;
     only registration removed.
   properties:
-  - removes universal_file_save, universal_file_replace, universal_file_read, universal_file_delete
-  - removes all cst_* and json_* tree commands
-  - removes write_project_text_lines, replace_file_lines, compose_cst_module, query_cst,
-    list_cst_blocks, read_project_text_file
-  - get_file_lines remains (fallback for broken files)
+  - legacy save, replace, read, delete commands unregistered
+  - all legacy CST and JSON tree commands unregistered
+  - legacy text line commands unregistered
+  - get_file_lines remains as fallback for broken files
   - universal_file_preview remains unchanged
   source_ranges:
-  - start: 14
-    end: 32
+  - start: 21
+    end: 38
 relations:
 - from_concept: C-005
   to_concept: C-001
@@ -219,6 +214,9 @@ relations:
 - from_concept: C-005
   to_concept: C-004
   type: uses
+- from_concept: C-001
+  to_concept: C-002
+  type: depends_on
 - from_concept: C-005
   to_concept: C-002
   type: consumes

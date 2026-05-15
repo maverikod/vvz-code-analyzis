@@ -8,26 +8,41 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from __future__ import annotations
 
+
 import logging
+
 from pathlib import Path
+
 from typing import Any, Dict, Optional, Type
+
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+
 from .base_mcp_command import BaseMCPCommand
+
 from .project_text_file_guard import reject_if_write_under_project_venv
+
 from .registration import (
     MCP_FILE_MANAGEMENT_REGISTRY_HELP,
     REGISTRY_SCHEMA_DISCOVERY_SHORT,
 )
+
 from ..core.backup_manager import BackupManager
+
 from ..core.git_integration import commit_after_write
+
 from ..core.exceptions import ValidationError
+
 from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
+
 from ..core.file_handlers.json_handler import JsonFileHandler
+
 from ..core.file_handlers.python_handler import PythonFileHandler
+
 from ..core.file_handlers.registry import (
     HANDLER_JSON,
     HANDLER_PYTHON,
@@ -36,15 +51,21 @@ from ..core.file_handlers.registry import (
     RegistryError,
     resolve_handler,
 )
+
 from ..core.file_handlers.text_handler import (
     TextFileHandler,
     persist_plain_text_file_metadata,
 )
+
 from ..core.file_handlers.yaml_handler import YamlFileHandler
+
 from ..core.file_lock import file_lock
+
 from ..core.path_normalization import normalize_path_simple
 
+
 logger = logging.getLogger(__name__)
+
 
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
@@ -61,6 +82,7 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
     return SuccessResult(data=data)
 
 
+
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
     return ErrorResult(
         message=fr.message or fr.code,
@@ -73,12 +95,16 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
         },
     )
 
-
-class UniversalFileSaveCommand(BaseMCPCommand):
+class UniversalFileSaveCommand:
+    
+    
     """Save project files via handler registry (extension routing before side effects)."""
-
+    
+    
     name = "universal_file_save"
+    
     version = "1.0.0"
+    
     descr = (
         "Full-file save using the universal handler registry. Unsupported extensions fail "
         "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Text: full `content` "
@@ -86,11 +112,16 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         "`content` is applied via CST-safe ops. Supports dry_run and diff when the handler "
         "can serialize before/after." + " " + MCP_FILE_MANAGEMENT_REGISTRY_HELP
     )
+    
     category = "file_management"
+    
     author = "Vasiliy Zdanovskiy"
+    
     email = "vasilyvz@gmail.com"
+    
     use_queue = False
-
+    
+    
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         return {
@@ -158,7 +189,8 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             "required": ["project_id", "file_path", "content"],
             "additionalProperties": False,
         }
-
+    
+    
     @classmethod
     def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
         return {
@@ -174,7 +206,8 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
         }
-
+    
+    
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
         if content is None:
@@ -190,7 +223,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 details={"field": "content"},
             )
         return None
-
+    
     async def execute(
         self,
         project_id: str,
@@ -214,13 +247,13 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     code=e.code,
                     details=e.details,
                 )
-
+    
             bad = self._validate_save_payload(content)
             if bad is not None:
                 return bad
-
+    
             assert content is not None
-
+    
             database = self._open_database_from_config(auto_analyze=False)
             absolute_path = self._resolve_file_path_from_project(
                 database, project_id, file_path, require_exists=False
@@ -233,11 +266,11 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     details={"project_id": project_id},
                 )
             root_dir = Path(project.root_path)
-
+    
             blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
             if blocked_venv is not None:
                 return blocked_venv
-
+    
             extra: Dict[str, Any] = {
                 "absolute_path": absolute_path,
                 "content": content,
@@ -246,32 +279,21 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 extra["diff_context_lines"] = diff_context_lines
             if isinstance(commit_message, str) and commit_message.strip():
                 extra["commit_message"] = commit_message
-            if handler_id in (HANDLER_JSON, HANDLER_YAML):
-                extra["database"] = database
-                extra["root_dir"] = root_dir.resolve()
-                extra["normalized_path"] = normalize_path_simple(str(absolute_path))
-            if handler_id == HANDLER_PYTHON:
-                extra["root_path"] = root_dir.resolve()
-                extra["validate_syntax_only"] = validate_syntax_only
-                if tree_id is not None and str(tree_id).strip():
-                    extra["tree_id"] = str(tree_id)
-
-            backup_for_handler = bool(backup)
-            if handler_id == HANDLER_TEXT and (not dry_run) and backup_for_handler:
-                backup_for_handler = False
-
-            req = FileHandlerRequest(
-                project_id=project_id,
-                file_path=file_path,
-                handler_id=handler_id,
-                operation="save",
-                dry_run=bool(dry_run),
-                diff=bool(diff),
-                backup=backup_for_handler,
-                extra=extra,
-            )
-
+    
             if handler_id == HANDLER_TEXT:
+                backup_for_handler = bool(backup)
+                if not dry_run and backup_for_handler:
+                    backup_for_handler = False
+                req = FileHandlerRequest(
+                    project_id=project_id,
+                    file_path=file_path,
+                    handler_id=handler_id,
+                    operation="save",
+                    dry_run=bool(dry_run),
+                    diff=bool(diff),
+                    backup=backup_for_handler,
+                    extra=extra,
+                )
                 fr = self._run_text_save(
                     req=req,
                     database=database,
@@ -281,11 +303,57 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     dry_run=bool(dry_run),
                 )
             elif handler_id == HANDLER_JSON:
-                fr = JsonFileHandler().save(req)
+                extra["database"] = database
+                extra["root_dir"] = root_dir.resolve()
+                extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                fr = JsonFileHandler().save(
+                    FileHandlerRequest(
+                        project_id=project_id,
+                        file_path=file_path,
+                        handler_id=handler_id,
+                        operation="save",
+                        dry_run=bool(dry_run),
+                        diff=bool(diff),
+                        backup=bool(backup),
+                        extra=extra,
+                    )
+                )
             elif handler_id == HANDLER_YAML:
-                fr = YamlFileHandler().save(req)
+                extra["database"] = database
+                extra["root_dir"] = root_dir.resolve()
+                extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                fr = YamlFileHandler().save(
+                    FileHandlerRequest(
+                        project_id=project_id,
+                        file_path=file_path,
+                        handler_id=handler_id,
+                        operation="save",
+                        dry_run=bool(dry_run),
+                        diff=bool(diff),
+                        backup=bool(backup),
+                        extra=extra,
+                    )
+                )
             elif handler_id == HANDLER_PYTHON:
-                fr = PythonFileHandler().save(req)
+                cm = (
+                    commit_message.strip()
+                    if isinstance(commit_message, str) and commit_message.strip()
+                    else None
+                )
+                fr = self._run_python_save(
+                    content=content,
+                    absolute_path=absolute_path,
+                    root_dir=root_dir,
+                    project_id=project_id,
+                    file_path=file_path,
+                    handler_id=handler_id,
+                    database=database,
+                    backup=bool(backup),
+                    dry_run=bool(dry_run),
+                    diff=bool(diff),
+                    commit_message=cm,
+                    caller_tree_id=tree_id,
+                )
             else:
                 return ErrorResult(
                     message=f"Unhandled handler_id after registry resolve: {handler_id!r}",
@@ -297,10 +365,10 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                         "operation": "save",
                     },
                 )
-
+    
             if not fr.success:
                 return _error_from_handler(fr)
-            if not dry_run:
+            if not dry_run and handler_id != HANDLER_PYTHON:
                 cm = (
                     commit_message.strip()
                     if isinstance(commit_message, str) and commit_message.strip()
@@ -316,7 +384,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 if not git_ok and git_err:
                     logger.warning("Git commit after universal_file_save: %s", git_err)
             return _success_from_handler(fr, operation="save")
-
+    
         except ValidationError as e:
             return ErrorResult(
                 message=str(e),
@@ -330,7 +398,8 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 message=f"universal_file_save failed: {e}",
                 code="UNIVERSAL_FILE_SAVE_ERROR",
             )
-
+    
+    
     def _run_text_save(
         self,
         *,
@@ -342,11 +411,11 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         dry_run: bool,
     ) -> FileHandlerResult:
         """Text save with BackupManager (handler does not) and files-table metadata."""
-
+    
         def _restore(rel: str, uuid_: str) -> None:
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
-
+    
         with file_lock(
             absolute_path,
             mode="full",
@@ -355,7 +424,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             file_path=req.file_path,
         ):
             normalized_path = normalize_path_simple(str(absolute_path))
-
+    
             backup_uuid: Optional[str] = None
             if not dry_run and backup and absolute_path.exists():
                 bm = BackupManager(root_dir)
@@ -387,14 +456,14 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                             "resolved_path": str(absolute_path),
                         },
                     )
-
+    
             fr = TextFileHandler().save(req)
             if not fr.success:
                 return fr
-
+    
             if dry_run:
                 return fr
-
+    
             meta = persist_plain_text_file_metadata(
                 database=database,
                 project_id=req.project_id,
@@ -436,3 +505,4 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 changed=fr.changed,
                 data=out,
             )
+    

@@ -202,17 +202,23 @@ class UniversalFileSaveCommand:
 
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
+        """Validate that content is not None and not empty.
+
+    Args:
+        content: Content string to validate.
+
+    Returns:
+        ErrorResult if invalid, None if valid.
+    """
         if content is None:
             return ErrorResult(
                 message="content is required",
-                code="VALIDATION_ERROR",
-                details={"field": "content"},
+                code="CONTENT_REQUIRED",
             )
-        if not isinstance(content, str):
+        if not content.strip():
             return ErrorResult(
-                message="content must be a string",
-                code="VALIDATION_ERROR",
-                details={"field": "content"},
+                message="content must not be empty",
+                code="CONTENT_EMPTY",
             )
         return None
 

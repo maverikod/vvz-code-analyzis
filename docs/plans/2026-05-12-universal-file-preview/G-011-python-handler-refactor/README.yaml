@@ -2,18 +2,21 @@ step_id: G-011
 name: PythonFileHandler refactor
 description: 'Refactor PythonFileHandler and its helpers after G-010 visualizer is
   in place. Goals: (1) remove dead code paths left from pre-visualizer era (_cst_statements_to_nodes,
-  _cst_node_to_node, _classify_cst_node, _find_by_stable_id — kept only if used elsewhere);
-  (2) rewrite _metadata_children_to_nodes to correctly enumerate module-level children
-  using outline_nodes depth=1 from metadata_map instead of iterating children_ids;
-  (3) rewrite open_root to call render_module and return structured text block; (4)
-  add text field to Block model and wire it through response serialization; (5) smoke-test
-  the full round-trip with a real Python file.
+  _cst_node_to_node, _classify_cst_node, _find_by_stable_id); (2) rewrite
+  _metadata_children_to_nodes to correctly enumerate module-level children using
+  outline_nodes depth=1 from metadata_map; (3) rewrite open_root to call render_module
+  and return structured text block; (4) add text field to Block model and wire it
+  through BlockHandler and ResponseEnvelope serialization; (5) smoke-test the full
+  round-trip with a real Python file via PreviewCommand.
 
   '
 concepts:
-- C-016
+- C-001
 - C-003
 - C-005
+- C-008
+- C-012
+- C-016
 - C-022
 - C-023
 relations:
@@ -26,6 +29,12 @@ relations:
 - from_concept: C-016
   to_concept: C-023
   type: consumes
+- from_concept: C-001
+  to_concept: C-012
+  type: produces
+- from_concept: C-008
+  to_concept: C-005
+  type: depends_on
 depends_on:
 - G-010
 tactical_steps:

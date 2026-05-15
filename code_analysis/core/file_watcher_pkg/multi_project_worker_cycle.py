@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 import logging
 
+from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from .multi_project_worker_scan import scan_watch_dir
 from .processor import FileChangeProcessor
@@ -51,11 +52,12 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
 
     cycle_id = str(uuid.uuid4())
     cycle_start_time = time.time()
+    _now_sql = sql_julian_timestamp_now_expr(database)
 
     database.execute(
-        """
+        f"""
         UPDATE file_watcher_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now_sql}
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
@@ -121,7 +123,7 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
             )
 
         database.execute(
-            """
+            f"""
             UPDATE file_watcher_stats
             SET
                 files_added = files_added + ?,
@@ -131,7 +133,7 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
                 files_changed = files_changed + ?,
                 files_deleted = files_deleted + ?,
                 total_processing_time_seconds = total_processing_time_seconds + ?,
-                last_updated = julianday('now')
+                last_updated = {_now_sql}
             WHERE cycle_id = ?
             """,
             (
@@ -149,19 +151,19 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         )
 
     database.execute(
-        """
+        f"""
         INSERT INTO file_watcher_stats (
             cycle_id, cycle_start_time, files_total_at_start, last_updated
-        ) VALUES (?, ?, ?, julianday('now'))
+        ) VALUES (?, ?, ?, {_now_sql})
         """,
         (cycle_id, cycle_start_time, cycle_stats["files_scanned"]),
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     database.execute(
-        """
+        f"""
         UPDATE file_watcher_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now_sql}
         WHERE cycle_id = ?
         """,
         (time.time(), cycle_id),

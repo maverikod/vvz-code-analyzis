@@ -66,6 +66,23 @@ async def _request_chunking_for_files(
             file_id = file_record["id"]
             project_id = file_record["project_id"]
 
+            # Skip rows where path is absolute (legacy defect until watcher dedup).
+            _raw_path = file_record.get("path", "") or ""
+            if _raw_path.startswith("/") or (
+                len(_raw_path) > 2
+                and _raw_path[1] == ":"
+                and _raw_path[2] in "\\/"
+            ):
+                logger.error(
+                    "[VECTORIZER_ABSPATH] Skipping file with absolute path in DB: "
+                    "file_id=%s project_id=%s path=%s — "
+                    "run file_watcher to deduplicate.",
+                    file_id,
+                    project_id,
+                    _raw_path,
+                )
+                continue
+
             file_path_obj = resolve_indexed_file_path(file_record)
             if file_path_obj is None:
                 logger.info(

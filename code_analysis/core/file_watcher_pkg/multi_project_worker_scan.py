@@ -22,6 +22,7 @@ from ..venv_path_policy import (
     load_ignore_exceptions_from_config_path,
     load_venv_site_packages_index_allowlist_from_config,
 )
+from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..docs_indexing_config_load import load_docs_indexing_from_config_path
 from ..worker_project_activity import (
@@ -38,6 +39,231 @@ from .watcher_soft_deleted_projects import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _abspath_dedup_ts(value: Any) -> float:
+    if value is None:
+        return float("inf")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
+    """
+    Finds files rows where path is absolute (starts with '/') within projects
+    rooted under watch_dir. For each absolute-path row, checks if a sibling
+    row with the relative counterpart exists. If a duplicate pair is found,
+    the LATER-created (higher updated_at / created_at) row is deleted (all
+    related data cleared), and the canonical (earlier) row's path/relative_path
+    is normalised to the relative form. Returns count of pairs resolved.
+    """
+    wd = str(watch_dir.resolve())
+    root_prefix = (wd, wd + "/%")
+    list_sql = (
+        "SELECT f.id AS file_id, f.project_id, f.path, f.relative_path, "
+        "f.created_at, f.updated_at, p.root_path "
+        "FROM files f "
+        "JOIN projects p ON p.id = f.project_id "
+        "WHERE (f.deleted IS NULL OR f.deleted = 0) "
+        "AND SUBSTR(CAST(f.path AS TEXT), 1, 1) = '/' "
+        "AND p.root_path IS NOT NULL "
+        "AND (p.root_path = ? OR p.root_path LIKE ?)"
+    )
+    try:
+        list_res = database.execute(
+            list_sql,
+            root_prefix,
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+        )
+    except Exception as exc:
+        logger.warning("[ABSPATH_DEDUP] list absolute rows failed: %s", exc)
+        return 0
+
+    abs_rows = (
+        list(list_res.get("data", []))
+        if isinstance(list_res, dict)
+        else []
+    )
+    pairs_merged = 0
+    lone_fixed = 0
+    skipped = 0
+    _now_sql = sql_julian_timestamp_now_expr(database)
+
+    dup_sql = (
+        "SELECT id, created_at, updated_at FROM files "
+        "WHERE project_id = ? AND path = ? "
+        "AND (deleted IS NULL OR deleted = 0) AND id != ?"
+    )
+
+    for abs_row in abs_rows:
+        try:
+            abs_path_str = str(abs_row.get("path") or "")
+            project_id = abs_row.get("project_id")
+            abs_row_id = abs_row.get("file_id")
+            root_s = abs_row.get("root_path")
+            if not abs_path_str or not project_id or abs_row_id is None or not root_s:
+                skipped += 1
+                continue
+
+            try:
+                abs_path = Path(abs_path_str)
+                root = Path(str(root_s))
+                rel = abs_path.relative_to(root)
+            except ValueError:
+                logger.warning(
+                    "[ABSPATH_DEDUP] skip abs path outside project root: "
+                    "project_id=%s path=%s root=%s",
+                    project_id,
+                    abs_path_str,
+                    root_s,
+                )
+                skipped += 1
+                continue
+
+            rel_str = rel.as_posix()
+
+            try:
+                dup_res = database.execute(
+                    dup_sql,
+                    (project_id, rel_str, str(abs_row_id)),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[ABSPATH_DEDUP] duplicate lookup failed for %s: %s",
+                    abs_path_str,
+                    exc,
+                )
+                skipped += 1
+                continue
+
+            dup_rows = (
+                list(dup_res.get("data", []))
+                if isinstance(dup_res, dict)
+                else []
+            )
+
+            if dup_rows:
+                rel_dup = dup_rows[0]
+                rel_dup_id = rel_dup.get("id")
+                t_abs = (
+                    str(abs_row_id),
+                    abs_row.get("created_at"),
+                    abs_row.get("updated_at"),
+                )
+                t_rel = (
+                    str(rel_dup_id),
+                    rel_dup.get("created_at"),
+                    rel_dup.get("updated_at"),
+                )
+
+                def _pair_sort_key(t: Tuple[str, Any, Any]) -> Tuple[float, float, str]:
+                    return (
+                        _abspath_dedup_ts(t[2]),
+                        _abspath_dedup_ts(t[1]),
+                        str(t[0]),
+                    )
+
+                if _pair_sort_key(t_abs) <= _pair_sort_key(t_rel):
+                    canonical_id, duplicate_id = t_abs[0], t_rel[0]
+                else:
+                    canonical_id, duplicate_id = t_rel[0], t_abs[0]
+
+                try:
+                    clear_fn = getattr(database, "clear_file_data", None)
+                    if callable(clear_fn):
+                        clear_fn(str(duplicate_id))
+                    else:
+                        # Legacy facades only: avoid SQLite-only tables (e.g.
+                        # ``chunk_embeddings``) that are absent on PostgreSQL.
+                        for tbl in ("code_chunks", "vector_index", "code_content"):
+                            database.execute(
+                                f"DELETE FROM {tbl} WHERE file_id = ?",
+                                (str(duplicate_id),),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "[ABSPATH_DEDUP] duplicate cleanup failed duplicate_id=%s: %s",
+                        duplicate_id,
+                        exc,
+                    )
+                    skipped += 1
+                    continue
+
+                try:
+                    database.execute(
+                        "DELETE FROM files WHERE id = ?",
+                        (str(duplicate_id),),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
+                    database.execute(
+                        f"UPDATE files SET path = ?, relative_path = ?, "
+                        f"updated_at = {_now_sql} WHERE id = ?",
+                        (rel_str, rel_str, str(canonical_id)),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
+                    database.execute(
+                        "DELETE FROM indexing_errors WHERE project_id = ? "
+                        "AND (file_path = ? OR file_path = ?)",
+                        (project_id, abs_path_str, rel_str),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[ABSPATH_DEDUP] merge update failed canonical_id=%s: %s",
+                        canonical_id,
+                        exc,
+                    )
+                    skipped += 1
+                    continue
+
+                logger.info(
+                    "[ABSPATH_DEDUP] merged abs=%s -> canonical_id=%s rel=%s",
+                    abs_path_str,
+                    canonical_id,
+                    rel_str,
+                )
+                pairs_merged += 1
+            else:
+                try:
+                    database.execute(
+                        f"UPDATE files SET path = ?, relative_path = ?, "
+                        f"updated_at = {_now_sql} WHERE id = ?",
+                        (rel_str, rel_str, str(abs_row_id)),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[ABSPATH_DEDUP] lone abs fix failed id=%s: %s",
+                        abs_row_id,
+                        exc,
+                    )
+                    skipped += 1
+                    continue
+                logger.info(
+                    "[ABSPATH_DEDUP] fixed lone abs_row abs=%s -> rel=%s",
+                    abs_path_str,
+                    rel_str,
+                )
+                lone_fixed += 1
+        except Exception as exc:
+            logger.warning(
+                "[ABSPATH_DEDUP] row handling failed: %s",
+                exc,
+                exc_info=True,
+            )
+            skipped += 1
+
+    logger.info(
+        "[ABSPATH_DEDUP] done: pairs_merged=%d, lone_fixed=%d, skipped=%d",
+        pairs_merged,
+        lone_fixed,
+        skipped,
+    )
+    return pairs_merged + lone_fixed
 
 
 def scan_watch_dir(
@@ -98,6 +324,16 @@ def scan_watch_dir(
         return stats
 
     try:
+        _now_sql = sql_julian_timestamp_now_expr(database)
+        try:
+            _deduplicate_absolute_paths(database, watch_dir)
+        except Exception as _dedup_exc:
+            logger.warning(
+                "[ABSPATH_DEDUP] deduplication failed (non-fatal): %s",
+                _dedup_exc,
+                exc_info=True,
+            )
+
         try:
             discovered_projects = discover_projects_in_directory(watch_dir)
         except NestedProjectError as e:
@@ -211,7 +447,7 @@ def scan_watch_dir(
                         database.execute(
                             f"""
                             UPDATE projects 
-                            SET {', '.join(update_fields)}, updated_at = julianday('now')
+                            SET {', '.join(update_fields)}, updated_at = {_now_sql}
                             WHERE id = ?
                             """,
                             tuple(update_values),
@@ -244,9 +480,9 @@ def scan_watch_dir(
                                 f"({project_root_obj.project_id}), updating"
                             )
                             database.execute(
-                                """
+                                f"""
                                 UPDATE projects 
-                                SET id = ?, comment = ?, updated_at = julianday('now')
+                                SET id = ?, comment = ?, updated_at = {_now_sql}
                                 WHERE id = ?
                                 """,
                                 (
@@ -293,9 +529,9 @@ def scan_watch_dir(
                             database=database,
                         )
                         database.execute(
-                            """
+                            f"""
                             INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
-                            VALUES (?, ?, ?, ?, ?, julianday('now'))
+                            VALUES (?, ?, ?, ?, ?, {_now_sql})
                             """,
                             (
                                 project_root_obj.project_id,
@@ -408,7 +644,7 @@ def scan_watch_dir(
         total_deleted = sum(len(d.deleted_files) for d in delta.values())
         per_project = " | ".join(
             f"{proj_id} new={len(d.new_files)} changed={len(d.changed_files)} deleted={len(d.deleted_files)}"
-            for proj_id, d in sorted(delta.items())
+            for proj_id, d in sorted(delta.items(), key=lambda kv: str(kv[0]))
         )
         logger.info(
             f"[SCAN END] Watch directory: {watch_dir} | "
@@ -463,9 +699,9 @@ def scan_watch_dir(
                     if cycle_rows:
                         cycle_id = cycle_rows[0].get("cycle_id")
                         database.execute(
-                            """
+                            f"""
                             UPDATE file_watcher_stats
-                            SET current_project_id = ?, last_updated = julianday('now')
+                            SET current_project_id = ?, last_updated = {_now_sql}
                             WHERE cycle_id = ?
                             """,
                             (current_project_id, cycle_id),

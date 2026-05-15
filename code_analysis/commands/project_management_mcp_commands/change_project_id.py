@@ -22,6 +22,7 @@ from ._shared import (
 )
 from ...core.exceptions import CodeAnalysisError
 from ...core.project_root_path import persist_projects_root_path_stored_value
+from ...core.sql_portable import sql_julian_timestamp_now_expr
 from .change_project_id_schema import get_metadata as _get_metadata
 from .change_project_id_schema import get_schema as _get_schema
 
@@ -334,6 +335,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
 
                     database = self._open_database_from_config(auto_analyze=False)
                     try:
+                        _now = sql_julian_timestamp_now_expr(database)
                         existing_project_id = (
                             BaseMCPCommand._get_project_id_by_root_path(
                                 database, str(root_path)
@@ -348,9 +350,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 if description is not None:
                                     # Update both ID and description
                                     database.execute(
-                                        """
+                                        f"""
                                         UPDATE projects 
-                                        SET id = ?, comment = ?, updated_at = julianday('now')
+                                        SET id = ?, comment = ?, updated_at = {_now}
                                         WHERE id = ?
                                         """,
                                         (
@@ -362,9 +364,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 else:
                                     # Update only ID
                                     database.execute(
-                                        """
+                                        f"""
                                         UPDATE projects 
-                                        SET id = ?, updated_at = julianday('now')
+                                        SET id = ?, updated_at = {_now}
                                         WHERE id = ?
                                         """,
                                         (new_project_id, current_project_id),
@@ -384,9 +386,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 # Update existing project with different ID
                                 if description is not None:
                                     database.execute(
-                                        """
+                                        f"""
                                         UPDATE projects 
-                                        SET id = ?, comment = ?, updated_at = julianday('now')
+                                        SET id = ?, comment = ?, updated_at = {_now}
                                         WHERE id = ?
                                         """,
                                         (
@@ -397,9 +399,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                     )
                                 else:
                                     database.execute(
-                                        """
+                                        f"""
                                         UPDATE projects 
-                                        SET id = ?, updated_at = julianday('now')
+                                        SET id = ?, updated_at = {_now}
                                         WHERE id = ?
                                         """,
                                         (new_project_id, existing_project_id),
@@ -419,9 +421,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 # Same ID, only update description if provided
                                 if description is not None:
                                     database.execute(
-                                        """
+                                        f"""
                                         UPDATE projects 
-                                        SET comment = ?, updated_at = julianday('now')
+                                        SET comment = ?, updated_at = {_now}
                                         WHERE id = ?
                                         """,
                                         (new_description, existing_project_id),
@@ -438,9 +440,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 database=database,
                             )
                             database.execute(
-                                """
+                                f"""
                                 INSERT INTO projects (id, root_path, name, comment, updated_at)
-                                VALUES (?, ?, ?, ?, julianday('now'))
+                                VALUES (?, ?, ?, ?, {_now})
                                 """,
                                 (
                                     new_project_id,

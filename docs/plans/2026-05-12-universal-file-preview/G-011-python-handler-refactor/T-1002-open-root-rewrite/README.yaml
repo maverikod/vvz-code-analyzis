@@ -1,0 +1,19 @@
+step_id: T-1002
+parent_global_step: G-011
+name: Rewrite open_root and _metadata_children_to_nodes
+description: >
+  Rewrite open_root: always call cst_load_file, then call render_module(tree, budget)
+  from python_visualizer, return single text Block with the rendered string.
+  Rewrite _metadata_children_to_nodes: iterate metadata_map filtering by depth==parent_depth+1
+  and parent_id==parent_node_id, skip whitespace kinds, return Nodes with correct stable_id.
+  This fixes the root cause of SimpleStatementLine showing instead of real types.
+concepts:
+  - C-016
+  - C-022
+inputs:
+  - {name: python_handler_py, type: file, description: handlers/python_handler.py after T-1001}
+  - {name: python_visualizer_py, type: file, description: python_visualizer.py from G-010}
+outputs:
+  - {name: python_handler_py, type: file, description: rewritten open_root and helper}
+atomic_steps: []
+status: draft

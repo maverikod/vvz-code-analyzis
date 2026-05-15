@@ -1,0 +1,22 @@
+step_id: T-904
+parent_global_step: G-010
+name: Wire visualizer into PythonFileHandler block rendering
+description: >
+  Modify PythonFileHandler.open_root to use render_module for file overview.
+  Modify _metadata_children_to_nodes to put rendered text into Block.summary["text"].
+  Modify resolve_node_ref to call render_node and return in Block.summary["text"].
+  Add optional text field to Block dataclass alongside summary dict.
+concepts:
+  - C-022
+  - C-016
+  - C-005
+  - C-008
+inputs:
+  - {name: python_visualizer_py, type: file, description: from T-902 and T-903}
+  - {name: python_handler_py, type: file, description: handlers/python_handler.py}
+  - {name: models_py, type: file, description: models.py}
+outputs:
+  - {name: python_handler_py, type: file, description: wired to visualizer}
+  - {name: models_py, type: file, description: Block with text field}
+atomic_steps: []
+status: draft

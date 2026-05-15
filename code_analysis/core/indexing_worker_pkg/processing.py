@@ -206,13 +206,14 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
             cycle_start_time = time.time()
             cycle_had_activity = False
             log_timing = getattr(self, "log_timing", False)
+            _now_sql = sql_julian_timestamp_now_expr(database)
 
             try:
                 # Start indexing_worker_stats cycle (same pattern as vectorization)
                 database.execute(
-                    """
+                    f"""
                     UPDATE indexing_worker_stats
-                    SET cycle_end_time = ?, last_updated = julianday('now')
+                    SET cycle_end_time = ?, last_updated = {_now_sql}
                     WHERE cycle_end_time IS NULL
                     """,
                     (cycle_start_time,),
@@ -241,13 +242,13 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     files_total_at_start,
                 )
                 database.execute(
-                    """
+                    f"""
                     INSERT INTO indexing_worker_stats (
                         cycle_id, cycle_start_time, files_total_at_start,
                         files_indexed, files_failed,
                         total_processing_time_seconds, average_processing_time_seconds,
                         last_updated
-                    ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, julianday('now'))
+                    ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, {_now_sql})
                     """,
                     (cycle_id, cycle_start_time, files_total_at_start),
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
@@ -377,6 +378,38 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 for row in files_data:
                                     path = row.get("path")
                                     if not path or not project_id:
+                                        continue
+                                    # Skip rows where path is absolute (legacy defect until watcher dedup).
+                                    if path.startswith("/") or (
+                                        len(path) > 2
+                                        and path[1] == ":"
+                                        and path[2] in "\\/"
+                                    ):
+                                        logger.error(
+                                            "[INDEXER_ABSPATH] Skipping file with absolute path in DB: "
+                                            "file_id=%s project_id=%s path=%s — "
+                                            "run file_watcher to deduplicate (abspath_dedup).",
+                                            row.get("id"),
+                                            project_id,
+                                            path,
+                                        )
+                                        errors_to_insert.append(
+                                            (
+                                                project_id,
+                                                path,
+                                                "abspath_skipped",
+                                                f"Absolute path in DB; deduplication required: {path}",
+                                            )
+                                        )
+                                        heartbeat_project_activity(
+                                            database,
+                                            project_id,
+                                            "indexer",
+                                            owner_id,
+                                            "indexer_processing",
+                                            _INDEXER_LEASE_TTL_S,
+                                            rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                        )
                                         continue
                                     if editing_lock_holder_is_alive(
                                         row.get("editing_pid")
@@ -605,7 +638,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                             "files_indexed = ?, files_failed = ?, "
                             "total_processing_time_seconds = ?, "
                             "average_processing_time_seconds = ?, "
-                            "last_updated = julianday('now') WHERE cycle_id = ?",
+                            f"last_updated = {_now_sql} WHERE cycle_id = ?",
                             (
                                 cycle_files_indexed,
                                 cycle_files_failed,
@@ -657,9 +690,9 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                 )
                 try:
                     database.execute(
-                        """
+                        f"""
                         UPDATE indexing_worker_stats
-                        SET cycle_end_time = ?, last_updated = julianday('now')
+                        SET cycle_end_time = ?, last_updated = {_now_sql}
                         WHERE cycle_id = ?
                         """,
                         (time.time(), cycle_id),

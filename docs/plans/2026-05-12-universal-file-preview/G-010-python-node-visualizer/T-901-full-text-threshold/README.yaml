@@ -1,0 +1,20 @@
+step_id: T-901
+parent_global_step: G-010
+name: Full-text threshold in PreviewBudget
+description: >
+  Add full_text_max_lines field to PreviewBudget dataclass and wire it
+  into UniversalFilePreviewCommand.get_schema() and validate_params().
+  Default value 200. When a Python file has fewer lines than this threshold,
+  PythonFileHandler.open_root returns the entire file as a single text block.
+concepts:
+  - C-023
+  - C-013
+  - C-001
+inputs:
+  - {name: budget_py, type: file, description: budget.py}
+  - {name: command_py, type: file, description: universal_file_preview_command.py}
+outputs:
+  - {name: budget_py, type: file, description: PreviewBudget with full_text_max_lines}
+  - {name: command_py, type: file, description: schema and validate_params updated}
+atomic_steps: []
+status: draft

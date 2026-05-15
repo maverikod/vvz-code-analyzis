@@ -17,6 +17,7 @@ from code_analysis.core.sql_portable import (
     WHERE_HAS_DOCSTRING_F,
     WHERE_PROCESSING_ACTIVE_P,
     database_has_sqlite_code_content_fts,
+    sql_julian_timestamp_now_expr,
 )
 from code_analysis.core.project_root_path import (
     enrich_project_dict_resolve_root_path,
@@ -58,8 +59,9 @@ def get_or_create_project(
         watch_dir_id=None,
         database=self,
     )
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        "\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, julianday('now'))\n            ",
+        f"\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, {_now})\n            ",
         (new_id, stored, project_name, comment),
     )
     self._commit()
@@ -112,6 +114,7 @@ def relocate_project_root_after_disk_move(
     File rows keep project-relative paths; they are not rewritten on relocate.
     """
     try:
+        _now = sql_julian_timestamp_now_expr(self)
         old_r = Path(old_root_path).expanduser().resolve()
         new_r = Path(new_root_path).expanduser().resolve()
     except OSError as e:
@@ -126,7 +129,7 @@ def relocate_project_root_after_disk_move(
     if old_r == new_r:
         if new_watch_dir_id is not None:
             self._execute(
-                "UPDATE projects SET watch_dir_id = ?, updated_at = julianday('now') "
+                f"UPDATE projects SET watch_dir_id = ?, updated_at = {_now} "
                 "WHERE id = ?",
                 (new_watch_dir_id, project_id),
             )
@@ -182,12 +185,12 @@ def relocate_project_root_after_disk_move(
     if new_watch_dir_id is not None:
         self._execute(
             "UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
-            "updated_at = julianday('now') WHERE id = ?",
+            f"updated_at = {_now} WHERE id = ?",
             (new_stored, new_name, new_watch_dir_id, project_id),
         )
     else:
         self._execute(
-            "UPDATE projects SET root_path = ?, name = ?, updated_at = julianday('now') "
+            f"UPDATE projects SET root_path = ?, name = ?, updated_at = {_now} "
             "WHERE id = ?",
             (new_stored, new_name, project_id),
         )

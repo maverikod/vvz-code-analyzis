@@ -17,18 +17,14 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
 from .client_base import _DatabaseClientBase
 
 logger = logging.getLogger(__name__)
 
 # Type for one batch item: (file_id, project_id, file_mtime, results, summary)
 _ComprehensiveAnalysisItem = Tuple[int, str, float, Dict[str, Any], Dict[str, Any]]
-
-_INSERT_SQL = """
-INSERT OR REPLACE INTO comprehensive_analysis_results
-(file_id, project_id, file_mtime, results_json, summary_json, updated_at)
-VALUES (?, ?, ?, ?, ?, julianday('now'))
-"""
 
 
 class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
@@ -208,8 +204,14 @@ class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
         """
         results_json = json.dumps(results, ensure_ascii=False)
         summary_json = json.dumps(summary, ensure_ascii=False)
+        _now = sql_julian_timestamp_now_expr(self)
+        insert_sql = f"""
+INSERT OR REPLACE INTO comprehensive_analysis_results
+(file_id, project_id, file_mtime, results_json, summary_json, updated_at)
+VALUES (?, ?, ?, ?, ?, {_now})
+"""
         result = self.execute(
-            _INSERT_SQL,
+            insert_sql,
             (file_id, project_id, file_mtime, results_json, summary_json),
         )
         if isinstance(result, dict):
@@ -230,13 +232,19 @@ class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
         """
         if not items:
             return
+        _now = sql_julian_timestamp_now_expr(self)
+        insert_sql = f"""
+INSERT OR REPLACE INTO comprehensive_analysis_results
+(file_id, project_id, file_mtime, results_json, summary_json, updated_at)
+VALUES (?, ?, ?, ?, ?, {_now})
+"""
         operations: List[Tuple[str, Optional[tuple]]] = []
         for file_id, project_id, file_mtime, results, summary in items:
             results_json = json.dumps(results, ensure_ascii=False)
             summary_json = json.dumps(summary, ensure_ascii=False)
             operations.append(
                 (
-                    _INSERT_SQL,
+                    insert_sql,
                     (file_id, project_id, file_mtime, results_json, summary_json),
                 )
             )

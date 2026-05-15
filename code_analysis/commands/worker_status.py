@@ -17,6 +17,7 @@ from ..core.sql_portable import (
     WHERE_FILES_ACTIVE_F,
     WHERE_FILES_TRASHED,
     WHERE_HAS_DOCSTRING,
+    sql_julian_one_day_ago_expr,
 )
 from ..core.worker_status_file import read_worker_status
 
@@ -396,6 +397,7 @@ class DatabaseStatusCommand:
 
             try:
                 # All independent SELECTs in one execute_batch to reduce RPC round-trips
+                _day_ago = sql_julian_one_day_ago_expr(db)
                 status_ops = [
                     ("SELECT COUNT(*) as count FROM projects", None),
                     ("SELECT id, name FROM projects LIMIT 10", None),
@@ -430,16 +432,16 @@ class DatabaseStatusCommand:
                         None,
                     ),
                     (
-                        """
+                        f"""
                     SELECT COUNT(*) as count FROM files 
-                    WHERE updated_at > julianday('now', '-1 day')
+                    WHERE updated_at > {_day_ago}
                     """,
                         None,
                     ),
                     (
-                        """
+                        f"""
                     SELECT COUNT(*) as count FROM code_chunks 
-                    WHERE created_at > julianday('now', '-1 day')
+                    WHERE created_at > {_day_ago}
                     """,
                         None,
                     ),

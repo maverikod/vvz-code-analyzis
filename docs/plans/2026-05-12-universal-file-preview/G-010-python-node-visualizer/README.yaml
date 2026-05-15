@@ -1,0 +1,44 @@
+step_id: G-010
+name: Python node visualizer
+description: 'Add a NodeVisualizer component to PythonFileHandler that renders any
+  node from CSTTree into a structured human-readable text preview. Four rendering
+  modes: module-level overview, class structure, function/method body first-level,
+  and full-text fallback for small files. No changes to the public command schema
+  or response envelope shape.
+
+  '
+concepts:
+- C-016
+- C-022
+- C-023
+- C-003
+- C-008
+relations:
+- from_concept: C-022
+  to_concept: C-016
+  type: extends
+- from_concept: C-022
+  to_concept: C-003
+  type: uses
+- from_concept: C-022
+  to_concept: C-008
+  type: implements
+- from_concept: C-016
+  to_concept: C-023
+  type: consumes
+source_ranges:
+- start: 259
+  end: 295
+- start: 296
+  end: 307
+depends_on:
+- G-001
+- G-002
+- G-003
+- G-004
+tactical_steps:
+- T-901
+- T-902
+- T-903
+- T-904
+status: draft

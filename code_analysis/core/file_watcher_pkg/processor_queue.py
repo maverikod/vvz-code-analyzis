@@ -32,6 +32,7 @@ from .ignore_pre_scan_purge import (
 from .processor_delta import FileDelta
 
 from code_analysis.core.database.file_edit_lock import file_row_has_live_edit_lock
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 from code_analysis.core.file_identity import (
     FILE_ROW_PATH_MATCH_SQL,
     file_row_path_match_values,
@@ -292,6 +293,7 @@ class ProcessorQueueOps:
             )
 
         try:
+            _now = sql_julian_timestamp_now_expr(self.database)
             watch_dir_id_queue = _watch_dir_id_for_project(self.database, project_id)
 
             watch_dirs: List[Path] = list(self.watch_dirs_resolved)
@@ -397,7 +399,7 @@ class ProcessorQueueOps:
                 "INSERT INTO files "
                 "(id, project_id, watch_dir_id, path, relative_path, lines, last_modified, "
                 "has_docstring, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now')) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now}, {_now}) "
                 "ON CONFLICT (project_id, path) DO NOTHING"
             )
             update_chunk_sql = f"UPDATE files SET needs_chunking = 1 WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
@@ -444,7 +446,7 @@ class ProcessorQueueOps:
                     raise RuntimeError("watcher phase updating_changed not acquired")
             update_changed_sql = (
                 "UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
-                "deleted = FALSE, updated_at = julianday('now') "
+                f"deleted = FALSE, updated_at = {_now} "
                 f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
             )
             n_ch = 0
@@ -540,7 +542,7 @@ class ProcessorQueueOps:
                         f"action: soft_delete"
                     )
                 del_sql = (
-                    "UPDATE files SET deleted = TRUE, updated_at = julianday('now') "
+                    f"UPDATE files SET deleted = TRUE, updated_at = {_now} "
                     f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
                 )
                 del_ops: List[Tuple[str, Optional[tuple]]] = []
@@ -604,6 +606,7 @@ class ProcessorQueueOps:
         from ..exceptions import ProjectIdMismatchError
 
         try:
+            _now = sql_julian_timestamp_now_expr(self.database)
             watch_dirs: List[str | Path] = list(self.watch_dirs_resolved)
             path_for_norm = file_path
             if project_root is not None:
@@ -688,16 +691,16 @@ class ProcessorQueueOps:
 
             try:
                 self._db_execute(
-                    """
+                    f"""
                     INSERT INTO files (id, project_id, watch_dir_id, path, relative_path,
                         lines, last_modified, has_docstring, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now'))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now}, {_now})
                     ON CONFLICT (project_id, path) DO UPDATE SET
                     lines = excluded.lines,
                     last_modified = excluded.last_modified,
                     has_docstring = excluded.has_docstring,
                     deleted = FALSE,
-                    updated_at = julianday('now')
+                    updated_at = {_now}
                     """,
                     (
                         str(uuid.uuid4()),

@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
 
 from .client_base import _DatabaseClientBase
 from .objects.file import File
@@ -171,6 +171,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         root = Path(project.root_path).resolve()
         relative_path_str = relative_path_for_project(abs_path, root)
         watch_dir_id = getattr(project, "watch_dir_id", None)
+        _now = sql_julian_timestamp_now_expr(self)
         existing = self.get_file_by_path(abs_path, project_id, include_deleted=False)
         if existing:
             file_id_raw = existing.get("id")
@@ -182,10 +183,10 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             else:
                 file_id = str(file_id_raw)
                 self.execute(
-                    """
+                    f"""
                     UPDATE files
                     SET watch_dir_id = ?, path = ?, relative_path = ?, lines = ?,
-                        last_modified = ?, has_docstring = ?, updated_at = julianday('now')
+                        last_modified = ?, has_docstring = ?, updated_at = {_now}
                     WHERE id = ?
                     """,
                     (
@@ -213,11 +214,11 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             else:
                 file_id = str(file_id_raw)
                 self.execute(
-                    """
+                    f"""
                     UPDATE files
                     SET watch_dir_id = ?, path = ?, relative_path = ?, lines = ?,
                         last_modified = ?, has_docstring = ?, deleted = 0,
-                        updated_at = julianday('now')
+                        updated_at = {_now}
                     WHERE id = ?
                     """,
                     (
@@ -234,11 +235,11 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
 
         new_id = str(uuid.uuid4())
         self.execute(
-            """
+            f"""
             INSERT INTO files
             (id, project_id, watch_dir_id, path, relative_path, lines,
              last_modified, has_docstring, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now})
             """,
             (
                 new_id,
@@ -263,6 +264,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         overwrite: bool = False,
     ) -> int:
         """Save AST tree for a file. Returns ast_tree id."""
+        _now = sql_julian_timestamp_now_expr(self)
         if overwrite:
             self.execute(
                 "DELETE FROM ast_trees WHERE file_id = ?",
@@ -277,8 +279,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             if rows:
                 existing_id = rows[0].get("id")
                 self.execute(
-                    "UPDATE ast_trees SET ast_json = ?, file_mtime = ?, "
-                    "updated_at = julianday('now') WHERE id = ?",
+                    f"UPDATE ast_trees SET ast_json = ?, file_mtime = ?, "
+                    f"updated_at = {_now} WHERE id = ?",
                     (ast_json, file_mtime, existing_id),
                 )
                 return existing_id
@@ -299,6 +301,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         overwrite: bool = False,
     ) -> int:
         """Save CST tree (source code) for a file. Returns cst_tree id."""
+        _now = sql_julian_timestamp_now_expr(self)
         if overwrite:
             self.execute(
                 "DELETE FROM cst_trees WHERE file_id = ?",
@@ -313,8 +316,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             if rows:
                 existing_id = rows[0].get("id")
                 self.execute(
-                    "UPDATE cst_trees SET cst_code = ?, file_mtime = ?, "
-                    "updated_at = julianday('now') WHERE id = ?",
+                    f"UPDATE cst_trees SET cst_code = ?, file_mtime = ?, "
+                    f"updated_at = {_now} WHERE id = ?",
                     (cst_code, file_mtime, existing_id),
                 )
                 return existing_id
@@ -473,8 +476,9 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         if file_id is None:
             return False
         self.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+        _now = sql_julian_timestamp_now_expr(self)
         self.execute(
-            "UPDATE files SET updated_at = julianday('now') WHERE id = ?",
+            f"UPDATE files SET updated_at = {_now} WHERE id = ?",
             (file_id,),
         )
         return True

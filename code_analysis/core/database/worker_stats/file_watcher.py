@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,12 @@ def start_file_watcher_cycle(
         cycle_id = str(uuid.uuid4())
 
     cycle_start_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
 
     self._execute(
-        """
+        f"""
         UPDATE file_watcher_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
@@ -42,14 +43,14 @@ def start_file_watcher_cycle(
         files_total_at_start = result["count"] if result else 0
 
     self._execute(
-        """
+        f"""
         INSERT INTO file_watcher_stats (
             cycle_id, cycle_start_time, files_total_at_start,
             files_added, files_processed, files_skipped, files_failed,
             files_changed, files_deleted,
             total_processing_time_seconds, average_processing_time_seconds,
             current_project_id, last_updated
-        ) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0.0, NULL, NULL, julianday('now'))
+        ) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0.0, NULL, NULL, {_now})
         """,
         (cycle_id, cycle_start_time, files_total_at_start),
     )
@@ -76,7 +77,8 @@ def update_file_watcher_stats(
     current_project_id: Optional[str] = None,
 ) -> None:
     """Update file watcher cycle statistics."""
-    update_sql = """
+    _now = sql_julian_timestamp_now_expr(self)
+    update_sql = f"""
         UPDATE file_watcher_stats
         SET
             files_added = files_added + ?,
@@ -86,7 +88,7 @@ def update_file_watcher_stats(
             files_changed = files_changed + ?,
             files_deleted = files_deleted + ?,
             total_processing_time_seconds = total_processing_time_seconds + ?,
-            last_updated = julianday('now')
+            last_updated = {_now}
     """
     update_params: List[Union[int, float, str, None]] = [
         files_added,
@@ -122,10 +124,11 @@ def update_file_watcher_stats(
 def end_file_watcher_cycle(self: Any, cycle_id: str) -> None:
     """End file watcher cycle by setting end time."""
     cycle_end_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
         UPDATE file_watcher_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_id = ?
         """,
         (cycle_end_time, cycle_id),

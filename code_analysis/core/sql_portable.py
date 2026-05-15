@@ -52,6 +52,18 @@ def sql_julian_timestamp_now_expr(database: Any) -> str:
     return "julianday('now')"
 
 
+def sql_julian_one_day_ago_expr(database: Any) -> str:
+    """
+    SQL fragment for Julian-day threshold ~24 hours ago (status / analytics).
+
+    SQLite: ``julianday('now', '-1 day')``; PostgreSQL: subtract ``INTERVAL '1 day'``.
+    """
+    dt = getattr(database, "_driver_type", None)
+    if isinstance(dt, str) and dt == "postgres":
+        return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
+    return "julianday('now', '-1 day')"
+
+
 def database_has_sqlite_code_content_fts(database: Any) -> bool:
     """
     Return True if DML may target SQLite FTS5 ``code_content_fts``.

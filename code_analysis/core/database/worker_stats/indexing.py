@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +35,12 @@ def start_indexing_cycle(
         cycle_id = str(uuid.uuid4())
 
     cycle_start_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
 
     self._execute(
-        """
+        f"""
         UPDATE indexing_worker_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
@@ -55,13 +56,13 @@ def start_indexing_cycle(
         files_total_at_start = result["count"] if result else 0
 
     self._execute(
-        """
+        f"""
         INSERT INTO indexing_worker_stats (
             cycle_id, cycle_start_time, files_total_at_start,
             files_indexed, files_failed,
             total_processing_time_seconds, average_processing_time_seconds,
             last_updated
-        ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, julianday('now'))
+        ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, {_now})
         """,
         (cycle_id, cycle_start_time, files_total_at_start),
     )
@@ -89,15 +90,16 @@ def update_indexing_stats(
         files_failed: Number of files failed (increment)
         processing_time_seconds: Processing time for this batch (add to total)
     """
+    _now = sql_julian_timestamp_now_expr(self)
     ops = [
         (
-            """
+            f"""
             UPDATE indexing_worker_stats
             SET
                 files_indexed = files_indexed + ?,
                 files_failed = files_failed + ?,
                 total_processing_time_seconds = total_processing_time_seconds + ?,
-                last_updated = julianday('now')
+                last_updated = {_now}
             WHERE cycle_id = ?
             """,
             (files_indexed, files_failed, processing_time_seconds, cycle_id),
@@ -128,10 +130,11 @@ def end_indexing_cycle(self: Any, cycle_id: str) -> None:
         cycle_id: Cycle ID
     """
     cycle_end_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
         UPDATE indexing_worker_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_id = ?
         """,
         (cycle_end_time, cycle_id),

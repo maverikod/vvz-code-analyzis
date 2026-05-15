@@ -162,11 +162,20 @@ class _RPCHandlersIndexFileMixin:
             # Clear needs_chunking only when full reindex was performed (not skipped)
             # When skipped, needs_chunking stays 1 so vectorization worker recreates vectors
             abs_path = update_result.get("file_path", file_path)
+            fp_param = str(file_path)
+            abs_resolved = str(abs_path)
             if not update_result.get("skipped"):
                 try:
                     self.driver.execute(
-                        "UPDATE files SET needs_chunking = 0 WHERE path = ? AND project_id = ?",
-                        (abs_path, project_id),
+                        "UPDATE files SET needs_chunking = 0 WHERE project_id = ? "
+                        "AND (path = ? OR path = ? OR relative_path = ? OR relative_path = ?)",
+                        (
+                            project_id,
+                            fp_param,
+                            abs_resolved,
+                            fp_param,
+                            abs_resolved,
+                        ),
                         None,
                     )
                 except Exception as e:
@@ -190,8 +199,9 @@ class _RPCHandlersIndexFileMixin:
             # Clear indexing error for this file on successful write
             try:
                 self.driver.execute(
-                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
-                    (project_id, abs_path),
+                    "DELETE FROM indexing_errors WHERE project_id = ? "
+                    "AND (file_path = ? OR file_path = ?)",
+                    (project_id, fp_param, abs_resolved),
                     None,
                 )
             except Exception:

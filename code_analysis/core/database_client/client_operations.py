@@ -320,6 +320,58 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         response = self.rpc_client.call("execute_logical_write_operation", rpc_params)
         return cast(dict[str, Any], self._extract_result_data(response))
 
+    def clear_file_data(self, file_id: str) -> None:
+        """Drop all rows tied to ``file_id`` (chunks, vectors, entities, trees).
+
+        Same semantics as :meth:`code_analysis.core.database.files.crud.clear_file_data`
+        on :class:`~code_analysis.core.database.base.CodeDatabase`, implemented via
+        :func:`~code_analysis.core.database.files.trash_standalone_support.clear_file_data_via_driver`
+        so SQLite and PostgreSQL stay aligned (no legacy ``chunk_embeddings`` DML).
+
+        Uses background RPC priority for worker-style callers (e.g. file watcher
+        absolute-path dedup).
+        """
+        from code_analysis.core.database.files import trash_standalone_support as _tss
+        from code_analysis.core.worker_db_rpc_priority import (
+            BACKGROUND_WORKER_DB_RPC_PRIORITY,
+        )
+
+        class _ClientTrashAdapter:
+            __slots__ = ("_client", "_priority")
+
+            def __init__(self, client: Any, priority: int) -> None:
+                self._client = client
+                self._priority = priority
+
+            def execute(
+                self,
+                sql: str,
+                params: Optional[tuple] = None,
+                transaction_id: Optional[str] = None,
+            ) -> Any:
+                return self._client.execute(
+                    sql,
+                    params,
+                    transaction_id=transaction_id,
+                    priority=self._priority,
+                )
+
+            def execute_batch(
+                self,
+                operations: List[Tuple[str, Optional[Union[tuple, list]]]],
+                transaction_id: Optional[str] = None,
+            ) -> List[Dict[str, Any]]:
+                return self._client.execute_batch(
+                    operations,
+                    transaction_id=transaction_id,
+                    priority=self._priority,
+                )
+
+        _tss.clear_file_data_via_driver(
+            _ClientTrashAdapter(self, BACKGROUND_WORKER_DB_RPC_PRIORITY),
+            str(file_id),
+        )
+
     def qa_set_db_retry_injections(self, remaining: int = 1) -> Dict[str, Any]:
         """QA only: arm driver to raise synthetic transients on next N self-managed writes.
 

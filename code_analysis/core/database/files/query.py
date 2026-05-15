@@ -8,7 +8,11 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Any, Dict, List, Optional, cast
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F, WHERE_HAS_DOCSTRING_F
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE_F,
+    WHERE_HAS_DOCSTRING_F,
+    sql_julian_timestamp_now_expr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +155,9 @@ def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
 
     # Delete chunks so worker will re-chunk and re-vectorize in background.
     self._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        "UPDATE files SET updated_at = julianday('now') WHERE id = ?",
+        f"UPDATE files SET updated_at = {_now} WHERE id = ?",
         (file_id,),
     )
     self._commit()

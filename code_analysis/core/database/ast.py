@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Dict, Any, Optional
 
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +63,7 @@ def save_ast_tree(
     Returns:
         AST tree ID
     """
+    _now = sql_julian_timestamp_now_expr(self)
     if overwrite:
         self._execute(
             """
@@ -79,9 +82,9 @@ def save_ast_tree(
         )
         if existing:
             self._execute(
-                """
+                f"""
                     UPDATE ast_trees
-                    SET ast_json = ?, file_mtime = ?, updated_at = julianday('now')
+                    SET ast_json = ?, file_mtime = ?, updated_at = {_now}
                     WHERE id = ?
                 """,
                 (ast_json, file_mtime, existing["id"]),

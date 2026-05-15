@@ -10,7 +10,11 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    sql_julian_timestamp_now_expr,
+)
 from code_analysis.core.vector_search_backend import (
     VectorSearchBackend,
     ann_pending_sql_fragment,
@@ -43,14 +47,15 @@ def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
         cycle_id = str(uuid.uuid4())
 
     cycle_start_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
 
     # Don't delete previous cycles - keep history
     # Only ensure we don't have multiple active cycles (shouldn't happen, but just in case)
     # Mark any old active cycles as ended (with current time as end_time)
     self._execute(
-        """
+        f"""
         UPDATE vectorization_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
@@ -88,14 +93,14 @@ def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
 
     # Insert new cycle record
     self._execute(
-        """
+        f"""
         INSERT INTO vectorization_stats (
             cycle_id, cycle_start_time, chunks_total_at_start,
             chunks_processed, chunks_skipped, chunks_failed,
             files_total_at_start, files_vectorized,
             total_processing_time_seconds, average_processing_time_seconds,
             last_updated
-        ) VALUES (?, ?, ?, 0, 0, 0, ?, ?, 0.0, NULL, julianday('now'))
+        ) VALUES (?, ?, ?, 0, 0, 0, ?, ?, 0.0, NULL, {_now})
         """,
         (
             cycle_id,
@@ -135,15 +140,16 @@ def update_vectorization_stats(
         processing_time_seconds: Processing time for this batch (add to total)
     """
     # Update statistics with increments
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
         UPDATE vectorization_stats
         SET
             chunks_processed = chunks_processed + ?,
             chunks_skipped = chunks_skipped + ?,
             chunks_failed = chunks_failed + ?,
             total_processing_time_seconds = total_processing_time_seconds + ?,
-            last_updated = julianday('now')
+            last_updated = {_now}
         WHERE cycle_id = ?
         """,
         (
@@ -204,10 +210,11 @@ def end_vectorization_cycle(self: Any, cycle_id: str) -> None:
         cycle_id: Cycle ID
     """
     cycle_end_time = time.time()
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
         UPDATE vectorization_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now}
         WHERE cycle_id = ?
         """,
         (cycle_end_time, cycle_id),

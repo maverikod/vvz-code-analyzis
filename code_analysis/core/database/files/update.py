@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from ...constants import FILE_MODIFICATION_TOLERANCE, LAST_MODIFIED_EPSILON
 from ...exceptions import ProjectIdMismatchError
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
 
 from .helpers import _last_modified_to_unix
 
@@ -220,10 +220,11 @@ def update_file_data(
         # so _analyze_file will process the file; overwritten with real mtime after success
         updated_mtime = current_mtime + LAST_MODIFIED_EPSILON
         try:
+            _now = sql_julian_timestamp_now_expr(self)
             self._execute(
-                """
+                f"""
                 UPDATE files 
-                SET last_modified = ?, updated_at = julianday('now')
+                SET last_modified = ?, updated_at = {_now}
                 WHERE id = ?
                 """,
                 (updated_mtime, file_id),

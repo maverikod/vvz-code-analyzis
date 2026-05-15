@@ -251,15 +251,36 @@
       "enabled": true,
       "vectorize": true,
       "roots": [
-        "docs"
+        "docs/man",
+        "docs/tutor",
+        "docs/plans",
+        "docs/howto"
       ],
       "include": [
-        "docs/**/*.md",
-        "docs/*.md",
-        "docs/**/*.yml",
-        "docs/*.yml",
-        "docs/**/*.yaml",
-        "docs/*.yaml"
+        "docs/man/**/*.md",
+        "docs/man/*.md",
+        "docs/plans/**/*.md",
+        "docs/plans/*.md",
+        "docs/tutor/**/*.md",
+        "docs/tutor/*.md",
+        "docs/howto/**/*.md",
+        "docs/howto/*.md",
+        "docs/man/**/*.yml",
+        "docs/man/*.yml",
+        "docs/plans/**/*.yml",
+        "docs/plans/*.yml",
+        "docs/tutor/**/*.yml",
+        "docs/tutor/*.yml",
+        "docs/howto/**/*.yml",
+        "docs/howto/*.yml",
+        "docs/man/**/*.yaml",
+        "docs/man/*.yaml",
+        "docs/plans/**/*.yaml",
+        "docs/plans/*.yaml",
+        "docs/tutor/**/*.yaml",
+        "docs/tutor/*.yaml",
+        "docs/howto/**/*.yaml",
+        "docs/howto/*.yaml"
       ],
       "exclude": [
         "docs/ai_reports/**"

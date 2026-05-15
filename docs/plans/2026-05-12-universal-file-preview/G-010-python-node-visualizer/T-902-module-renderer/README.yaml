@@ -1,0 +1,19 @@
+step_id: T-902
+parent_global_step: G-010
+name: Module-level renderer
+description: >
+  Create python_visualizer.py with render_module(tree, budget) function.
+  Returns text: file docstring, imports (stable_id + range + type),
+  constants, class signatures + docstrings + method signatures + docstrings,
+  module-level function signatures + docstrings.
+concepts:
+  - C-022
+  - C-016
+  - C-009
+inputs:
+  - {name: tree, type: CSTTree, description: loaded CSTTree}
+  - {name: budget, type: PreviewBudget, description: with full_text_max_lines}
+outputs:
+  - {name: python_visualizer_py, type: file, description: new module with render_module}
+atomic_steps: []
+status: draft

@@ -9,6 +9,8 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,11 +38,12 @@ def save_comprehensive_analysis_results(
     results_json = json.dumps(results, ensure_ascii=False)
     summary_json = json.dumps(summary, ensure_ascii=False)
 
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
             INSERT OR REPLACE INTO comprehensive_analysis_results
             (file_id, project_id, file_mtime, results_json, summary_json, updated_at)
-            VALUES (?, ?, ?, ?, ?, julianday('now'))
+            VALUES (?, ?, ?, ?, ?, {_now})
         """,
         (file_id, project_id, file_mtime, results_json, summary_json),
     )

@@ -43,7 +43,6 @@ from .tree_sidecar import (
 )
 
 logger = logging.getLogger(__name__)
-# @node-id: b65e0660-2f5f-4918-9146-f1944d64e403
 
 
 def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNodeIds]:
@@ -60,7 +59,6 @@ def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNode
     return logical, ids
 
 
-# @node-id: e526cb82-cb31-4ee3-a40d-9a52f4ea00d9
 
 
 def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
@@ -77,7 +75,6 @@ def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     tree.module_source_sha256_hex = digest
 
 
-# @node-id: a0e4d4b4-808a-4c2c-85c8-0d6ab73b1560
 
 
 def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
@@ -93,7 +90,6 @@ def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
         logger.warning("Could not strip legacy trailer from %s: %s", py_path, exc)
 
 
-# @node-id: a48a4ef0-e75f-4e68-956b-764f89b20f3b
 def _finalize_cst_tree(
     tree: CSTTree,
     module: cst.Module,
@@ -180,7 +176,6 @@ def _finalize_cst_tree(
 
 # In-memory storage for CST trees
 _trees: dict[str, CSTTree] = {}
-# @node-id: 09db228e-5b6d-447b-a04f-192a29acc799
 
 
 def load_file_to_tree(
@@ -230,7 +225,6 @@ def load_file_to_tree(
     return tree
 
 
-# @node-id: f471c2a5-b8d8-4b1b-a6b1-fcc7dbfc0d84
 
 
 def create_tree_from_code(
@@ -290,7 +284,6 @@ def create_tree_from_code(
     return tree
 
 
-# @node-id: f847c769-7675-45db-8ebe-363b3bf16123
 
 
 def _build_tree_index(
@@ -331,7 +324,6 @@ def _build_tree_index(
     class_stack: List[str] = []
     func_stack: List[str] = []
     node_to_uuid: Dict[int, str] = {}
-    # @node-id: 9e6b6a21-255f-4cde-a230-ca5abb0f1f41
 
     def visit(node: cst.CSTNode, depth: int, path_indices: tuple[int, ...]) -> None:
         if max_depth is not None and depth > max_depth:
@@ -462,7 +454,6 @@ def _build_tree_index(
                 tree.node_id_aliases[old_uuid] = new_uuid
 
 
-# @node-id: 762544bf-0d1b-46f4-a4ab-5a2a2e5ae840
 
 
 def get_tree(tree_id: str) -> Optional[CSTTree]:
@@ -473,7 +464,6 @@ def get_tree(tree_id: str) -> Optional[CSTTree]:
     return tree
 
 
-# @node-id: db218b06-bc4c-4dcc-8085-8f1c99d2a71b
 
 
 def remove_tree(tree_id: str) -> bool:
@@ -484,7 +474,6 @@ def remove_tree(tree_id: str) -> bool:
     return False
 
 
-# @node-id: b19255fb-cf63-4485-a318-497618de577f
 
 
 def reload_tree_from_file(
@@ -551,7 +540,6 @@ def reload_tree_from_file(
     return tree
 
 
-# @node-id: a4039634-e529-4165-9e7b-a9cb00d67430
 
 
 def rollback_tree_to_code(
@@ -622,7 +610,6 @@ def rollback_tree_to_code(
 
 
 CST_TREE_TTL_SECONDS: float = 900.0  # 15 minutes
-# @node-id: 09ea45c7-957c-421a-8cae-c09260e12d2f
 
 
 async def _cst_tree_ttl_cleanup_loop() -> None:
@@ -638,7 +625,6 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
             _trees.pop(tid, None)
 
 
-# @node-id: 784dc496-5666-4266-a26b-b60fd3a2f75c
 
 
 def start_cst_tree_ttl_cleanup() -> None:

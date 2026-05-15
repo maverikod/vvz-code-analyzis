@@ -26,6 +26,7 @@ from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE_F,
     WHERE_HAS_DOCSTRING_F,
     WHERE_PROCESSING_ACTIVE_P,
+    sql_julian_timestamp_now_expr,
 )
 from code_analysis.core.docs_markdown_vector_gate import (
     sql_and_exclude_docs_markdown_chunks,
@@ -193,14 +194,15 @@ async def run_one_cycle(
 
     cycle_id = str(uuid.uuid4())
     cycle_start_time = time.time()
+    _now_sql = sql_julian_timestamp_now_expr(database)
     logger.info(
         "[CYCLE #%s] Updating vectorization_stats (mark old cycles ended)...",
         cycle_count,
     )
     database.execute(
-        """
+        f"""
         UPDATE vectorization_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now_sql}
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
@@ -254,11 +256,11 @@ async def run_one_cycle(
     files_vectorized = vectorized_data[0].get("count", 0) if vectorized_data else 0
 
     database.execute(
-        """
+        f"""
         INSERT INTO vectorization_stats (
             cycle_id, cycle_start_time, chunks_total_at_start,
             files_total_at_start, files_vectorized, last_updated
-        ) VALUES (?, ?, ?, ?, ?, julianday('now'))
+        ) VALUES (?, ?, ?, ?, ?, {_now_sql})
         """,
         (
             cycle_id,
@@ -316,14 +318,14 @@ async def run_one_cycle(
             extra={"reason": "no_pending_projects"},
         )
         database.execute(
-            """
+            f"""
             UPDATE vectorization_stats
             SET
                 chunks_processed = chunks_processed + ?,
                 chunks_skipped = chunks_skipped + ?,
                 chunks_failed = chunks_failed + ?,
                 total_processing_time_seconds = total_processing_time_seconds + ?,
-                last_updated = julianday('now')
+                last_updated = {_now_sql}
             WHERE cycle_id = ?
             """,
             (0, 0, 0, 0.0, cycle_id),
@@ -437,9 +439,9 @@ async def run_one_cycle(
         cycle_step3_s = time.time() - t0_step3
 
     database.execute(
-        """
+        f"""
         UPDATE vectorization_stats
-        SET cycle_end_time = ?, last_updated = julianday('now')
+        SET cycle_end_time = ?, last_updated = {_now_sql}
         WHERE cycle_id = ?
         """,
         (time.time(), cycle_id),

@@ -314,6 +314,40 @@ concepts:
   source_ranges:
   - start: 248
     end: 260
+- concept_id: C-022
+  name: PythonNodeRenderer
+  definition: Component that renders a CSTTree node into a structured text block suitable
+    for direct AI model consumption, following the rules in source_spec sections 15
+    and 16.
+  properties:
+  - 'renders Module as: docstring + top-level entities (imports, constants, classes,
+    functions) each prefixed with stable_id and line range'
+  - 'renders ClassDef as: class signature + docstring + method signatures + method
+    docstrings'
+  - 'renders FunctionDef/AsyncFunctionDef as: signature + docstring + first-level
+    body (compound stmts collapsed to first line + stable_id + range + ...)'
+  - 'renders compound stmts (If/For/While/Try/With/Match) as focus: first line + stable_id
+    + range + first-level body with same collapse rule'
+  - output placed in text field of block summary
+  - when text is present, it takes precedence over generic type/name/attributes/child_count
+    fields
+  source_ranges:
+  - start: 259
+    end: 295
+- concept_id: C-023
+  name: FullTextThreshold
+  definition: A numeric budget cap that triggers full-file text fallback in the Python
+    handler when the file line count is below the threshold.
+  properties:
+  - 'parameter name: full_text_max_lines'
+  - 'default value: 200 lines'
+  - 'when file lines < full_text_max_lines: return entire file source as single text
+    block'
+  - 'when value is 0: full-text fallback disabled'
+  - part of PreviewBudget alongside preview_lines and value_preview_len
+  source_ranges:
+  - start: 296
+    end: 307
 relations:
 - from_concept: C-001
   to_concept: C-002
@@ -423,3 +457,21 @@ relations:
 - from_concept: C-001
   to_concept: C-021
   type: implements
+- from_concept: C-022
+  to_concept: C-016
+  type: extends
+- from_concept: C-022
+  to_concept: C-003
+  type: uses
+- from_concept: C-022
+  to_concept: C-008
+  type: implements
+- from_concept: C-016
+  to_concept: C-022
+  type: uses
+- from_concept: C-023
+  to_concept: C-013
+  type: extends
+- from_concept: C-016
+  to_concept: C-023
+  type: consumes

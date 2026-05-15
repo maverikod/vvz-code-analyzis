@@ -16,7 +16,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
-from code_analysis.core.sql_portable import WHERE_FILES_TRASHED
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_TRASHED,
+    sql_julian_timestamp_now_expr,
+)
 
 from .trash_codedatabase_adapter import TrashSqlDriver
 from .trash_standalone_support import (
@@ -27,6 +30,14 @@ from .trash_standalone_support import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _database_for_julian_expr(driver: Any) -> Any:
+    """Resolve object with ``_driver_type`` (CodeDatabase on TrashCodeDatabaseDriverFacade)."""
+    facade_db = getattr(driver, "_db", None)
+    if facade_db is not None:
+        return facade_db
+    return driver
 
 
 def _get_project_row(
@@ -127,14 +138,15 @@ def mark_file_deleted_via_driver(
 
     file_id = row["id"]
     original_path = Path(abs_path)
+    _now = sql_julian_timestamp_now_expr(_database_for_julian_expr(driver))
 
     if not original_path.exists():
         logger.warning("File not found at %s, DB-only delete", file_path)
         driver_execute_write(
             driver,
-            """
+            f"""
             UPDATE files
-            SET deleted = 1, original_path = ?, version_dir = ?, updated_at = julianday('now')
+            SET deleted = 1, original_path = ?, version_dir = ?, updated_at = {_now}
             WHERE id = ?
             """,
             (str(original_path), str(file_trash_root), file_id),
@@ -204,9 +216,9 @@ def mark_file_deleted_via_driver(
 
     driver_execute_write(
         driver,
-        """
+        f"""
         UPDATE files
-        SET deleted = 1, original_path = ?, version_dir = ?, path = ?, updated_at = julianday('now')
+        SET deleted = 1, original_path = ?, version_dir = ?, path = ?, updated_at = {_now}
         WHERE id = ?
         """,
         (str(original_path), str(file_trash_root), str(target_path), file_id),
@@ -322,12 +334,13 @@ def unmark_file_deleted_via_driver(
         )
         return False
 
+    _now = sql_julian_timestamp_now_expr(_database_for_julian_expr(driver))
     driver_execute_write(
         driver,
-        """
+        f"""
         UPDATE files
         SET deleted = 0, path = ?, original_path = NULL, version_dir = NULL,
-            updated_at = julianday('now')
+            updated_at = {_now}
         WHERE id = ?
         """,
         (str(original_path), file_id),

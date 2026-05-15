@@ -81,15 +81,17 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
     files = [
         {
             "id": 1,
-            "path": "/repo/proj-a/src/foo.py",
+            "path": "src/foo.py",
             "project_id": "proj-a",
             "updated_at": 2.0,
+            "editing_pid": None,
         },
         {
             "id": 2,
-            "path": "/repo/proj-a/src/bar.py",
+            "path": "src/bar.py",
             "project_id": "proj-a",
             "updated_at": 1.0,
+            "editing_pid": None,
         },
     ]
     files_per_project = {"proj-a": files}
@@ -122,8 +124,8 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
     calls = [
         c[0] for c in mock_db.index_file.call_args_list
     ]  # (path, project_id) positional
-    assert ("/repo/proj-a/src/foo.py", "proj-a") in calls
-    assert ("/repo/proj-a/src/bar.py", "proj-a") in calls
+    assert ("src/foo.py", "proj-a") in calls
+    assert ("src/bar.py", "proj-a") in calls
 
 
 @pytest.mark.asyncio
@@ -133,9 +135,27 @@ async def test_process_cycle_respects_batch_size(tmp_path):
     projects = [{"project_id": "p1"}]
     # 3 files available; batch_size=2 so only first 2 should be requested
     files = [
-        {"id": 1, "path": "/p1/a.py", "project_id": "p1", "updated_at": 300.0},
-        {"id": 2, "path": "/p1/b.py", "project_id": "p1", "updated_at": 200.0},
-        {"id": 3, "path": "/p1/c.py", "project_id": "p1", "updated_at": 100.0},
+        {
+            "id": 1,
+            "path": "a.py",
+            "project_id": "p1",
+            "updated_at": 300.0,
+            "editing_pid": None,
+        },
+        {
+            "id": 2,
+            "path": "b.py",
+            "project_id": "p1",
+            "updated_at": 200.0,
+            "editing_pid": None,
+        },
+        {
+            "id": 3,
+            "path": "c.py",
+            "project_id": "p1",
+            "updated_at": 100.0,
+            "editing_pid": None,
+        },
     ]
     files_per_project = {"p1": files}
 
@@ -164,8 +184,8 @@ async def test_process_cycle_respects_batch_size(tmp_path):
     # Should have been called with limit batch_size (2) so only 2 files in first cycle
     assert mock_db.index_file.call_count == 2
     paths = [c[0][0] for c in mock_db.index_file.call_args_list]
-    assert "/p1/a.py" in paths
-    assert "/p1/b.py" in paths
+    assert "a.py" in paths
+    assert "b.py" in paths
 
 
 @pytest.mark.asyncio
@@ -179,14 +199,21 @@ async def test_process_cycle_respects_project_order(tmp_path):
     ]
     files_per_project = {
         "first": [
-            {"id": 1, "path": "/first/one.py", "project_id": "first", "updated_at": 1.0}
+            {
+                "id": 1,
+                "path": "one.py",
+                "project_id": "first",
+                "updated_at": 1.0,
+                "editing_pid": None,
+            }
         ],
         "second": [
             {
                 "id": 2,
-                "path": "/second/two.py",
+                "path": "two.py",
                 "project_id": "second",
                 "updated_at": 1.0,
+                "editing_pid": None,
             }
         ],
     }

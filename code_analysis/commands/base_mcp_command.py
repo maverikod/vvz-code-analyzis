@@ -111,7 +111,9 @@ class BaseMCPCommand(Command):
         from code_analysis.core.project_root_path import (
             persist_projects_root_path_stored_value,
         )
+        from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
+        _now_sql = sql_julian_timestamp_now_expr(db)
         if project_id:
             project = db.get_project(project_id)
             if project:
@@ -134,7 +136,7 @@ class BaseMCPCommand(Command):
                 database=db,
             )
             result = db.execute(
-                "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+                f"INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, {_now_sql})",
                 (project_id, root_stored, project_name),
             )
             affected = 0
@@ -158,7 +160,7 @@ class BaseMCPCommand(Command):
             database=db,
         )
         result = db.execute(
-            "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+            f"INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, {_now_sql})",
             (new_id, root_stored, root_path.name),
         )
         affected = 0

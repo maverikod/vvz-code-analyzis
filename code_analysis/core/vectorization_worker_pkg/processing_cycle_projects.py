@@ -25,7 +25,11 @@ from .batch_processor import (
     process_embedding_ready_chunks,
 )
 from .timing_log import log_operation_timing
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F, WHERE_HAS_DOCSTRING_F
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE_F,
+    WHERE_HAS_DOCSTRING_F,
+    sql_julian_timestamp_now_expr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,8 @@ async def process_projects_in_cycle(
     cycle_activity = False
     delta_processed = 0
     delta_errors = 0
+
+    _now_sql = sql_julian_timestamp_now_expr(database)
 
     for project in projects:
         project_id = project["project_id"]
@@ -383,13 +389,13 @@ async def process_projects_in_cycle(
                     cycle_activity = True
 
                 database.execute(
-                    """
+                    f"""
                     UPDATE vectorization_stats
                     SET
                         chunks_processed = chunks_processed + ?,
                         chunks_failed = chunks_failed + ?,
                         total_processing_time_seconds = total_processing_time_seconds + ?,
-                        last_updated = julianday('now')
+                        last_updated = {_now_sql}
                     WHERE cycle_id = ?
                     """,
                     (

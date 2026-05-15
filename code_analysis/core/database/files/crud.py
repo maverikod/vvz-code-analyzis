@@ -255,6 +255,7 @@ def add_file(
         (project_id, r1, r2, r3),
     )
 
+    _now = sql_julian_timestamp_now_expr(self)
     if existing_in_correct_project:
         # Update existing file (including relative_path and watch_dir_id)
         file_id_raw = (
@@ -266,10 +267,10 @@ def add_file(
             raise ValueError("Existing file record has no id in add_file update path")
         file_id = str(file_id_raw)
         self._execute(
-            """
+            f"""
             UPDATE files 
             SET watch_dir_id = ?, path = ?, relative_path = ?, lines = ?, 
-                last_modified = ?, has_docstring = ?, updated_at = julianday('now')
+                last_modified = ?, has_docstring = ?, updated_at = {_now}
             WHERE id = ?
             """,
             (
@@ -290,10 +291,10 @@ def add_file(
         # Insert new file with explicit UUID primary key (no reliance on lastrowid).
         new_id = str(uuid.uuid4())
         self._execute(
-            """
+            f"""
                 INSERT INTO files
                 (id, project_id, watch_dir_id, path, relative_path, lines, last_modified, has_docstring, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now})
             """,
             (
                 new_id,

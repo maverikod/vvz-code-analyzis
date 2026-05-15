@@ -1,0 +1,20 @@
+step_id: T-903
+parent_global_step: G-010
+name: Node renderer
+description: >
+  Add render_node(tree, stable_id) to python_visualizer.py.
+  FunctionDef/AsyncFunctionDef: signature + docstring + body first-level
+  (compound stmts collapsed with stable_id + range + ...).
+  ClassDef: signature + docstring + method signatures + docstrings.
+  Compound stmts (If/For/While/Try/With): first line + stable_id + range + ...
+concepts:
+  - C-022
+  - C-009
+  - C-016
+inputs:
+  - {name: python_visualizer_py, type: file, description: module from T-902}
+  - {name: stable_id, type: str, description: stable_id of target node}
+outputs:
+  - {name: python_visualizer_py, type: file, description: extended with render_node}
+atomic_steps: []
+status: draft

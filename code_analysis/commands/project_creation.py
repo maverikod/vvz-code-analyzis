@@ -22,6 +22,7 @@ else:
     DatabaseClient = Any
 
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -402,8 +403,9 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
+                _now = sql_julian_timestamp_now_expr(self.database)
                 self.database.execute(
-                    "INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, julianday('now'))",
+                    f"INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, {_now})",
                     (
                         project_id,
                         root_stored,
@@ -446,8 +448,9 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
+                _now = sql_julian_timestamp_now_expr(self.database)
                 self.database.execute(
-                    "INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, julianday('now'))",
+                    f"INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, {_now})",
                     (
                         project_id,
                         root_stored,

@@ -19,6 +19,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
 logger = logging.getLogger(__name__)
 
 RUNTIME_LOCK_SESSIONS_TABLE = "runtime_lock_sessions"
@@ -160,15 +162,16 @@ def register_runtime_session(
     sid = str(session_id or uuid.uuid4()).strip()
     role_s = str(role or "unknown").strip() or "unknown"
     host = socket.gethostname()
+    _now = sql_julian_timestamp_now_expr(database)
     with _session_lock:
         _execute(database, "DELETE FROM runtime_lock_sessions WHERE pid = ?", (pid,))
         _execute(
             database,
-            """
+            f"""
             INSERT INTO runtime_lock_sessions (
                 session_id, pid, listener_url, role, hostname, started_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))
+            VALUES (?, ?, ?, ?, ?, {_now}, {_now})
             """,
             (sid, pid, listener_url, role_s, host),
         )
@@ -247,6 +250,7 @@ def acquire_file_advisory_lease(
     if not runtime_session_exists(database, sid):
         raise ValueError(f"runtime lock session not found: {sid}")
 
+    _now = sql_julian_timestamp_now_expr(database)
     row = _select_one(
         database,
         """
@@ -259,9 +263,9 @@ def acquire_file_advisory_lease(
     if row:
         _execute(
             database,
-            """
+            f"""
             UPDATE file_advisory_lock_leases
-            SET refcount = refcount + 1, updated_at = julianday('now')
+            SET refcount = refcount + 1, updated_at = {_now}
             WHERE session_id = ? AND project_id = ? AND file_path = ? AND lock_mode = ?
             """,
             (sid, pid, rel, mode),
@@ -270,11 +274,11 @@ def acquire_file_advisory_lease(
     else:
         _execute(
             database,
-            """
+            f"""
             INSERT INTO file_advisory_lock_leases (
                 session_id, project_id, file_path, lock_mode, locked_since, updated_at, refcount
             )
-            VALUES (?, ?, ?, ?, julianday('now'), julianday('now'), 1)
+            VALUES (?, ?, ?, ?, {_now}, {_now}, 1)
             """,
             (sid, pid, rel, mode),
         )
@@ -331,6 +335,7 @@ def release_file_advisory_lease(
 
     released = 0
     decremented = 0
+    _now = sql_julian_timestamp_now_expr(database)
     for row in lease_rows:
         row_mode = str(row["lock_mode"])
         refcount = int(row.get("refcount") or 1)
@@ -347,9 +352,9 @@ def release_file_advisory_lease(
         else:
             _execute(
                 database,
-                """
+                f"""
                 UPDATE file_advisory_lock_leases
-                SET refcount = refcount - 1, updated_at = julianday('now')
+                SET refcount = refcount - 1, updated_at = {_now}
                 WHERE session_id = ? AND project_id = ? AND file_path = ? AND lock_mode = ?
                 """,
                 (sid, pid, rel, row_mode),

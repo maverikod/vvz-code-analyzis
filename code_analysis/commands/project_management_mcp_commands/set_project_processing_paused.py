@@ -13,6 +13,7 @@ from ._shared import (
     SuccessResult,
     ValidationError,
 )
+from ...core.sql_portable import sql_julian_timestamp_now_expr
 
 
 class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
@@ -84,10 +85,11 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
             try:
                 # PostgreSQL column is BOOLEAN; bind Python bool (not 0/1) for psycopg.
                 bind_paused = bool(processing_paused)
+                _now = sql_julian_timestamp_now_expr(database)
                 database.execute(
-                    """
+                    f"""
                     UPDATE projects
-                    SET processing_paused = ?, updated_at = julianday('now')
+                    SET processing_paused = ?, updated_at = {_now}
                     WHERE id = ?
                     """,
                     (bind_paused, project_id),

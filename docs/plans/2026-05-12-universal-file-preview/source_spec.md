@@ -247,6 +247,58 @@ The whitelist edit is its own step in the plan, not part of the command
 package. The whitelist edit happens only after the command and its tests
 are green.
 
+## 15. Python handler structured text rendering
+
+The Python file handler produces a structured text rendering of any node,
+suitable for direct consumption by AI models. This rendering replaces the
+generic JSON child-count summary for Python `tree_node` nodes with a
+human-readable text block.
+
+The rendering follows these rules by node type:
+
+- **Module (file root):** The rendering includes the module docstring, followed
+  by one line per top-level entity: import lines with their stable identifier
+  and line range, constant assignments, class signatures with class docstrings
+  and method signatures with method docstrings, and module-level function
+  signatures with docstrings. Each entity is prefixed with its stable
+  identifier in brackets and its line range.
+
+- **ClassDef:** The rendering includes the class signature and docstring,
+  followed by each method's signature and docstring. Method bodies are not
+  included.
+
+- **FunctionDef / AsyncFunctionDef:** The rendering includes the full function
+  signature, full docstring, and the first-level body. Compound statements
+  at the first level (`if`, `for`, `while`, `try`, `with`, `match`) are
+  collapsed: only the first line of the compound statement is shown, followed
+  by `...`, prefixed with the statement's stable identifier and line range.
+  Simple statements at the first level are shown in full.
+
+- **Compound statements (If, For, While, Try, With, Match) as focus node:**
+  The same first-level rendering applies: the statement itself is shown with
+  its stable identifier, line range, and first line, followed by its
+  first-level body with the same collapse rule.
+
+The stable identifier and line range prefix format is:
+`[stable_id] Lstart-end` for multi-line nodes, `[stable_id] Lline` for
+single-line nodes.
+
+This structured text is returned in the `text` field of the block summary.
+When `text` is present, the caller should use it instead of the generic
+`type`, `name`, `attributes`, `child_count` fields for display purposes.
+
+## 16. Python handler full-text threshold
+
+The Python file handler accepts a `full_text_max_lines` parameter as part of
+the preview budget. When the target Python file has fewer lines than this
+threshold, the handler returns the entire file source as a single text block
+instead of the structured rendering described in section 15. This allows
+callers to read small files in one step without navigating the tree structure.
+
+The default value of `full_text_max_lines` is 200 lines. The parameter is
+optional; when omitted, the default applies. A value of 0 disables the
+full-text fallback entirely.
+
 <!-- non-binding -->
 ## Notes
 

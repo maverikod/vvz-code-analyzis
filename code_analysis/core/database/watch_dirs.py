@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Any, Dict, List, Optional
 
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,10 +21,11 @@ def create_watch_dir(self, watch_dir_id: str, name: Optional[str] = None) -> Non
         watch_dir_id: UUID4 identifier for watch directory
         name: Optional human-readable name
     """
+    _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        """
+        f"""
         INSERT OR REPLACE INTO watch_dirs (id, name, updated_at)
-        VALUES (?, ?, julianday('now'))
+        VALUES (?, ?, {_now})
         """,
         (watch_dir_id, name),
     )
@@ -72,12 +75,13 @@ def update_watch_dir_path(
         (watch_dir_id,),
     )
 
+    _now = sql_julian_timestamp_now_expr(self)
     if existing:
         # Update existing entry
         self._execute(
-            """
+            f"""
             UPDATE watch_dir_paths
-            SET absolute_path = ?, updated_at = julianday('now')
+            SET absolute_path = ?, updated_at = {_now}
             WHERE watch_dir_id = ?
             """,
             (absolute_path, watch_dir_id),
@@ -85,9 +89,9 @@ def update_watch_dir_path(
     else:
         # Create new entry
         self._execute(
-            """
+            f"""
             INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
-            VALUES (?, ?, julianday('now'))
+            VALUES (?, ?, {_now})
             """,
             (watch_dir_id, absolute_path),
         )

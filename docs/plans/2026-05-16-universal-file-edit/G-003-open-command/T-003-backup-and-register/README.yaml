@@ -1,11 +1,17 @@
 step_id: T-003
 parent_global_step: G-003
 name: Create initial backup and register session
-description: If the file has no backup history, create an initial BackupPair (C-011)
-  via the backup manager. Register a new EditSession (C-001) in the session registry
-  with the session_id, file paths, format_group, handler_id, and in-memory tree reference
-  (for tree-temp group). Return the session_id and the list of operations available
-  for the format group.
+description: 'If the file has no backup history, create an initial BackupPair (C-011).
+  Use the existing `BackupManager` from `core/backup_manager.py`: call `BackupManager.list_versions(file_path)`
+  — if the returned list is empty, call `BackupManager.create_backup(file_path, command=''initial'')`.
+  BackupManager already exists and handles all backup storage; no new backup code
+  is needed.
+
+  Then register a new EditSession (C-001) using `create_session` from the session
+  module created in G-002/T-002. Pass the FormatDescriptor (format_group, handler_id,
+  draft_path), abs_path, and tree_id from T-002.
+
+  Return the session_id UUID and the available_operations list from the FormatDescriptor.'
 concepts:
 - C-001
 - C-005
@@ -15,19 +21,22 @@ inputs:
 - name: file_path
   type: project-relative path string
   description: Path to the original file.
+- name: abs_path
+  type: Path
+  description: Absolute path to the original file.
 - name: format_descriptor
-  type: FormatGroup descriptor
-  description: Resolved format group for the file.
-- name: draft_file
-  type: DraftFile on disk
-  description: Draft file created by T-002.
+  type: FormatDescriptor
+  description: Resolved descriptor from G-002/T-001.
+- name: tree_id
+  type: str | None
+  description: In-memory tree UUID from T-002 (tree-temp group only).
 outputs:
 - name: session_id
   type: UUID string
   description: Identifier for the new editing session.
 - name: available_operations
-  type: list of operation descriptors
-  description: Operations available for the format group (insert, delete, replace
-    with addressing rules).
+  type: list of operation descriptor dicts
+  description: Operations available for the format group, each with type, address
+    fields, and content rules.
 atomic_steps: []
 status: draft

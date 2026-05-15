@@ -1,12 +1,11 @@
 step_id: G-010
 name: Python node visualizer
-description: 'Add a NodeVisualizer component to PythonFileHandler that renders any
-  node from CSTTree into a structured human-readable text preview. Four rendering
+description: >
+  Add PythonNodeRenderer (C-022) to PythonFileHandler (C-016). Four rendering
   modes: module-level overview, class structure, function/method body first-level,
-  and full-text fallback for small files. Wires PreviewBudget full_text_max_lines
-  into UniversalFilePreviewCommand. Adds text field to Block model.
-
-  '
+  and full-text fallback for small files via FullTextThreshold (C-023).
+  Wires full_text_max_lines into UniversalFilePreviewCommand (C-001).
+  Adds optional text field to Block (C-005) and updates BlockHandler (C-008).
 concepts:
 - C-001
 - C-003
@@ -30,7 +29,7 @@ relations:
   to_concept: C-023
   type: consumes
 - from_concept: C-001
-  type: consumes
+  to_concept: C-023
   type: consumes
 source_ranges:
 - start: 259

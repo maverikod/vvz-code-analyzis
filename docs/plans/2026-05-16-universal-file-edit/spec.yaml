@@ -175,8 +175,22 @@ concepts:
   - get_file_lines remains as fallback for broken files
   - universal_file_preview remains unchanged
   source_ranges:
-  - start: 21
-    end: 38
+  - {start: 21, end: 38}
+
+- concept_id: C-014
+  name: ErrorCodes
+  definition: >-
+    Set of deterministic error codes produced by the four commands
+    when preconditions are violated.
+  properties:
+  - SESSION_NOT_FOUND when session_id is unknown
+  - DRAFT_NOT_FOUND when draft is missing but expected
+  - NESTED_BATCH_FORBIDDEN when ancestor-descendant pair in sidecar batch
+  - WRITE_FAILED when code generation or file write fails; backup restored
+  - UNKNOWN_FORMAT when file extension is not supported
+  - PARSE_ERROR when file cannot be parsed on open
+  source_ranges:
+  - {start: 265, end: 275}
 relations:
 - from_concept: C-005
   to_concept: C-001

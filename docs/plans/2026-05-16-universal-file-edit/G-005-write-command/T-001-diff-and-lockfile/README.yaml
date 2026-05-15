@@ -1,0 +1,28 @@
+step_id: T-001
+parent_global_step: G-005
+name: Generate diff and write lockfile (first call)
+description: 'Realise the first phase of WriteCommand (C-009). Generate source code
+  from the DraftFile (C-003) using the format group''s code generation mechanism.
+  Compute a diff between the original file and the generated code. Write the WriteLockfile
+  (C-004) with the current server process identifier. Return the diff to the caller.
+  The original file is not modified. When the lockfile already exists but its process
+  identifier does not match the current process, treat the call as a first call: overwrite
+  the lockfile and return a fresh diff.'
+concepts:
+- C-003
+- C-004
+- C-009
+- C-012
+inputs:
+- name: session
+  type: EditSession
+  description: Active session identifying the file and draft.
+outputs:
+- name: diff
+  type: unified diff string
+  description: Diff between original file and code generated from draft.
+- name: lockfile
+  type: WriteLockfile on disk
+  description: Lockfile written with current server process identifier.
+atomic_steps: []
+status: draft

@@ -1,0 +1,14 @@
+step_id: G-001
+name: Registration cleanup
+description: Remove all legacy editing commands from hooks.py registration. Code files
+  are not deleted; only their registration entries are removed. universal_file_preview
+  and get_file_lines remain registered.
+concepts:
+- C-012
+relations: []
+source_ranges:
+- start: 14
+  end: 32
+depends_on: []
+tactical_steps: []
+status: draft

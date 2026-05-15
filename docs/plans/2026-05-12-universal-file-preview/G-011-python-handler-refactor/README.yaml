@@ -36,11 +36,10 @@ relations:
   to_concept: C-005
   type: depends_on
 depends_on:
-- G-010
 tactical_steps:
 - T-1001
-- T-1002
 - T-1003
+- T-1004
 - T-1004
 status: draft
 source_ranges:

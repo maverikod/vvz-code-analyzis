@@ -1,1 +1,0 @@
-"""Helper script: copy file for replace test."""

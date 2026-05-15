@@ -1,21 +1,25 @@
 step_id: T-1001
 parent_global_step: G-011
 name: Drop dead code from python_handler.py
-description: 'Remove functions no longer needed after G-010 visualizer is wired: _cst_statements_to_nodes,
-  _cst_node_to_node, _classify_cst_node, _find_by_stable_id. Verify none are imported
-  elsewhere before deletion. Remove dead imports that become unused after deletion.
-
-  '
+description: >
+  Remove four module-level functions from PythonFileHandler (C-016) that became
+  dead code after G-010 wired PythonNodeRenderer (C-022): _cst_statements_to_nodes,
+  _cst_node_to_node, _classify_cst_node, _find_by_stable_id.
+  These four functions are confirmed to have no callers outside python_handler.py.
+  Remove also any imports that become unused after their deletion (import libcst
+  inside function bodies disappears with the functions; no top-level imports are
+  affected). Do not change PythonFileHandler methods, _metadata_children_to_nodes,
+  or any other code.
 concepts:
 - C-016
 inputs:
 - name: python_handler_py
   type: file
-  description: handlers/python_handler.py
+  description: handlers/python_handler.py after G-010 changes
 outputs:
 - name: python_handler_py
   type: file
-  description: cleaned file without dead functions
+  description: cleaned file without the four dead functions
 atomic_steps:
 - A-001
 status: draft

@@ -7,11 +7,14 @@ description: 'Add a NodeVisualizer component to PythonFileHandler that renders a
   or response envelope shape.
 
   '
-concepts:
+- C-001
+- C-003
+- C-005
+- C-008
+- C-009
 - C-016
 - C-022
 - C-023
-- C-003
 - C-008
 relations:
 - from_concept: C-022

@@ -1,20 +1,18 @@
 step_id: T-1003
 parent_global_step: G-011
-name: Add text field to Block model
-description: 'Add optional text: str | None = None field to Block dataclass in models.py.
-  Update ResponseEnvelope serialization in response.py to include text field in block
-  output when non-None. Update block_handlers.py tree_node handler to pass rendered
-  text through instead of building child_count summary.
-
-  '
+name: Wire text field through BlockHandler and ResponseEnvelope
+description: >
+  Block.text field is added in G-010/T-904. This step wires it through serialization.
+  Update ResponseEnvelope assembly (C-012) in response.py: extract text from
+  focus Node.attributes and include in focus dict; include Block.text in each
+  block dict when non-None.
+  Update BlockHandler (C-008) tree_node rule in block_handlers.py: promote text
+  from Node.attributes to top-level summary field, exclude from attributes dict.
 concepts:
 - C-005
 - C-008
 - C-012
 inputs:
-- name: models_py
-  type: file
-  description: universal_file_preview/models.py
 - name: response_py
   type: file
   description: universal_file_preview/response.py
@@ -22,15 +20,12 @@ inputs:
   type: file
   description: universal_file_preview/block_handlers.py
 outputs:
-- name: models_py
-  type: file
-  description: Block with text field
 - name: response_py
   type: file
-  description: serialization updated
+  description: ResponseEnvelope serialization updated with text field
 - name: block_handlers_py
   type: file
-  description: tree_node handler updated
+  description: tree_node BlockHandler promotes text from attributes
 atomic_steps:
 - A-001
 - A-002

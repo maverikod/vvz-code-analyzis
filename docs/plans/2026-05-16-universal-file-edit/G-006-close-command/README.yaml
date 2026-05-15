@@ -1,0 +1,38 @@
+step_id: G-006
+name: universal_file_close command
+description: 'Implement the universal_file_close MCP command. Behaviour by format
+  group: sidecar - verify_sidecar_against_source; mismatch rebuilds sidecar without
+  backup; sidecar not deleted. tree-temp - sha256 compare draft vs original; mismatch
+  rebuilds draft; draft deleted on match; remove_tree frees in-memory tree. text -
+  delete draft unconditionally. Lockfile deleted in all cases. Session released. Returns
+  draft_rebuilt flag when rebuild occurred.'
+concepts:
+- C-001
+- C-002
+- C-003
+- C-004
+- C-010
+- C-012
+relations:
+- from_concept: C-010
+  to_concept: C-001
+  type: consumes
+- from_concept: C-010
+  to_concept: C-002
+  type: consumes
+- from_concept: C-010
+  to_concept: C-003
+  type: uses
+- from_concept: C-010
+  to_concept: C-004
+  type: uses
+- from_concept: C-010
+  to_concept: C-012
+  type: uses
+source_ranges:
+- start: 212
+  end: 245
+depends_on:
+- G-002
+tactical_steps: []
+status: draft

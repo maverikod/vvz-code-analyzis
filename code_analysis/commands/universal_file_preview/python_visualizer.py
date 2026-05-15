@@ -7,7 +7,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -17,7 +16,6 @@ from typing import Any
 
 
 from .budget import PreviewBudget
-
 
 
 def _fmt_range(meta: Any) -> str:
@@ -38,7 +36,6 @@ def _fmt_range(meta: Any) -> str:
     return f"L{start}"
 
 
-
 def _doc_first_line(doc: Any) -> str:
     """First line for inline docstring preview (handles DocstringMeta or string)."""
     if doc is None:
@@ -57,7 +54,6 @@ def _doc_first_line(doc: Any) -> str:
     return ""
 
 
-
 def _doc_block_preview(doc: Any) -> str:
     """Full docstring snippet for module header (handles DocstringMeta or string)."""
     if doc is None:
@@ -71,6 +67,7 @@ def _doc_block_preview(doc: Any) -> str:
     if body:
         return body
     return ""
+
 
 def _headline(meta: Any, tree: Any = None) -> str:
     """One-line header for a CST node metadata row.
@@ -120,7 +117,6 @@ def _headline(meta: Any, tree: Any = None) -> str:
     return ""
 
 
-
 def _function_headline(meta: Any) -> str:
     """Header line for defs (used under classes and collapsed bodies)."""
     h = _headline(meta)
@@ -131,6 +127,7 @@ def _function_headline(meta: Any) -> str:
     if typ == "AsyncFunctionDef":
         return f"async def {name or '?'}:"
     return f"def {name or '?'}:"
+
 
 def render_module(tree: Any, budget: PreviewBudget) -> str:
     """Render top-level module view: classes, functions, and loose statements.
@@ -172,8 +169,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
                     (
                         m
                         for m in tree.metadata_map.values()
-                        if m.parent_id == node_id
-                        and m.kind in ("function", "method")
+                        if m.parent_id == node_id and m.kind in ("function", "method")
                     ),
                     key=lambda m: m.start_line or 0,
                 )
@@ -195,7 +191,6 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
     return "\n".join(lines)
 
 
-
 _COMPOUND_STMT_TYPES = frozenset(
     {
         "If",
@@ -211,7 +206,6 @@ _COMPOUND_STMT_TYPES = frozenset(
 )
 
 
-
 def _is_compound_stmt(meta: Any) -> bool:
     """Return whether metadata denotes a compound statement for collapsed body preview.
 
@@ -223,7 +217,6 @@ def _is_compound_stmt(meta: Any) -> bool:
     """
     typ = getattr(meta, "type", None) or ""
     return typ in _COMPOUND_STMT_TYPES
-
 
 
 def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
@@ -286,6 +279,7 @@ def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
         key=lambda m: m.start_line or 0,
     )
 
+
 def _append_collapsed_body_lines(
     lines: list[str], children: list[Any], tree: Any = None
 ) -> None:
@@ -307,6 +301,7 @@ def _append_collapsed_body_lines(
             lines.append(f"  [{sid}] {rng}  {head}  ...")
         else:
             lines.append(f"  [{sid}] {rng}  {head}")
+
 
 def render_node(tree: Any, stable_id: str) -> str:
     """Render a single CST node identified by its stable_id (C-022).
@@ -365,7 +360,9 @@ def render_node(tree: Any, stable_id: str) -> str:
         return "\n".join(lines_cls)
 
     if typ in ("If", "For", "While", "Try", "With", "Match"):
-        lines_stm: list[str] = [f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta, tree)}"]
+        lines_stm: list[str] = [
+            f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta, tree)}"
+        ]
         _append_collapsed_body_lines(lines_stm, _direct_children(tree, node_id), tree)
         return "\n".join(lines_stm)
 

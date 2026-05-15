@@ -6,11 +6,10 @@ description: >
   render_module (C-022) and store result in Node.attributes["text"].
   Modify resolve_node_ref to call render_node (C-022) and return text in attributes.
   Add optional text field to Block dataclass (C-005) alongside summary dict.
-  Update BlockHandler (C-008) tree_node rule to promote text from attributes.
+  BlockHandler update is out of scope for this step (handled in G-011/T-1003).
 concepts:
 - C-003
 - C-005
-- C-008
 - C-016
 - C-022
 inputs:

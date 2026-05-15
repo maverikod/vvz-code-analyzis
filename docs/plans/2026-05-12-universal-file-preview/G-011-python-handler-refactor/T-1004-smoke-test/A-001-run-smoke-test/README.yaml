@@ -18,38 +18,46 @@ verification:
     first-level statements.
 
     '
-prompt: "## Task\n\nRun a live smoke-test of universal_file_preview via MCP and record\
-  \ results.\n\nTarget file: docs/plans/2026-05-12-universal-file-preview/G-011-python-handler-refactor/T-1004-smoke-test/smoke_test_results.md\n\
-  Operation: create_file\n\nThe file does not exist. Create it with the test results.\n\
-  \n## How to run the test\n\nCall the MCP command universal_file_preview with the\
-  \ following three cases.\nThe server must be running with the code from G-010 and\
-  \ G-011 applied.\n\n### Case 1 — Small file (full-text fallback)\n\nChoose any .py\
-  \ file in the project that has fewer than 200 lines.\nCall universal_file_preview\
-  \ with:\n  project_id: <project UUID>\n  file_path: <chosen small file, e.g. budget.py>\n\
-  \  full_text_max_lines: 200\n\nExpected: The focus node has a 'text' field containing\
-  \ the full file source.\nThe blocks list may be empty or contain one text block.\n\
-  Record: the file chosen, its line count, and whether 'text' is present\nin the focus\
-  \ or first block.\n\n### Case 2 — Large file without node_ref (module overview)\n\
-  \nChoose any .py file with more than 200 lines.\nCall universal_file_preview with:\n\
-  \  project_id: <project UUID>\n  file_path: <chosen large file>\n  full_text_max_lines:\
-  \ 200\n\nExpected: The focus node has 'text' containing a structured overview\n\
-  with imports, classes, and functions prefixed by stable_id and line range.\nRecord:\
-  \ file chosen, line count, first 10 lines of the text field.\n\n### Case 3 — Large\
-  \ file with node_ref pointing to a FunctionDef\n\nUse the same large file from Case\
-  \ 2.\nFirst call universal_file_preview without node_ref to get a stable_id\nof\
-  \ a top-level function from the blocks.\nThen call universal_file_preview again\
-  \ with that stable_id as node_ref.\n\nExpected: The focus node has 'text' showing\
-  \ the function signature,\ndocstring, and first-level body with compound statements\
-  \ collapsed.\nRecord: stable_id used, first 10 lines of the text field.\n\n## What\
-  \ to produce\n\nCreate the file smoke_test_results.md with the following sections:\n\
-  \n# Smoke Test Results — G-011 T-1004\n\n## Case 1: Small file full-text fallback\n\
-  - File: <path>\n- Line count: <N>\n- text present in focus: yes/no\n- First 5 lines\
-  \ of text: ...\n- Status: PASS / FAIL\n- Notes: (if FAIL, describe what went wrong)\n\
-  \n## Case 2: Large file module overview\n- File: <path>\n- Line count: <N>\n- text\
-  \ present in focus: yes/no\n- First 10 lines of text: ...\n- Status: PASS / FAIL\n\
-  - Notes:\n\n## Case 3: Large file single FunctionDef\n- File: <path>\n- node_ref\
-  \ used: <stable_id>\n- text present in focus: yes/no\n- First 10 lines of text:\
-  \ ...\n- Status: PASS / FAIL\n- Notes:\n\n## Overall: PASS / FAIL\n\nIf any case\
-  \ FAILs, describe the fix applied before marking overall PASS.\n\n## Constraints\n\
-  \nThis step produces a Markdown document, not Python code.\nThe file must exist\
-  \ and be non-empty when the step is marked done.\n"
+prompt: "## Task\n\nRun a live smoke-test of the universal_file_preview MCP command\
+  \ and record results.\n\nTarget file: docs/plans/2026-05-12-universal-file-preview/G-011-python-handler-refactor/T-1004-smoke-test/smoke_test_results.md\n\
+  Operation: create_file\n\nThe file does not exist. Create it with the test results\
+  \ after running\nthe three cases below.\n\n## Prerequisites\n\nThe MCP server code-analysis-server\
+  \ must be running.\nProject UUID: 8772a086-688d-4198-a0c4-f03817cc0e6c\n\n## Test\
+  \ cases\n\n### Case 1 — Small file (full-text fallback, < 200 lines)\n\nCall universal_file_preview\
+  \ with:\n  project_id: 8772a086-688d-4198-a0c4-f03817cc0e6c\n  file_path: code_analysis/commands/universal_file_preview/budget.py\n\
+  \  full_text_max_lines: 200\n\nbudget.py has 49 lines (< 200), so full-text fallback\
+  \ must trigger.\n\nExpected: response focus dict contains key 'text' with the full\
+  \ file source.\nRecord: whether 'text' key is present in focus, first 5 lines of\
+  \ text.\n\n### Case 2 — Large file module overview (> 200 lines, no node_ref)\n\n\
+  Call universal_file_preview with:\n  project_id: 8772a086-688d-4198-a0c4-f03817cc0e6c\n\
+  \  file_path: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  \  full_text_max_lines: 200\n\npython_handler.py has more than 200 lines, so structured\
+  \ rendering must trigger.\n\nExpected: response focus dict contains key 'text' with\
+  \ a structured module\noverview: imports prefixed with stable_id and line range,\
+  \ class and function\nentries with docstring first lines.\nRecord: whether 'text'\
+  \ key is present in focus, first 10 lines of text.\n\n### Case 3 — Large file with\
+  \ node_ref pointing to a FunctionDef\n\nStep 3a: call universal_file_preview with:\n\
+  \  project_id: 8772a086-688d-4198-a0c4-f03817cc0e6c\n  file_path: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  \  full_text_max_lines: 200\n\nFrom the blocks in the response, pick the stable_id\
+  \ of a top-level function\n(look for a block whose summary.type is 'FunctionDef'\
+  \ or similar).\n\nStep 3b: call universal_file_preview with:\n  project_id: 8772a086-688d-4198-a0c4-f03817cc0e6c\n\
+  \  file_path: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  \  node_ref: <stable_id from step 3a>\n  full_text_max_lines: 200\n\nExpected: response\
+  \ focus dict contains key 'text' showing the function\nsignature, docstring, and\
+  \ first-level body with compound statements collapsed.\nRecord: stable_id used,\
+  \ whether 'text' is present, first 10 lines of text.\n\n## What to produce\n\nCreate\
+  \ the file with the following exact structure, filled with real results:\n\n# Smoke\
+  \ Test Results — G-011 T-1004\n\n## Case 1: Small file full-text fallback\n- File:\
+  \ code_analysis/commands/universal_file_preview/budget.py\n- Line count: 49\n- text\
+  \ present in focus: yes/no\n- First 5 lines of text: ...\n- Status: PASS / FAIL\n\
+  - Notes: (if FAIL, describe what went wrong and what fix was applied)\n\n## Case\
+  \ 2: Large file module overview\n- File: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  - Line count: <actual>\n- text present in focus: yes/no\n- First 10 lines of text:\
+  \ ...\n- Status: PASS / FAIL\n- Notes:\n\n## Case 3: Large file single FunctionDef\n\
+  - File: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  - node_ref used: <stable_id>\n- text present in focus: yes/no\n- First 10 lines\
+  \ of text: ...\n- Status: PASS / FAIL\n- Notes:\n\n## Overall: PASS / FAIL\n\nIf\
+  \ any case FAILs, apply the fix and re-run before writing PASS.\n\n## Constraints\n\
+  \nThis step produces a Markdown document, not Python code.\nAll three cases must\
+  \ be actually executed via MCP; do not fabricate results.\nThe file must be non-empty\
+  \ and contain real observed output.\n"

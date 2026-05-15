@@ -1,0 +1,28 @@
+step_id: T-002
+parent_global_step: G-004
+name: Apply operations to sidecar group draft
+description: Apply a validated batch of EditOperations (C-007) to a sidecar group
+  session. Operations are applied to the in-memory CST tree sequentially in the order
+  received. After each operation the DraftFile (C-003) is written to disk via the
+  sidecar write mechanism. The original file is not touched. On success return the
+  updated top-level node list. The ExistingInfrastructure (C-012) provides the CST
+  mutation and sidecar write operations.
+concepts:
+- C-002
+- C-003
+- C-006
+- C-007
+- C-012
+inputs:
+- name: session
+  type: EditSession
+  description: Active session for a sidecar group file.
+- name: validated_batch
+  type: list of EditOperation
+  description: Batch confirmed free of ancestor-descendant pairs by T-001.
+outputs:
+- name: updated_node_list
+  type: list of node descriptors
+  description: Top-level nodes of the CST after all operations applied.
+atomic_steps: []
+status: draft

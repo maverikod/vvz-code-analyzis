@@ -15,8 +15,10 @@ description: >
   SimpleStatementLine appearing instead of real semantic types.
   Do not change PythonFileHandler methods open_root or resolve_node_ref.
 concepts:
+- C-003
 - C-016
 - C-022
+- C-023
 inputs:
 - name: python_handler_py
   type: file

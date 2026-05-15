@@ -1,10 +1,10 @@
 step_id: G-003
 name: universal_file_open command
-description: Implement the universal_file_open MCP command. On entry clean stale artefacts
-  (<file>.write, <file>.draft; not cst_sidecar). Resolve format group. Create draft
-  appropriate for the group (sidecar via write_sidecar_atomic; JSON/YAML draft via
-  tree serialisation; text via file copy). Create initial BackupPair when file has
-  no backup history. Register EditSession. Return session_id and available operations.
+description: The open command starts an editing session for one file. It cleans stale
+  artefacts from any previous session, resolves the format group, creates the appropriate
+  draft file, creates an initial backup when the file has no backup history, registers
+  the EditSession, and returns the session identifier together with the operations
+  available for the format group.
 concepts:
 - C-001
 - C-002
@@ -13,10 +13,14 @@ concepts:
 - C-005
 - C-011
 - C-012
+- C-014
 relations:
 - from_concept: C-005
   to_concept: C-001
   type: produces
+- from_concept: C-005
+  to_concept: C-002
+  type: consumes
 - from_concept: C-005
   to_concept: C-003
   type: produces
@@ -29,8 +33,11 @@ relations:
 - from_concept: C-005
   to_concept: C-012
   type: uses
+- from_concept: C-005
+  to_concept: C-014
+  type: produces
 source_ranges:
-- start: 113
+- start: 116
   end: 136
 depends_on:
 - G-002

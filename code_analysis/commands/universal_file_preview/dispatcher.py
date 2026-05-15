@@ -18,6 +18,7 @@ from .base_handler import FileHandler
 from .errors import PreviewError, input_error, INPUT_ERROR_UNKNOWN_EXTENSION
 from .handlers.json_handler import JsonFileHandler
 from .handlers.jsonl_handler import JsonLinesFileHandler
+from .handlers.markdown_handler import MarkdownFileHandler
 from .handlers.python_handler import PythonFileHandler
 from .handlers.text_handler import TextFileHandler
 from .handlers.yaml_handler import YamlFileHandler
@@ -38,14 +39,13 @@ class HandlerDispatcher:
         _registry: dict[str, FileHandler] — mapping of lowercase extension
                  string to the registered FileHandler instance.
     """
-
     def __init__(self) -> None:
         """Initialise dispatcher with the default extension-to-handler registry."""
         self._registry: dict[str, FileHandler] = {
             ".py": PythonFileHandler(),
             ".pyi": PythonFileHandler(),
             ".pyw": PythonFileHandler(),
-            ".md": TextFileHandler(),
+            ".md": MarkdownFileHandler(),
             ".txt": TextFileHandler(),
             ".rst": TextFileHandler(),
             ".adoc": TextFileHandler(),

@@ -1,13 +1,23 @@
 step_id: T-002
 parent_global_step: G-003
 name: Create draft file per format group
-description: Parse the original file and write the initial DraftFile (C-003) appropriate
-  for the format group. For the sidecar group, parse the file into a CST tree and
-  write the sidecar; if a sidecar already exists from a prior session it is reloaded
-  and rewritten to ensure synchronisation. For the tree-temp group, load the file
-  into an in-memory tree and serialise it to a draft file. For the text group, copy
-  the original file to the draft path. The ExistingInfrastructure (C-012) provides
-  the parse and serialise operations for each group.
+description: 'Parse the original file and write the initial DraftFile (C-003) using
+  existing infrastructure (C-012) per format group:
+
+  Sidecar group (Python): Call the existing `cst_load_file` pipeline to parse the
+  file into a CSTTree. Then call the existing `write_sidecar_atomic(tree, file_path)`
+  from `core/cst_tree/tree_sidecar.py` to write <file>.cst_sidecar. If a sidecar already
+  exists from a prior session, reload it: call `load_file_to_tree` from `core/cst_tree/tree_builder.py`
+  which reuses the existing sidecar when checksums match, then rewrite the sidecar
+  to ensure sync.
+
+  Tree-temp group (JSON/YAML): Call the existing `load_file_to_tree` from `core/json_tree/tree_builder.py`
+  or `core/yaml_tree/tree_builder.py` respectively. Serialise the resulting tree to
+  <file>.draft using json.dumps or yaml.dump.
+
+  Text group: Copy the original file to <file>.draft using shutil.copy2.
+
+  On parse failure return PARSE_ERROR from ErrorCodes (C-014).'
 concepts:
 - C-002
 - C-003
@@ -15,18 +25,22 @@ concepts:
 - C-012
 - C-014
 inputs:
-- name: file_path
-  type: project-relative path string
-  description: Path to the original file.
-- name: format_group
-  type: FormatGroup descriptor
-  description: Resolved format group including draft_path.
+- name: abs_path
+  type: Path
+  description: Absolute path to the original file.
+- name: format_descriptor
+  type: FormatDescriptor
+  description: Contains format_group, handler_id, draft_path.
 outputs:
 - name: draft_file
-  type: DraftFile on disk
-  description: Draft file written at draft_path, ready for mutation.
+  type: DraftFile on disk at draft_path
+  description: Draft written and ready for mutation.
+- name: tree_id
+  type: str | None
+  description: In-memory tree UUID for tree-temp group (from load_file_to_tree); None
+    for sidecar and text groups.
 - name: parse_error
   type: ErrorCodes entry
-  description: PARSE_ERROR returned when the file cannot be parsed.
+  description: PARSE_ERROR when the file cannot be parsed.
 atomic_steps: []
 status: draft

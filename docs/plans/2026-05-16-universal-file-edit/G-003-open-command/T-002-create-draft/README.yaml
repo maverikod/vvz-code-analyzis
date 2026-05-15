@@ -1,0 +1,32 @@
+step_id: T-002
+parent_global_step: G-003
+name: Create draft file per format group
+description: Parse the original file and write the initial DraftFile (C-003) appropriate
+  for the format group. For the sidecar group, parse the file into a CST tree and
+  write the sidecar; if a sidecar already exists from a prior session it is reloaded
+  and rewritten to ensure synchronisation. For the tree-temp group, load the file
+  into an in-memory tree and serialise it to a draft file. For the text group, copy
+  the original file to the draft path. The ExistingInfrastructure (C-012) provides
+  the parse and serialise operations for each group.
+concepts:
+- C-002
+- C-003
+- C-005
+- C-012
+- C-014
+inputs:
+- name: file_path
+  type: project-relative path string
+  description: Path to the original file.
+- name: format_group
+  type: FormatGroup descriptor
+  description: Resolved format group including draft_path.
+outputs:
+- name: draft_file
+  type: DraftFile on disk
+  description: Draft file written at draft_path, ready for mutation.
+- name: parse_error
+  type: ErrorCodes entry
+  description: PARSE_ERROR returned when the file cannot be parsed.
+atomic_steps: []
+status: draft

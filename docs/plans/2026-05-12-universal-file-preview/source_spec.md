@@ -299,6 +299,42 @@ The default value of `full_text_max_lines` is 200 lines. The parameter is
 optional; when omitted, the default applies. A value of 0 disables the
 full-text fallback entirely.
 
+## 17. Post-implementation addenda (G-010, G-011)
+
+<!-- non-binding -->
+Sections 17.1 and 17.2 document work performed after the initial implementation
+was complete. They do not change any binding requirements in sections 1–16.
+They add clarifications about what was actually built and what issues were
+found and fixed. Do not propagate these sections into existing G/T/A-step
+rewrites — treat them as append-only notes.
+<!-- /non-binding -->
+
+### 17.1 G-010 — PythonNodeRenderer implementation
+
+G-010 delivered PythonNodeRenderer (C-022) as a new module `python_visualizer.py`
+with two public functions: `render_module(tree, budget)` and `render_node(tree, stable_id)`.
+The visualizer was wired into `PythonFileHandler` via `open_root` and `resolve_node_ref`.
+An optional `text: str | None` field was added to the `Block` dataclass (C-005).
+
+Known gap left open after G-010: `T-901` (full-text threshold wiring into
+`get_schema()` and `validate_params()`) has no atomic steps written (`atomic_steps: []`).
+This wiring is required for `full_text_max_lines` to be accepted as a caller parameter.
+
+### 17.2 G-011 — PythonFileHandler refactor findings
+
+G-011 refactored `python_handler.py` after G-010. The following issues were
+found during verification of tactical steps (checks t7, t10):
+
+- **T-1001 / t10:** The description defers the decision "verify none are imported
+  elsewhere" to the executor. The functions `_cst_statements_to_nodes`,
+  `_classify_cst_node`, `_cst_node_to_node`, `_find_by_stable_id` are confirmed
+  unused outside `python_handler.py` and are safe to delete.
+
+- **T-1002 / t7:** The description says `open_root` should "return single text Block".
+  This is incorrect: `open_root` returns a `Node`, not a `Block`. The Block is
+  produced downstream by the BlockHandler. The A-001 prompt correctly implements
+  `Node` return — the T-step description contains a terminology error only.
+
 <!-- non-binding -->
 ## Notes
 

@@ -1,25 +1,27 @@
 step_id: T-001
 parent_global_step: G-003
 name: Clean stale artefacts on open
-description: 'On entry to OpenCommand (C-005), remove stale artefacts left by any
-  previous session: delete the WriteLockfile (C-004) if present, and delete the DraftFile
-  (C-003) if present. For the sidecar format group the sidecar file is not deleted
-  — it persists between sessions to preserve stable identifiers.'
+description: At the start of OpenCommand (C-005) execution, remove stale artefacts
+  from any previous session for the same file. Delete <file>.write (WriteLockfile
+  C-004) if it exists. Delete <file>.draft if it exists. For the sidecar format group
+  (Python files), do NOT delete <file>.cst_sidecar — it persists between sessions
+  to preserve stable identifiers. The draft_path comes from the FormatDescriptor produced
+  by format_group.resolve_format_group (created in G-002/T-001). Use standard pathlib
+  Path.unlink(missing_ok=True) for deletion.
 concepts:
 - C-003
 - C-004
 - C-005
 inputs:
-- name: file_path
-  type: project-relative path string
-  description: Path to the file being opened.
-- name: format_group
-  type: FormatGroup descriptor
-  description: Resolved format group for the file.
+- name: abs_path
+  type: Path
+  description: Absolute path to the original file.
+- name: format_descriptor
+  type: FormatDescriptor
+  description: Contains draft_path and format_group.
 outputs:
 - name: clean_state
   type: boolean
-  description: True when stale artefacts have been removed and the file is ready for
-    draft creation.
+  description: True when stale artefacts have been removed.
 atomic_steps: []
 status: draft

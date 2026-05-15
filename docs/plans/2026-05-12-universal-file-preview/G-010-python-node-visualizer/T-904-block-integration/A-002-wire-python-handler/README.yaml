@@ -1,0 +1,159 @@
+step_id: A-002
+parent_tactical_step: T-904
+name: Wire python_visualizer into PythonFileHandler
+target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-022
+- C-016
+- C-005
+- C-008
+status: draft
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.handlers.python_handler
+  expected: 'Module imports without error. PythonFileHandler.open_root calls render_module
+    and returns a Block with text field set. resolve_node_ref calls render_node and
+    returns a Block with text field set.
+
+    '
+prompt: "## Task\n\nModify an existing file.\n\nTarget file: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  Operation: modify_file\n\n## Current file content (post A-001, models.py has text\
+  \ field on Block)\n\nThe file content is exactly as shown below. Replace it in full.\n\
+  \n--- BEGIN CURRENT FILE ---\n\"\"\"\nPythonFileHandler — FileHandler for .py, .pyi,\
+  \ .pyw files (C-016).\n\nOpens Python source via the project's cst_load_file infrastructure.\n\
+  Root NodeKind is tree_node with type label 'Module'.\nIdentifier format: stable_id\
+  \ UUID from cst_load_file outline_nodes.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com\n\
+  \"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom typing import\
+  \ Any\n\nfrom ..base_handler import FileHandler\nfrom ..errors import (\n    PreviewError,\n\
+  \    file_structure_error,\n    input_error,\n    INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  )\nfrom ..models import Node, NodeKind\n\nlogger = logging.getLogger(__name__)\n\
+  \n\nclass PythonFileHandler(FileHandler):\n    \"\"\"FileHandler for Python files\
+  \ (.py, .pyi, .pyw) (C-016).\n\n    Root NodeKind: tree_node (Module).\n    Interior\
+  \ nodes: tree_node for ClassDef and FunctionDef;\n    tree_node or scalar for other\
+  \ statements; scalar for leaf values.\n    Identifier source: cst_load_file outline_nodes\
+  \ stable_id UUID.\n    Lazy materialisation: only root and requested children are\
+  \ loaded.\n\n    Attributes:\n        supported_extensions: Frozenset of .py, .pyi,\
+  \ .pyw.\n    \"\"\"\n\n    @property\n    def supported_extensions(self) -> frozenset[str]:\n\
+  \        \"\"\"Frozenset of lowercase extensions this handler supports.\"\"\"\n\
+  \        return frozenset({\".py\", \".pyi\", \".pyw\"})\n\n    def open_root(self,\
+  \ file_path: str, session: Any | None) -> Node | PreviewError:\n        \"\"\"Parse\
+  \ the Python file and return a tree_node Module root Node. ...\"\"\"\n        try:\n\
+  \            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree\n\
+  \            if session is not None:\n                tree = session\n         \
+  \   else:\n                tree = load_file_to_tree(file_path)\n            self._last_file_path\
+  \ = file_path\n            self._last_session = tree\n            self._last_tree_id\
+  \ = tree.tree_id\n            def _load_children() -> list[Node]:\n            \
+  \    return _metadata_children_to_nodes(tree, tree.root_node_id)\n            return\
+  \ Node(\n                node_kind=NodeKind.TREE_NODE,\n                node_ref=tree.metadata_map[tree.root_node_id].stable_id\
+  \ if tree.root_node_id else \"\",\n                type_label=\"Module\",\n    \
+  \            name=None,\n                attributes={},\n                _children_loader=_load_children,\n\
+  \            )\n        except Exception as exc:\n            return file_structure_error(parser=\"\
+  libcst\", message=str(exc))\n\n    def resolve_node_ref(self, node_ref: str, session:\
+  \ Any | None) -> Node | PreviewError:\n        \"\"\"Resolve a stable_id UUID to\
+  \ the CST Node it addresses (C-009). ...\"\"\"\n        if session is None:\n  \
+  \          fp = getattr(self, \"_last_file_path\", None)\n            if fp is None:\n\
+  \                return input_error(INPUT_ERROR_UNKNOWN_NODE_REF,\n            \
+  \        \"No active CST session and no cached file_path to scan.\",\n         \
+  \           details={\"node_ref\": node_ref})\n            open_result = self.open_root(fp,\
+  \ None)\n            if isinstance(open_result, PreviewError):\n               \
+  \ return open_result\n            session = getattr(self, \"_last_session\", None)\n\
+  \            if session is None:\n                return input_error(INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \                    \"Could not open CST session for stable_id scan.\",\n     \
+  \               details={\"node_ref\": node_ref})\n        try:\n            from\
+  \ code_analysis.core.cst_tree.tree_metadata import get_node_by_stable_id\n     \
+  \       cst_node = get_node_by_stable_id(session, node_ref)\n        except ImportError:\n\
+  \            cst_node = _find_by_stable_id(session, node_ref)\n        if cst_node\
+  \ is None:\n            return input_error(INPUT_ERROR_UNKNOWN_NODE_REF,\n     \
+  \           f\"stable_id {node_ref!r} not found in current CST.\",\n           \
+  \     details={\"node_ref\": node_ref})\n        return _cst_node_to_node(cst_node,\
+  \ node_ref)\n\n\ndef _metadata_children_to_nodes(tree: Any, parent_node_id: str\
+  \ | None) -> list[Node]:\n    \"\"\"Build preview Nodes from CSTTree metadata for\
+  \ direct children of parent_node_id.\"\"\"\n    if parent_node_id is None:\n   \
+  \     return []\n    _MEANINGFUL_KINDS = frozenset({\"import\", \"class\", \"function\"\
+  , \"method\", \"smallstmt\"})\n    _TREE_NODE_KINDS = frozenset({\"class\", \"function\"\
+  , \"method\"})\n    nodes_by_line: list[tuple[int, Any]] = []\n    for nid, meta\
+  \ in tree.metadata_map.items():\n        if meta.parent_id != parent_node_id:\n\
+  \            continue\n        kind = getattr(meta, \"kind\", \"\") or \"\"\n  \
+  \      if kind not in _MEANINGFUL_KINDS:\n            continue\n        nodes_by_line.append((meta.start_line\
+  \ or 0, meta))\n    nodes_by_line.sort(key=lambda x: x[0])\n    nodes = []\n   \
+  \ for _, meta in nodes_by_line:\n        node_type = meta.type\n        kind_str\
+  \ = getattr(meta, \"kind\", \"\") or \"\"\n        preview_kind = NodeKind.TREE_NODE\
+  \ if kind_str in _TREE_NODE_KINDS else NodeKind.SCALAR\n        def _make_loader(nid:\
+  \ str) -> Any:\n            def _load() -> list[Node]:\n                return _metadata_children_to_nodes(tree,\
+  \ nid)\n            return _load\n        has_children = preview_kind == NodeKind.TREE_NODE\n\
+  \        nodes.append(Node(\n            node_kind=preview_kind,\n            node_ref=meta.stable_id,\n\
+  \            type_label=node_type,\n            name=meta.name,\n            attributes={},\n\
+  \            _children_loader=_make_loader(meta.node_id) if has_children else None,\n\
+  \        ))\n    return nodes\n\n\ndef _cst_statements_to_nodes(stmts: Any) -> list[Node]:\n\
+  \    \"\"\"Convert a sequence of top-level CST statements to preview Nodes lazily.\"\
+  \"\"\n    nodes = []\n    for stmt in stmts:\n        try:\n            import libcst\
+  \ as cst\n            if isinstance(stmt, cst.SimpleStatementLine) and stmt.body:\n\
+  \                effective_type = type(stmt.body[0]).__name__\n                stmt_has_body\
+  \ = False\n            else:\n                effective_type = type(stmt).__name__\n\
+  \                stmt_has_body = hasattr(stmt, \"body\")\n        except ImportError:\n\
+  \            effective_type = type(stmt).__name__\n            stmt_has_body = hasattr(stmt,\
+  \ \"body\")\n        kind = _classify_cst_node(stmt)\n        name_attr = getattr(stmt,\
+  \ \"name\", None)\n        name = getattr(name_attr, \"value\", None)\n        def\
+  \ _make_loader(s: Any) -> Any:\n            def _load() -> list[Node]:\n       \
+  \         body = s.body\n                inner = getattr(body, \"body\", body)\n\
+  \                return _cst_statements_to_nodes(inner)\n            return _load\n\
+  \        nodes.append(Node(\n            node_kind=kind,\n            node_ref=getattr(stmt,\
+  \ \"_stable_id\", \"\") or \"\",\n            type_label=effective_type,\n     \
+  \       name=name,\n            attributes={},\n            _children_loader=_make_loader(stmt)\
+  \ if stmt_has_body else None,\n        ))\n    return nodes\n\n\ndef _classify_cst_node(node:\
+  \ Any) -> NodeKind:\n    \"\"\"Return NodeKind for a libcst CST node.\"\"\"\n  \
+  \  try:\n        import libcst as cst\n        if isinstance(node, (cst.ClassDef,\
+  \ cst.FunctionDef, cst.Module)):\n            return NodeKind.TREE_NODE\n    except\
+  \ ImportError:\n        pass\n    return NodeKind.SCALAR\n\n\ndef _cst_node_to_node(cst_node:\
+  \ Any, node_ref: str) -> Node:\n    \"\"\"Convert a single libcst CST node to a\
+  \ preview Node.\"\"\"\n    return Node(\n        node_kind=_classify_cst_node(cst_node),\n\
+  \        node_ref=node_ref,\n        type_label=type(cst_node).__name__,\n     \
+  \   name=getattr(getattr(cst_node, \"name\", None), \"value\", None),\n        attributes={},\n\
+  \    )\n\n\ndef _find_by_stable_id(tree: Any, stable_id: str) -> Any | None:\n \
+  \   \"\"\"Linear scan of a CST tree for a node with _stable_id == stable_id.\"\"\
+  \"\n    import libcst as cst\n    class _Finder(cst.CSTVisitor):\n        found:\
+  \ Any = None\n        def on_visit(self, node: cst.CSTNode) -> bool:\n         \
+  \   if getattr(node, \"_stable_id\", None) == stable_id:\n                type(self).found\
+  \ = node\n                return False\n            return True\n    _Finder.found\
+  \ = None\n    visitor = _Finder()\n    if hasattr(tree, \"visit\"):\n        tree.visit(visitor)\n\
+  \        return visitor.found\n    return None\n--- END CURRENT FILE ---\n\n## What\
+  \ to change\n\nApply the following three changes. Produce the complete new file\
+  \ content.\n\n### Change 1: Add import for python_visualizer\n\nAdd to the import\
+  \ section (after the existing local imports):\n\n    from ..python_visualizer import\
+  \ render_module, render_node\n    from ..budget import PreviewBudget\n\nAlso add\
+  \ Block to the models import line:\n\n    from ..models import Block, Node, NodeKind\n\
+  \n### Change 2: Rewrite open_root\n\nReplace the body of open_root with the following\
+  \ logic:\n\n    Load the tree (same as before: use session if provided, else call\n\
+  \    load_file_to_tree(file_path)).\n    Store self._last_file_path, self._last_session,\
+  \ self._last_tree_id.\n\n    Then call render_module(tree, budget) where budget\
+  \ comes from the\n    method signature. Because open_root currently receives no\
+  \ budget,\n    add budget: PreviewBudget as an optional parameter with default\n\
+  \    PreviewBudget(preview_lines=20, value_preview_len=120).\n    Update the method\
+  \ signature:\n\n        def open_root(\n            self,\n            file_path:\
+  \ str,\n            session: Any | None,\n            budget: PreviewBudget | None\
+  \ = None,\n        ) -> Node | PreviewError:\n\n    If budget is None, use PreviewBudget(preview_lines=20,\
+  \ value_preview_len=120).\n\n    text = render_module(tree, budget)\n\n    Return\
+  \ a Node with:\n        node_kind=NodeKind.TREE_NODE\n        node_ref = tree.metadata_map[tree.root_node_id].stable_id\n\
+  \                   if tree.root_node_id and tree.root_node_id in tree.metadata_map\n\
+  \                   else \"\"\n        type_label=\"Module\"\n        name=None\n\
+  \        attributes={\"text\": text}\n        _children_loader=lambda: _metadata_children_to_nodes(tree,\
+  \ tree.root_node_id)\n\n    The node now carries the rendered text in its attributes\
+  \ dict so\n    that block_handlers can pass it through.\n\n### Change 3: Rewrite\
+  \ resolve_node_ref\n\nKeep the session-recovery logic as-is (lines that handle session\
+  \ is None).\nReplace the final lookup (try/except get_node_by_stable_id ... return\
+  \ _cst_node_to_node)\nwith:\n\n    # Verify node exists in metadata_map\n    meta\
+  \ = next(\n        (m for m in session.metadata_map.values() if m.stable_id == node_ref),\n\
+  \        None\n    ) if hasattr(session, 'metadata_map') else None\n\n    if meta\
+  \ is None:\n        return input_error(\n            INPUT_ERROR_UNKNOWN_NODE_REF,\n\
+  \            f\"stable_id {node_ref!r} not found in current CST.\",\n          \
+  \  details={\"node_ref\": node_ref},\n        )\n\n    text = render_node(session,\
+  \ node_ref)\n    return Node(\n        node_kind=NodeKind.TREE_NODE,\n        node_ref=node_ref,\n\
+  \        type_label=meta.type,\n        name=meta.name,\n        attributes={\"\
+  text\": text},\n    )\n\n## Constraints\n\nKeep _metadata_children_to_nodes, _cst_statements_to_nodes,\
+  \ _classify_cst_node,\n_cst_node_to_node, and _find_by_stable_id unchanged (they\
+  \ will be removed in G-011).\nAll changed methods must have complete docstrings\
+  \ with Args and Returns updated.\nFile must not exceed 300 lines after the change.\n"

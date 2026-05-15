@@ -6,232 +6,267 @@ concepts:
 - concept_id: C-001
   name: EditSession
   definition: In-memory record that tracks one active editing session for one file.
-    Identified by a session_id UUID. Owns the draft file path and the in-memory tree
-    reference.
+    Identified by a session_id UUID. Stores format group, handler_id, paths, and optional
+    in-memory tree reference.
   properties:
   - identified by session_id (UUID)
-  - stores file_path, draft_path, format (tree or text), tree_id
-  - stored in a module-level registry in the server process
+  - stores file_path, abs_path, draft_path, format_group, handler_id, tree_id
+  - format_group is one of sidecar, tree-temp, text
+  - stored in module-level _sessions dict in the server process
   - not persisted across server restarts
   source_ranges:
-  - start: 107
-    end: 121
+  - start: 178
+    end: 195
 - concept_id: C-002
-  name: DraftFile
-  definition: On-disk working copy of the file being edited. For tree formats persists
-    permanently alongside the original. For text formats is temporary and deleted
-    on close.
+  name: FormatGroup
+  definition: Classification of a file into one of three groups that determines draft
+    lifecycle, sync mechanism, and close behaviour.
   properties:
-  - path is <file>.draft
-  - tree formats: contains serialised tree; persists after close
-  - text formats: byte-for-byte copy of original; deleted on close
-  - created by universal_file_open
+  - sidecar (Python): draft is <file>.cst_sidecar; persists after close
+  - tree-temp (JSON, YAML): draft is <file>.draft; deleted after close
+  - text (MD, txt, rst, adoc): draft is <file>.draft copy; deleted after close
+  - group resolved by registry.resolve_handler(ext)
   source_ranges:
   - start: 35
-    end: 50
+    end: 73
 - concept_id: C-003
+  name: DraftFile
+  definition: On-disk working copy written after every mutation. Format and persistence
+    depend on the format group.
+  properties:
+  - sidecar group: <file>.cst_sidecar via write_sidecar_atomic; persists
+  - tree-temp group: <file>.draft serialised tree; deleted on close
+  - text group: <file>.draft byte copy; deleted on close
+  - written after each mutation, not only on write
+  source_ranges:
+  - start: 35
+    end: 73
+- concept_id: C-004
   name: WriteLockfile
-  definition: On-disk lockfile that records the server PID of the process that initiated
-    a write preview. Its presence signals that a diff has been shown and the next
-    universal_file_write call should commit.
+  definition: On-disk lockfile containing server PID. Controls the two-phase write
+    protocol.
   properties:
   - path is <file>.write
-  - contains the server process PID as text
-  - created on first universal_file_write call
+  - contains os.getpid() as text
+  - absent means first write call; present with matching PID means second
+  - PID mismatch means stale lock; treated as first call
   - deleted on successful commit or on universal_file_open
-  - PID mismatch means stale lock from a dead process; treated as first call
   source_ranges:
-  - start: 52
-    end: 58
-- concept_id: C-004
-  name: OpenCommand
-  definition: MCP command that starts an editing session. Cleans up stale artefacts,
-    creates the draft file, creates an initial backup when the file has no history,
-    and returns the session_id.
-  properties:
-  - deletes stale <file>.write and <file>.draft on entry
-  - creates <file>.draft by parsing the original file
-  - creates initial backup if file has no backup history
-  - returns session_id and list of available operations for the format
-  source_ranges:
-  - start: 60
-    end: 81
+  - start: 74
+    end: 79
 - concept_id: C-005
-  name: EditCommand
-  definition: MCP command that applies a batch of mutation operations to <file>.draft.
-    The original file is never touched.
+  name: OpenCommand
+  definition: MCP command that starts an editing session. Cleans stale artefacts,
+    creates draft, creates initial backup when file has no history.
   properties:
-  - accepts insert, delete, replace operations
-  - tree formats: validates batch then applies sequentially; writes draft after each
-      op
-  - text formats: sorts by start_line descending then applies; writes draft once
-  - tree batch rejection is atomic on NESTED_BATCH_FORBIDDEN
-  - original file is never modified
+  - deletes stale <file>.write and <file>.draft (not cst_sidecar) on entry
+  - resolves format group via registry.resolve_handler
+  - creates draft appropriate for format group
+  - creates initial backup if BackupManager.list_versions returns empty
+  - returns session_id and available operations for the format
   source_ranges:
-  - start: 83
-    end: 133
+  - start: 113
+    end: 136
 - concept_id: C-006
+  name: EditCommand
+  definition: MCP command that applies a batch of mutation operations to the draft.
+    Original file is never touched. Draft written after each operation.
+  properties:
+  - accepts insert, delete, replace with format-specific addressing
+  - sidecar group: validates no ancestor-descendant pairs; applies via CST pipeline;
+      writes sidecar after each op
+  - tree-temp group: applies to in-memory tree sequentially; writes draft after each
+      op
+  - text group: sorts by start_line descending; applies to buffer; writes draft once
+  - NESTED_BATCH_FORBIDDEN on ancestor-descendant violation (sidecar only)
+  source_ranges:
+  - start: 138
+    end: 172
+- concept_id: C-007
   name: EditOperation
-  definition: Single mutation instruction inside an edit batch. One of insert, delete,
-    or replace. Address space depends on the file format.
+  definition: Single mutation in an edit batch. Type, address, and content depend
+    on the format group.
   properties:
   - type is one of insert, delete, replace
-  - tree format address is (parent_node_id, position_among_siblings)
-  - text format address is (start_line, end_line) 1-based inclusive
-  - content field required for insert and replace; absent for delete
+  - sidecar address: parent_node_id (StableIdentifier UUID) + position (int)
+  - tree-temp address: parent_node_id (JSON pointer) + position (int)
+  - text address: start_line + end_line (1-based inclusive)
+  - content required for insert and replace; absent for delete
   source_ranges:
-  - start: 89
-    end: 103
-- concept_id: C-007
-  name: BatchValidation
-  definition: Pre-application check applied to tree format batches only. Ensures no
-    ancestor-descendant conflicts. Text format uses sort-then-apply without pre-validation.
-  properties:
-  - tree only: runs before any operation is applied
-  - tree only: rejects batch atomically on ancestor-descendant pair
-  - tree only: error code NESTED_BATCH_FORBIDDEN on violation
-  - text only: sort by start_line descending before application
-  - text only: no ancestor-descendant concept applies
-  source_ranges:
-  - start: 105
-    end: 127
+  - start: 138
+    end: 155
 - concept_id: C-008
-  name: WriteCommand
-  definition: Two-phase MCP command. First call shows a diff and creates the lockfile.
-    Second call (lockfile present, PID matches) commits the draft to the original
-    file with backup.
+  name: BatchValidation
+  definition: Pre-application check for sidecar group batches only. Forbids ancestor-descendant
+    node pairs in one batch.
   properties:
-  - first call generates code, computes diff, writes lockfile, returns diff
-  - second call does backup then rename draft to original then delete lockfile then
-    git commit
-  - PID mismatch on second call is treated as first call (stale lock)
-  - write failure after backup restores original from backup
+  - applies to sidecar (Python) group only
+  - runs before any operation is applied
+  - rejects batch atomically on violation
+  - error code NESTED_BATCH_FORBIDDEN
+  - tree-temp and text groups have no batch validation
   source_ranges:
-  - start: 135
-    end: 183
+  - start: 156
+    end: 165
 - concept_id: C-009
-  name: CloseCommand
-  definition: MCP command that ends an editing session. Behaviour differs by format.
+  name: WriteCommand
+  definition: Two-phase MCP command. First call returns diff and writes lockfile.
+    Second call (PID matches) commits with backup.
   properties:
-  - text formats: deletes <file>.draft and <file>.write, releases session
-  - tree formats: <file>.draft is never deleted
-  - tree formats: if checksums match leaves draft as is, releases session
-  - tree formats: if checksums differ rebuilds draft from original without backup
-  - returns draft_rebuilt flag when rebuild occurred
+  - first call: generate code from draft, compute diff, write lockfile, return diff
+  - second call: backup pair + rename temp to original + delete lockfile + git commit
+  - PID mismatch: treat as first call
+  - write failure after backup: restore_file from backup
   source_ranges:
-  - start: 185
-    end: 211
+  - start: 174
+    end: 210
 - concept_id: C-010
-  name: BackupPair
-  definition: Atomic backup of the original file and its draft created together as
-    one history entry. Count of backup pairs equals count of successful write commits.
+  name: CloseCommand
+  definition: MCP command that ends the session. Behaviour differs by format group.
   properties:
-  - created only on successful universal_file_write commit
-  - contains both <file> and <file>.draft at commit time
-  - one entry in backup history per commit
-  - initial backup created by universal_file_open when file has no history
+  - sidecar: verify_sidecar_against_source; mismatch rebuilds sidecar; sidecar not
+      deleted
+  - tree-temp: sha256 compare draft vs original; mismatch rebuilds draft; draft deleted
+      on match
+  - text: delete draft; always clean
+  - lockfile deleted in all cases
+  - draft_rebuilt flag returned when rebuild occurred
   source_ranges:
-  - start: 70
-    end: 74
-  - start: 157
-    end: 167
+  - start: 212
+    end: 245
 - concept_id: C-011
-  name: HandlerReuse
-  definition: The four new commands reuse the handler infrastructure of universal_file_preview
-    without creating a new package.
+  name: BackupPair
+  definition: Atomic backup of original file and draft created together as one history
+    entry on successful write commit.
   properties:
-  - imports HandlerDispatcher from universal_file_preview/dispatcher.py
-  - imports FileHandler ABC from universal_file_preview/base_handler.py
-  - imports resolve_session from universal_file_preview/session.py
-  - imports Node and NodeKind from universal_file_preview/models.py
-  - imports concrete handlers from universal_file_preview/handlers/
+  - created only on successful second write call
+  - initial backup created by open when BackupManager.list_versions is empty
+  - uses BackupManager.create_backup from core/backup_manager.py
+  - restore via BackupManager.restore_file on write failure
   source_ranges:
-  - start: 213
-    end: 226
+  - start: 100
+    end: 104
+  - start: 195
+    end: 203
 - concept_id: C-012
+  name: ExistingInfrastructure
+  definition: Existing code reused by the four new commands without modification.
+  properties:
+  - core/file_handlers/registry.py: resolve_handler, HANDLER_IDS
+  - core/file_handlers/python_handler.py: PythonFileHandler.save, replace via run_ops_mode
+  - core/file_handlers/diff_support.py: diff computation
+  - core/file_handlers/text_ranges.py: text range operations
+  - core/cst_tree/tree_sidecar.py: sidecar_path_for_py, write_sidecar_atomic, verify_sidecar_against_source
+  - core/cst_tree/tree_builder.py: get_tree, load
+  - core/json_tree/tree_builder.py: load_file_to_tree, get_tree, remove_tree
+  - core/yaml_tree/tree_builder.py: load_file_to_tree, get_tree, remove_tree
+  - core/backup_manager.py: BackupManager.create_backup, list_versions, restore_file
+  - core/git_integration.py: commit_after_write
+  - core/file_lock.py: file_lock
+  - universal_file_replace_command.py: _sort_text_replacements_bottom_up
+  - commands/universal_file_preview/: HandlerDispatcher, FileHandler, Node, NodeKind
+  source_ranges:
+  - start: 82
+    end: 111
+- concept_id: C-013
   name: RegistrationCleanup
-  definition: Removal of the legacy editing command zoo from hooks.py registration.
-    Code is not deleted; only registration is removed.
+  definition: Removal of legacy editing commands from hooks.py. Code not deleted;
+    only registration removed.
   properties:
   - removes universal_file_save, universal_file_replace, universal_file_read, universal_file_delete
   - removes all cst_* and json_* tree commands
   - removes write_project_text_lines, replace_file_lines, compose_cst_module, query_cst,
     list_cst_blocks, read_project_text_file
-  - get_file_lines remains registered as fallback for broken files
-  - universal_file_preview remains registered unchanged
+  - get_file_lines remains (fallback for broken files)
+  - universal_file_preview remains unchanged
   source_ranges:
   - start: 14
     end: 32
 relations:
-- from_concept: C-004
-  to_concept: C-001
-  type: produces
 - from_concept: C-005
   to_concept: C-001
-  type: consumes
-- from_concept: C-008
+  type: produces
+- from_concept: C-006
   to_concept: C-001
   type: consumes
 - from_concept: C-009
   to_concept: C-001
   type: consumes
-- from_concept: C-004
-  to_concept: C-002
-  type: produces
+- from_concept: C-010
+  to_concept: C-001
+  type: consumes
+- from_concept: C-002
+  to_concept: C-003
+  type: owns
 - from_concept: C-005
-  to_concept: C-002
-  type: uses
-- from_concept: C-008
-  to_concept: C-002
-  type: uses
-- from_concept: C-009
-  to_concept: C-002
-  type: uses
-- from_concept: C-008
   to_concept: C-003
   type: produces
+- from_concept: C-006
+  to_concept: C-003
+  type: uses
 - from_concept: C-009
   to_concept: C-003
   type: uses
-- from_concept: C-004
+- from_concept: C-010
   to_concept: C-003
   type: uses
-- from_concept: C-005
-  to_concept: C-006
-  type: consumes
-- from_concept: C-005
-  to_concept: C-007
-  type: uses
-- from_concept: C-007
-  to_concept: C-006
-  type: consumes
-- from_concept: C-008
-  to_concept: C-010
-  type: produces
-- from_concept: C-004
-  to_concept: C-010
-  type: produces
-- from_concept: C-004
-  to_concept: C-011
-  type: uses
-- from_concept: C-005
-  to_concept: C-011
-  type: uses
-- from_concept: C-008
-  to_concept: C-011
-  type: uses
 - from_concept: C-009
-  to_concept: C-011
-  type: uses
-- from_concept: C-012
   to_concept: C-004
-  type: depends_on
-- from_concept: C-012
+  type: produces
+- from_concept: C-010
+  to_concept: C-004
+  type: uses
+- from_concept: C-005
+  to_concept: C-004
+  type: uses
+- from_concept: C-005
+  to_concept: C-002
+  type: consumes
+- from_concept: C-006
+  to_concept: C-002
+  type: consumes
+- from_concept: C-009
+  to_concept: C-002
+  type: consumes
+- from_concept: C-010
+  to_concept: C-002
+  type: consumes
+- from_concept: C-006
+  to_concept: C-007
+  type: consumes
+- from_concept: C-006
+  to_concept: C-008
+  type: uses
+- from_concept: C-008
+  to_concept: C-007
+  type: consumes
+- from_concept: C-009
+  to_concept: C-011
+  type: produces
+- from_concept: C-005
+  to_concept: C-011
+  type: produces
+- from_concept: C-005
+  to_concept: C-012
+  type: uses
+- from_concept: C-006
+  to_concept: C-012
+  type: uses
+- from_concept: C-009
+  to_concept: C-012
+  type: uses
+- from_concept: C-010
+  to_concept: C-012
+  type: uses
+- from_concept: C-013
   to_concept: C-005
   type: depends_on
-- from_concept: C-012
-  to_concept: C-008
+- from_concept: C-013
+  to_concept: C-006
   type: depends_on
-- from_concept: C-012
+- from_concept: C-013
   to_concept: C-009
+  type: depends_on
+- from_concept: C-013
+  to_concept: C-010
   type: depends_on

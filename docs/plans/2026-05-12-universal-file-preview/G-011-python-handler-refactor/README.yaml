@@ -34,6 +34,7 @@ relations:
   type: produces
 - from_concept: C-008
   to_concept: C-005
+  type: depends_on
 depends_on:
 - G-010
 tactical_steps:

@@ -31,11 +31,11 @@ relations:
   type: consumes
 - from_concept: C-001
   to_concept: C-023
-  type: consumes
 source_ranges:
+- start: 259
+  end: 295
 - start: 296
   end: 307
-- start: 296
 depends_on:
 - G-001
 - G-002

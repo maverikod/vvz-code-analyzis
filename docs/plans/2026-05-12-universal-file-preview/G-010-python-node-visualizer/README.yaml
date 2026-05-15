@@ -40,11 +40,8 @@ source_ranges:
 depends_on:
 - G-001
 - G-002
-- G-003
-- G-004
 tactical_steps:
 - T-901
 - T-902
-- T-903
 - T-904
 status: draft

@@ -1,0 +1,33 @@
+step_id: T-003
+parent_global_step: G-003
+name: Create initial backup and register session
+description: If the file has no backup history, create an initial BackupPair (C-011)
+  via the backup manager. Register a new EditSession (C-001) in the session registry
+  with the session_id, file paths, format_group, handler_id, and in-memory tree reference
+  (for tree-temp group). Return the session_id and the list of operations available
+  for the format group.
+concepts:
+- C-001
+- C-005
+- C-011
+- C-012
+inputs:
+- name: file_path
+  type: project-relative path string
+  description: Path to the original file.
+- name: format_descriptor
+  type: FormatGroup descriptor
+  description: Resolved format group for the file.
+- name: draft_file
+  type: DraftFile on disk
+  description: Draft file created by T-002.
+outputs:
+- name: session_id
+  type: UUID string
+  description: Identifier for the new editing session.
+- name: available_operations
+  type: list of operation descriptors
+  description: Operations available for the format group (insert, delete, replace
+    with addressing rules).
+atomic_steps: []
+status: draft

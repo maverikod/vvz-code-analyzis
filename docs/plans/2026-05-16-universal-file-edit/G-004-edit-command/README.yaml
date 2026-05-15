@@ -28,9 +28,11 @@ relations:
 - from_concept: C-006
   to_concept: C-007
   type: consumes
-- from_concept: C-006
-  to_concept: C-008
-  type: uses
+tactical_steps:
+- T-001
+- T-002
+- T-003
+status: draft
 - from_concept: C-006
   to_concept: C-012
   type: uses

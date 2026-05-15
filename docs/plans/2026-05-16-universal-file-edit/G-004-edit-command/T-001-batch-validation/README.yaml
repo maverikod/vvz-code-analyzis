@@ -1,0 +1,30 @@
+step_id: T-001
+parent_global_step: G-004
+name: Validate edit batch for sidecar group
+description: Realise the BatchValidation (C-008) entity for the sidecar format group.
+  Before any operation is applied, traverse the full batch of EditOperations (C-007)
+  and verify that no operation addresses a node that is an ancestor or descendant
+  of another node addressed in the same batch. If a violation is found, reject the
+  entire batch atomically and return the NESTED_BATCH_FORBIDDEN error code. For tree-temp
+  and text groups this validation is not performed.
+concepts:
+- C-007
+- C-008
+- C-014
+inputs:
+- name: operations
+  type: list of EditOperation
+  description: Batch of operations submitted by the caller.
+- name: format_group
+  type: FormatGroup descriptor
+  description: Format group of the session; validation runs only for sidecar group.
+outputs:
+- name: validated_batch
+  type: list of EditOperation
+  description: The original batch unchanged, confirmed free of ancestor-descendant
+    pairs.
+- name: validation_error
+  type: ErrorCodes entry
+  description: NESTED_BATCH_FORBIDDEN when a violation is found; batch not applied.
+atomic_steps: []
+status: draft

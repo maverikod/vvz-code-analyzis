@@ -1,14 +1,25 @@
 step_id: T-002
 parent_global_step: G-006
 name: Close tree-temp and text group sessions
-description: Realise CloseCommand (C-010) for tree-temp and text format groups. For
-  the tree-temp group, compare the sha256 checksum of the DraftFile (C-003) against
-  the sha256 of the original file. When checksums match, delete the draft. When checksums
-  do not match, rebuild the draft by re-parsing the original and serialising the result;
-  no backup is created. In both cases free the in-memory tree and release the EditSession
-  (C-001). For the text group, delete the draft unconditionally. In all cases delete
-  the WriteLockfile (C-004) if present and release the session. Return draft_rebuilt
-  flag when a rebuild occurred.
+description: 'Realise CloseCommand (C-010) for tree-temp and text format group sessions.
+
+  Tree-temp group (JSON/YAML): Compute sha256 of <file>.draft and sha256 of <file>
+  (original) using hashlib.sha256.
+
+  Checksums match: delete <file>.draft using Path.unlink(missing_ok=True).
+
+  Checksums do not match (file changed externally): rebuild <file>.draft by calling
+  the existing `load_file_to_tree` from `core/json_tree/tree_builder.py` or `core/yaml_tree/tree_builder.py`,
+  then serialise the tree back to <file>.draft using json.dumps or yaml.dump. No backup
+  created. Set draft_rebuilt=True.
+
+  In both cases: call the existing `remove_tree(tree_id)` from `core/json_tree/tree_builder.py`
+  or `core/yaml_tree/tree_builder.py` to free the in-memory tree. Delete <file>.write
+  if present. Call `release_session(session_id)` from the session module.
+
+  Text group (MD, txt, rst, adoc): Delete <file>.draft using Path.unlink(missing_ok=True).
+  Delete <file>.write using Path.unlink(missing_ok=True). Call `release_session(session_id)`.
+  Return success with draft_rebuilt=False.'
 concepts:
 - C-001
 - C-002
@@ -22,8 +33,8 @@ inputs:
   description: Active tree-temp or text group session to close.
 outputs:
 - name: close_result
-  type: response with draft_rebuilt flag
-  description: Success response; draft_rebuilt is true when draft was rebuilt from
-    source.
+  type: response dict
+  description: '{success: true, draft_rebuilt: bool}. draft_rebuilt is true when draft
+    was rebuilt from source (tree-temp mismatch only). Always false for text group.'
 atomic_steps: []
 status: draft

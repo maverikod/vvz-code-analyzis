@@ -3,10 +3,11 @@ name: Python node visualizer
 description: 'Add a NodeVisualizer component to PythonFileHandler that renders any
   node from CSTTree into a structured human-readable text preview. Four rendering
   modes: module-level overview, class structure, function/method body first-level,
-  and full-text fallback for small files. No changes to the public command schema
-  or response envelope shape.
+  and full-text fallback for small files. Wires PreviewBudget full_text_max_lines
+  into UniversalFilePreviewCommand. Adds text field to Block model.
 
   '
+concepts:
 - C-001
 - C-003
 - C-005
@@ -15,7 +16,6 @@ description: 'Add a NodeVisualizer component to PythonFileHandler that renders a
 - C-016
 - C-022
 - C-023
-- C-008
 relations:
 - from_concept: C-022
   to_concept: C-016
@@ -27,6 +27,9 @@ relations:
   to_concept: C-008
   type: implements
 - from_concept: C-016
+  to_concept: C-023
+  type: consumes
+- from_concept: C-001
   to_concept: C-023
   type: consumes
 source_ranges:

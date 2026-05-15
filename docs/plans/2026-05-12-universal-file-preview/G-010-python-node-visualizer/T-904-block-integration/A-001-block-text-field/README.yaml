@@ -12,57 +12,143 @@ status: draft
 verification:
   type: import
   target: code_analysis.commands.universal_file_preview.models
-  expected: 'Block dataclass has an optional text field of type str | None = None.
+  expected: >
+    Block dataclass has an optional text field of type str | None = None.
     Existing fields node_kind, node_ref, summary are unchanged.
+prompt: |
+  ## Task
 
-    '
-prompt: "## Task\n\nModify an existing file by adding one field to the Block dataclass.\n\
-  \nTarget file: code_analysis/commands/universal_file_preview/models.py\nOperation:\
-  \ modify_file\n\n## Current file content\n\n\"\"\"\nDomain models for universal_file_preview.\n\
-  \nDefines the closed NodeKind enumeration (C-004), the Block (C-005),\nthe Node\
-  \ (uniform in-memory representation), and NavigationResult\n(output of the navigation\
-  \ procedure).\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com\n\"\"\"\n\
-  \nfrom __future__ import annotations\n\nimport enum\nfrom dataclasses import dataclass,\
-  \ field\nfrom typing import Any\n\n\nclass NodeKind(str, enum.Enum):\n    \"\"\"\
-  Closed enumeration of node classifications (C-004).\n\n    Exactly five values.\
-  \ The kind is intrinsic to the node;\n    it does not depend on the parent or on\
-  \ the file type.\n    \"\"\"\n\n    SCALAR = \"scalar\"\n    LINES = \"lines\"\n\
-  \    MAPPING = \"mapping\"\n    SEQUENCE = \"sequence\"\n    TREE_NODE = \"tree_node\"\
-  \n\n\n@dataclass\nclass Node:\n    \"\"\"Uniform in-memory representation of any\
-  \ file node.\n\n    Produced by a FileHandler (C-003); consumed by NavigationProcedure\
-  \ (C-006).\n\n    Attributes:\n        node_kind: Classification of this node (C-004).\n\
-  \        node_ref: StableIdentifier string (opaque to dispatcher).\n        type_label:\
-  \ Optional type label (e.g. 'FunctionDef' for tree_node).\n        name: Optional\
-  \ name carried by the node.\n        attributes: Optional compact metadata dict\
-  \ (e.g. params, returns).\n        _children_loader: Callable that lazily loads\
-  \ children; None if already loaded.\n        _children: Loaded children list; empty\
-  \ list means no children.\n    \"\"\"\n\n    node_kind: NodeKind\n    node_ref:\
-  \ str\n    type_label: str | None = None\n    name: str | None = None\n    attributes:\
-  \ dict[str, Any] = field(default_factory=dict)\n    _children_loader: Any = field(default=None,\
-  \ repr=False, compare=False)\n    _children: list[Node] = field(default_factory=list,\
-  \ repr=False, compare=False)\n\n    @property\n    def children(self) -> list[Node]:\n\
-  \        \"\"\"Return children lazily, calling _children_loader on first access.\"\
-  \"\"\n        if self._children_loader is not None:\n            self._children\
-  \ = self._children_loader()\n            self._children_loader = None\n        return\
-  \ self._children\n\n\n@dataclass\nclass Block:\n    \"\"\"Self-contained unit of\
-  \ a focus node's ordered block set (C-005).\n\n    A Block is exactly one element\
-  \ of the block set. It carries its own\n    NodeKind, node_ref, and rendered summary\
-  \ (after BlockHandler runs).\n    For a mapping focus, a Block is one complete key-value\
-  \ pair.\n\n    Attributes:\n        node_kind: NodeKind of this block.\n       \
-  \ node_ref: StableIdentifier for drill-down.\n        summary: Rendered compact\
-  \ summary from BlockHandler.\n    \"\"\"\n\n    node_kind: NodeKind\n    node_ref:\
-  \ str\n    summary: dict[str, Any] = field(default_factory=dict)\n\n\n@dataclass\n\
-  class NavigationResult:\n    \"\"\"Output of the NavigationProcedure (C-006) for\
-  \ one request.\n\n    Attributes:\n        focus_node: The focus Node (file root\
-  \ or resolved node_ref).\n        total_blocks: Total count of blocks in the focus\
-  \ node's block set.\n        selected_blocks: Ordered list of rendered Blocks after\
-  \ selector applied.\n        tree_id: tree_id of an internally-created TreeSession,\
-  \ or None.\n    \"\"\"\n\n    focus_node: Node\n    total_blocks: int\n    selected_blocks:\
-  \ list[Block]\n    tree_id: str | None = None\n\n## What to change\n\nIn the Block\
-  \ dataclass, add one optional field after the existing `summary` field:\n\n    text:\
-  \ str | None = None\n\nUpdate the Block docstring Attributes section to document\
-  \ the new field:\n\n    text: Optional pre-rendered structured text from PythonNodeRenderer\
-  \ (C-022).\n          When present, callers should use this instead of generic summary\
-  \ fields.\n\nDo not change any other code.\n\n## Constraints\n\nAll existing fields\
-  \ and their defaults must remain unchanged.\nNo new imports needed (str | None uses\
-  \ built-in types).\nFile must remain under 120 lines after the change.\n"
+  Modify an existing file by adding one field to the Block dataclass.
+
+  Target file: code_analysis/commands/universal_file_preview/models.py
+  Operation: modify_file
+
+  ## Current file content (103 lines)
+
+  ---
+  """
+  Domain models for universal_file_preview.
+
+  Defines the closed NodeKind enumeration (C-004), the Block (C-005),
+  the Node (uniform in-memory representation), and NavigationResult
+  (output of the navigation procedure).
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  import enum
+  from dataclasses import dataclass, field
+  from typing import Any
+
+
+  class NodeKind(str, enum.Enum):
+      """
+      Closed enumeration of node classifications (C-004).
+
+      Exactly five values. The kind is intrinsic to the node;
+      it does not depend on the parent or on the file type.
+      """
+
+      SCALAR = "scalar"
+      LINES = "lines"
+      MAPPING = "mapping"
+      SEQUENCE = "sequence"
+      TREE_NODE = "tree_node"
+
+
+  @dataclass
+  class Node:
+      """
+      Uniform in-memory representation of any file node.
+
+      Produced by a FileHandler (C-003); consumed by NavigationProcedure (C-006).
+
+      Attributes:
+          node_kind: Classification of this node (C-004).
+          node_ref: StableIdentifier string (opaque to dispatcher).
+          type_label: Optional type label (e.g. 'FunctionDef' for tree_node).
+          name: Optional name carried by the node.
+          attributes: Optional compact metadata dict (e.g. params, returns).
+          _children_loader: Callable that lazily loads children; None if already loaded.
+          _children: Loaded children list; empty list means no children.
+      """
+
+      node_kind: NodeKind
+      node_ref: str
+      type_label: str | None = None
+      name: str | None = None
+      attributes: dict[str, Any] = field(default_factory=dict)
+      _children_loader: Any = field(default=None, repr=False, compare=False)
+      _children: list[Node] = field(default_factory=list, repr=False, compare=False)
+
+      @property
+      def children(self) -> list[Node]:
+          """Return children lazily, calling _children_loader on first access."""
+          if self._children_loader is not None:
+              self._children = self._children_loader()
+              self._children_loader = None
+          return self._children
+
+
+  @dataclass
+  class Block:
+      """
+      Self-contained unit of a focus node's ordered block set (C-005).
+
+      A Block is exactly one element of the block set. It carries its own
+      NodeKind, node_ref, and rendered summary (after BlockHandler runs).
+      For a mapping focus, a Block is one complete key-value pair.
+
+      Attributes:
+          node_kind: NodeKind of this block.
+          node_ref: StableIdentifier for drill-down.
+          summary: Rendered compact summary from BlockHandler.
+      """
+
+      node_kind: NodeKind
+      node_ref: str
+      summary: dict[str, Any] = field(default_factory=dict)
+
+
+  @dataclass
+  class NavigationResult:
+      """
+      Output of the NavigationProcedure (C-006) for one request.
+
+      Attributes:
+          focus_node: The focus Node (file root or resolved node_ref).
+          total_blocks: Total count of blocks in the focus node's block set.
+          selected_blocks: Ordered list of rendered Blocks after selector applied.
+          tree_id: tree_id of an internally-created TreeSession, or None.
+      """
+
+      focus_node: Node
+      total_blocks: int
+      selected_blocks: list[Block]
+      tree_id: str | None = None
+  ---
+
+  ## What to change
+
+  In the Block dataclass, make two changes:
+
+  1. Add one optional field after the existing `summary` field:
+
+         text: str | None = None
+
+  2. Update the Block docstring Attributes section to add documentation
+     for the new field:
+
+         text: Optional pre-rendered structured text from PythonNodeRenderer (C-022).
+               When present, callers should use this instead of generic summary fields.
+
+  Do not change any other code.
+
+  ## Constraints
+
+  All existing fields and their defaults must remain unchanged.
+  No new imports needed (str | None uses built-in types).
+  File must remain under 120 lines after the change.

@@ -1,0 +1,26 @@
+step_id: T-001
+parent_global_step: G-006
+name: Close sidecar group session
+description: 'Realise CloseCommand (C-010) for the sidecar format group. Verify the
+  checksum embedded in the DraftFile (C-003) against the current source file. When
+  checksums match, leave the sidecar as-is: it persists to preserve stable identifiers
+  for future sessions. When checksums do not match, rebuild the sidecar by re-parsing
+  the source file and rewriting the sidecar; no backup is created. In both cases delete
+  the WriteLockfile (C-004) if present and release the EditSession (C-001) from the
+  registry. Return draft_rebuilt flag when a rebuild occurred.'
+concepts:
+- C-001
+- C-003
+- C-004
+- C-010
+- C-012
+inputs:
+- name: session
+  type: EditSession
+  description: Active sidecar group session to close.
+outputs:
+- name: close_result
+  type: response with draft_rebuilt flag
+  description: Success response; draft_rebuilt is true when sidecar was rebuilt.
+atomic_steps: []
+status: draft

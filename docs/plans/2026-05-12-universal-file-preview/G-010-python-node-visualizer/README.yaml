@@ -28,8 +28,10 @@ relations:
   type: implements
 - from_concept: C-016
   to_concept: C-023
+  type: consumes
 - from_concept: C-001
   to_concept: C-023
+  type: consumes
   type: consumes
 source_ranges:
 - start: 259

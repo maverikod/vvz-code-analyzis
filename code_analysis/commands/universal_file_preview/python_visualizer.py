@@ -127,8 +127,6 @@ def _function_headline(meta: Any) -> str:
     if typ == "AsyncFunctionDef":
         return f"async def {name or '?'}:"
     return f"def {name or '?'}:"
-
-
 def render_module(tree: Any, budget: PreviewBudget) -> str:
     """Render top-level module view: classes, functions, and loose statements.
 
@@ -144,6 +142,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
     root_id = getattr(tree, "root_node_id", None)
     top_level = _direct_children(tree, root_id)
     lines: list[str] = []
+    rendered_blocks = 0
     for meta in top_level:
         kind = meta.kind or ""
         typ = getattr(meta, "type", None) or ""
@@ -169,7 +168,8 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
                     (
                         m
                         for m in tree.metadata_map.values()
-                        if m.parent_id == node_id and m.kind in ("function", "method")
+                        if m.parent_id == node_id
+                        and m.kind in ("function", "method")
                     ),
                     key=lambda m: m.start_line or 0,
                 )
@@ -185,7 +185,8 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
             head = _headline(meta, tree)
             if head:
                 lines.append(f"[{sid}] {rng}  {head}")
-        if budget.over():
+        rendered_blocks += 1
+        if rendered_blocks >= budget.preview_lines:
             lines.append("... (truncated)")
             break
     return "\n".join(lines)

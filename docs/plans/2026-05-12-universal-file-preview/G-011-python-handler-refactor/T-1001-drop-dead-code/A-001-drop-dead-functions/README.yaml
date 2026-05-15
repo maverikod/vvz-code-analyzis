@@ -1,0 +1,44 @@
+step_id: A-001
+parent_tactical_step: T-1001
+name: Remove dead functions from python_handler.py
+target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts:
+- C-016
+status: draft
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.handlers.python_handler
+  expected: 'Module imports without error. Functions _cst_statements_to_nodes, _classify_cst_node,
+    _cst_node_to_node, _find_by_stable_id are absent. PythonFileHandler, _metadata_children_to_nodes,
+    render_module and render_node imports are present and callable.
+
+    '
+prompt: "## Task\n\nModify an existing file by removing functions that are no longer\
+  \ needed.\n\nTarget file: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  Operation: modify_file\n\n## Current file content\n\nThe file is the result of G-010/T-904/A-002.\
+  \ It has the following structure\n(produce the complete new file with the dead code\
+  \ removed):\n\nImports section includes:\n  from __future__ import annotations\n\
+  \  import logging\n  from typing import Any\n  from ..base_handler import FileHandler\n\
+  \  from ..errors import (PreviewError, file_structure_error, input_error,\n    \
+  \                    INPUT_ERROR_UNKNOWN_NODE_REF)\n  from ..models import Block,\
+  \ Node, NodeKind\n  from ..python_visualizer import render_module, render_node\n\
+  \  from ..budget import PreviewBudget\n\nClasses and functions present:\n  class\
+  \ PythonFileHandler(FileHandler):\n      supported_extensions property\n      open_root(file_path,\
+  \ session, budget=None) -> Node | PreviewError\n      resolve_node_ref(node_ref,\
+  \ session) -> Node | PreviewError\n  _metadata_children_to_nodes(tree, parent_node_id)\
+  \ -> list[Node]\n  _cst_statements_to_nodes(stmts) -> list[Node]          # DEAD\
+  \ — remove\n  _classify_cst_node(node) -> NodeKind                    # DEAD — remove\n\
+  \  _cst_node_to_node(cst_node, node_ref) -> Node          # DEAD — remove\n  _find_by_stable_id(tree,\
+  \ stable_id) -> Any | None      # DEAD — remove\n\n## What to change\n\nRemove the\
+  \ following four module-level functions entirely (body and all):\n  - _cst_statements_to_nodes\n\
+  \  - _classify_cst_node\n  - _cst_node_to_node\n  - _find_by_stable_id\n\nAlso remove\
+  \ any import that becomes unused after the deletions.\nSpecifically: check whether\
+  \ `import libcst as cst` appears only inside\nthe removed functions. If so, it is\
+  \ gone automatically with them.\nDo not remove any import that is still used by\
+  \ remaining code.\n\nDo not change PythonFileHandler, _metadata_children_to_nodes,\
+  \ or any imports\nthat remain in use.\n\n## Constraints\n\nProduce the full new\
+  \ file content (not a diff).\nAll remaining functions and methods must keep their\
+  \ existing docstrings.\nFile must not exceed 180 lines after the change.\n"

@@ -127,6 +127,8 @@ def _function_headline(meta: Any) -> str:
     if typ == "AsyncFunctionDef":
         return f"async def {name or '?'}:"
     return f"def {name or '?'}:"
+
+
 def render_module(tree: Any, budget: PreviewBudget) -> str:
     """Render top-level module view: classes, functions, and loose statements.
 
@@ -168,8 +170,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
                     (
                         m
                         for m in tree.metadata_map.values()
-                        if m.parent_id == node_id
-                        and m.kind in ("function", "method")
+                        if m.parent_id == node_id and m.kind in ("function", "method")
                     ),
                     key=lambda m: m.start_line or 0,
                 )

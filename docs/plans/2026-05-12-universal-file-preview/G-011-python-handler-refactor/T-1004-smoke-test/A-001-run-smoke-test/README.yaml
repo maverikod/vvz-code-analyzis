@@ -1,0 +1,55 @@
+step_id: A-001
+parent_tactical_step: T-1004
+name: Smoke-test universal_file_preview on three Python files
+target_file: docs/plans/2026-05-12-universal-file-preview/G-011-python-handler-refactor/T-1004-smoke-test/smoke_test_results.md
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-016
+status: draft
+verification:
+  type: manual
+  target: docs/plans/2026-05-12-universal-file-preview/G-011-python-handler-refactor/T-1004-smoke-test/smoke_test_results.md
+  expected: 'File exists and documents results for all three test cases. Case 1 shows
+    full-text fallback (text field present, no blocks). Case 2 shows module overview
+    with imports, classes, functions. Case 3 shows function body with signature, docstring,
+    first-level statements.
+
+    '
+prompt: "## Task\n\nRun a live smoke-test of universal_file_preview via MCP and record\
+  \ results.\n\nTarget file: docs/plans/2026-05-12-universal-file-preview/G-011-python-handler-refactor/T-1004-smoke-test/smoke_test_results.md\n\
+  Operation: create_file\n\nThe file does not exist. Create it with the test results.\n\
+  \n## How to run the test\n\nCall the MCP command universal_file_preview with the\
+  \ following three cases.\nThe server must be running with the code from G-010 and\
+  \ G-011 applied.\n\n### Case 1 — Small file (full-text fallback)\n\nChoose any .py\
+  \ file in the project that has fewer than 200 lines.\nCall universal_file_preview\
+  \ with:\n  project_id: <project UUID>\n  file_path: <chosen small file, e.g. budget.py>\n\
+  \  full_text_max_lines: 200\n\nExpected: The focus node has a 'text' field containing\
+  \ the full file source.\nThe blocks list may be empty or contain one text block.\n\
+  Record: the file chosen, its line count, and whether 'text' is present\nin the focus\
+  \ or first block.\n\n### Case 2 — Large file without node_ref (module overview)\n\
+  \nChoose any .py file with more than 200 lines.\nCall universal_file_preview with:\n\
+  \  project_id: <project UUID>\n  file_path: <chosen large file>\n  full_text_max_lines:\
+  \ 200\n\nExpected: The focus node has 'text' containing a structured overview\n\
+  with imports, classes, and functions prefixed by stable_id and line range.\nRecord:\
+  \ file chosen, line count, first 10 lines of the text field.\n\n### Case 3 — Large\
+  \ file with node_ref pointing to a FunctionDef\n\nUse the same large file from Case\
+  \ 2.\nFirst call universal_file_preview without node_ref to get a stable_id\nof\
+  \ a top-level function from the blocks.\nThen call universal_file_preview again\
+  \ with that stable_id as node_ref.\n\nExpected: The focus node has 'text' showing\
+  \ the function signature,\ndocstring, and first-level body with compound statements\
+  \ collapsed.\nRecord: stable_id used, first 10 lines of the text field.\n\n## What\
+  \ to produce\n\nCreate the file smoke_test_results.md with the following sections:\n\
+  \n# Smoke Test Results — G-011 T-1004\n\n## Case 1: Small file full-text fallback\n\
+  - File: <path>\n- Line count: <N>\n- text present in focus: yes/no\n- First 5 lines\
+  \ of text: ...\n- Status: PASS / FAIL\n- Notes: (if FAIL, describe what went wrong)\n\
+  \n## Case 2: Large file module overview\n- File: <path>\n- Line count: <N>\n- text\
+  \ present in focus: yes/no\n- First 10 lines of text: ...\n- Status: PASS / FAIL\n\
+  - Notes:\n\n## Case 3: Large file single FunctionDef\n- File: <path>\n- node_ref\
+  \ used: <stable_id>\n- text present in focus: yes/no\n- First 10 lines of text:\
+  \ ...\n- Status: PASS / FAIL\n- Notes:\n\n## Overall: PASS / FAIL\n\nIf any case\
+  \ FAILs, describe the fix applied before marking overall PASS.\n\n## Constraints\n\
+  \nThis step produces a Markdown document, not Python code.\nThe file must exist\
+  \ and be non-empty when the step is marked done.\n"

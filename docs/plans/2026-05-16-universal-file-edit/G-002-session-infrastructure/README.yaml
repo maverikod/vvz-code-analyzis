@@ -18,9 +18,10 @@ relations:
 - from_concept: C-005
   to_concept: C-001
   type: produces
-source_ranges:
-- start: 41
-  end: 79
+tactical_steps:
+- T-001
+- T-002
+status: draft
 - start: 247
   end: 263
 depends_on:

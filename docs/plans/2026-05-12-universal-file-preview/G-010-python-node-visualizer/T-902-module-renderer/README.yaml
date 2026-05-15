@@ -30,7 +30,7 @@ inputs:
 outputs:
 - name: python_visualizer_py
   type: file
-  description: new module with render_module and render_node
 atomic_steps:
 - A-001
+- A-002
 status: draft

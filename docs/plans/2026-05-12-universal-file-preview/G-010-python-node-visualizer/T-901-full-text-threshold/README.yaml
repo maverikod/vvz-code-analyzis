@@ -29,4 +29,9 @@ outputs:
   type: file
   description: schema updated with full_text_max_lines key; validate_params passes value to PreviewBudget
 atomic_steps: []
-status: draft
+status: done
+implementation_note: >
+  Already implemented in code before AS authoring. budget.py (49 lines) has
+  full_text_max_lines field with __post_init__ validation. universal_file_preview_command.py
+  (282 lines) has the key in get_schema(), extraction in validate_params(), and
+  passes it to PreviewBudget in execute(). No AS needed.

@@ -1,0 +1,30 @@
+step_id: T-003
+parent_global_step: G-004
+name: Apply operations to tree-temp and text group drafts
+description: Apply a batch of EditOperations (C-007) to tree-temp or text group sessions.
+  For the tree-temp group, operations are applied sequentially to the in-memory tree
+  and the DraftFile (C-003) is written after each operation. For the text group, operations
+  are first sorted by line position descending to avoid address shifts, then applied
+  to an in-memory buffer, and the draft is written once after all operations complete.
+  The original file is not touched in either case. The ExistingInfrastructure (C-012)
+  provides tree mutation, serialisation, and text sort operations.
+concepts:
+- C-002
+- C-003
+- C-006
+- C-007
+- C-012
+inputs:
+- name: session
+  type: EditSession
+  description: Active session for a tree-temp or text group file.
+- name: operations
+  type: list of EditOperation
+  description: Batch of operations submitted by the caller.
+outputs:
+- name: updated_state
+  type: node list or line count
+  description: 'For tree-temp: updated node list. For text: updated line count of
+    the draft after all operations applied.'
+atomic_steps: []
+status: draft

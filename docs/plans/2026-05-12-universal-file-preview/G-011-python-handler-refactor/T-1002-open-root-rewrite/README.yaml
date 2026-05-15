@@ -1,28 +1,13 @@
+# MERGED INTO T-1001
+# Both operations (drop dead code + rewrite _metadata_children_to_nodes) are
+# now in T-1001 (Clean and rewrite python_handler.py). This file is obsolete.
 step_id: T-1002
 parent_global_step: G-011
-name: Rewrite open_root and _metadata_children_to_nodes
+name: OBSOLETE - merged into T-1001
 description: >
-  Rewrite open_root in PythonFileHandler (C-016): call cst_load_file, then call
-  render_module(tree, budget) from PythonNodeRenderer (C-022), return a tree_node
-  Module Node with the rendered text stored in attributes["text"].
-  Rewrite _metadata_children_to_nodes: filter metadata_map by
-  depth == parent_depth + 1 and parent_id == parent_node_id, skip nodes with
-  empty kind, return Nodes with correct stable_id as node_ref. This fixes the
-  root cause of SimpleStatementLine appearing instead of real semantic types.
-concepts:
-- C-016
-- C-022
-inputs:
-- name: python_handler_py
-  type: file
-  description: handlers/python_handler.py after T-1001
-- name: python_visualizer_py
-  type: file
-  description: python_visualizer.py from G-010
-outputs:
-- name: python_handler_py
-  type: file
-  description: rewritten open_root and _metadata_children_to_nodes
-atomic_steps:
-- A-001
-status: draft
+  Merged into T-1001 (Clean and rewrite python_handler.py). This TS is no longer active.
+concepts: []
+inputs: []
+outputs: []
+atomic_steps: []
+status: obsolete

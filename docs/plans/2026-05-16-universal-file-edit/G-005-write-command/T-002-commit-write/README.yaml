@@ -1,0 +1,37 @@
+step_id: T-002
+parent_global_step: G-005
+name: Commit write with backup (second call)
+description: Realise the second phase of WriteCommand (C-009). This phase executes
+  when the WriteLockfile (C-004) is present and its process identifier matches the
+  current server process. Create a BackupPair (C-011) atomically covering both the
+  original file and the draft. Generate code from the DraftFile (C-003) to a temporary
+  file. On generation failure restore the original from the backup and return a WRITE_FAILED
+  error. On success rename the temporary file to the original, delete the lockfile,
+  and issue a git commit when git integration is enabled. Return success with the
+  diff.
+concepts:
+- C-003
+- C-004
+- C-009
+- C-011
+- C-012
+- C-014
+inputs:
+- name: session
+  type: EditSession
+  description: Active session identifying the file, draft, and format group.
+- name: lockfile
+  type: WriteLockfile on disk
+  description: Lockfile confirming first call was completed.
+outputs:
+- name: committed_file
+  type: original file updated on disk
+  description: Original file replaced with generated code from draft.
+- name: backup_pair
+  type: BackupPair in backup history
+  description: Atomic backup of original and draft created before write.
+- name: write_error
+  type: ErrorCodes entry
+  description: WRITE_FAILED when generation fails; original restored from backup.
+atomic_steps: []
+status: draft

@@ -8,7 +8,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -67,7 +66,6 @@ from ..core.path_normalization import normalize_path_simple
 logger = logging.getLogger(__name__)
 
 
-
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
     data: Dict[str, Any] = {
         "success": True,
@@ -82,7 +80,6 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
     return SuccessResult(data=data)
 
 
-
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
     return ErrorResult(
         message=fr.message or fr.code,
@@ -95,16 +92,14 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
         },
     )
 
+
 class UniversalFileSaveCommand:
-    
-    
     """Save project files via handler registry (extension routing before side effects)."""
-    
-    
+
     name = "universal_file_save"
-    
+
     version = "1.0.0"
-    
+
     descr = (
         "Full-file save using the universal handler registry. Unsupported extensions fail "
         "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Text: full `content` "
@@ -112,16 +107,15 @@ class UniversalFileSaveCommand:
         "`content` is applied via CST-safe ops. Supports dry_run and diff when the handler "
         "can serialize before/after." + " " + MCP_FILE_MANAGEMENT_REGISTRY_HELP
     )
-    
+
     category = "file_management"
-    
+
     author = "Vasiliy Zdanovskiy"
-    
+
     email = "vasilyvz@gmail.com"
-    
+
     use_queue = False
-    
-    
+
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         return {
@@ -189,8 +183,7 @@ class UniversalFileSaveCommand:
             "required": ["project_id", "file_path", "content"],
             "additionalProperties": False,
         }
-    
-    
+
     @classmethod
     def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
         return {
@@ -206,8 +199,7 @@ class UniversalFileSaveCommand:
             "author": cls.author,
             "email": cls.email,
         }
-    
-    
+
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
         if content is None:
@@ -223,7 +215,7 @@ class UniversalFileSaveCommand:
                 details={"field": "content"},
             )
         return None
-    
+
     async def execute(
         self,
         project_id: str,
@@ -247,13 +239,13 @@ class UniversalFileSaveCommand:
                     code=e.code,
                     details=e.details,
                 )
-    
+
             bad = self._validate_save_payload(content)
             if bad is not None:
                 return bad
-    
+
             assert content is not None
-    
+
             database = self._open_database_from_config(auto_analyze=False)
             absolute_path = self._resolve_file_path_from_project(
                 database, project_id, file_path, require_exists=False
@@ -266,11 +258,11 @@ class UniversalFileSaveCommand:
                     details={"project_id": project_id},
                 )
             root_dir = Path(project.root_path)
-    
+
             blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
             if blocked_venv is not None:
                 return blocked_venv
-    
+
             extra: Dict[str, Any] = {
                 "absolute_path": absolute_path,
                 "content": content,
@@ -279,7 +271,7 @@ class UniversalFileSaveCommand:
                 extra["diff_context_lines"] = diff_context_lines
             if isinstance(commit_message, str) and commit_message.strip():
                 extra["commit_message"] = commit_message
-    
+
             if handler_id == HANDLER_TEXT:
                 backup_for_handler = bool(backup)
                 if not dry_run and backup_for_handler:
@@ -365,7 +357,7 @@ class UniversalFileSaveCommand:
                         "operation": "save",
                     },
                 )
-    
+
             if not fr.success:
                 return _error_from_handler(fr)
             if not dry_run and handler_id != HANDLER_PYTHON:
@@ -384,7 +376,7 @@ class UniversalFileSaveCommand:
                 if not git_ok and git_err:
                     logger.warning("Git commit after universal_file_save: %s", git_err)
             return _success_from_handler(fr, operation="save")
-    
+
         except ValidationError as e:
             return ErrorResult(
                 message=str(e),
@@ -398,8 +390,7 @@ class UniversalFileSaveCommand:
                 message=f"universal_file_save failed: {e}",
                 code="UNIVERSAL_FILE_SAVE_ERROR",
             )
-    
-    
+
     def _run_text_save(
         self,
         *,
@@ -411,11 +402,11 @@ class UniversalFileSaveCommand:
         dry_run: bool,
     ) -> FileHandlerResult:
         """Text save with BackupManager (handler does not) and files-table metadata."""
-    
+
         def _restore(rel: str, uuid_: str) -> None:
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
-    
+
         with file_lock(
             absolute_path,
             mode="full",
@@ -424,7 +415,7 @@ class UniversalFileSaveCommand:
             file_path=req.file_path,
         ):
             normalized_path = normalize_path_simple(str(absolute_path))
-    
+
             backup_uuid: Optional[str] = None
             if not dry_run and backup and absolute_path.exists():
                 bm = BackupManager(root_dir)
@@ -456,14 +447,14 @@ class UniversalFileSaveCommand:
                             "resolved_path": str(absolute_path),
                         },
                     )
-    
+
             fr = TextFileHandler().save(req)
             if not fr.success:
                 return fr
-    
+
             if dry_run:
                 return fr
-    
+
             meta = persist_plain_text_file_metadata(
                 database=database,
                 project_id=req.project_id,
@@ -505,4 +496,3 @@ class UniversalFileSaveCommand:
                 changed=fr.changed,
                 data=out,
             )
-    

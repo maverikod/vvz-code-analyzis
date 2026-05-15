@@ -1,11 +1,14 @@
 step_id: G-005
 name: universal_file_write command
-description: 'Implement the two-phase universal_file_write MCP command. First call:
-  generate code from draft, compute diff via diff_support, write lockfile with os.getpid(),
-  return diff. Second call (lockfile present, PID matches, lockfile mtime newer than
-  draft): create BackupPair atomically, generate code to temp, on failure restore_file
-  from backup, on success rename temp to original, delete lockfile, git commit if
-  enabled. PID mismatch treated as first call.'
+description: The write command is a two-phase protocol controlled by the lockfile.
+  On the first call the command generates code from the draft, computes a diff against
+  the original file, writes the lockfile with the server process identifier, and returns
+  the diff without modifying the original. On the second call, when the lockfile is
+  present and the process identifier matches, the command creates a backup pair atomically,
+  generates code to a temporary file, renames it to the original on success, deletes
+  the lockfile, and issues a git commit when configured. A process identifier mismatch
+  on the second call is treated as a first call. A write failure after backup creation
+  restores the original from the backup.
 concepts:
 - C-001
 - C-002
@@ -14,6 +17,7 @@ concepts:
 - C-009
 - C-011
 - C-012
+- C-014
 relations:
 - from_concept: C-009
   to_concept: C-001
@@ -33,9 +37,12 @@ relations:
 - from_concept: C-009
   to_concept: C-012
   type: uses
+- from_concept: C-009
+  to_concept: C-014
+  type: produces
 source_ranges:
-- start: 174
-  end: 210
+- start: 177
+  end: 213
 depends_on:
 - G-002
 tactical_steps: []

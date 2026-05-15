@@ -1,9 +1,9 @@
 step_id: G-002
 name: Session infrastructure and format groups
-description: 'Define the EditSession dataclass and the module-level session registry.
-  Define FormatGroup resolution logic: given a file extension, determine group (sidecar
-  / tree-temp / text), handler_id, draft_path, and available operations. This infrastructure
-  is consumed by all four commands.'
+description: 'Define the EditSession entity and the session registry that stores active
+  sessions. Define FormatGroup resolution: given a file, determine its group (sidecar,
+  tree-temp, or text), the draft file path, and the set of available operations. This
+  infrastructure is the foundation consumed by all four commands.'
 concepts:
 - C-001
 - C-002
@@ -12,14 +12,17 @@ relations:
 - from_concept: C-002
   to_concept: C-003
   type: owns
+- from_concept: C-001
+  to_concept: C-002
+  type: depends_on
 - from_concept: C-005
   to_concept: C-001
   type: produces
 source_ranges:
-- start: 35
+- start: 41
   end: 79
-- start: 178
-  end: 195
+- start: 247
+  end: 263
 depends_on:
 - G-001
 tactical_steps: []

@@ -1,0 +1,26 @@
+step_id: T-001
+parent_global_step: G-001
+name: Unregister legacy editing commands
+description: Modify the command registration module to remove all legacy editing command
+  registrations. The RegistrationCleanup (C-013) entity is realised by identifying
+  each legacy command entry and removing it. The registration entries for OpenCommand
+  (C-005), EditCommand (C-006), WriteCommand (C-009), and CloseCommand (C-010) are
+  added in their place. The preview command registration and the broken-file fallback
+  registration are left unchanged.
+concepts:
+- C-013
+- C-005
+- C-006
+- C-009
+- C-010
+inputs:
+- name: registration_module
+  type: existing source file
+  description: The module that registers all MCP commands (hooks.py or equivalent).
+outputs:
+- name: updated_registration_module
+  type: modified source file
+  description: Registration module with legacy commands removed and four new commands
+    registered.
+atomic_steps: []
+status: draft

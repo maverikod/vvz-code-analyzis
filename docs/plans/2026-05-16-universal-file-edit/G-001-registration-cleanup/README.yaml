@@ -16,6 +16,7 @@ relations:
   to_concept: C-009
 tactical_steps:
 - T-001
+- T-002
 status: draft
   type: depends_on
 source_ranges:

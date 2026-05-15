@@ -26,9 +26,9 @@ inputs:
   description: PreviewBudget with full_text_max_lines cap (C-023)
 - name: stable_id
   type: str
-  description: StableIdentifier UUID of the target node (C-009)
-outputs:
 - name: python_visualizer_py
+  type: file
+  description: new module with render_module and render_node
   type: file
 atomic_steps:
 - A-001

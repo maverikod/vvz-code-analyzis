@@ -1,14 +1,20 @@
 step_id: T-002
 parent_global_step: G-005
 name: Commit write with backup (second call)
-description: Realise the second phase of WriteCommand (C-009). This phase executes
-  when the WriteLockfile (C-004) is present and its process identifier matches the
-  current server process. Create a BackupPair (C-011) atomically covering both the
-  original file and the draft. Generate code from the DraftFile (C-003) to a temporary
-  file. On generation failure restore the original from the backup and return a WRITE_FAILED
-  error. On success rename the temporary file to the original, delete the lockfile,
-  and issue a git commit when git integration is enabled. Return success with the
-  diff.
+description: "Realise the second phase of WriteCommand (C-009). Conditions: <file>.write\
+  \ exists AND its content equals str(os.getpid()) AND <file>.write mtime > draft_path\
+  \ mtime.\nSteps: 1. Create a BackupPair (C-011) atomically using the existing\n\
+  \   `BackupManager` from `core/backup_manager.py`: call\n   `BackupManager.create_backup(file_path,\
+  \ command='universal_file_write')`\n   for the original file and\n   `BackupManager.create_backup(draft_path,\
+  \ command='universal_file_write_draft')`\n   for the draft. Both calls share the\
+  \ same backup label so they form\n   one logical history entry.\n2. Generate code\
+  \ from DraftFile (C-003) to a temp file (same logic as\n   T-001 step 1).\n3. If\
+  \ generation fails: call `BackupManager.restore_file` to restore\n   the original\
+  \ from its backup. Return WRITE_FAILED from ErrorCodes\n   (C-014). Draft is left\
+  \ intact for retry.\n4. On success: rename temp file to <file> (atomic on POSIX\
+  \ via\n   os.replace). Delete <file>.write. Call the existing\n   `commit_after_write(root_path,\
+  \ file_path, config)` from\n   `core/git_integration.py` if git is enabled.\n5.\
+  \ Return success with the diff string."
 concepts:
 - C-003
 - C-004
@@ -19,17 +25,17 @@ concepts:
 inputs:
 - name: session
   type: EditSession
-  description: Active session identifying the file, draft, and format group.
+  description: Active session identifying file, draft, format group.
 - name: lockfile
   type: WriteLockfile on disk
-  description: Lockfile confirming first call was completed.
+  description: Lockfile with matching PID confirming first call completed.
 outputs:
 - name: committed_file
   type: original file updated on disk
-  description: Original file replaced with generated code from draft.
+  description: Original file replaced with code generated from draft.
 - name: backup_pair
-  type: BackupPair in backup history
-  description: Atomic backup of original and draft created before write.
+  type: BackupPair entries in backup history
+  description: Backup of original and draft created before write.
 - name: write_error
   type: ErrorCodes entry
   description: WRITE_FAILED when generation fails; original restored from backup.

@@ -1,0 +1,75 @@
+step_id: A-001
+parent_tactical_step: T-903
+name: Add render_node to python_visualizer.py
+target_file: code_analysis/commands/universal_file_preview/python_visualizer.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts:
+- C-022
+- C-009
+- C-016
+status: draft
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.python_visualizer
+  expected: 'Module imports without error. render_node(tree, stable_id) is callable
+    and returns a non-empty string for a valid node stable_id.
+
+    '
+prompt: "## Task\n\nModify an existing file by adding one function to it.\n\nTarget\
+  \ file: code_analysis/commands/universal_file_preview/python_visualizer.py\nOperation:\
+  \ modify_file\n\n## Current file content\n\nThe file already exists with the following\
+  \ content (result of the previous step):\n\n\"\"\"\nPython node renderer for universal_file_preview\
+  \ (C-022).\n\nConverts CSTTree nodes to structured human-readable text for AI consumption.\n\
+  Two public functions: render_module (module overview) and render_node\n(single-node\
+  \ drill-down, to be added in the next step).\n\nAuthor: Vasiliy Zdanovskiy\nemail:\
+  \ vasilyvz@gmail.com\n\"\"\"\n\nfrom __future__ import annotations\nimport pathlib\n\
+  from typing import Any\nfrom .budget import PreviewBudget\n\n\ndef render_module(tree:\
+  \ Any, budget: PreviewBudget) -> str:\n    \"\"\"Render a structured text overview\
+  \ of a Python module (C-022).\n\n    When the file has fewer lines than budget.full_text_max_lines\
+  \ and that\n    threshold is positive, returns the raw file source instead of the\n\
+  \    structured overview (C-023 full-text fallback).\n\n    Args:\n        tree:\
+  \ CSTTree loaded for the file.\n        budget: PreviewBudget with full_text_max_lines\
+  \ cap.\n\n    Returns:\n        Structured text string suitable for AI consumption.\n\
+  \    \"\"\"\n    # ... (implementation from previous step)\n\n## What to add\n\n\
+  Append a new public function render_node at the end of the file.\nDo not modify\
+  \ render_module or any other existing code.\n\n### render_node(tree: Any, stable_id:\
+  \ str) -> str\n\nDocstring: Render a single CST node identified by its stable_id\
+  \ (C-022).\nArgs: tree: CSTTree loaded for the file. stable_id: Stable UUID of the\
+  \ target node.\nReturns: Structured text for the node, or empty string if not found.\n\
+  \nLogic:\n\nStep 1 — Locate the node metadata by stable_id:\n  meta = next(\n  \
+  \    (m for m in tree.metadata_map.values() if m.stable_id == stable_id),\n    \
+  \  None\n  )\n  if meta is None:\n      return ''\n\n  node_id = next(\n      (nid\
+  \ for nid, m in tree.metadata_map.items() if m.stable_id == stable_id),\n      None\n\
+  \  )\n\nStep 2 — Render by kind/type:\n\n  Helper _fmt_range (same logic as in render_module\
+  \ — duplicate locally or\n  extract to a private module-level helper if it was already\
+  \ extracted):\n    'L{start}-{end}' if start != end and end not None, else 'L{start}'.\n\
+  \n  - kind == 'function' or kind == 'method' or type in ('FunctionDef','AsyncFunctionDef'):\n\
+  \      Header: '[{stable_id}] {_fmt_range(meta)}  {meta.signature or 'def ' + (meta.name\
+  \ or '?') + ':'}'\n      If meta.docstring: append '    ' + first line of docstring.\n\
+  \      First-level body: collect depth==(meta.depth+1) children where\n      parent_id\
+  \ == node_id, sorted by start_line.\n      For each child:\n        if child.kind\
+  \ in ('function','method','class') or child.type in\n        ('FunctionDef','AsyncFunctionDef','ClassDef','If','For','While',\n\
+  \        'Try','With','Match'):\n          # compound stmt: show first line + stable_id\
+  \ + range + '...'\n          append '    [{child.stable_id}] {_fmt_range(child)}\
+  \  {child.signature or child.type}  ...'\n        else:\n          # simple stmt:\
+  \ show as-is\n          append '    [{child.stable_id}] {_fmt_range(child)}  {child.signature\
+  \ or child.type}'\n\n  - kind == 'class' or type == 'ClassDef':\n      Header: '[{stable_id}]\
+  \ {_fmt_range(meta)}  class {meta.name or '?'}:'\n      If meta.docstring: append\
+  \ '    ' + first line of docstring.\n      Methods: collect depth==(meta.depth+1)\
+  \ children where parent_id==node_id\n      and kind in ('function','method'), sorted\
+  \ by start_line.\n      For each method:\n          sig = method.signature or ('def\
+  \ ' + (method.name or '?'))\n          append '    [{method.stable_id}] {_fmt_range(method)}\
+  \  {sig}'\n          if method.docstring:\n              append '        ' + first\
+  \ line of method.docstring\n\n  - type in ('If','For','While','Try','With','Match')\
+  \ (compound stmt as focus):\n      Header: '[{stable_id}] {_fmt_range(meta)}  {meta.signature\
+  \ or meta.type}'\n      First-level body: same collapse rule as FunctionDef above.\n\
+  \n  - anything else (scalar, import, smallstmt):\n      return '[{stable_id}] {_fmt_range(meta)}\
+  \  {meta.signature or meta.type or meta.name or ''}'\n\nStep 3 — Return '\\n'.join(lines).\n\
+  \n## CSTTree interface (same as in previous step)\n\ntree.metadata_map: dict[str,\
+  \ NodeMetadata]\nNodeMetadata attributes: stable_id, start_line, end_line, type,\
+  \ kind,\nname, parent_id, depth, signature, docstring.\n\n## Constraints\n\nFunction\
+  \ must have a complete docstring with Args and Returns.\nAll parameters must carry\
+  \ type annotations.\nDo not import libcst directly.\nDo not change render_module\
+  \ or any other existing code.\nAfter this step the file must not exceed 350 lines.\n"

@@ -1,0 +1,71 @@
+step_id: A-001
+parent_tactical_step: T-1002
+name: Rewrite open_root and _metadata_children_to_nodes
+target_file: code_analysis/commands/universal_file_preview/handlers/python_handler.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts:
+- C-016
+- C-022
+status: draft
+verification:
+  type: import
+  target: code_analysis.commands.universal_file_preview.handlers.python_handler
+  expected: 'Module imports without error. PythonFileHandler.open_root calls render_module
+    and returns a Node. _metadata_children_to_nodes iterates metadata_map filtering
+    by depth and parent_id, skipping whitespace-only kinds.
+
+    '
+prompt: "## Task\n\nModify an existing file.\n\nTarget file: code_analysis/commands/universal_file_preview/handlers/python_handler.py\n\
+  Operation: modify_file\n\n## Current file content\n\nThe file is the result of G-011/T-1001/A-001\
+  \ (dead functions removed).\nIt has the following structure:\n\n\"\"\"\nPythonFileHandler\
+  \ — FileHandler for .py, .pyi, .pyw files (C-016).\n...\n\"\"\"\n\nfrom __future__\
+  \ import annotations\nimport logging\nfrom typing import Any\nfrom ..base_handler\
+  \ import FileHandler\nfrom ..errors import (PreviewError, file_structure_error,\
+  \ input_error,\n                      INPUT_ERROR_UNKNOWN_NODE_REF)\nfrom ..models\
+  \ import Block, Node, NodeKind\nfrom ..python_visualizer import render_module, render_node\n\
+  from ..budget import PreviewBudget\n\nlogger = logging.getLogger(__name__)\n\n\n\
+  class PythonFileHandler(FileHandler):\n    \"\"\"...\"\"\"\n\n    @property\n  \
+  \  def supported_extensions(self) -> frozenset[str]:\n        \"\"\"...\"\"\"\n\
+  \        return frozenset({\".py\", \".pyi\", \".pyw\"})\n\n    def open_root(\n\
+  \        self,\n        file_path: str,\n        session: Any | None,\n        budget:\
+  \ PreviewBudget | None = None,\n    ) -> Node | PreviewError:\n        \"\"\"...\
+  \ (uses render_module, returns Node with attributes={'text': text})\"\"\"\n    \
+  \    ...\n\n    def resolve_node_ref(\n        self, node_ref: str, session: Any\
+  \ | None\n    ) -> Node | PreviewError:\n        \"\"\"... (uses render_node, looks\
+  \ up meta in metadata_map)\"\"\"\n        ...\n\n\ndef _metadata_children_to_nodes(tree:\
+  \ Any, parent_node_id: str | None) -> list[Node]:\n    \"\"\"... (current implementation\
+  \ uses parent_id check but may miss some nodes)\"\"\"\n    ...\n\n## What to change\n\
+  \n### Rewrite _metadata_children_to_nodes\n\nReplace the body with a correct implementation\
+  \ that:\n1. Returns [] if parent_node_id is None.\n2. Finds the parent node's depth\
+  \ from tree.metadata_map to determine child_depth.\n   child_depth = parent_meta.depth\
+  \ + 1 if parent_meta and parent_meta.depth is not None else 1\n3. Iterates tree.metadata_map.items();\
+  \ selects nodes where:\n   - meta.parent_id == parent_node_id\n   - meta.depth ==\
+  \ child_depth\n   - meta.kind is not None and meta.kind != '' (skip whitespace/None-kind\
+  \ entries)\n4. Sorts selected nodes by start_line (None sorts last).\n5. For each\
+  \ selected meta, decides NodeKind:\n   - kind in ('class', 'function', 'method')\
+  \ -> NodeKind.TREE_NODE\n   - anything else -> NodeKind.SCALAR\n6. Creates Node\
+  \ with:\n   node_kind=preview_kind\n   node_ref=meta.stable_id\n   type_label=meta.type\n\
+  \   name=meta.name\n   attributes={}\n   _children_loader = (lambda nid=nid: _metadata_children_to_nodes(tree,\
+  \ nid))\n                      if preview_kind == NodeKind.TREE_NODE else None\n\
+  \   where nid is the node_id key from the metadata_map iteration.\n7. Returns the\
+  \ list of Nodes.\n\n### Rewrite open_root\n\nReplace the body entirely:\n\n    try:\n\
+  \        from code_analysis.core.cst_tree.tree_builder import load_file_to_tree\n\
+  \        tree = session if session is not None else load_file_to_tree(file_path)\n\
+  \        self._last_file_path = file_path\n        self._last_session = tree\n \
+  \       self._last_tree_id = getattr(tree, 'tree_id', None)\n        _budget = budget\
+  \ or PreviewBudget(preview_lines=20, value_preview_len=120)\n        text = render_module(tree,\
+  \ _budget)\n        root_stable_id = (\n            tree.metadata_map[tree.root_node_id].stable_id\n\
+  \            if tree.root_node_id and tree.root_node_id in tree.metadata_map\n \
+  \           else \"\"\n        )\n        return Node(\n            node_kind=NodeKind.TREE_NODE,\n\
+  \            node_ref=root_stable_id,\n            type_label=\"Module\",\n    \
+  \        name=None,\n            attributes={\"text\": text},\n            _children_loader=lambda:\
+  \ _metadata_children_to_nodes(\n                tree, tree.root_node_id\n      \
+  \      ),\n        )\n    except Exception as exc:\n        return file_structure_error(parser=\"\
+  libcst\", message=str(exc))\n\nUpdate open_root docstring to reflect the new behaviour:\n\
+  \"Parse the Python file, render module overview via PythonNodeRenderer, and\nreturn\
+  \ a tree_node Module root Node carrying the rendered text in attributes.\"\n\nKeep\
+  \ resolve_node_ref exactly as it is (already uses render_node).\n\n## Constraints\n\
+  \nProduce the full new file content.\nAll methods and functions must keep complete\
+  \ docstrings.\nFile must not exceed 180 lines after the change.\n"

@@ -1,23 +1,32 @@
 step_id: T-001
 parent_global_step: G-002
 name: Define FormatGroup resolution
-description: Create the FormatGroup (C-002) resolution entity. Given a file path,
-  it determines the format group (sidecar, tree-temp, or text), the draft file path,
-  and the set of operations available for that group. The resolution is based on the
-  file extension and uses the existing handler registry. The entity exposes a resolve
-  operation that returns a structured descriptor consumed by all four commands.
+description: 'Create a new module `code_analysis/commands/universal_file_edit/format_group.py`
+  that wraps the existing handler registry to produce a FormatGroup (C-002) descriptor.
+  The existing `core/file_handlers/registry.py` already provides `resolve_handler(ext)
+  -> handler_id` and `HANDLER_IDS` (text/json/yaml/python). The new module adds a
+  `resolve_format_group` function that calls `resolve_handler`, maps handler_id to
+  group name (python -> sidecar, json/yaml -> tree-temp, text -> text), computes the
+  draft_path (<file>.cst_sidecar for sidecar, <file>.draft for others), and returns
+  a FormatDescriptor dataclass with fields: format_group, handler_id, draft_path,
+  available_operations. On unsupported extension it returns UNKNOWN_FORMAT from ErrorCodes
+  (C-014).'
 concepts:
 - C-002
 - C-003
 - C-012
+- C-014
 inputs:
 - name: file_path
   type: project-relative path string
   description: Path to the file being opened for editing.
 outputs:
 - name: format_descriptor
-  type: FormatGroup descriptor
-  description: Descriptor containing format_group, handler_id, draft_path, and available_operations
-    for the given file.
+  type: FormatDescriptor dataclass
+  description: Contains format_group ('sidecar'|'tree-temp'|'text'), handler_id, draft_path
+    (Path), available_operations (list of operation names).
+- name: unknown_format_error
+  type: ErrorCodes entry
+  description: UNKNOWN_FORMAT when file extension is not supported.
 atomic_steps: []
 status: draft

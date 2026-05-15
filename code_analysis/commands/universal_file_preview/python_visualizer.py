@@ -7,12 +7,17 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from __future__ import annotations
 
+
 import pathlib
+
 from typing import Any
 
+
 from .budget import PreviewBudget
+
 
 
 def _fmt_range(meta: Any) -> str:
@@ -33,6 +38,7 @@ def _fmt_range(meta: Any) -> str:
     return f"L{start}"
 
 
+
 def _doc_first_line(doc: Any) -> str:
     """First line for inline docstring preview (handles DocstringMeta or string)."""
     if doc is None:
@@ -51,6 +57,7 @@ def _doc_first_line(doc: Any) -> str:
     return ""
 
 
+
 def _doc_block_preview(doc: Any) -> str:
     """Full docstring snippet for module header (handles DocstringMeta or string)."""
     if doc is None:
@@ -65,15 +72,38 @@ def _doc_block_preview(doc: Any) -> str:
         return body
     return ""
 
+def _headline(meta: Any, tree: Any = None) -> str:
+    """One-line header for a CST node metadata row.
 
-def _headline(meta: Any) -> str:
-    """One-line header without assuming TreeNodeMetadata.signature exists."""
+    Tries, in order:
+    1. ``signature`` attribute (pre-computed for functions/classes).
+    2. First line of source code via ``tree.module.code_for_node`` (for
+       SimpleStatementLine and other stmt nodes without a name).
+    3. Fallback to ``type`` string.
+
+    Args:
+        meta: ``TreeNodeMetadata`` object from ``tree.metadata_map``.
+        tree: ``CSTTree`` instance; required for source-code extraction.
+
+    Returns:
+        Single-line string describing the node.
+    """
     sig = getattr(meta, "signature", None)
     if isinstance(sig, str) and sig.strip():
         return sig.strip()
-    code = getattr(meta, "code", None)
-    if isinstance(code, str) and code.strip():
-        return code.strip().split("\n")[0]
+    # Try to extract first line of source code for stmt nodes (e.g. SimpleStatementLine).
+    if tree is not None:
+        node_id = getattr(meta, "node_id", None) or getattr(meta, "stable_id", None)
+        if node_id:
+            cst_node = tree.node_map.get(node_id)
+            if cst_node is not None:
+                try:
+                    raw = tree.module.code_for_node(cst_node)
+                    first = raw.strip().split("\n")[0].strip()
+                    if first:
+                        return first
+                except Exception:
+                    pass
     typ = getattr(meta, "type", None) or ""
     kind = getattr(meta, "kind", None) or ""
     name = getattr(meta, "name", None)
@@ -90,6 +120,7 @@ def _headline(meta: Any) -> str:
     return ""
 
 
+
 def _function_headline(meta: Any) -> str:
     """Header line for defs (used under classes and collapsed bodies)."""
     h = _headline(meta)
@@ -101,74 +132,39 @@ def _function_headline(meta: Any) -> str:
         return f"async def {name or '?'}:"
     return f"def {name or '?'}:"
 
-
 def render_module(tree: Any, budget: PreviewBudget) -> str:
-    """Render a structured text overview of a Python module (C-022).
-
-    When the file has fewer lines than budget.full_text_max_lines and that
-    threshold is positive, returns the raw file source instead of the
-    structured overview (C-023 full-text fallback).
+    """Render top-level module view: classes, functions, and loose statements.
 
     Args:
         tree: CSTTree loaded for the file.
-        budget: PreviewBudget with full_text_max_lines cap.
+        budget: PreviewBudget controlling how many characters to render.
 
     Returns:
-        Structured text string suitable for AI consumption.
+        Multi-line structured text of the module.
     """
-    file_line_count = max(
-        (meta.end_line for meta in tree.metadata_map.values() if meta.end_line),
-        default=0,
-    )
-    if budget.full_text_max_lines > 0 and file_line_count < budget.full_text_max_lines:
-        file_path = getattr(tree, "file_path", None)
-        if file_path:
-            try:
-                return pathlib.Path(file_path).read_text(encoding="utf-8")
-            except Exception:
-                pass
-
+    if not hasattr(tree, "metadata_map") or not tree.metadata_map:
+        return ""
     root_id = getattr(tree, "root_node_id", None)
-    top_nodes = sorted(
-        (
-            meta
-            for meta in tree.metadata_map.values()
-            if root_id is not None and meta.parent_id == root_id
-        ),
-        key=lambda m: m.start_line or 0,
-    )
-
-    entries: list[str] = []
-    for meta in top_nodes:
+    top_level = _direct_children(tree, root_id)
+    lines: list[str] = []
+    for meta in top_level:
         kind = meta.kind or ""
-        stable_id = meta.stable_id
+        typ = getattr(meta, "type", None) or ""
+        sid = meta.stable_id
         rng = _fmt_range(meta)
-
-        if kind == "import" or (
-            not kind and meta.type in ("Import", "ImportFrom", "ImportStar")
-        ):
-            entries.append(f"[{stable_id}] {rng}  {_headline(meta)}")
-        elif kind == "smallstmt":
-            entries.append(f"[{stable_id}] {rng}  {_headline(meta)}")
-        elif kind == "function":
-            line1 = f"[{stable_id}] {rng}  {_function_headline(meta)}"
+        if kind in ("function", "method") or typ in ("FunctionDef", "AsyncFunctionDef"):
+            head = _function_headline(meta)
+            lines.append(f"[{sid}] {rng}  {head}")
             doc = _doc_first_line(meta.docstring)
             if doc:
-                entries.append(line1 + "\n    " + doc)
-            else:
-                entries.append(line1)
-        elif kind == "class":
-            line1 = f"[{stable_id}] {rng}  class {meta.name or '?'}:"
-            lines_for_entry = [line1]
+                lines.append("    " + doc)
+        elif kind == "class" or typ == "ClassDef":
+            lines.append(f"[{sid}] {rng}  class {meta.name or '?'}:")
             doc = _doc_first_line(meta.docstring)
             if doc:
-                lines_for_entry.append("    " + doc)
+                lines.append("    " + doc)
             node_id = next(
-                (
-                    nid
-                    for nid, m in tree.metadata_map.items()
-                    if m.stable_id == stable_id
-                ),
+                (nid for nid, m in tree.metadata_map.items() if m.stable_id == sid),
                 None,
             )
             if node_id:
@@ -176,26 +172,28 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
                     (
                         m
                         for m in tree.metadata_map.values()
-                        if m.parent_id == node_id and m.kind in ("function", "method")
+                        if m.parent_id == node_id
+                        and m.kind in ("function", "method")
                     ),
                     key=lambda m: m.start_line or 0,
                 )
                 for meth in methods:
-                    sig = _function_headline(meth)
-                    lines_for_entry.append(
-                        "    [{sid}] {r}  {sig}".format(
-                            sid=meth.stable_id, r=_fmt_range(meth), sig=sig
-                        )
+                    meth_sig = _function_headline(meth)
+                    lines.append(
+                        f"    [{meth.stable_id}] {_fmt_range(meth)}  {meth_sig}"
                     )
-            entries.append("\n".join(lines_for_entry))
+                    doc_m = _doc_first_line(meth.docstring)
+                    if doc_m:
+                        lines.append("        " + doc_m)
+        else:
+            head = _headline(meta, tree)
+            if head:
+                lines.append(f"[{sid}] {rng}  {head}")
+        if budget.over():
+            lines.append("... (truncated)")
+            break
+    return "\n".join(lines)
 
-    root_meta = tree.metadata_map.get(tree.root_node_id)
-    module_docstring = _doc_block_preview(root_meta.docstring if root_meta else None)
-    parts: list[str] = []
-    if module_docstring:
-        parts.append(module_docstring)
-    parts.extend(entries)
-    return "\n\n".join(parts)
 
 
 _COMPOUND_STMT_TYPES = frozenset(
@@ -213,6 +211,7 @@ _COMPOUND_STMT_TYPES = frozenset(
 )
 
 
+
 def _is_compound_stmt(meta: Any) -> bool:
     """Return whether metadata denotes a compound statement for collapsed body preview.
 
@@ -224,6 +223,7 @@ def _is_compound_stmt(meta: Any) -> bool:
     """
     typ = getattr(meta, "type", None) or ""
     return typ in _COMPOUND_STMT_TYPES
+
 
 
 def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
@@ -286,13 +286,15 @@ def _direct_children(tree: Any, node_id: str | None) -> list[Any]:
         key=lambda m: m.start_line or 0,
     )
 
-
-def _append_collapsed_body_lines(lines: list[str], children: list[Any]) -> None:
+def _append_collapsed_body_lines(
+    lines: list[str], children: list[Any], tree: Any = None
+) -> None:
     """Append first-level body lines; compound statements get a trailing ``...``.
 
     Args:
         lines: Mutable list of output lines to extend in place.
         children: Direct child metadata rows (sorted) to render.
+        tree: ``CSTTree`` instance passed to ``_headline`` for source extraction.
 
     Returns:
         None.
@@ -300,12 +302,11 @@ def _append_collapsed_body_lines(lines: list[str], children: list[Any]) -> None:
     for child in children:
         sid = child.stable_id
         rng = _fmt_range(child)
-        head = _headline(child)
+        head = _headline(child, tree)
         if _is_compound_stmt(child):
             lines.append(f"  [{sid}] {rng}  {head}  ...")
         else:
             lines.append(f"  [{sid}] {rng}  {head}")
-
 
 def render_node(tree: Any, stable_id: str) -> str:
     """Render a single CST node identified by its stable_id (C-022).
@@ -336,7 +337,7 @@ def render_node(tree: Any, stable_id: str) -> str:
         doc = _doc_first_line(meta.docstring)
         if doc:
             lines.append("    " + doc)
-        _append_collapsed_body_lines(lines, _direct_children(tree, node_id))
+        _append_collapsed_body_lines(lines, _direct_children(tree, node_id), tree)
         return "\n".join(lines)
 
     if kind == "class" or typ == "ClassDef":
@@ -364,8 +365,8 @@ def render_node(tree: Any, stable_id: str) -> str:
         return "\n".join(lines_cls)
 
     if typ in ("If", "For", "While", "Try", "With", "Match"):
-        lines_stm: list[str] = [f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta)}"]
-        _append_collapsed_body_lines(lines_stm, _direct_children(tree, node_id))
+        lines_stm: list[str] = [f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta, tree)}"]
+        _append_collapsed_body_lines(lines_stm, _direct_children(tree, node_id), tree)
         return "\n".join(lines_stm)
 
-    return f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta)}"
+    return f"[{stable_id}] {_fmt_range(meta)}  {_headline(meta, tree)}"

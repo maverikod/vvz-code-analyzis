@@ -35,6 +35,9 @@ source_ranges:
 - start: 138
   end: 175
 depends_on:
-- G-002
-tactical_steps: []
+tactical_steps:
+- T-001
+- T-002
+- T-003
+- T-004
 status: draft

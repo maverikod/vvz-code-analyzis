@@ -8,8 +8,14 @@ description: Implement WriteCommand with a two-phase protocol. The first call
   mismatch is treated as a first call. Write failure restores the original
   from the backup.
 concepts:
+- C-001
+- C-002
+- C-003
+- C-004
 - C-009
 - C-011
+- C-012
+- C-014
 relations:
 - from_concept: C-009
   to_concept: C-001
@@ -29,11 +35,15 @@ relations:
 - from_concept: C-009
   to_concept: C-012
   type: uses
+- from_concept: C-009
+  to_concept: C-014
+  type: produces
 source_ranges:
 - start: 177
   end: 213
 depends_on:
 - G-002
+- G-007
 tactical_steps:
 - T-001
 - T-002

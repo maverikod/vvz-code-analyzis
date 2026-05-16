@@ -1,19 +1,15 @@
 step_id: G-003
-name: universal_file_open command
-description: The open command starts an editing session for one file. It cleans stale
-  artefacts from any previous session, resolves the format group, creates the appropriate
-  draft file, creates an initial backup when the file has no backup history, registers
-  the EditSession, and returns the session identifier together with the operations
-  available for the format group.
+name: Open command
+description: Implement OpenCommand that starts an editing session. It cleans
+  stale artefacts, resolves the FormatGroup via the handler registry,
+  creates the DraftFile, creates an initial BackupPair when the file has no
+  backup history, registers the EditSession, and returns the session_id with
+  available operations. All ExistingInfrastructure components are reused
+  without modification.
 concepts:
-- C-001
-- C-002
-- C-003
-- C-004
 - C-005
 - C-011
 - C-012
-- C-014
 relations:
 - from_concept: C-005
   to_concept: C-001
@@ -28,18 +24,16 @@ relations:
   to_concept: C-004
   type: uses
 - from_concept: C-005
-tactical_steps:
-- T-001
-- T-002
-- T-003
-status: draft
+  to_concept: C-011
+  type: produces
+- from_concept: C-005
   to_concept: C-012
   type: uses
 - from_concept: C-005
   to_concept: C-014
   type: produces
 source_ranges:
-- start: 116
+- start: 82
   end: 136
 depends_on:
 - G-002

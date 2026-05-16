@@ -91,9 +91,7 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
             "operation": fr.operation,
         },
     )
-
-
-class UniversalFileSaveCommand:
+class UniversalFileSaveCommand(BaseMCPCommand):
     """Save project files via handler registry (extension routing before side effects)."""
 
     name = "universal_file_save"

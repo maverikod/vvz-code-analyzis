@@ -5,6 +5,10 @@ description: Remove all legacy editing commands from the command registration an
   deleted; only registration entries are modified. The preview command and the
   broken-file fallback remain registered throughout.
 concepts:
+- C-005
+- C-006
+- C-009
+- C-010
 - C-013
 relations:
 - from_concept: C-013

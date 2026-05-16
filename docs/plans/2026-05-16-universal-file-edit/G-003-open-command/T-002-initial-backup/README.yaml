@@ -1,27 +1,22 @@
-step_id: T-001
-parent_global_step: G-001
-name: Unregister legacy editing commands
-description: Modify hooks.py to remove the registration entries for all legacy
-  editing commands listed in RegistrationCleanup (C-013). The following
-  registrations are removed: universal_file_save, universal_file_replace,
-  universal_file_read, universal_file_delete, cst_load_file, cst_find_node,
-  cst_get_node_info, cst_get_node_by_range, cst_modify_tree, cst_save_tree,
-  json_load_file, json_find_node, json_modify_tree, json_save_tree,
-  write_project_text_lines, replace_file_lines, compose_cst_module, query_cst,
-  list_cst_blocks, read_project_text_file. The code files themselves are not
-  deleted. The registrations for universal_file_preview and get_file_lines
-  remain unchanged.
+step_id: T-002
+parent_global_step: G-003
+name: Create initial backup when file has no history
+description: After draft is created, call BackupManager.list_versions(file_path)
+  from ExistingInfrastructure (C-012). If the result is an empty list,
+  call BackupManager.create_backup(file_path) to create the initial BackupPair
+  (C-011). If the list is non-empty, skip backup creation. This step has no
+  effect on the draft or lockfile.
 concepts:
-- C-013
+- C-011
+- C-012
 inputs:
-- name: registration_module
-  type: existing source file (hooks.py)
-  description: The module that registers all MCP commands. Already exists;
-    contains registration calls for all current commands.
+- name: abs_path
+  type: Path
+  description: Absolute path to the file being opened.
 outputs:
-- name: updated_registration_module
-  type: modified source file
-  description: hooks.py with all legacy command registrations removed.
-    universal_file_preview and get_file_lines registrations unchanged.
+- name: initial_backup_created
+  type: bool
+  description: True when an initial backup was created; False when history
+    already existed.
 atomic_steps: []
 status: draft

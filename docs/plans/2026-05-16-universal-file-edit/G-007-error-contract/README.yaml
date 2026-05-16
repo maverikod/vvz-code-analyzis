@@ -18,10 +18,10 @@ relations:
   type: produces
 - from_concept: C-010
   to_concept: C-014
-  type: produces
 source_ranges:
 - start: 265
   end: 275
+depends_on: []
 tactical_steps:
 - T-001
 status: draft

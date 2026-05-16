@@ -1,8 +1,9 @@
 step_id: G-001
 name: Registration cleanup
-description: Remove all legacy editing commands from the command registration. Code
-  files are not deleted; only registration entries are removed. The preview command
-  and the broken-file fallback remain registered.
+description: Remove all legacy editing commands from the command registration and
+  register the four new commands once they are implemented. Code files are not
+  deleted; only registration entries are modified. The preview command and the
+  broken-file fallback remain registered throughout.
 concepts:
 - C-013
 relations:

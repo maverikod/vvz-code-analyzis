@@ -22,6 +22,7 @@ relations:
   type: produces
 - from_concept: C-005
   to_concept: C-004
+  type: uses
 - from_concept: C-005
   to_concept: C-011
   type: produces

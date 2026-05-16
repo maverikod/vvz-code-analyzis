@@ -20,7 +20,6 @@ relations:
   to_concept: C-010
   type: depends_on
 source_ranges:
-- start: 21
   end: 38
   end: 38
 depends_on: []

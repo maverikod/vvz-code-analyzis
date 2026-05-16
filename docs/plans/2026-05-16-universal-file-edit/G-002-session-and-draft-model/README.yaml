@@ -1,26 +1,28 @@
-step_id: G-001
-name: Registration cleanup
-description: Remove all legacy editing commands from the command registration. Code
-  files are not deleted; only registration entries are removed. The preview command
-  and the broken-file fallback remain registered.
+step_id: G-002
+name: Session and draft model
+description: Define the in-memory EditSession record and the on-disk DraftFile
+  and WriteLockfile artefacts. EditSession is created by OpenCommand, consumed
+  by EditCommand, WriteCommand, and CloseCommand, and keyed by a session_id UUID.
+  The format_group field of EditSession determines the DraftFile variant and
+  the WriteLockfile lifecycle.
 concepts:
-- C-013
+- C-001
+- C-002
+- C-003
+- C-004
 relations:
-- from_concept: C-013
-  to_concept: C-005
+- from_concept: C-001
+  to_concept: C-002
   type: depends_on
-- from_concept: C-013
-  to_concept: C-006
-  type: depends_on
-- from_concept: C-013
-  to_concept: C-009
-  type: depends_on
-- from_concept: C-013
-  to_concept: C-010
-  type: depends_on
+- from_concept: C-002
+  to_concept: C-003
+  type: owns
 source_ranges:
-- start: 21
-  end: 38
-depends_on: []
+- start: 41
+  end: 79
+- start: 247
+  end: 263
+depends_on:
+- G-001
 tactical_steps: []
 status: draft

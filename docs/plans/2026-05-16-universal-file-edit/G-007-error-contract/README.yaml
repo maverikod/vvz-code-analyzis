@@ -22,6 +22,6 @@ relations:
 source_ranges:
 - start: 265
   end: 275
-depends_on: []
-tactical_steps: []
+tactical_steps:
+- T-001
 status: draft

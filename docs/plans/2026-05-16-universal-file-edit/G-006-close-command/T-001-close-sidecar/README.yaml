@@ -1,37 +1,25 @@
 step_id: T-001
 parent_global_step: G-006
 name: Close sidecar group session
-description: 'Realise CloseCommand (C-010) for sidecar format group sessions.
-
-  Call the existing `verify_sidecar_against_source(file_path)` from `core/cst_tree/tree_sidecar.py`.
-  This function reads the sha256 embedded in the sidecar header (SIDECAR_HEADER_PREFIX)
-  and compares it to the sha256 of the current source file.
-
-  Checksums match: the sidecar is already in sync. Leave <file>.cst_sidecar as-is
-  (it persists for the next session). Delete <file>.write if present using Path.unlink(missing_ok=True).
-
-  Checksums do not match (file changed externally or write not called): Rebuild the
-  sidecar by calling the existing `load_file_to_tree` from `core/cst_tree/tree_builder.py`
-  to re-parse, then calling `write_sidecar_atomic` to rewrite the sidecar. No backup
-  is created for this rebuild. Delete <file>.write if present. Set draft_rebuilt=True
-  in the response.
-
-  In both cases: call `release_session(session_id)` from the session module (G-002/T-002)
-  to remove the session from the registry.'
+description: Implement CloseCommand (C-010) for sidecar group sessions. Call
+  verify_sidecar_against_source(file_path) from ExistingInfrastructure (C-012).
+  If checksums match: leave <file>.cst_sidecar as-is; delete <file>.write if
+  present. If checksums do not match: rebuild sidecar by calling cst_load_file
+  then write_sidecar_atomic; no backup; delete <file>.write; set
+  draft_rebuilt=True in response. The DraftFile (C-003) sidecar is never
+  deleted. Call release_session(session_id) to remove the EditSession (C-001)
+  from the registry.
 concepts:
-- C-001
-- C-003
-- C-004
 - C-010
+- C-001
 - C-012
 inputs:
 - name: session
   type: EditSession
   description: Active sidecar group session to close.
 outputs:
-- name: close_result
-  type: response dict
-  description: '{success: true, draft_rebuilt: bool}. draft_rebuilt is true when sidecar
-    was rebuilt from source.'
+- name: draft_rebuilt
+  type: bool
+  description: True when sidecar was rebuilt from source; False when in sync.
 atomic_steps: []
 status: draft

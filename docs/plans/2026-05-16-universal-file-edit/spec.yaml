@@ -40,6 +40,7 @@ concepts:
   - written after each mutation
   source_ranges:
   - start: 41
+    end: 73
 - concept_id: C-004
   name: WriteLockfile
   definition: On-disk lockfile containing server PID. Controls the two-phase write

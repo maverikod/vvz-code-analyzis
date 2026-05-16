@@ -20,8 +20,9 @@ relations:
   to_concept: C-010
   type: depends_on
 source_ranges:
-- start: 21
+- start: 1
   end: 38
+depends_on: []
 tactical_steps:
 - T-001
 - T-002

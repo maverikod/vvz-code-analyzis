@@ -30,11 +30,11 @@ relations:
   type: uses
 - from_concept: C-008
   to_concept: C-007
+  type: consumes
 source_ranges:
 - start: 138
   end: 175
 depends_on:
-- G-002
 - G-002
 tactical_steps:
 - T-001

@@ -19,9 +19,9 @@ relations:
   to_concept: C-003
   type: uses
 - from_concept: C-010
-  to_concept: C-004
-  type: uses
 - from_concept: C-010
+  to_concept: C-012
+  type: uses
   to_concept: C-014
   type: produces
 source_ranges:

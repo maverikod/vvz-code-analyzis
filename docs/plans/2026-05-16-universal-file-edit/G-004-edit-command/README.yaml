@@ -26,12 +26,11 @@ relations:
   to_concept: C-008
   type: uses
 - from_concept: C-006
+  to_concept: C-012
+  type: uses
 - from_concept: C-008
   to_concept: C-007
   type: consumes
-  to_concept: C-007
-source_ranges:
-- start: 138
   end: 175
 depends_on:
 - G-002

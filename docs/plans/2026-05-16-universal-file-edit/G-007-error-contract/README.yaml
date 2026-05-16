@@ -1,0 +1,26 @@
+step_id: G-001
+name: Registration cleanup
+description: Remove all legacy editing commands from the command registration. Code
+  files are not deleted; only registration entries are removed. The preview command
+  and the broken-file fallback remain registered.
+concepts:
+- C-013
+relations:
+- from_concept: C-013
+  to_concept: C-005
+  type: depends_on
+- from_concept: C-013
+  to_concept: C-006
+  type: depends_on
+- from_concept: C-013
+  to_concept: C-009
+  type: depends_on
+- from_concept: C-013
+  to_concept: C-010
+  type: depends_on
+source_ranges:
+- start: 21
+  end: 38
+depends_on: []
+tactical_steps: []
+status: draft

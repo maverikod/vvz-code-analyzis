@@ -22,12 +22,12 @@ relations:
   type: uses
 - from_concept: C-009
   to_concept: C-004
-  type: produces
 - from_concept: C-009
   to_concept: C-011
-  type: uses
+  type: produces
 - from_concept: C-009
-  to_concept: C-014
+  to_concept: C-012
+  type: uses
   type: produces
 source_ranges:
 - start: 177

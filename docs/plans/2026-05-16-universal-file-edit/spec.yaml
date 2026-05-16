@@ -97,6 +97,8 @@ concepts:
   source_ranges:
   - start: 142
     end: 148
+  - start: 149
+    end: 175
 - concept_id: C-008
   name: BatchValidation
   definition: Pre-application check for sidecar group batches only. Forbids ancestor-descendant

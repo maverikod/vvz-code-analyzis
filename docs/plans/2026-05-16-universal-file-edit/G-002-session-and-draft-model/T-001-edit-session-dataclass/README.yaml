@@ -1,27 +1,22 @@
 step_id: T-001
-parent_global_step: G-001
-name: Unregister legacy editing commands
-description: Modify hooks.py to remove the registration entries for all legacy
-  editing commands listed in RegistrationCleanup (C-013). The following
-  registrations are removed: universal_file_save, universal_file_replace,
-  universal_file_read, universal_file_delete, cst_load_file, cst_find_node,
-  cst_get_node_info, cst_get_node_by_range, cst_modify_tree, cst_save_tree,
-  json_load_file, json_find_node, json_modify_tree, json_save_tree,
-  write_project_text_lines, replace_file_lines, compose_cst_module, query_cst,
-  list_cst_blocks, read_project_text_file. The code files themselves are not
-  deleted. The registrations for universal_file_preview and get_file_lines
-  remain unchanged.
+parent_global_step: G-002
+name: Define EditSession dataclass and session registry
+description: Define the EditSession dataclass (C-001) with fields session_id,
+  file_path, abs_path, draft_path, format_group, handler_id, tree_id. Define
+  the module-level _sessions dict keyed by session_id. Define helper functions
+  get_session(session_id) raising SESSION_NOT_FOUND when absent, and
+  register_session(session) and release_session(session_id). These are the
+  only entry points for session lifecycle management.
 concepts:
-- C-013
+- C-001
 inputs:
-- name: registration_module
-  type: existing source file (hooks.py)
-  description: The module that registers all MCP commands. Already exists;
-    contains registration calls for all current commands.
+- name: nothing
+  type: new module
+  description: No existing file; this T-step creates the session module from scratch.
 outputs:
-- name: updated_registration_module
-  type: modified source file
-  description: hooks.py with all legacy command registrations removed.
-    universal_file_preview and get_file_lines registrations unchanged.
+- name: session_module
+  type: new source file
+  description: Module containing EditSession dataclass, _sessions dict, and
+    get_session / register_session / release_session helpers.
 atomic_steps: []
 status: draft

@@ -14,9 +14,9 @@ relations:
   type: depends_on
 - from_concept: C-013
   to_concept: C-009
-  type: depends_on
 - from_concept: C-013
   to_concept: C-010
+  type: depends_on
 source_ranges:
 - start: 21
   end: 38

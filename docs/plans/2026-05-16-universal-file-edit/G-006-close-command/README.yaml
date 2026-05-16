@@ -1,22 +1,13 @@
 step_id: G-006
-name: universal_file_close command
-description: The close command ends the editing session. Behaviour is determined by
-  the format group. For the sidecar group the command verifies the checksum of the
-  sidecar against the source file; a mismatch causes the sidecar to be rebuilt from
-  the source without creating a backup; the sidecar is never deleted. For the tree-temp
-  group the command compares checksums of the draft and the original; a match deletes
-  the draft; a mismatch rebuilds the draft from the original without backup; the in-memory
-  tree is freed in both cases. For the text group the draft is deleted unconditionally.
-  In all cases the lockfile is deleted if present and the session is released. When
-  a rebuild occurs the response carries a flag indicating this.
+name: Close command
+description: Implement CloseCommand that ends the session with format-group-specific
+  cleanup. For sidecar: verify sidecar checksum; rebuild sidecar from source
+  on mismatch; sidecar not deleted. For tree-temp: compare sha256 of draft vs
+  original; delete draft on match; rebuild draft on mismatch; free in-memory
+  tree. For text: delete draft unconditionally. In all cases delete the
+  WriteLockfile if present and release the EditSession.
 concepts:
-- C-001
-- C-002
-- C-003
-- C-004
 - C-010
-- C-012
-- C-014
 relations:
 - from_concept: C-010
   to_concept: C-001
@@ -28,10 +19,9 @@ relations:
   to_concept: C-003
   type: uses
 - from_concept: C-010
-tactical_steps:
-- T-001
-- T-002
-status: draft
+  to_concept: C-004
+  type: uses
+- from_concept: C-010
   to_concept: C-012
   type: uses
 - from_concept: C-010

@@ -35,12 +35,13 @@ relations:
   to_concept: C-012
   type: uses
 - from_concept: C-005
-  to_concept: C-014
-  type: produces
 source_ranges:
 - start: 75
   end: 79
 - start: 82
+  end: 136
+- start: 247
+  end: 263
   end: 136
 depends_on:
 - G-002

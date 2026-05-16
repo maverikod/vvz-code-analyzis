@@ -1,27 +1,33 @@
 step_id: T-001
-parent_global_step: G-001
-name: Unregister legacy editing commands
-description: Modify hooks.py to remove the registration entries for all legacy
-  editing commands listed in RegistrationCleanup (C-013). The following
-  registrations are removed: universal_file_save, universal_file_replace,
-  universal_file_read, universal_file_delete, cst_load_file, cst_find_node,
-  cst_get_node_info, cst_get_node_by_range, cst_modify_tree, cst_save_tree,
-  json_load_file, json_find_node, json_modify_tree, json_save_tree,
-  write_project_text_lines, replace_file_lines, compose_cst_module, query_cst,
-  list_cst_blocks, read_project_text_file. The code files themselves are not
-  deleted. The registrations for universal_file_preview and get_file_lines
-  remain unchanged.
+parent_global_step: G-003
+name: Implement stale artefact cleanup and draft creation
+description: Implement the first four steps of OpenCommand (C-005). Delete
+  <file>.write if present. Delete <file>.draft if present; do NOT delete
+  <file>.cst_sidecar for Python files. Resolve FormatGroup (C-002) from
+  file extension via resolve_format_group. Create the DraftFile (C-003)
+  according to format group: for sidecar call cst_load_file then
+  write_sidecar_atomic; for tree-temp call load_file_to_tree then serialise
+  to <file>.draft; for text copy <file> to <file>.draft byte-for-byte.
+  On UNKNOWN_FORMAT or PARSE_ERROR return the corresponding error code
+  from ErrorCodes (C-014).
 concepts:
-- C-013
+- C-005
+- C-002
+- C-003
+- C-012
 inputs:
-- name: registration_module
-  type: existing source file (hooks.py)
-  description: The module that registers all MCP commands. Already exists;
-    contains registration calls for all current commands.
+- name: project_id
+  type: str
+  description: Project UUID for path resolution.
+- name: file_path
+  type: str
+  description: Project-relative path to the file to open.
 outputs:
-- name: updated_registration_module
-  type: modified source file
-  description: hooks.py with all legacy command registrations removed.
-    universal_file_preview and get_file_lines registrations unchanged.
+- name: format_group
+  type: FormatGroup
+  description: Resolved format group for the file.
+- name: draft_written
+  type: bool
+  description: True when DraftFile has been written successfully.
 atomic_steps: []
 status: draft

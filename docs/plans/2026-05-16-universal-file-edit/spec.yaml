@@ -47,16 +47,10 @@ concepts:
     protocol.
   properties:
   - path is <file>.write
-  - contains server process PID as text
-  - absent means first write call; present with matching PID means second
-  - PID mismatch treated as first call
-  - deleted on successful commit or on universal_file_open
-  source_ranges:
   source_ranges:
   - start: 75
     end: 79
-  - start: 177
-    end: 196
+- concept_id: C-005
   name: OpenCommand
   definition: MCP command that starts an editing session. Cleans stale artefacts,
     creates draft, creates initial backup when file has no history.
@@ -66,6 +60,9 @@ concepts:
   - creates draft appropriate for format group
   - creates initial backup if file has no backup history
   - returns session_id and available operations for the format
+  source_ranges:
+  - start: 116
+    end: 136
   source_ranges:
   - start: 116
     end: 136

@@ -7,6 +7,8 @@ description: Implement OpenCommand that starts an editing session. It cleans
   available operations. All ExistingInfrastructure components are reused
   without modification.
 concepts:
+- C-001
+- C-004
 - C-005
 - C-011
 - C-012
@@ -29,11 +31,15 @@ relations:
 - from_concept: C-005
   to_concept: C-012
   type: uses
+- from_concept: C-005
+  to_concept: C-014
+  type: produces
 source_ranges:
 - start: 82
   end: 136
 depends_on:
 - G-002
+- G-007
 tactical_steps:
 - T-001
 - T-002

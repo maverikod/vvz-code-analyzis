@@ -26,9 +26,6 @@ relations:
 - from_concept: C-005
   to_concept: C-011
   type: produces
-- from_concept: C-005
-  to_concept: C-014
-  type: produces
 source_ranges:
 - start: 82
   end: 136

@@ -1,18 +1,14 @@
 step_id: T-002
 parent_global_step: G-004
-name: Apply operations to sidecar group draft
-description: "Apply a validated batch of EditOperations (C-007) to a sidecar group\
-  \ session using existing infrastructure (C-012).\nFor each operation in the received\
-  \ order: 1. Translate the EditOperation into a CST op format consumed by the\n \
-  \  existing `run_ops_mode` from\n   `code_analysis/commands/compose_cst_ops_flow.py`.\
-  \ run_ops_mode\n   already handles insert/delete/replace on a CSTTree by node_id.\n\
-  2. After each successful operation, call the existing\n   `write_sidecar_atomic(tree,\
-  \ file_path)` from\n   `core/cst_tree/tree_sidecar.py` to persist the updated sidecar.\n\
-  3. The original file (<file>) is not touched at any point.\nOn success return the\
-  \ updated top-level node list from the tree."
+name: Apply EditOperations to sidecar group draft
+description: Apply a validated batch of EditOperations (C-007) to a sidecar
+  group session. For each operation in received order: translate the operation
+  into the CST op format and call run_ops_mode from python_handler.py
+  (ExistingInfrastructure C-012); after each successful operation call
+  write_sidecar_atomic(tree, file_path) from tree_sidecar.py to persist the
+  updated DraftFile (C-003). The original file is not touched at any point.
+  Return the updated top-level node list from the tree.
 concepts:
-- C-002
-- C-003
 - C-006
 - C-007
 - C-012
@@ -21,11 +17,11 @@ inputs:
   type: EditSession
   description: Active sidecar group session with loaded CSTTree.
 - name: validated_batch
-  type: list of EditOperation dicts
-  description: Batch confirmed valid by T-001.
+  type: list of EditOperation
+  description: Batch confirmed valid by BatchValidation.
 outputs:
 - name: updated_node_list
-  type: list of node descriptor dicts
+  type: list of node descriptors
   description: Top-level CST nodes after all operations applied.
 atomic_steps: []
 status: draft

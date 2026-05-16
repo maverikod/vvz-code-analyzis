@@ -1,26 +1,27 @@
-step_id: G-001
-name: Registration cleanup
-description: Remove all legacy editing commands from the command registration. Code
-  files are not deleted; only registration entries are removed. The preview command
-  and the broken-file fallback remain registered.
+step_id: G-007
+name: Error contract
+description: Define the deterministic ErrorCodes contract produced by all four
+  commands when preconditions are violated. Codes: SESSION_NOT_FOUND,
+  DRAFT_NOT_FOUND, NESTED_BATCH_FORBIDDEN, WRITE_FAILED, UNKNOWN_FORMAT,
+  PARSE_ERROR.
 concepts:
-- C-013
+- C-014
 relations:
-- from_concept: C-013
-  to_concept: C-005
-  type: depends_on
-- from_concept: C-013
-  to_concept: C-006
-  type: depends_on
-- from_concept: C-013
-  to_concept: C-009
-  type: depends_on
-- from_concept: C-013
-  to_concept: C-010
-  type: depends_on
+- from_concept: C-005
+  to_concept: C-014
+  type: produces
+- from_concept: C-006
+  to_concept: C-014
+  type: produces
+- from_concept: C-009
+  to_concept: C-014
+  type: produces
+- from_concept: C-010
+  to_concept: C-014
+  type: produces
 source_ranges:
-- start: 21
-  end: 38
+- start: 265
+  end: 275
 depends_on: []
 tactical_steps: []
 status: draft

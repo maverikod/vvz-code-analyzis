@@ -26,8 +26,8 @@ relations:
   type: uses
 source_ranges:
 - start: 215
-  end: 244
 depends_on:
+- G-002
 tactical_steps:
 - T-001
 - T-002

@@ -52,9 +52,11 @@ concepts:
   - PID mismatch treated as first call
   - deleted on successful commit or on universal_file_open
   source_ranges:
+  source_ranges:
   - start: 75
     end: 79
-- concept_id: C-005
+  - start: 177
+    end: 196
   name: OpenCommand
   definition: MCP command that starts an editing session. Cleans stale artefacts,
     creates draft, creates initial backup when file has no history.

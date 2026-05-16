@@ -3,21 +3,37 @@ parent_global_step: G-002
 name: Define EditSession entity and registry
 description: 'Create a new module `code_analysis/commands/universal_file_edit/session.py`
   containing the EditSession (C-001) dataclass and the module-level session registry.
-  EditSession is a new dataclass (does not exist yet) with fields: session_id (str
-  UUID), file_path (str), abs_path (Path), draft_path (Path), format_group (str),
-  handler_id (str), tree_id (str | None). The registry is a module-level dict `_sessions:
-  dict[str, EditSession]` with three functions: `create_session(descriptor, abs_path)
-  -> EditSession` which generates a UUID and stores the session; `get_session(session_id)
-  -> EditSession | None`; `release_session(session_id) -> None`. Sessions are never
-  persisted to disk; on server restart the registry is empty and clients must call
-  universal_file_open again.'
+
+  EditSession is a dataclass (does not exist yet) with fields: session_id (str UUID),
+  file_path (str, project-relative), abs_path (Path), draft_path (Path), lockfile_path
+  (Path), format_group (str), handler_id (str), tree_id (str | None). The `lockfile_path`
+  field is added vs the original HRS definition to avoid recomputing it on every write/close
+  call.
+
+  The registry is a module-level dict `_sessions: dict[str, EditSession]` with three
+  functions:
+
+  (1) `create_session(abs_path, descriptor) -> EditSession` - generates a UUID4 session_id,
+  builds EditSession from abs_path and FormatDescriptor (C-002 output from T-001),
+  stores it in `_sessions`, returns it.
+
+  (2) `get_session(session_id) -> EditSession` - returns session or raises SESSION_NOT_FOUND
+  (C-014) if absent.
+
+  (3) `release_session(session_id) -> None` - removes session from `_sessions`; silent
+  if absent.
+
+  Sessions are never persisted to disk. On server restart `_sessions` is empty and
+  clients must call universal_file_open again.'
 concepts:
 - C-001
 - C-002
+- C-014
 inputs:
 - name: format_descriptor
   type: FormatDescriptor dataclass
-  description: Descriptor produced by T-001 resolution.
+  description: Descriptor produced by T-001 (format_group, handler_id, draft_path,
+    lockfile_path, available_operations).
 - name: abs_path
   type: Path
   description: Absolute path to the original file.

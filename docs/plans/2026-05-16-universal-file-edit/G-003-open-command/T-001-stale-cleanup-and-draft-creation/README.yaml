@@ -27,6 +27,6 @@ outputs:
   description: Resolved format group, draft path, and lockfile path for the file.
 - name: draft_written
   type: bool
-  description: True when DraftFile has been written successfully.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

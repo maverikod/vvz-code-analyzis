@@ -10,7 +10,7 @@ concepts:
     in-memory tree reference.
   properties:
   - identified by session_id (UUID)
-  - stores file_path, abs_path, draft_path, format_group, handler_id, tree_id
+  - stores file_path, abs_path, draft_path, lockfile_path, format_group, handler_id, tree_id
   - format_group is one of sidecar, tree-temp, text
   - stored in module-level _sessions dict in the server process
   - not persisted across server restarts

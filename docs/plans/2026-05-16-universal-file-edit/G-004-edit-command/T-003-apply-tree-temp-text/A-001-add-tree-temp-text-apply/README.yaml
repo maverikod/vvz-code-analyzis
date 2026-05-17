@@ -1,0 +1,62 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Add _apply_tree_temp and _apply_text implementations to UniversalFileEditCommand
+target_file: code_analysis/commands/universal_file_edit/edit_command.py
+operation: modify_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-002
+- C-003
+- C-006
+- C-007
+- C-012
+prompt: "Operation: modify_file\nTarget: code_analysis/commands/universal_file_edit/edit_command.py\n\
+  \nMRS context:\nC-006 EditCommand:\n  tree-temp: applies to in-memory tree sequentially;\
+  \ writes draft after each op.\n  text: sorts by start_line descending; applies to\
+  \ buffer; writes draft once.\nC-007 EditOperation: tree-temp address: parent_node_id\
+  \ (JSON pointer) + position.\n  text address: start_line + end_line (1-based inclusive).\n\
+  C-012: json_tree/yaml_tree builders; text sort utility.\n\nAPI needed:\n  from code_analysis.core.json_tree.tree_builder\
+  \ import get_tree, apply_op (json)\n  from code_analysis.core.yaml_tree.tree_builder\
+  \ import get_tree, apply_op (yaml)\n  from code_analysis.commands.universal_file_replace_command\
+  \ import _sort_text_replacements_bottom_up\n\nCurrent full file content (after T-001/A-001\
+  \ and T-002/A-001, ~200 lines):\nSame as T-002/A-001 prompt current content, except\
+  \ _apply_sidecar body is now:\n  from code_analysis.core.cst_tree.tree_builder import\
+  \ get_tree\n  from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic\n\
+  \  from code_analysis.core.file_handlers.python_handler import run_ops_mode\n  tree\
+  \ = get_tree(session.tree_id)\n  for op in operations:\n      tree = run_ops_mode(tree,\
+  \ [op])\n      write_sidecar_atomic(session.abs_path, tree)\n  return {\"success\"\
+  : True, \"updated\": True}\nAll other methods including _apply_tree_temp and _apply_text\
+  \ still contain raise NotImplementedError.\nFull class and module structure identical\
+  \ to T-002/A-001 prompt except _apply_sidecar body above.\n\nTask: Replace bodies\
+  \ of _apply_tree_temp and _apply_text (both currently raise NotImplementedError).\n\
+  \nNew _apply_tree_temp body:\n```python\nif session.handler_id == \"json\":\n  \
+  \  from code_analysis.core.json_tree import tree_builder as jtb\n    tree = jtb.get_tree(session.tree_id)\n\
+  \    for op in operations:\n        jtb.apply_op(tree, op)\n        session.draft_path.write_text(jtb.serialize_tree(session.tree_id))\n\
+  else:\n    from code_analysis.core.yaml_tree import tree_builder as ytb\n    tree\
+  \ = ytb.get_tree(session.tree_id)\n    for op in operations:\n        ytb.apply_op(tree,\
+  \ op)\n        session.draft_path.write_text(ytb.serialize_tree(session.tree_id))\n\
+  return {\"success\": True, \"updated\": True}\n```\n\nNew _apply_text body:\n```python\n\
+  from code_analysis.commands.universal_file_replace_command import _sort_text_replacements_bottom_up\n\
+  sorted_ops = _sort_text_replacements_bottom_up(operations)\nbuffer = session.draft_path.read_text().splitlines(keepends=True)\n\
+  for op in sorted_ops:\n    start = op.get(\"start_line\", 1) - 1\n    end = op.get(\"\
+  end_line\", start + 1)\n    content = op.get(\"content\", \"\")\n    op_type = op.get(\"\
+  type\", \"replace\")\n    if op_type == \"delete\":\n        del buffer[start:end]\n\
+  \    elif op_type == \"insert\":\n        buffer.insert(start, content if content.endswith(\"\
+  \\n\") else content + \"\\n\")\n    else:\n        buffer[start:end] = [content\
+  \ if content.endswith(\"\\n\") else content + \"\\n\"]\nsession.draft_path.write_text(\"\
+  \".join(buffer))\nreturn {\"success\": True, \"line_count\": len(buffer)}\n```\n\
+  \nImplementation:\n1. cst_load_file, locate each stub body.\n2. cst_modify_tree\
+  \ replace each raise NotImplementedError.\n3. cst_save_tree(validate=true, backup=true).\n\
+  4. lint_code then format_code.\n\nConstraints:\n- Do not modify any other method.\n\
+  - Resulting file must be syntactically valid Python.\n- File line count must not\
+  \ exceed 400.\n"
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_edit/edit_command.py
+  expected: 'flake8 reports no errors. Neither _apply_tree_temp nor _apply_text contain
+    NotImplementedError. _apply_text calls write_text on draft_path.
+
+    '
+status: draft

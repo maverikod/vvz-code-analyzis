@@ -2,6 +2,8 @@ step_id: T-002
 parent_global_step: G-006
 name: Close tree-temp and text group sessions
 description: Realise CloseCommand (C-010) for tree-temp and text group sessions.
+  Look up the EditSession (C-001) by session_id; return SESSION_NOT_FOUND (C-014)
+  if unknown.
   Tree-temp group: compare sha256 of the DraftFile (C-003) against sha256 of
   the original file using ExistingInfrastructure (C-012). If checksums match,
   delete the DraftFile (C-003). If checksums do not match, rebuild the DraftFile

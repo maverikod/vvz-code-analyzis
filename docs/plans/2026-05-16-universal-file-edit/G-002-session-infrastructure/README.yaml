@@ -24,6 +24,7 @@ relations:
   type: depends_on
 - from_concept: C-002
   to_concept: C-012
+  type: uses
 - from_concept: C-002
   to_concept: C-014
   type: produces

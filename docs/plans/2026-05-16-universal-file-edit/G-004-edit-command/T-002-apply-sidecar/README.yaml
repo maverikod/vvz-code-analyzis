@@ -7,6 +7,7 @@ description: Apply a validated batch of EditOperations (C-007) to the DraftFile 
   persist the updated DraftFile after each operation. The original file is never
   touched. Return the updated top-level node list.
 concepts:
+- C-001
 - C-003
 - C-006
 - C-007

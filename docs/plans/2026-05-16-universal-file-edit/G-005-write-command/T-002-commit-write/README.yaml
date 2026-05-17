@@ -1,21 +1,19 @@
 step_id: T-002
 parent_global_step: G-005
 name: Commit write with backup (second call)
-description: "Realise the second phase of WriteCommand (C-009). Conditions: <file>.write\
-  \ exists AND its content equals str(os.getpid()) AND <file>.write mtime > draft_path\
-  \ mtime.\nSteps: 1. Create a BackupPair (C-011) atomically using the existing\n\
-  \   `BackupManager` from `core/backup_manager.py`: call\n   `BackupManager.create_backup(file_path,\
-  \ command='universal_file_write')`\n   for the original file and\n   `BackupManager.create_backup(draft_path,\
-  \ command='universal_file_write_draft')`\n   for the draft. Both calls share the\
-  \ same backup label so they form\n   one logical history entry.\n2. Generate code\
-  \ from DraftFile (C-003) to a temp file (same logic as\n   T-001 step 1).\n3. If\
-  \ generation fails: call `BackupManager.restore_file` to restore\n   the original\
-  \ from its backup. Return WRITE_FAILED from ErrorCodes\n   (C-014). Draft is left\
-  \ intact for retry.\n4. On success: rename temp file to <file> (atomic on POSIX\
-  \ via\n   os.replace). Delete <file>.write. Call the existing\n   `commit_after_write(root_path,\
-  \ file_path, config)` from\n   `core/git_integration.py` if git is enabled.\n5.\
-  \ Return success with the diff string."
+description: Realise the second phase of WriteCommand (C-009). Entry condition:
+  the WriteLockfile (C-004) exists and its PID matches the current server PID
+  and the lockfile mtime is newer than the draft mtime.
+  Create a BackupPair (C-011) atomically for the original file and the draft
+  using ExistingInfrastructure (C-012), forming one logical history entry.
+  Generate source code from the DraftFile (C-003) to a temp file. If generation
+  fails, restore the original from the backup and return WRITE_FAILED (C-014).
+  On success, atomically rename the temp file to the original, delete the
+  WriteLockfile (C-004), and trigger a git commit via ExistingInfrastructure
+  (C-012) if git is enabled. Return success with the diff.
 concepts:
+- C-001
+- C-002
 - C-003
 - C-004
 - C-009
@@ -24,20 +22,20 @@ concepts:
 - C-014
 inputs:
 - name: session
-  type: EditSession
-  description: Active session identifying file, draft, format group.
+  type: EditSession (C-001)
+  description: Active session identifying file, draft path, and format group.
 - name: lockfile
-  type: WriteLockfile on disk
-  description: Lockfile with matching PID confirming first call completed.
+  type: WriteLockfile (C-004) on disk
+  description: WriteLockfile with PID matching current server, confirming first call completed.
 outputs:
 - name: committed_file
   type: original file updated on disk
-  description: Original file replaced with code generated from draft.
+  description: Original file atomically replaced with code generated from draft.
 - name: backup_pair
-  type: BackupPair entries in backup history
-  description: Backup of original and draft created before write.
+  type: BackupPair (C-011)
+  description: Backup of original and draft created atomically before write.
 - name: write_error
-  type: ErrorCodes entry
-  description: WRITE_FAILED when generation fails; original restored from backup.
+  type: ErrorCodes (C-014) entry
+  description: WRITE_FAILED when code generation fails; original restored from backup.
 atomic_steps: []
 status: draft

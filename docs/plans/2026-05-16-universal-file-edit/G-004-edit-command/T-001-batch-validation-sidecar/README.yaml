@@ -8,8 +8,9 @@ description: Implement BatchValidation (C-008) for sidecar group batches only.
   No operation is applied on violation. Tree-temp and text groups do not
   invoke this validation.
 concepts:
-- C-008
 - C-007
+- C-008
+- C-014
 inputs:
 - name: operations
   type: list of EditOperation

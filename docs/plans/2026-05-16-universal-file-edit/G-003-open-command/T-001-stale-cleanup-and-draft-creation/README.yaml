@@ -1,20 +1,19 @@
 step_id: T-001
 parent_global_step: G-003
 name: Implement stale artefact cleanup and draft creation
-description: Implement the first four steps of OpenCommand (C-005). Delete
-  <file>.write if present. Delete <file>.draft if present; do NOT delete
-  <file>.cst_sidecar for Python files. Resolve FormatGroup (C-002) from
-  file extension via resolve_format_group. Create the DraftFile (C-003)
-  according to format group: for sidecar call cst_load_file then
-  write_sidecar_atomic; for tree-temp call load_file_to_tree then serialise
-  to <file>.draft; for text copy <file> to <file>.draft byte-for-byte.
-  On UNKNOWN_FORMAT or PARSE_ERROR return the corresponding error code
-  from ErrorCodes (C-014).
+description: Implement the stale-artefact cleanup and DraftFile creation phase of
+  OpenCommand (C-005). Delete any stale WriteLockfile (C-004) and stale DraftFile
+  (C-003) from a previous session; for Python files the sidecar draft is not deleted.
+  Resolve the FormatGroup (C-002) from the file extension using ExistingInfrastructure
+  (C-012). Create the DraftFile (C-003) appropriate for the resolved format group.
+  On unsupported extension or parse failure return the corresponding ErrorCodes (C-014).
 concepts:
-- C-005
 - C-002
 - C-003
+- C-004
+- C-005
 - C-012
+- C-014
 inputs:
 - name: project_id
   type: str
@@ -23,9 +22,9 @@ inputs:
   type: str
   description: Project-relative path to the file to open.
 outputs:
-- name: format_group
-  type: FormatGroup
-  description: Resolved format group for the file.
+- name: format_descriptor
+  type: FormatDescriptor
+  description: Resolved format group, draft path, and lockfile path for the file.
 - name: draft_written
   type: bool
   description: True when DraftFile has been written successfully.

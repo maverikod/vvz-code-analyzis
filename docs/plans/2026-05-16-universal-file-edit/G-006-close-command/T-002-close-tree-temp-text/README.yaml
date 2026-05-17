@@ -1,25 +1,15 @@
 step_id: T-002
 parent_global_step: G-006
 name: Close tree-temp and text group sessions
-description: 'Realise CloseCommand (C-010) for tree-temp and text format group sessions.
-
-  Tree-temp group (JSON/YAML): Compute sha256 of <file>.draft and sha256 of <file>
-  (original) using hashlib.sha256.
-
-  Checksums match: delete <file>.draft using Path.unlink(missing_ok=True).
-
-  Checksums do not match (file changed externally): rebuild <file>.draft by calling
-  the existing `load_file_to_tree` from `core/json_tree/tree_builder.py` or `core/yaml_tree/tree_builder.py`,
-  then serialise the tree back to <file>.draft using json.dumps or yaml.dump. No backup
-  created. Set draft_rebuilt=True.
-
-  In both cases: call the existing `remove_tree(tree_id)` from `core/json_tree/tree_builder.py`
-  or `core/yaml_tree/tree_builder.py` to free the in-memory tree. Delete <file>.write
-  if present. Call `release_session(session_id)` from the session module.
-
-  Text group (MD, txt, rst, adoc): Delete <file>.draft using Path.unlink(missing_ok=True).
-  Delete <file>.write using Path.unlink(missing_ok=True). Call `release_session(session_id)`.
-  Return success with draft_rebuilt=False.'
+description: Realise CloseCommand (C-010) for tree-temp and text group sessions.
+  Tree-temp group: compare sha256 of the DraftFile (C-003) against sha256 of
+  the original file using ExistingInfrastructure (C-012). If checksums match,
+  delete the DraftFile (C-003). If checksums do not match, rebuild the DraftFile
+  from the original by re-parsing and re-serialising via ExistingInfrastructure
+  (C-012); set draft_rebuilt=True. In both cases free the in-memory tree and
+  delete the WriteLockfile (C-004) if present.
+  Text group: delete the DraftFile (C-003) and WriteLockfile (C-004) unconditionally.
+  In all cases release the EditSession (C-001) from the session registry.
 concepts:
 - C-001
 - C-002
@@ -29,12 +19,12 @@ concepts:
 - C-012
 inputs:
 - name: session
-  type: EditSession
+  type: EditSession (C-001)
   description: Active tree-temp or text group session to close.
 outputs:
 - name: close_result
-  type: response dict
-  description: '{success: true, draft_rebuilt: bool}. draft_rebuilt is true when draft
-    was rebuilt from source (tree-temp mismatch only). Always false for text group.'
+  type: response
+  description: 'Contains draft_rebuilt flag: true when DraftFile was rebuilt from
+    source (tree-temp mismatch only); false for text group and matching checksums.'
 atomic_steps: []
 status: draft

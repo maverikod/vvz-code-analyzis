@@ -22,5 +22,7 @@ outputs:
   type: modified source file
   description: hooks.py with all legacy command registrations removed.
     universal_file_preview and get_file_lines registrations unchanged.
-atomic_steps: []
+atomic_steps:
+- A-001
+- A-002
 status: draft

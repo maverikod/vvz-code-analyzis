@@ -28,6 +28,6 @@ outputs:
 - name: available_operations
   type: list of operation descriptors
   description: Operations valid for this FormatGroup (C-002), each describing type,
-    address fields, and content rules.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

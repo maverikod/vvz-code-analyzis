@@ -6,7 +6,6 @@ description: Define the deterministic ErrorCodes contract produced by all four
   PARSE_ERROR.
 concepts:
 - C-014
-relations:
 relations: []
 source_ranges:
 - start: 265

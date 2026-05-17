@@ -1,12 +1,11 @@
 step_id: T-001
 parent_global_step: G-007
 name: Define ErrorCodes constants module
-description: Define the ErrorCodes (C-014) constants module containing string
-  constants for all six error codes: SESSION_NOT_FOUND, DRAFT_NOT_FOUND,
+description: Define the ErrorCodes (C-014) entity as a constants module containing
+  string constants for all six error codes: SESSION_NOT_FOUND, DRAFT_NOT_FOUND,
   NESTED_BATCH_FORBIDDEN, WRITE_FAILED, UNKNOWN_FORMAT, PARSE_ERROR.
-  Define a make_error(code, message) helper that returns a structured error
-  dict consumed by all four commands. The module has no dependencies on
-  other new modules.
+  Provide an error-construction helper that returns a structured error dict
+  consumed by all four commands. The module has no dependencies on other new modules.
 concepts:
 - C-014
 inputs:

@@ -1,11 +1,10 @@
 step_id: T-002
 parent_global_step: G-003
 name: Create initial backup when file has no history
-description: After draft is created, call BackupManager.list_versions(file_path)
-  from ExistingInfrastructure (C-012). If the result is an empty list,
-  call BackupManager.create_backup(file_path) to create the initial BackupPair
-  (C-011). If the list is non-empty, skip backup creation. This step has no
-  effect on the draft or lockfile.
+description: Check whether the file has any backup history using ExistingInfrastructure
+  (C-012). If no history exists, create an initial BackupPair (C-011) for the file.
+  If history already exists, skip backup creation. This step does not affect the
+  DraftFile or WriteLockfile.
 concepts:
 - C-011
 - C-012

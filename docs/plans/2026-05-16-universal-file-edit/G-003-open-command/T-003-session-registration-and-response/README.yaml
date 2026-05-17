@@ -1,3 +1,40 @@
 step_id: T-003
-name: test-diag
+parent_global_step: G-003
+name: Register EditSession and return response
+  register the EditSession (C-001) and return the session_id with
+  available operations. Call `create_session(abs_path, descriptor)` from the
+  session module (code_analysis/commands/universal_file_edit/session.py) passing the FormatDescriptor
+  resolved during stale-cleanup and draft-creation, and the tree_id produced during
+  that same phase (None for sidecar and text groups; in-memory tree UUID for
+  tree-temp group). The create_session function generates a UUID4 session_id,
+  stores the EditSession in the module-level _sessions dict, and returns it.
+  Return a success response containing: session_id (UUID string) and
+  available_operations (list of operation descriptor dicts from the
+  FormatDescriptor, describing which operation types and address fields
+  are valid for this format group).
+- C-001
+- C-002
+- C-005
+- C-014
+inputs:
+- name: abs_path
+  type: Path
+  description: Absolute path to the original file.
+- name: format_descriptor
+  type: FormatDescriptor
+  description: Resolved descriptor from T-001 containing format_group, handler_id,
+    draft_path, lockfile_path, and available_operations.
+- name: tree_id
+  type: str | None
+  description: In-memory tree UUID from T-001 for tree-temp group; None for sidecar
+    and text groups.
+outputs:
+- name: session_id
+  type: UUID string
+  description: Identifier for the newly registered EditSession.
+- name: available_operations
+  type: list of operation descriptor dicts
+  description: Operations valid for this format group, each describing type,
+    address fields, and content rules.
+atomic_steps: []
 status: draft

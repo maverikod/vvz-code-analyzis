@@ -24,6 +24,7 @@ outputs:
     (Path), lockfile_path (Path), available_operations (list[str]).
 - name: unknown_format_error
   type: ErrorCodes entry
-  description: UNKNOWN_FORMAT raised when file extension is not supported.
-atomic_steps: []
+atomic_steps:
+- A-001
+- A-002
 status: draft

@@ -1,46 +1,27 @@
 step_id: T-002
 parent_global_step: G-002
 name: Define EditSession entity and registry
-description: 'Create a new module `code_analysis/commands/universal_file_edit/session.py`
-  containing the EditSession (C-001) dataclass and the module-level session registry.
-
-  EditSession is a dataclass (does not exist yet) with fields: session_id (str UUID),
-  file_path (str, project-relative), abs_path (Path), draft_path (Path), lockfile_path
-  (Path), format_group (str), handler_id (str), tree_id (str | None). The `lockfile_path`
-  field is added vs the original HRS definition to avoid recomputing it on every write/close
-  call.
-
-  The registry is a module-level dict `_sessions: dict[str, EditSession]` with three
-  functions:
-
-  (1) `create_session(abs_path, descriptor) -> EditSession` - generates a UUID4 session_id,
-  builds EditSession from abs_path and FormatDescriptor (C-002 output from T-001),
-  stores it in `_sessions`, returns it.
-
-  (2) `get_session(session_id) -> EditSession` - returns session or raises SESSION_NOT_FOUND
-  (C-014) if absent.
-
-  (3) `release_session(session_id) -> None` - removes session from `_sessions`; silent
-  if absent.
-
-  Sessions are never persisted to disk. On server restart `_sessions` is empty and
-  clients must call universal_file_open again.'
+description: Create the EditSession entity (C-001) as a dataclass holding session_id,
+  file paths, format_group, handler_id, and optional tree reference. Create a
+  module-level session registry backed by a dict with operations to create,
+  look up, and release sessions. Look-up raises SESSION_NOT_FOUND (C-014) on
+  unknown session_id. Sessions are never persisted to disk.
 concepts:
 - C-001
 - C-002
 - C-014
 inputs:
 - name: format_descriptor
-  type: FormatDescriptor dataclass
-  description: Descriptor produced by T-001 (format_group, handler_id, draft_path,
-    lockfile_path, available_operations).
+  type: FormatDescriptor
+  description: Resolved format group descriptor providing format_group, handler_id,
+    draft path (C-003), and lockfile path (C-004).
 - name: abs_path
   type: Path
   description: Absolute path to the original file.
 outputs:
-- name: session_module
-  type: new source file
-  description: 'session.py with EditSession dataclass and registry API: create_session,
-    get_session, release_session.'
+- name: session_entity
+  type: EditSession dataclass and registry module
+  description: EditSession (C-001) entity with module-level registry supporting
+    create, get, and release operations.
 atomic_steps: []
 status: draft

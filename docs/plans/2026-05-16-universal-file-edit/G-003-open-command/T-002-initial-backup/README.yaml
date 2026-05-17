@@ -16,6 +16,6 @@ outputs:
 - name: initial_backup_created
   type: bool
   description: True when an initial backup was created; False when history
-    already existed.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

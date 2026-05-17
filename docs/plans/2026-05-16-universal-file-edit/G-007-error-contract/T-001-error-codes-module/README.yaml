@@ -15,6 +15,6 @@ inputs:
 outputs:
 - name: errors_module
   type: new source file
-  description: Module with six error code constants and make_error helper.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

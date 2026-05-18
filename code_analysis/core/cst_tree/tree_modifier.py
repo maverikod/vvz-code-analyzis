@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
+import dataclasses
 
 
 import logging
@@ -22,9 +23,9 @@ from .models import (
     ROOT_NODE_ID_SENTINEL,
     TreeOperation,
     TreeOperationType,
-    TreeNodeMetadata,
 )
 
+from .node_id_markers import append_persisted_node_ids, strip_persisted_node_ids
 from .tree_builder import _build_tree_index, get_tree
 
 from .tree_metadata import _resolve_node_id as resolve_parent_id
@@ -39,7 +40,11 @@ from .tree_modifier_ops import (
 
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    class_body_indent_prefix,
     class_or_function_snippet_needs_full_replace,
+    def_snippet_container_kind,
+    insert_target_container_kind,
+    parse_code_snippet_for_move,
 )
 
 from .tree_modifier_validate import _validate_operation
@@ -84,12 +89,14 @@ _apply_libcst_codegen_compat()
 
 
 def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> bool:
-    """
-    True when batch path (mutable layer) should be used: more than one replace,
-    or more than one insert, or any delete; and no REPLACE_RANGE or MOVE.
+    return False  # disabled: mutable_cst path breaks stable_id preservation
+    """Use mutable CST batch path only for a single lone DELETE.
+
+    Any other combination (multiple ops, replace+delete, insert+delete) uses
+    the LibCST sequential path which produces correct class-body serialization.
 
     Batches that include REPLACE or DELETE targeting fine-grained node types
-    (Param, Name) use the LibCST sequential path instead.
+    (Param, Name) also use the sequential path.
     """
     if (
         build_from_libcst is None
@@ -97,10 +104,6 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
         or apply_operations is None
     ):
         return False
-    replace_count = sum(
-        1 for op in operations if op.action == TreeOperationType.REPLACE
-    )
-    insert_count = sum(1 for op in operations if op.action == TreeOperationType.INSERT)
     has_delete = any(op.action == TreeOperationType.DELETE for op in operations)
     has_range_or_move = any(
         op.action in (TreeOperationType.REPLACE_RANGE, TreeOperationType.MOVE)
@@ -123,7 +126,21 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
         node_type = getattr(meta, "type", "")
         if node_type and node_type in FINE_GRAINED_REPLACE_NODE_TYPES:
             return False
-    return replace_count > 1 or insert_count > 1 or has_delete
+    # Lone single DELETE: safe for mutable path (established by BUG-002 fix).
+    if has_delete and len(operations) == 1:
+        return True
+    # Everything else (multi-op, mixed types) → LibCST sequential path.
+    return False
+
+
+def _apply_single_op(tree: CSTTree, op: TreeOperation) -> CSTTree:
+    """Apply a single validated operation to a tree with full cycle."""
+    from .tree_stable_data import extract_stable_data, restore_stable_data
+    decorator_map = extract_stable_data(tree)
+    modified_module = _apply_operation(tree.module, tree, op)
+    tree.module = modified_module
+    tree = restore_stable_data(tree, decorator_map)
+    return tree
 
 
 def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
@@ -156,23 +173,6 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
         _validate_operation(tree, op)
 
     sorted_ops = _sort_operations_for_batch(operations, tree)
-
-    previous_metadata_map: Dict[str, TreeNodeMetadata] = dict(tree.metadata_map)
-    replaced_positions_to_id: Dict[Tuple[int, int, str], str] = {}
-    for op in sorted_ops:
-        if op.action == TreeOperationType.REPLACE and op.node_id:
-            meta = tree.metadata_map.get(op.node_id)
-            if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
-                replaced_positions_to_id[
-                    (meta.start_line, meta.start_col, meta.type)
-                ] = op.node_id
-        elif op.action == TreeOperationType.REPLACE_RANGE and op.start_node_id:
-            meta = tree.metadata_map.get(op.start_node_id)
-            if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
-                replaced_positions_to_id[
-                    (meta.start_line, meta.start_col, meta.type)
-                ] = op.start_node_id
-
     use_mutable_batch = _use_mutable_batch_path(operations, tree)
 
     try:
@@ -182,21 +182,20 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
             )
             apply_operations(mutable_tree, sorted_ops, tree.metadata_map)
             source = serialize_to_source(mutable_tree)
-            new_module = cst.parse_module(source)
+            logical_source, persisted_node_ids = strip_persisted_node_ids(source)
+            new_module = cst.parse_module(logical_source)
             _validate_module(new_module)
             tree.module = new_module
-            prev_obj_to_id: Dict[int, str] = {
-                id(v): k for k, v in tree.node_map.items()
-            }
             tree.node_map.clear()
             tree.metadata_map.clear()
             tree.parent_map.clear()
+            tree.node_id_aliases.clear()
             _build_tree_index(
                 tree,
                 node_types=None,
                 max_depth=None,
                 include_children=True,
-                previous_obj_to_id=prev_obj_to_id,
+                persisted_node_ids=persisted_node_ids,
             )
             tree.module_source_sha256_hex = hashlib.sha256(
                 tree.module.code.encode("utf-8")
@@ -204,56 +203,18 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
             return tree
 
         modified_module = tree.module
-        sequential_multi = len(sorted_ops) > 1 and not use_mutable_batch
-        completed_replaced: Dict[Tuple[int, int, str], str] = {}
         for op in sorted_ops:
-            modified_module = _apply_operation(modified_module, tree, op)
-            tree.module = modified_module
-            _remove_operation_nodes_from_index(tree, op)
-            if sequential_multi:
-                if op.action == TreeOperationType.REPLACE and op.node_id:
-                    om = previous_metadata_map.get(op.node_id)
-                    if om and hasattr(om, "start_line") and hasattr(om, "start_col"):
-                        completed_replaced[(om.start_line, om.start_col, om.type)] = (
-                            op.node_id
-                        )
-                elif op.action == TreeOperationType.REPLACE_RANGE and op.start_node_id:
-                    om = previous_metadata_map.get(op.start_node_id)
-                    if om and hasattr(om, "start_line") and hasattr(om, "start_col"):
-                        completed_replaced[(om.start_line, om.start_col, om.type)] = (
-                            op.start_node_id
-                        )
-                prev_obj_to_id = {id(v): k for k, v in tree.node_map.items()}
-                tree.node_map.clear()
-                tree.metadata_map.clear()
-                tree.parent_map.clear()
-                _build_tree_index(
-                    tree,
-                    node_types=None,
-                    max_depth=None,
-                    include_children=True,
-                    previous_metadata_map=previous_metadata_map,
-                    replaced_positions_to_id=(
-                        dict(completed_replaced) if completed_replaced else None
-                    ),
-                    previous_obj_to_id=prev_obj_to_id,
+            # Resolve stable_id -> current node_id after each operation
+            if op.node_id:
+                stable = op.node_id
+                current_nid = next(
+                    (nid for nid, m in tree.metadata_map.items() if m.stable_id == stable),
+                    stable,
                 )
+                op = dataclasses.replace(op, node_id=current_nid)
+            tree = _apply_single_op(tree, op)
 
-        if not sequential_multi:
-            prev_obj_to_id = {id(v): k for k, v in tree.node_map.items()}
-            tree.node_map.clear()
-            tree.metadata_map.clear()
-            tree.parent_map.clear()
-            _build_tree_index(
-                tree,
-                node_types=None,
-                max_depth=None,
-                include_children=True,
-                previous_metadata_map=previous_metadata_map,
-                replaced_positions_to_id=replaced_positions_to_id or None,
-                previous_obj_to_id=prev_obj_to_id,
-            )
-
+        modified_module = tree.module
         _validate_module(modified_module)
         tree.module_source_sha256_hex = hashlib.sha256(
             tree.module.code.encode("utf-8")
@@ -304,48 +265,6 @@ def _sort_operations_for_batch(
         + [op for (_, _, op) in inserts]
         + others
     )
-
-
-def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:
-    """
-    Remove from node_map/metadata_map/parent_map only the node(s) affected by
-    this operation, so other node_ids (UUIDs) stay valid for the next operation.
-    """
-    to_remove: List[str] = []
-    if operation.action == TreeOperationType.REPLACE and operation.node_id:
-        to_remove.append(operation.node_id)
-    elif operation.action == TreeOperationType.MOVE and operation.node_id:
-        to_remove.append(operation.node_id)
-    elif operation.action == TreeOperationType.DELETE and operation.node_id:
-        to_remove.append(operation.node_id)
-    elif operation.action == TreeOperationType.REPLACE_RANGE:
-        if operation.start_node_id and operation.end_node_id:
-            start_meta = tree.metadata_map.get(operation.start_node_id)
-            end_meta = tree.metadata_map.get(operation.end_node_id)
-            parent_id = start_meta.parent_id if start_meta else None
-            if parent_id and end_meta and end_meta.parent_id == parent_id:
-                parent_meta = tree.metadata_map.get(parent_id)
-                if parent_meta and parent_meta.children_ids:
-                    try:
-                        i = parent_meta.children_ids.index(operation.start_node_id)
-                        j = parent_meta.children_ids.index(operation.end_node_id)
-                        if i <= j:
-                            to_remove.extend(parent_meta.children_ids[i : j + 1])
-                    except ValueError:
-                        to_remove.extend(
-                            [operation.start_node_id, operation.end_node_id]
-                        )
-            else:
-                to_remove.extend([operation.start_node_id, operation.end_node_id])
-        else:
-            if operation.start_node_id:
-                to_remove.append(operation.start_node_id)
-            if operation.end_node_id:
-                to_remove.append(operation.end_node_id)
-    for nid in to_remove:
-        tree.node_map.pop(nid, None)
-        tree.metadata_map.pop(nid, None)
-        tree.parent_map.pop(nid, None)
 
 
 def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
@@ -433,20 +352,26 @@ def _replace_node_header(
     new_node_raw = parsed.body[0]
 
     if isinstance(old_node, cst.ClassDef) and isinstance(new_node_raw, cst.ClassDef):
+        decorators = (
+            old_node.decorators if old_node.decorators else new_node_raw.decorators
+        )
         patched = old_node.with_changes(
             name=new_node_raw.name,
             bases=new_node_raw.bases,
             keywords=new_node_raw.keywords,
-            decorators=new_node_raw.decorators,
+            decorators=decorators,
         )
     elif isinstance(old_node, cst.FunctionDef) and isinstance(
         new_node_raw, cst.FunctionDef
     ):
+        decorators = (
+            old_node.decorators if old_node.decorators else new_node_raw.decorators
+        )
         patched = old_node.with_changes(
             name=new_node_raw.name,
             params=new_node_raw.params,
             returns=new_node_raw.returns,
-            decorators=new_node_raw.decorators,
+            decorators=decorators,
         )
     else:
         # Type mismatch or unsupported node — fall back to full replace
@@ -576,6 +501,8 @@ def _apply_operation(
         node = tree.node_map.get(node_id)
         if not node:
             raise ValueError(f"Node not found for move: {node_id}")
+        source_meta = tree.metadata_map.get(node_id)
+        node_type = (source_meta.type if source_meta else "") or type(node).__name__
         code = tree.module.code_for_node(node)
         parent_id_raw = (operation.parent_node_id or ROOT_NODE_ID_SENTINEL).strip()
         move_parent_id = resolve_parent_id(tree, parent_id_raw)
@@ -586,6 +513,23 @@ def _apply_operation(
             )
         position = (operation.position or "last").strip().lower()
         after_index = operation.position_after_index
+        target_container = insert_target_container_kind(tree, move_parent_id)
+        source_container = (
+            def_snippet_container_kind(tree, source_meta) if source_meta else "module"
+        )
+        parsed_for_insert = None
+        if (
+            node_type in ("FunctionDef", "ClassDef")
+            or source_container != target_container
+        ):
+            class_indent = class_body_indent_prefix(tree, move_parent_id)
+            parsed_for_insert = parse_code_snippet_for_move(
+                code,
+                node_type=node_type,
+                target_container=target_container,
+                source_container=source_container,
+                class_body_indent=class_indent or "    ",
+            )
         module_after_delete = delete_node(module, tree, node_id)
         return insert_node_at_position(
             module_after_delete,
@@ -594,6 +538,7 @@ def _apply_operation(
             code,
             position=position,
             position_after_index=after_index,
+            parsed_statements=parsed_for_insert,
         )
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")

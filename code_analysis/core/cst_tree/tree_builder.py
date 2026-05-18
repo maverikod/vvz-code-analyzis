@@ -20,6 +20,7 @@ import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
 from .models import CSTTree, TreeNodeMetadata
+from .tree_stable_data import embed_stable_ids_into_tree
 from .node_id_markers import (
     PersistedNodeIds,
     build_marker_path,
@@ -27,7 +28,12 @@ from .node_id_markers import (
     build_exact_node_key,
     strip_persisted_node_ids,
 )
-from .node_type_utils import get_node_kind, get_node_name, get_node_qualname
+from .node_type_utils import (
+    decorator_stable_id,
+    get_node_kind,
+    get_node_name,
+    get_node_qualname,
+)
 from .node_stable_id import (
     get_stable_id as _get_stable_id_from_node,
     strip_inline_node_id_lines_from_source,
@@ -161,6 +167,7 @@ def _finalize_cst_tree(
                 )
                 if sidecar_matches_built_tree(tree, payload):
                     tree.node_id_aliases = aliases_from_payload(payload)
+                    embed_stable_ids_into_tree(tree)
                     if raw_disk_source is not None:
                         # SHA must match logical source (no inline/legacy markers)
                         _attach_disk_snapshot(tree, tree.module.code)
@@ -183,6 +190,7 @@ def _finalize_cst_tree(
         previous_metadata_map=previous_metadata_map,
         persisted_node_ids=legacy_persisted or None,
     )
+    embed_stable_ids_into_tree(tree)
     if raw_disk_source is not None:
         # SHA must match logical source (no inline/legacy markers)
         _attach_disk_snapshot(tree, tree.module.code)
@@ -310,9 +318,8 @@ def _build_tree_index(
     max_depth: Optional[int] = None,
     include_children: bool = True,
     previous_metadata_map: Optional[Dict[str, TreeNodeMetadata]] = None,
-    replaced_positions_to_id: Optional[Dict[Tuple[int, int, str], str]] = None,
     persisted_node_ids: Optional[PersistedNodeIds] = None,
-    previous_obj_to_id: Optional[Dict[int, str]] = None,
+    obj_to_stable: Optional[Dict[int, str]] = None,
 ) -> None:
     """
     Build node index and metadata for tree.
@@ -335,10 +342,6 @@ def _build_tree_index(
             previous_metadata_map
         ).items():
             exact_key_to_id.setdefault(key, node_id)
-    replaced_map: Dict[Tuple[int, int, str], str] = {}
-    if replaced_positions_to_id:
-        replaced_map = dict(replaced_positions_to_id)
-
     class_stack: List[str] = []
     func_stack: List[str] = []
     node_to_uuid: Dict[int, str] = {}
@@ -355,6 +358,8 @@ def _build_tree_index(
                 return
 
         pos = positions.get(node)
+        if pos is None and isinstance(node, cst.Decorator):
+            pos = positions.get(node.decorator)
         if pos is None:
             return
 
@@ -395,10 +400,6 @@ def _build_tree_index(
             node_id = persisted_node_ids[marker_path]
         elif exact_key in exact_key_to_id:
             node_id = exact_key_to_id.pop(exact_key)
-        elif replaced_map:
-            start_key = (start_line, start_col, node_type)
-            if start_key in replaced_map:
-                node_id = replaced_map.pop(start_key)
         if node_id is None:
             node_id = str(uuid.uuid4())
         node_to_uuid[id(node)] = node_id
@@ -414,10 +415,22 @@ def _build_tree_index(
             previous_metadata_map.get(node_id) if previous_metadata_map else None
         )
         stable_id = (
-            _get_stable_id_from_node(node)
+            (obj_to_stable.get(exact_key) if obj_to_stable else None)
+            or (obj_to_stable.get(('qualname', qualname)) if obj_to_stable and qualname else None)
+            or _get_stable_id_from_node(node)
             or (prev_meta.stable_id if prev_meta else None)
             or node_id
         )
+        if isinstance(node, cst.Decorator):
+            parent_cst = parents.get(node)
+            if isinstance(parent_cst, (cst.FunctionDef, cst.ClassDef)):
+                dec_index = next(
+                    (i for i, d in enumerate(parent_cst.decorators) if d is node),
+                    0,
+                )
+                parent_qual = get_node_qualname(parent_cst, class_stack, func_stack)
+                if not prev_meta or not prev_meta.stable_id:
+                    stable_id = decorator_stable_id(parent_qual, dec_index)
 
         entered_class = False
         entered_func = False
@@ -463,14 +476,6 @@ def _build_tree_index(
 
     visit(tree.module, 0, (0,))
 
-    if previous_obj_to_id is not None:
-        for obj_id, old_uuid in previous_obj_to_id.items():
-            new_uuid = node_to_uuid.get(obj_id)
-            if new_uuid is not None and new_uuid != old_uuid:
-                current = tree.node_id_aliases.get(old_uuid, old_uuid)
-                tree.node_id_aliases[current] = new_uuid
-                tree.node_id_aliases[old_uuid] = new_uuid
-
 
 def get_tree(tree_id: str) -> Optional[CSTTree]:
     """Return the in-memory CST tree, refreshing from disk when the file drifted.
@@ -488,6 +493,10 @@ def get_tree(tree_id: str) -> Optional[CSTTree]:
     path = Path(tree.file_path)
     snap = tree.disk_source_sha256_hex
     if snap is None or not path.is_file():
+        return tree
+    mod_snap = tree.module_source_sha256_hex
+    if mod_snap is not None and mod_snap != snap:
+        # Unsaved in-memory edits (e.g. universal_file_edit); do not reload from disk.
         return tree
     if _on_disk_logical_matches_tree_snapshot(path, tree):
         return tree

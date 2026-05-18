@@ -39,9 +39,7 @@ from ..core.exceptions import ValidationError
 from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
 
 from ..core.file_handlers.json_handler import JsonFileHandler
-
 from ..core.file_handlers.python_handler import PythonFileHandler
-
 from ..core.file_handlers.registry import (
     HANDLER_JSON,
     HANDLER_PYTHON,
@@ -91,6 +89,8 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
             "operation": fr.operation,
         },
     )
+
+
 class UniversalFileSaveCommand(BaseMCPCommand):
     """Save project files via handler registry (extension routing before side effects)."""
 
@@ -100,10 +100,12 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     descr = (
         "Full-file save using the universal handler registry. Unsupported extensions fail "
-        "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Text: full `content` "
-        "string; JSON/YAML: `content` must be a serialized document that parses; Python: "
-        "`content` is applied via CST-safe ops. Supports dry_run and diff when the handler "
-        "can serialize before/after." + " " + MCP_FILE_MANAGEMENT_REGISTRY_HELP
+        "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Creates the file when "
+        "missing (parent dirs included), then applies the same handler pipeline as overwrite. "
+        "Text: full `content` string; JSON/YAML: parseable serialized document; Python: "
+        "CST-safe save. Supports dry_run and diff when the handler can serialize before/after."
+        + " "
+        + MCP_FILE_MANAGEMENT_REGISTRY_HELP
     )
 
     category = "file_management"
@@ -120,11 +122,13 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             "type": "object",
             "title": "universal_file_save",
             "description": (
-                "Registry-first save. Required: project_id, file_path, content (string). "
-                "Optional: dry_run, diff, backup (default true), commit_message, "
-                "diff_context_lines, validate_syntax_only (Python), tree_id (Python). "
-                "Plain-text extensions use the text handler; structured JSON/YAML require "
-                "parseable `content`; Python uses CST-safe save only. "
+                "Registry-first save for text, json, yaml, and python handlers. "
+                "Required: project_id, file_path, content (string). "
+                "Optional: dry_run, diff, backup (default true), create_parent_dirs "
+                "(default true, mkdir -p for all handlers), commit_message, "
+                "diff_context_lines; validate_syntax_only and tree_id apply only to Python. "
+                "Creates missing files and parent directories when allowed; same overwrite "
+                "pipelines apply once the file exists. "
                 + REGISTRY_SCHEMA_DISCOVERY_SHORT
             ),
             "properties": {
@@ -135,7 +139,10 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Single path relative to project root (literal; globs/wildcards not supported)."
+                        "Single path relative to project root (literal; globs/wildcards not supported). "
+                        "May name a file that does not exist yet: all handlers support create with "
+                        "create_parent_dirs (mkdir -p). Routing: text (.md, .txt, …), .json, "
+                        ".yaml/.yml, .py/.pyi/.pyw — see list_handler_mappings()."
                     ),
                 },
                 "content": {
@@ -159,6 +166,15 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     "type": "boolean",
                     "default": True,
                     "description": "If true (default), create backups where the handler does so.",
+                },
+                "create_parent_dirs": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "When true (default), create missing parent directories for file_path "
+                        "(like mkdir -p) before writing. When false, fail with "
+                        "PARENT_DIR_MISSING if a parent directory is absent."
+                    ),
                 },
                 "commit_message": {
                     "type": "string",
@@ -184,19 +200,9 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "detailed_description": cls.descr,
-            "registry_discovery_python": (
-                "code_analysis.core.file_handlers.registry — get_handler_schema, "
-                "list_handler_mappings, HANDLER_IDS"
-            ),
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-        }
+        from .universal_file_save_metadata import get_universal_file_save_metadata
+
+        return get_universal_file_save_metadata(cls)
 
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
@@ -226,6 +232,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         diff_context_lines: Optional[int] = None,
         validate_syntax_only: bool = False,
         tree_id: Optional[str] = None,
+        create_parent_dirs: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
@@ -261,9 +268,12 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             if blocked_venv is not None:
                 return blocked_venv
 
+            existed_before = absolute_path.exists()
+
             extra: Dict[str, Any] = {
                 "absolute_path": absolute_path,
                 "content": content,
+                "create_parent_dirs": bool(create_parent_dirs),
             }
             if diff_context_lines is not None:
                 extra["diff_context_lines"] = diff_context_lines
@@ -325,24 +335,25 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     )
                 )
             elif handler_id == HANDLER_PYTHON:
-                cm = (
-                    commit_message.strip()
-                    if isinstance(commit_message, str) and commit_message.strip()
-                    else None
-                )
-                fr = self._run_python_save(
-                    content=content,
-                    absolute_path=absolute_path,
-                    root_dir=root_dir,
-                    project_id=project_id,
-                    file_path=file_path,
-                    handler_id=handler_id,
-                    database=database,
-                    backup=bool(backup),
-                    dry_run=bool(dry_run),
-                    diff=bool(diff),
-                    commit_message=cm,
-                    caller_tree_id=tree_id,
+                extra["root_path"] = root_dir.resolve()
+                extra["database"] = database
+                extra["git_command_name"] = "universal_file_save"
+                extra["validate_syntax_only"] = bool(validate_syntax_only)
+                if tree_id is not None:
+                    extra["tree_id"] = tree_id
+                if isinstance(commit_message, str) and commit_message.strip():
+                    extra["commit_message"] = commit_message.strip()
+                fr = PythonFileHandler().save(
+                    FileHandlerRequest(
+                        project_id=project_id,
+                        file_path=file_path,
+                        handler_id=handler_id,
+                        operation="save",
+                        dry_run=bool(dry_run),
+                        diff=bool(diff),
+                        backup=bool(backup),
+                        extra=extra,
+                    )
                 )
             else:
                 return ErrorResult(
@@ -373,7 +384,10 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 )
                 if not git_ok and git_err:
                     logger.warning("Git commit after universal_file_save: %s", git_err)
-            return _success_from_handler(fr, operation="save")
+            result = _success_from_handler(fr, operation="save")
+            if isinstance(result, SuccessResult):
+                result.data["created"] = not existed_before
+            return result
 
         except ValidationError as e:
             return ErrorResult(

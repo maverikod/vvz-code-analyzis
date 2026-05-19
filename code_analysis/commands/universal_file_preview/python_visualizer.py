@@ -98,16 +98,14 @@ def _headline(meta: Any, tree: Any = None) -> str:
                     raw = tree.module.code_for_node(cst_node)
                     first = raw.strip().split("\n")[0].strip()
                     if first:
-                        return first
+                        return str(first)
                 except Exception:
                     pass
     typ = getattr(meta, "type", None) or ""
     kind = getattr(meta, "kind", None) or ""
     name = getattr(meta, "name", None)
     if kind == "function" or typ in ("FunctionDef", "AsyncFunctionDef"):
-        if typ == "AsyncFunctionDef":
-            return f"async def {name or '?'}:"
-        return f"def {name or '?'}:"
+        return _function_headline(meta, tree)
     if kind == "class" or typ == "ClassDef":
         return f"class {name or '?'}:"
     if typ:
@@ -117,16 +115,75 @@ def _headline(meta: Any, tree: Any = None) -> str:
     return ""
 
 
-def _function_headline(meta: Any) -> str:
+def _meta_first_line(meta: Any, tree: Any = None) -> str:
+    """First non-empty source line from metadata ``code`` or CST source."""
+    code = getattr(meta, "code", None)
+    if isinstance(code, str) and code.strip():
+        return code.strip().splitlines()[0].strip()
+    if tree is not None:
+        node_id = getattr(meta, "node_id", None)
+        if node_id:
+            cst_node = tree.node_map.get(node_id)
+            if cst_node is not None:
+                try:
+                    raw = tree.module.code_for_node(cst_node)
+                    if raw.strip():
+                        return raw.strip().splitlines()[0].strip()
+                except Exception:
+                    pass
+    return ""
+
+
+def _function_def_line(meta: Any, tree: Any = None) -> str:
+    """``def`` / ``async def`` line from metadata code or CST source."""
+    snippets: list[str] = []
+    code = getattr(meta, "code", None)
+    if isinstance(code, str) and code.strip():
+        snippets.append(code)
+    if tree is not None:
+        node_id = getattr(meta, "node_id", None)
+        if node_id:
+            cst_node = tree.node_map.get(node_id)
+            if cst_node is not None:
+                try:
+                    raw = tree.module.code_for_node(cst_node)
+                    if raw.strip():
+                        snippets.append(raw)
+                except Exception:
+                    pass
+    for snippet in snippets:
+        for line in snippet.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("async def ") or stripped.startswith("def "):
+                return stripped
+    return ""
+
+
+def _function_headline(meta: Any, tree: Any = None) -> str:
     """Header line for defs (used under classes and collapsed bodies)."""
-    h = _headline(meta)
-    if h.startswith("def ") or h.startswith("async def "):
-        return h
+    sig = getattr(meta, "signature", None)
+    if isinstance(sig, str) and sig.strip():
+        return sig.strip()
+    def_line = _function_def_line(meta, tree)
+    if def_line:
+        return def_line
     name = getattr(meta, "name", None)
     typ = getattr(meta, "type", None) or ""
     if typ == "AsyncFunctionDef":
         return f"async def {name or '?'}:"
     return f"def {name or '?'}:"
+
+
+def _decorator_headline(meta: Any, tree: Any = None) -> str:
+    """One-line ``@decorator`` preview for a Decorator metadata row."""
+    first = _meta_first_line(meta, tree)
+    if first:
+        return first if first.startswith("@") else f"@{first}"
+    name = getattr(meta, "name", None)
+    if name:
+        text = str(name)
+        return text if text.startswith("@") else f"@{text}"
+    return "@..."
 
 
 def render_module(tree: Any, budget: PreviewBudget) -> str:
@@ -151,7 +208,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
         sid = meta.stable_id
         rng = _fmt_range(meta)
         if kind in ("function", "method") or typ in ("FunctionDef", "AsyncFunctionDef"):
-            head = _function_headline(meta)
+            head = _function_headline(meta, tree)
             lines.append(f"[{sid}] {rng}  {head}")
             doc = _doc_first_line(meta.docstring)
             if doc:
@@ -175,7 +232,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
                     key=lambda m: m.start_line or 0,
                 )
                 for meth in methods:
-                    meth_sig = _function_headline(meth)
+                    meth_sig = _function_headline(meth, tree)
                     lines.append(
                         f"    [{meth.stable_id}] {_fmt_range(meth)}  {meth_sig}"
                     )
@@ -328,9 +385,38 @@ def render_node(tree: Any, stable_id: str) -> str:
     kind = meta.kind or ""
     typ = getattr(meta, "type", None) or ""
 
+    if typ == "Parameters":
+        params = sorted(
+            (
+                m
+                for m in tree.metadata_map.values()
+                if m.parent_id == node_id and getattr(m, "type", None) == "Param"
+            ),
+            key=lambda m: m.start_line or 0,
+        )
+        param_lines: list[str] = []
+        for param in params:
+            preview = _meta_first_line(param, tree) or (param.name or "")
+            param_lines.append(f"[{param.stable_id}] {_fmt_range(param)}  {preview}")
+        return "\n".join(param_lines)
+
     if kind in ("function", "method") or typ in ("FunctionDef", "AsyncFunctionDef"):
-        line1 = f"[{stable_id}] {_fmt_range(meta)}  " f"{_function_headline(meta)}"
-        lines: list[str] = [line1]
+        lines: list[str] = []
+        decorators = sorted(
+            (
+                m
+                for m in tree.metadata_map.values()
+                if m.parent_id == node_id and getattr(m, "type", None) == "Decorator"
+            ),
+            key=lambda m: m.start_line or 0,
+        )
+        for dec in decorators:
+            lines.append(
+                f"[{dec.stable_id}] {_fmt_range(dec)}  {_decorator_headline(dec, tree)}"
+            )
+        lines.append(
+            f"[{stable_id}] {_fmt_range(meta)}  {_function_headline(meta, tree)}"
+        )
         doc = _doc_first_line(meta.docstring)
         if doc:
             lines.append("    " + doc)
@@ -354,7 +440,7 @@ def render_node(tree: Any, stable_id: str) -> str:
                 key=lambda m: m.start_line or 0,
             )
             for meth in methods:
-                sig = _function_headline(meth)
+                sig = _function_headline(meth, tree)
                 lines_cls.append(f"    [{meth.stable_id}] {_fmt_range(meth)}  {sig}")
                 doc_m = _doc_first_line(meth.docstring)
                 if doc_m:

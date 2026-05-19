@@ -15,7 +15,10 @@ from __future__ import annotations
 import logging
 
 
-from typing import Any, cast
+from pathlib import Path
+
+
+from typing import Any, Dict, cast
 
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -39,10 +42,30 @@ from .universal_file_preview.errors import (
 )
 
 
+from .universal_file_preview.handlers.json_handler import JsonFileHandler
+
+from .universal_file_preview.handlers.yaml_handler import YamlFileHandler
+
+
 from .universal_file_preview.navigation import navigate
 
 
 from .universal_file_preview.response import build_envelope
+
+
+from .universal_file_preview.tree_temp_preview_focus import looks_like_sidecar_stable_id
+
+
+from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
+    acquire_tree_temp_for_open,
+)
+from code_analysis.commands.universal_file_edit.format_group import check_lock
+
+
+from .universal_file_preview.session import merge_edit_session_into_preview_params
+from code_analysis.commands.preview_command_metadata import (
+    get_universal_file_preview_metadata,
+)
 
 
 _GLOB_CHARS = frozenset("*?[")
@@ -163,6 +186,15 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "description": "UUID of an existing in-memory TreeSession.",
                     "nullable": True,
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "UUID from universal_file_open. When set, preview uses the "
+                        "edit session in-memory tree (or draft file for text format) "
+                        "instead of reading unchanged content from disk."
+                    ),
+                    "nullable": True,
+                },
             },
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
@@ -212,6 +244,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             full_text_max_lines = _FULL_TEXT_MAX_LINES_DEFAULT
 
         tree_id = params.get("tree_id")
+        session_id = params.get("session_id")
 
         return {
             "project_id": project_id,
@@ -222,7 +255,17 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             "value_preview_len": value_preview_len,
             "full_text_max_lines": full_text_max_lines,
             "tree_id": tree_id,
+            "session_id": session_id,
         }
+
+    @classmethod
+    def metadata(cls: "type[UniversalFilePreviewCommand]") -> Dict[str, Any]:
+        """Return extended AI/docs metadata for universal_file_preview.
+
+        Returns:
+            Metadata dict with description, parameters, examples, errors.
+        """
+        return cast(Dict[str, Any], get_universal_file_preview_metadata(cls))
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         """Execute the preview command.
@@ -237,8 +280,29 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             SuccessResult with ResponseEnvelope data, or ErrorResult on failure.
         """
         try:
+            merged = merge_edit_session_into_preview_params(kwargs)
+            if isinstance(merged, PreviewError):
+                return ErrorResult(
+                    message=merged.message,
+                    code=cast(Any, merged.code),
+                    details=merged.details or {},
+                )
+            kwargs = merged
+
             project_root = self._resolve_project_root(kwargs["project_id"])
-            abs_file_path = str(project_root / kwargs["file_path"])
+            abs_file_path = kwargs.get("_preview_abs_path") or str(
+                project_root / kwargs["file_path"]
+            )
+
+            # Lock check: refuse preview if file is locked by another session.
+            caller_sid = str(kwargs.get("session_id") or "")
+            lock_owner = check_lock(Path(abs_file_path), caller_sid)
+            if lock_owner:
+                return ErrorResult(
+                    message=f"File is locked by edit session {lock_owner}",
+                    code="FILE_LOCKED",
+                    details={"lock_session_id": lock_owner},
+                )
 
             dispatcher = HandlerDispatcher()
             handler_result = dispatcher.dispatch(kwargs["file_path"])
@@ -250,12 +314,45 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 )
             handler = handler_result
 
+            # Tree-temp Sidecar preview: UUID ``node_ref`` delegates drill-down enumeration
+            # to NavigationProcedure after Sidecar roots are injected.
+            nav_kwargs = dict(kwargs)
+            nr_probe = kwargs.get("node_ref")
+            if isinstance(handler, (JsonFileHandler, YamlFileHandler)) and (
+                looks_like_sidecar_stable_id(
+                    nr_probe if isinstance(nr_probe, str) else None
+                )
+            ):
+                tt_roots_payload = None
+                sid_here = kwargs.get("session_id")
+                if sid_here is not None:
+                    from code_analysis.commands.universal_file_edit.session import (  # noqa: PLC0415
+                        get_session as get_edit_session,
+                    )
+
+                    try:
+                        edit_rec = get_edit_session(str(sid_here))
+                        tt_roots_payload = edit_rec.tree_temp_roots
+                    except ValueError:
+                        tt_roots_payload = None
+                if tt_roots_payload is None:
+                    proj_abs = Path(str(project_root)).resolve()
+                    source_abs_fp = Path(abs_file_path).resolve()
+                    hid = "json" if isinstance(handler, JsonFileHandler) else "yaml"
+                    tt_roots_payload = acquire_tree_temp_for_open(
+                        project_root=proj_abs,
+                        source_abs=source_abs_fp,
+                        handler_id=hid,
+                        raw_source_bytes=source_abs_fp.read_bytes(),
+                    ).roots
+                nav_kwargs["tree_temp_roots"] = tt_roots_payload
+
             budget = PreviewBudget(
                 preview_lines=int(kwargs["preview_lines"]),
                 value_preview_len=int(kwargs["value_preview_len"]),
                 full_text_max_lines=int(kwargs["full_text_max_lines"]),
             )
-            nav_kwargs = {**kwargs, "file_path": abs_file_path}
+            nav_kwargs["file_path"] = abs_file_path
             navigation_result = navigate(handler, nav_kwargs, budget)
             if isinstance(navigation_result, PreviewError):
                 return ErrorResult(
@@ -266,7 +363,11 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             session_origin = (
                 "command_created"
                 if navigation_result.tree_id is not None
-                else ("caller_owned" if kwargs.get("tree_id") else "none")
+                else (
+                    "caller_owned"
+                    if kwargs.get("tree_id") or kwargs.get("session_id")
+                    else "none"
+                )
             )
             envelope = build_envelope(
                 navigation_result,

@@ -42,6 +42,7 @@ from code_analysis.commands.universal_file_edit.session import (
 from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
     acquire_tree_temp_for_open,
 )
+from code_analysis.core.file_handlers.text_handler import TEXT_SUFFIXES
 
 
 class UniversalFileOpenCommand(BaseMCPCommand):
@@ -193,6 +194,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     initial_content if initial_content else "{}\n",
                     encoding="utf-8",
                 )
+            elif suffix in TEXT_SUFFIXES:
+                abs_path.write_text(initial_content or "", encoding="utf-8")
             else:
                 abs_path.write_text("", encoding="utf-8")
             created = True

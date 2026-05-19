@@ -694,3 +694,65 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
     assert "# Hello" in (focus.get("text") or "")
     assert "World" in (focus.get("text") or "")
     assert int((result.data or {}).get("total_blocks") or 0) > 0
+
+
+@pytest.mark.asyncio
+async def test_open_create_md_initial_content_preview_full_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    """create=True must persist initial_content for text formats before preview."""
+    root = tmp_path
+    (root / "projectid").write_text(
+        json.dumps({"id": "md-create-preview-proj"}), encoding="utf-8"
+    )
+
+    mock_db = MagicMock()
+    mock_project = MagicMock()
+    mock_project.root_path = str(root)
+    mock_db.get_project.return_value = mock_project
+
+    open_cmd = UniversalFileOpenCommand()
+    preview_cmd = UniversalFilePreviewCommand()
+    close_cmd = UniversalFileCloseCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+    ):
+        opened = await open_cmd.execute(
+            **open_cmd.validate_params(
+                {
+                    "project_id": "md-create-preview-proj",
+                    "file_path": "test.md",
+                    "create": True,
+                    "initial_content": "# Hello\n\nWorld\n",
+                }
+            )
+        )
+        assert isinstance(opened, SuccessResult)
+        sid = str(opened.data["session_id"])
+        md = root / "test.md"
+        assert md.read_text(encoding="utf-8") == "# Hello\n\nWorld\n"
+        result = await preview_cmd.execute(
+            **preview_cmd.validate_params(
+                {
+                    "project_id": "md-create-preview-proj",
+                    "file_path": "test.md",
+                    "session_id": sid,
+                    "full_text_max_lines": 9999,
+                }
+            )
+        )
+        await close_cmd.execute(
+            **close_cmd.validate_params(
+                {"project_id": "md-create-preview-proj", "session_id": sid}
+            )
+        )
+
+    assert isinstance(result, SuccessResult)
+    focus = (result.data or {}).get("focus", {})
+    text = focus.get("text") or ""
+    assert (focus.get("attributes") or {}).get("full_text") is True
+    assert "# Hello" in text
+    assert "World" in text
+    first_line = text.splitlines()[0]
+    assert first_line.startswith("[") and "# Hello" in first_line
+    assert int((result.data or {}).get("total_blocks") or 0) > 0

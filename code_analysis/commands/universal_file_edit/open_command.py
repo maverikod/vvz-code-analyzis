@@ -93,9 +93,11 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     "type": "string",
                     "description": (
                         "Initial file content used only when create=True. "
-                        "For Python (.py): valid Python source code written to disk "
-                        "before the CST tree is built via load_file_to_tree. "
-                        "For other formats: ignored (file is created empty)."
+                        "For Python (.py): source written to disk before the CST tree "
+                        "is built via load_file_to_tree (required when create=True). "
+                        "For JSON/YAML: raw text written as-is (not parsed before write); "
+                        "invalid syntax opens in text mode with is_invalid=true. "
+                        "For other formats: ignored (empty file is created)."
                     ),
                 },
             },
@@ -141,7 +143,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             project_id: Project UUID.
             file_path: Path relative to project root.
             create: When True, create the file if it does not exist.
-            initial_content: Initial source for new .py files (create=True).
+            initial_content: Initial source for new files (create=True).
             **kwargs: Unused; accepted for adapter compatibility.
 
         Returns:
@@ -182,9 +184,15 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             if suffix == ".py":
                 abs_path.write_text(initial_content, encoding="utf-8")
             elif suffix == ".json":
-                abs_path.write_text("{}\n", encoding="utf-8")
+                abs_path.write_text(
+                    initial_content if initial_content else "{}\n",
+                    encoding="utf-8",
+                )
             elif suffix in (".yaml", ".yml"):
-                abs_path.write_text("{}\n", encoding="utf-8")
+                abs_path.write_text(
+                    initial_content if initial_content else "{}\n",
+                    encoding="utf-8",
+                )
             else:
                 abs_path.write_text("", encoding="utf-8")
             created = True

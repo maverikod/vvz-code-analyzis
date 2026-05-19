@@ -135,6 +135,77 @@ async def test_open_does_not_preempt_write_preview_phase(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_create_invalid_json_preview_returns_raw_text(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: create broken JSON, preview must surface raw source."""
+    from code_analysis.commands.universal_file_preview_command import (
+        UniversalFilePreviewCommand,
+    )
+
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    broken = '{"key": "value", broken'
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "file_path": rel,
+                    "create": True,
+                    "initial_content": broken,
+                }
+            )
+        )
+        assert isinstance(opened, SuccessResult)
+        assert opened.data.get("is_invalid") is True
+        prev = UniversalFilePreviewCommand()
+        result = await prev.execute(
+            **prev.validate_params(
+                {"project_id": _PROJECT_UUID, "file_path": rel, "node_ref": ""}
+            )
+        )
+    assert isinstance(result, SuccessResult)
+    focus = result.data.get("focus", {})
+    assert focus.get("is_invalid") is True
+    assert focus.get("text") == broken
+    assert focus.get("text") != "{}"
+    assert focus.get("attributes", {}).get("parse_error")
+
+
+@pytest.mark.asyncio
+async def test_create_invalid_json_writes_raw_and_sets_is_invalid(
+    tmp_path: Path,
+) -> None:
+    """create=True with invalid initial_content must persist raw bytes and flag session."""
+    _ensure_project_root(tmp_path)
+    rel = "new_broken.json"
+    broken = '{"key": "value", broken'
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "file_path": rel,
+                    "create": True,
+                    "initial_content": broken,
+                }
+            )
+        )
+    assert isinstance(opened, SuccessResult)
+    assert opened.data.get("created") is True
+    assert opened.data.get("is_invalid") is True
+    assert opened.data.get("format_group") == "text"
+    assert (tmp_path / rel).read_text(encoding="utf-8") == broken
+
+
+@pytest.mark.asyncio
 async def test_open_invalid_json_sets_is_invalid_and_allows_raw_edit(
     tmp_path: Path,
 ) -> None:

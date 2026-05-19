@@ -68,7 +68,8 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": (
                     "When True, create the file if it does not exist. "
                     "For .py files, initial_content is required. "
-                    "For JSON/YAML, an empty object {} is written. "
+                    "For JSON/YAML, initial_content is written as raw text when "
+                    "provided; otherwise an empty object {} is written. "
                     "For text formats, an empty file is created."
                 ),
                 "type": "boolean",
@@ -77,9 +78,11 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "initial_content": {
                 "description": (
-                    "Initial source code for new .py files (create=True only). "
-                    "Must be valid Python; the CST tree is built from it immediately. "
-                    "Ignored for non-Python formats."
+                    "Initial content for new files (create=True only). "
+                    "For .py: required; CST tree is built after write. "
+                    "For JSON/YAML: optional raw text written as-is (invalid syntax "
+                    "opens in text mode with is_invalid). "
+                    "Ignored for other formats."
                 ),
                 "type": "string",
                 "required": False,
@@ -95,6 +98,7 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "created": "True when create=True and the file did not exist (optional field).",
                     "fallback_reason": "PARSE_ERROR when JSON/YAML could not be parsed and text-mode fallback was used (optional).",
                     "original_format_group": "Format group that was originally resolved before fallback (optional).",
+                    "is_invalid": "True when the file has syntax errors and the session opened in text-mode fallback (optional).",
                 },
                 "example": {
                     "session_id": "4b4255c7-6a0c-4396-94c6-6f2bcf297912",

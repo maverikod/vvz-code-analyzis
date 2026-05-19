@@ -117,6 +117,28 @@ class FsGrepCommand(BaseMCPCommand):
         show_hidden: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the fs_grep command.
+
+        Args:
+            project_id: Project UUID.
+            pattern: Search pattern (literal substring or regex).
+            literal: If True, match as plain substring.
+            case_sensitive: If False, case-insensitive matching.
+            file_pattern: Optional project-relative path filter.
+            glob: Alias for file_pattern.
+            max_matches: Stop after this many matching lines.
+            max_file_bytes: Skip files larger than this before opening.
+            show_venv: Include venv directories.
+            python_only: Only scan Python files.
+            include_venv_ignore_exceptions: Include venv ignore exceptions.
+            show_hidden: Include hidden files.
+            **kwargs: Ignored extra parameters.
+
+        Returns:
+            SuccessResult with matches list where each entry has
+            relative_path, line_number (int), and line (str content).
+            ErrorResult on validation failure.
+        """
         if not (pattern or "").strip():
             return ErrorResult(
                 message="pattern must be non-empty",
@@ -207,26 +229,26 @@ class FsGrepCommand(BaseMCPCommand):
                 files_scanned += 1
                 try:
                     with abs_path.open("r", encoding="utf-8", errors="replace") as fh:
-                        for i, line in enumerate(fh, start=1):
+                        for i, raw_line in enumerate(fh, start=1):
                             if len(matches) >= max_matches:
                                 break
-                            if "\0" in line:
+                            if "\0" in raw_line:
                                 break
-                            line = line.rstrip("\r\n")
+                            raw_line = raw_line.rstrip("\r\n")
                             ok = False
                             if literal:
-                                hay = line if case_sensitive else line.lower()
+                                hay = raw_line if case_sensitive else raw_line.lower()
                                 nd = needle if case_sensitive else needle.lower()
                                 ok = nd in hay
                             else:
                                 assert regex is not None
-                                ok = regex.search(line) is not None
+                                ok = regex.search(raw_line) is not None
                             if ok:
                                 matches.append(
                                     {
                                         "relative_path": rel,
-                                        "line": i,
-                                        "text": line,
+                                        "line_number": i,
+                                        "line": raw_line,
                                     }
                                 )
                 except OSError as e:

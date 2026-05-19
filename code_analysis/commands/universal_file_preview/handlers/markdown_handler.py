@@ -298,19 +298,25 @@ class MarkdownFileHandler(FileHandler):
         node_ref: str,
         session: Any | None,
     ) -> Node | PreviewError:
-        """Resolve a dot-separated slug path to the corresponding section Node.
+        """Resolve a node_ref to the corresponding Node.
 
-        Navigates the section tree built during the most recent open_root
-        call. If open_root has not been called, attempts a re-parse from
-        the last known file path.
+        Handles two kinds of node_ref:
+
+        * Dot-separated slug path (e.g. ``'introduction'``, ``'1.overview'``)
+          — navigates the section tree and returns the section's mapping Node.
+        * ``/__content`` suffix (e.g. ``'introduction/__content'``,
+          ``'__content'`` for the root) — the content scalar child of a section.
+          These refs are produced by ``_Section.to_node()`` but live only inside
+          the returned Node graph, not in the ``_Section`` tree itself.  This
+          method resolves them by locating the parent section first, then
+          returning the matching scalar child from ``section.to_node().children``.
 
         Args:
-            node_ref: Dot-separated slug path from the document root.
-                      Empty string returns the document root.
+            node_ref: Slug path or slug path with ``/__content`` suffix.
             session: Ignored for Markdown files.
 
         Returns:
-            Mapping Node for the addressed section, or PreviewError.
+            The addressed Node, or a PreviewError when not found.
         """
         if self._last_tree is None:
             fp = self._last_file_path or ""
@@ -321,6 +327,32 @@ class MarkdownFileHandler(FileHandler):
             except OSError:
                 source = ""
             self._last_tree = _build_section_tree(source)
+
+        # Handle /__content suffix: the scalar body child of a section.
+        _CONTENT_SUFFIX = "/__content"
+        if node_ref == "__content" or node_ref.endswith(_CONTENT_SUFFIX):
+            if node_ref == "__content":
+                parent_ref = ""
+            else:
+                parent_ref = node_ref[: -len(_CONTENT_SUFFIX)]
+            parent_section = _find_section(self._last_tree, parent_ref)
+            if parent_section is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"Markdown node_ref {node_ref!r} not found in document.",
+                    details={"node_ref": node_ref},
+                )
+            parent_node = parent_section.to_node()
+            for child in parent_node.children:
+                if child.node_ref == node_ref:
+                    return child
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                f"Markdown node_ref {node_ref!r} not found: section has no content block.",
+                details={"node_ref": node_ref},
+            )
+
+        # Regular section slug path.
         section = _find_section(self._last_tree, node_ref)
         if section is None:
             return input_error(

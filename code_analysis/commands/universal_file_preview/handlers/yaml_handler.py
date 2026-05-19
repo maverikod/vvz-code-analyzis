@@ -91,16 +91,23 @@ class YamlFileHandler(FileHandler):
         session: Any | None,
         budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
-        """
-        Parse the YAML file and return the root Node.
+        """Parse the YAML file and return the root Node.
 
         Root NodeKind is mapping, sequence, or scalar depending on the
         top-level YAML value. Anchors and aliases are resolved. On invalid
         YAML returns FILE_STRUCTURE_ERROR with parser 'yaml'.
 
+        When *budget* is provided and ``budget.full_text_max_lines`` is a
+        positive integer, and the file has fewer lines than that threshold,
+        returns a ``NodeKind.SCALAR`` node whose ``value`` attribute holds
+        the entire raw file source.  This mirrors the C-023 full-text
+        fallback implemented for the Python and Markdown handlers.
+
         Args:
             file_path: Project-relative path to the .yaml/.yml file.
             session: :class:`~code_analysis.core.yaml_tree.models.YamlTree` or None.
+            budget: Optional PreviewBudget; when provided, full_text_max_lines
+                    is honoured.
 
         Returns:
             Root Node or PreviewError.
@@ -118,6 +125,20 @@ class YamlFileHandler(FileHandler):
                 return _yaml_value_to_node(doc, "")
 
             raw = Path(file_path).read_text(encoding="utf-8", errors="replace")
+
+            # full-text fallback (C-023) — same contract as Python/Markdown handlers.
+            if (
+                budget is not None
+                and budget.full_text_max_lines > 0
+                and raw.count("\n") + (1 if raw and not raw.endswith("\n") else 0)
+                < budget.full_text_max_lines
+            ):
+                return Node(
+                    node_kind=NodeKind.SCALAR,
+                    node_ref="",
+                    attributes={"value": raw, "full_text": True},
+                )
+
             doc = yaml.safe_load(raw)
             if doc is None:
                 doc = {}

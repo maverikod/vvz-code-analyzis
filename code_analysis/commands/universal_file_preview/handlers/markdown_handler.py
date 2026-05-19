@@ -13,6 +13,7 @@ Document root has node_ref ''.
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
+
 from __future__ import annotations
 
 import logging
@@ -256,22 +257,38 @@ class MarkdownFileHandler(FileHandler):
     ) -> Node | PreviewError:
         """Parse the Markdown file and return the document root Node.
 
-        Parses the file into a section tree and returns the root Node.
-        The root contains top-level sections as children.
+        When *budget* is provided and ``budget.full_text_max_lines`` is a positive
+        integer, and the file has fewer lines than that threshold, returns a
+        ``NodeKind.SCALAR`` node whose ``value`` attribute holds the entire file
+        source.  This mirrors the C-023 full-text fallback implemented for the
+        Python handler and lets callers read small Markdown files in one step.
 
         Args:
             file_path: Absolute or project-relative path to the .md file.
             session: Ignored for Markdown files.
-            budget: Ignored for Markdown files.
+            budget: Optional PreviewBudget; when provided, full_text_max_lines
+                    is honoured.
 
         Returns:
-            Mapping root Node representing the document.
+            Scalar Node with full text when file is below the line threshold,
+            otherwise a mapping root Node representing the document.
         """
         self._last_file_path = file_path
         try:
             source = Path(file_path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             source = ""
+        if (
+            budget is not None
+            and budget.full_text_max_lines > 0
+            and source.count("\n") + (1 if source and not source.endswith("\n") else 0)
+            < budget.full_text_max_lines
+        ):
+            return Node(
+                node_kind=NodeKind.SCALAR,
+                node_ref="",
+                attributes={"value": source, "full_text": True},
+            )
         tree = _build_section_tree(source)
         self._last_tree = tree
         return tree.to_node()

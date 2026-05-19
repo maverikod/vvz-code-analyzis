@@ -47,6 +47,21 @@ def _source_line_count(raw: str) -> int:
     return raw.count("\n") + (1 if not raw.endswith("\n") else 0)
 
 
+def _read_markdown_source(file_path: str) -> str:
+    """Read UTF-8 source; fall back from empty ``*.draft`` to the original file."""
+    try:
+        source = Path(file_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        source = ""
+    if source or not file_path.endswith(".draft"):
+        return source
+    original_path = file_path[: -len(".draft")]
+    try:
+        return Path(original_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return source
+
+
 def _iter_md_block_tokens(tokens: list[Any]) -> Any:
     for token in tokens:
         if token.map is None or token.type in _MD_SKIP_TOKEN_TYPES:
@@ -261,10 +276,7 @@ class MarkdownFileHandler(FileHandler):
     ) -> Node | PreviewError:
         """Root Node: annotated TREE_NODE below full_text_max_lines, else section mapping."""
         self._last_file_path = file_path
-        try:
-            source = Path(file_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            source = ""
+        source = _read_markdown_source(file_path)
         effective_budget = (
             budget
             if budget is not None
@@ -300,12 +312,7 @@ class MarkdownFileHandler(FileHandler):
 
         if self._last_tree is None:
             fp = self._last_file_path or ""
-            try:
-                source = (
-                    Path(fp).read_text(encoding="utf-8", errors="replace") if fp else ""
-                )
-            except OSError:
-                source = ""
+            source = _read_markdown_source(fp) if fp else ""
             self._last_tree = _build_section_tree(source)
 
         # Handle /__content suffix: the scalar body child of a section.

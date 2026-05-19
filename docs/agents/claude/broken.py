@@ -1,3 +1,2 @@
-def foo(
-    x: int
-    return x  # missing closing paren
+def foo(x: int):
+    return x

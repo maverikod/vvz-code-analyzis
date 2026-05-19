@@ -53,6 +53,12 @@ from code_analysis.commands.universal_file_preview.session import (
     merge_edit_session_into_preview_params,
     resolve_session,
 )
+from code_analysis.commands.universal_file_edit.open_command import (
+    UniversalFileOpenCommand,
+)
+from code_analysis.commands.universal_file_edit.close_command import (
+    UniversalFileCloseCommand,
+)
 from code_analysis.commands.universal_file_edit.session import (
     create_session,
     release_session,
@@ -629,3 +635,62 @@ async def test_universal_file_preview_md_annotated_full_text_without_session(
     assert (focus.get("attributes") or {}).get("full_text") is True
     assert isinstance(focus.get("text"), str)
     assert "# Title" in focus["text"]
+
+
+@pytest.mark.asyncio
+async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Text edit session previews draft path; empty draft falls back to source file."""
+    root = tmp_path
+    (root / "projectid").write_text(
+        json.dumps({"id": "md-draft-preview-proj"}), encoding="utf-8"
+    )
+    md = root / "test.md"
+    md.write_text("# Hello\n\nWorld\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_project = MagicMock()
+    mock_project.root_path = str(root)
+    mock_db.get_project.return_value = mock_project
+
+    open_cmd = UniversalFileOpenCommand()
+    preview_cmd = UniversalFilePreviewCommand()
+    close_cmd = UniversalFileCloseCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+    ):
+        opened = await open_cmd.execute(
+            **open_cmd.validate_params(
+                {
+                    "project_id": "md-draft-preview-proj",
+                    "file_path": "test.md",
+                }
+            )
+        )
+        assert isinstance(opened, SuccessResult)
+        sid = str(opened.data["session_id"])
+        draft = md.with_suffix(md.suffix + ".draft")
+        draft.write_text("", encoding="utf-8")
+        result = await preview_cmd.execute(
+            **preview_cmd.validate_params(
+                {
+                    "project_id": "md-draft-preview-proj",
+                    "file_path": "test.md",
+                    "session_id": sid,
+                    "full_text_max_lines": 9999,
+                }
+            )
+        )
+        await close_cmd.execute(
+            **close_cmd.validate_params(
+                {"project_id": "md-draft-preview-proj", "session_id": sid}
+            )
+        )
+
+    assert isinstance(result, SuccessResult)
+    focus = (result.data or {}).get("focus", {})
+    assert (focus.get("attributes") or {}).get("full_text") is True
+    assert "# Hello" in (focus.get("text") or "")
+    assert "World" in (focus.get("text") or "")
+    assert int((result.data or {}).get("total_blocks") or 0) > 0

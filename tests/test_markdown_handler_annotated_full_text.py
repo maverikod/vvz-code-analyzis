@@ -81,6 +81,26 @@ def test_resolve_uuid_block_node_ref(
     assert resolved.type_label == "heading_open"
 
 
+def test_open_root_reads_original_when_draft_empty(
+    handler: MarkdownFileHandler, tmp_path: Path
+) -> None:
+    """Preview edit sessions use draft path; fall back when draft is still empty."""
+    original = tmp_path / "doc.md"
+    original.write_text("# Hello\n\nWorld\n", encoding="utf-8")
+    draft = tmp_path / "doc.md.draft"
+    draft.write_text("", encoding="utf-8")
+    budget = PreviewBudget(
+        preview_lines=10, value_preview_len=80, full_text_max_lines=9999
+    )
+    node = handler.open_root(str(draft), None, budget=budget)
+    assert node.node_kind == NodeKind.TREE_NODE
+    assert node.attributes.get("full_text") is True
+    text = node.attributes["text"]
+    assert "# Hello" in text
+    assert "World" in text
+    assert len(node.children) > 0
+
+
 def test_uuid5_stable_across_reads(tmp_path: Path) -> None:
     path = str(tmp_path / "x.md")
     from markdown_it import MarkdownIt

@@ -1,3 +1,4 @@
 key: value
-  bad_indent: oops
-key2: [unclosed
+key2:
+  - item1
+  - item2

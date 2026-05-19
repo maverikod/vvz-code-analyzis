@@ -186,6 +186,24 @@ def _decorator_headline(meta: Any, tree: Any = None) -> str:
     return "@..."
 
 
+def _try_full_text_fallback(tree: Any, budget: PreviewBudget) -> str | None:
+    """Return raw file source when the file is shorter than ``full_text_max_lines``."""
+    if budget.full_text_max_lines <= 0:
+        return None
+    if not hasattr(tree, "metadata_map") or not tree.metadata_map:
+        return None
+    file_line_count = max(
+        (meta.end_line for meta in tree.metadata_map.values() if meta.end_line),
+        default=0,
+    )
+    if file_line_count >= budget.full_text_max_lines:
+        return None
+    file_path = getattr(tree, "file_path", None)
+    if file_path and pathlib.Path(file_path).is_file():
+        return pathlib.Path(file_path).read_text(encoding="utf-8")
+    return None
+
+
 def render_module(tree: Any, budget: PreviewBudget) -> str:
     """Render top-level module view: classes, functions, and loose statements.
 
@@ -196,6 +214,9 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
     Returns:
         Multi-line structured text of the module.
     """
+    fallback = _try_full_text_fallback(tree, budget)
+    if fallback is not None:
+        return fallback
     if not hasattr(tree, "metadata_map") or not tree.metadata_map:
         return ""
     root_id = getattr(tree, "root_node_id", None)
@@ -362,16 +383,21 @@ def _append_collapsed_body_lines(
             lines.append(f"  [{sid}] {rng}  {head}")
 
 
-def render_node(tree: Any, stable_id: str) -> str:
+def render_node(tree: Any, stable_id: str, budget: PreviewBudget | None = None) -> str:
     """Render a single CST node identified by its stable_id (C-022).
 
     Args:
         tree: CSTTree loaded for the file.
         stable_id: Stable UUID of the target node from cst_load_file (C-009).
+        budget: PreviewBudget; when provided, may return raw source for small files.
 
     Returns:
         Structured text for the node, or empty string if stable_id not found.
     """
+    if budget is not None:
+        fallback = _try_full_text_fallback(tree, budget)
+        if fallback is not None:
+            return fallback
     meta = next(
         (m for m in tree.metadata_map.values() if m.stable_id == stable_id), None
     )

@@ -27,11 +27,25 @@ class HealthCommand(Command):
     """Health command extended with package version checks."""
 
     name = "health"
+    version = "1.0.0"
     descr = "Server health with queue dependency compatibility diagnostics"
+    category = "system"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}, "additionalProperties": False}
+        from code_analysis.commands.command_metadata_helpers import empty_params_schema
+
+        return empty_params_schema(
+            description="No parameters; returns server and dependency health.",
+        )
+
+    @classmethod
+    def metadata(cls: type["HealthCommand"]) -> Dict[str, Any]:
+        from code_analysis.commands.zero_arg_commands_metadata import health_command_metadata
+
+        return health_command_metadata(cls)
 
     async def execute(self, **kwargs: Any) -> SuccessResult:
         process = psutil.Process(os.getpid())

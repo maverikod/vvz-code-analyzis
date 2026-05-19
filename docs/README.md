@@ -10,7 +10,7 @@ Email: vasilyvz@gmail.com
 - **docs/** (root) — Main documentation: COMMANDS_GUIDE.md, COMMANDS_INDEX.md, AI_TOOL_USAGE_RULES.md, CST_WORKFLOW_GUIDE.md, TEST_DATA_AI_RULES.md, README.md.
 - **docs/reports/** — Analyses and explanations (e.g. FILE_STRUCTURE_AND_OBJECT_SCHEMA.md, COMPONENT_INTERACTION.md, LOG_WRITE_SITES.md).
 - **docs/plans/** — Technical specifications and plans (mutable_cst_layer TZ/steps, cst_concept refactor plan, design).
-- **docs/standards/** — Standards and rules (DRIVER_STANDARD.md, LOG_IMPORTANCE_CRITERIA.md, UNIFIED_LOG_FORMAT.md, PROJECT_PATH_AND_VENV_RULES.md).
+- **docs/standards/** — Standards and rules (PYTHON_DOCSTRING_STANDARD.md, DRIVER_STANDARD.md, LOG_IMPORTANCE_CRITERIA.md, UNIFIED_LOG_FORMAT.md, PROJECT_PATH_AND_VENV_RULES.md).
 - **docs/commands/** — Per-block command docs:
   - **ast**, **backup**, **code_mapper**, **code_quality**, **cst**, **database_integrity**, **database_restore**, **file_management**, **log_viewer**, **project_management**, **refactor**, **repair_worker**, **search**, **vector**, **worker_management**, **worker_status**, **analysis**, **misc**
   - In each block: `README.md` (overview and command→file table), `COMMANDS.md` (index with links to per-command docs), and **one file per command** `<command_name>.md` with: purpose, arguments, return format, examples (correct and incorrect).

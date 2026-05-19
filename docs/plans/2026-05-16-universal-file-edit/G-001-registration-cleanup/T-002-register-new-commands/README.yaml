@@ -24,5 +24,6 @@ outputs:
   type: modified source file
   description: 'Registration module with four new command registrations added:
     universal_file_open, universal_file_edit, universal_file_write, universal_file_close.'
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

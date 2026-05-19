@@ -22,6 +22,7 @@ outputs:
 - name: session_entity
   type: EditSession dataclass and registry module
   description: EditSession (C-001) entity with module-level registry supporting
+    create, look up, and release operations. Sessions are not persisted across restarts.
 atomic_steps:
 - A-001
 status: draft

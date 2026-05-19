@@ -161,22 +161,37 @@ class FsCopyCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsCopyCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": cls.descr,
-            "parameters": {},
-            "return_value": {
-                "success": {"description": "Copied.", "data": {}, "example": {}}
-            },
-            "usage_examples": [],
-            "error_cases": {},
-            "best_practices": [],
-        }
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            project_file_error_cases,
+            simple_success_return,
+        )
+
+        return build_command_metadata(
+            cls,
+            detailed_description=cls.descr,
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
+                {
+                    "description": "Copy within project",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "source_path": "src/a.py",
+                        "dest_path": "src/a_copy.py",
+                    },
+                    "explanation": "Optional backup of destination when overwriting.",
+                },
+            ],
+            error_cases=project_file_error_cases(),
+            return_value=simple_success_return(
+                data_fields={"source_path": "Relative path", "dest_path": "Relative path"},
+            ),
+            best_practices=[
+                "Paths must stay inside the project root.",
+                "Run update_indexes after copy if indexes must reflect new file.",
+            ],
+        )
 
 
 class FsMoveCommand(BaseMCPCommand):
@@ -340,22 +355,34 @@ class FsMoveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsMoveCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": cls.descr,
-            "parameters": {},
-            "return_value": {
-                "success": {"description": "Moved.", "data": {}, "example": {}}
-            },
-            "usage_examples": [],
-            "error_cases": {},
-            "best_practices": [],
-        }
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            project_file_error_cases,
+            simple_success_return,
+        )
+
+        return build_command_metadata(
+            cls,
+            detailed_description=cls.descr,
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
+                {
+                    "description": "Rename within project",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "source_path": "src/old.py",
+                        "dest_path": "src/new.py",
+                    },
+                    "explanation": "Backs up source (and destination when overwriting).",
+                },
+            ],
+            error_cases=project_file_error_cases(),
+            return_value=simple_success_return(
+                data_fields={"source_path": "Relative path", "dest_path": "Relative path"},
+            ),
+            best_practices=["Does not update DB file rows; run update_indexes if needed."],
+        )
 
 
 class FsRemoveCommand(BaseMCPCommand):
@@ -454,19 +481,28 @@ class FsRemoveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsRemoveCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": cls.descr,
-            "parameters": {},
-            "return_value": {
-                "success": {"description": "Removed.", "data": {}, "example": {}}
-            },
-            "usage_examples": [],
-            "error_cases": {},
-            "best_practices": [],
-        }
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            project_file_error_cases,
+            simple_success_return,
+        )
+
+        return build_command_metadata(
+            cls,
+            detailed_description=cls.descr,
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
+                {
+                    "description": "Remove a file",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "tmp/scratch.txt",
+                    },
+                    "explanation": "Optional backup before delete when backup=true.",
+                },
+            ],
+            error_cases=project_file_error_cases(),
+            return_value=simple_success_return(),
+            best_practices=["Prefer soft-delete commands when audit trail is required."],
+        )

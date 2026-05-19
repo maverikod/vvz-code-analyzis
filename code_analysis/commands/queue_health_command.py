@@ -20,11 +20,27 @@ class QueueHealthCommand(Command):
     """Queue health with dependency version diagnostics."""
 
     name = "queue_health"
+    version = "1.0.0"
     descr = "Queue subsystem health including dependency compatibility"
+    category = "system"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}}
+        from code_analysis.commands.command_metadata_helpers import empty_params_schema
+
+        return empty_params_schema(
+            description="No parameters; inspects global queue manager health.",
+        )
+
+    @classmethod
+    def metadata(cls: type["QueueHealthCommand"]) -> Dict[str, Any]:
+        from code_analysis.commands.zero_arg_commands_metadata import (
+            queue_health_command_metadata,
+        )
+
+        return queue_health_command_metadata(cls)
 
     async def execute(self, **kwargs: Any):
         queue_cfg = self._safe_get_queue_config()

@@ -14,6 +14,7 @@ Repository-specific paths, behavior, and restrictions. Universal layout: [`PROJE
 - **Tests:** pytest under [`tests/`](../../tests/). **Non-pytest** harnesses, smoke runners, and ops scripts → [`scripts/`](../../scripts/) per **LAYOUT-07**.
 - **Configuration:** Primary runtime config at repo root [`config.json`](../../config.json) (and variants such as `config_mtls_proxy.json`); sample schemas live under [`docs/`](../). **LAYOUT-04** directory [`configs/`](../../configs/) holds sample / non-secret configuration patterns when added.
 - **Planning stack (when used):** under `docs/plans/` or `docs/tech_spec/` per agent hierarchy, consistent with [`common_agent_rules.md`](common_agent_rules.md).
+- **Runtime dependency:** `mcp-proxy-adapter>=8.10.13` (help merges `get_schema()` + `metadata()` per [`standards/METADATA_SCHEMA_STANDARD.md`](../standards/METADATA_SCHEMA_STANDARD.md)).
 
 ## Directories and files beyond the universal skeleton
 
@@ -26,7 +27,7 @@ Repository-specific paths, behavior, and restrictions. Universal layout: [`PROJE
 | `old_code/` / `backups/` | Versioned backups from the server’s backup manager; treat as generated or operational. |
 | `code_analysis/` (package) | Production code **and** generated code-map artifacts when the tool writes under the package tree (`USE_CODE_MAP` = yes — see [`PROJECT_RULES.md`](../PROJECT_RULES.md) Profile). |
 | `docs/commands/` | Command reference for the server API. |
-| `docs/plans/`, `docs/reports/`, `docs/standards/` | Design, reports, and standards per existing repo layout. |
+| `docs/plans/`, `docs/reports/`, `docs/standards/` | Design, reports, and standards per existing repo layout. Command schema/metadata: [`docs/standards/METADATA_SCHEMA_STANDARD.md`](../standards/METADATA_SCHEMA_STANDARD.md). |
 | `docs/ai_reports/` | Working AI outputs per **LAYOUT-06** (create/promote as needed). |
 | `.cursor/rules/` | IDE rules (`project_canonical.mdc`, `test-data.mdc`, `filestruct.mdc`, …). |
 

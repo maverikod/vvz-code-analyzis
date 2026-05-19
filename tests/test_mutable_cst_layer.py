@@ -94,7 +94,7 @@ class TestBuildAndSerialize:
 
 
 class TestBatchReplaceIntegration:
-    """Integration: modify_tree with multiple replace ops (batch path)."""
+    """Integration: modify_tree with multiple replace ops (LibCST sequential path)."""
 
     def test_batch_replace_two_methods_succeeds(self, tree_class_with_methods):
         """Two replace ops in one call (e.g. add docstrings to two methods) succeed."""

@@ -32,6 +32,9 @@ from code_analysis.commands.universal_file_preview.handlers.json_handler import 
 from code_analysis.commands.universal_file_preview.handlers.jsonl_handler import (
     JsonLinesFileHandler,
 )
+from code_analysis.commands.universal_file_preview.handlers.markdown_handler import (
+    MarkdownFileHandler,
+)
 from code_analysis.commands.universal_file_preview.handlers.python_handler import (
     PythonFileHandler,
 )
@@ -46,8 +49,25 @@ from code_analysis.commands.universal_file_preview.python_visualizer import (
     render_module,
     render_node,
 )
-from code_analysis.commands.universal_file_preview.session import resolve_session
-from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+from code_analysis.commands.universal_file_preview.session import (
+    merge_edit_session_into_preview_params,
+    resolve_session,
+)
+from code_analysis.commands.universal_file_edit.session import (
+    create_session,
+    release_session,
+)
+from code_analysis.commands.universal_file_edit.format_group import (
+    FormatDescriptor,
+    FORMAT_SIDECAR,
+)
+from code_analysis.commands.cst_modify_tree_ops_build import build_tree_operations
+from code_analysis.commands.universal_file_edit.sidecar_cst_apply import (
+    _normalized_cst_modify_operation,
+    _resolve_stable_to_span,
+)
+from code_analysis.core.cst_tree.tree_modifier import modify_tree
+from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_tree
 from code_analysis.core.json_tree.models import stable_node_id_for_pointer
 from code_analysis.core.yaml_tree.tree_builder import (
     load_file_to_tree as load_yaml_file_to_tree,
@@ -83,6 +103,91 @@ def test_command_name_and_schema_structure() -> None:
     assert isinstance(props, dict)
     assert "project_id" in props
     assert "file_path" in props
+    assert "session_id" in props
+
+
+def test_merge_edit_session_injects_tree_id_for_sidecar(tmp_path) -> None:
+    """Preview with session_id uses the edit session in-memory CST tree."""
+    path = tmp_path / "mod.py"
+    path.write_text(
+        "def foo():\n    return 1\n\ndef bar():\n    return 2\n",
+        encoding="utf-8",
+    )
+    tree = load_file_to_tree(str(path))
+    try:
+        foo_meta = next(
+            m
+            for m in tree.metadata_map.values()
+            if m.type == "FunctionDef" and m.name == "foo"
+        )
+        bar_meta = next(
+            m
+            for m in tree.metadata_map.values()
+            if m.type == "FunctionDef" and m.name == "bar"
+        )
+        op = {
+            "type": "replace",
+            "node_id": foo_meta.stable_id,
+            "code_lines": ["def foo():\n", "    return 99\n"],
+        }
+        resolved = _resolve_stable_to_span(op, tree)
+        built, err = build_tree_operations(
+            tree, [_normalized_cst_modify_operation(resolved)]
+        )
+        assert err is None and built
+        tree = modify_tree(tree.tree_id, built)
+
+        descriptor = FormatDescriptor(
+            format_group=FORMAT_SIDECAR,
+            handler_id="python",
+            draft_path=path.with_suffix(path.suffix + ".cst_sidecar"),
+            lockfile_path=path.with_suffix(path.suffix + ".write"),
+            available_operations=["replace"],
+        )
+        edit_sess = create_session(
+            abs_path=path,
+            descriptor=descriptor,
+            file_path="mod.py",
+            tree_id=tree.tree_id,
+        )
+        try:
+            merged = merge_edit_session_into_preview_params(
+                {
+                    "project_id": "p",
+                    "file_path": "mod.py",
+                    "session_id": edit_sess.session_id,
+                }
+            )
+            assert not isinstance(merged, PreviewError)
+            assert merged["tree_id"] == tree.tree_id
+
+            handler = PythonFileHandler()
+            session_result = resolve_session(handler, merged)
+            assert not isinstance(session_result, PreviewError)
+            cst_session, origin, _ = session_result
+            assert origin == "caller_owned"
+            bar_stable_after_edit = next(
+                m.stable_id
+                for m in cst_session.metadata_map.values()
+                if m.type == "FunctionDef" and m.name == "bar"
+            )
+            assert bar_stable_after_edit == bar_meta.stable_id
+            bar_resolved = handler.resolve_node_ref(bar_stable_after_edit, cst_session)
+            assert not isinstance(bar_resolved, PreviewError)
+            assert bar_resolved.name == "bar"
+        finally:
+            release_session(edit_sess.session_id)
+    finally:
+        remove_tree(tree.tree_id)
+
+
+def test_merge_edit_session_unknown_session_id_returns_error() -> None:
+    bogus = "00000000-0000-4000-8000-000000000099"
+    out = merge_edit_session_into_preview_params(
+        {"file_path": "a.py", "session_id": bogus}
+    )
+    assert isinstance(out, PreviewError)
+    assert out.code == INPUT_ERROR_CONFLICTING_PARAMETERS
 
 
 def test_handler_dispatcher_known_and_unknown_extensions() -> None:
@@ -91,7 +196,7 @@ def test_handler_dispatcher_known_and_unknown_extensions() -> None:
     py_h = d.dispatch("a.py")
     assert isinstance(py_h, PythonFileHandler)
     md_h = d.dispatch("notes.md")
-    assert isinstance(md_h, TextFileHandler)
+    assert isinstance(md_h, MarkdownFileHandler)
     json_h = d.dispatch("cfg.json")
     assert isinstance(json_h, JsonFileHandler)
     yaml_h = d.dispatch("cfg.yaml")
@@ -111,6 +216,21 @@ def test_resolve_session_unknown_tree_id_returns_preview_error() -> None:
     out = resolve_session(handler, {"tree_id": bogus})
     assert isinstance(out, PreviewError)
     assert out.code == INPUT_ERROR_CONFLICTING_PARAMETERS
+
+
+def test_resolve_session_md_ignores_stale_tree_id(tmp_path) -> None:
+    """Markdown preview must not bind a CST tree session from a stale tree_id."""
+    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+
+    py = tmp_path / "mod.py"
+    py.write_text("x = 1\n", encoding="utf-8")
+    tree = load_file_to_tree(str(py))
+    out = resolve_session(MarkdownFileHandler(), {"tree_id": tree.tree_id})
+    assert not isinstance(out, PreviewError)
+    session, origin, tree_id = out
+    assert session is None
+    assert origin == "none"
+    assert tree_id is None
 
 
 def test_python_handler_open_root_valid_syntax(tmp_path) -> None:
@@ -273,15 +393,16 @@ def test_yaml_handler_open_root_sequence(tmp_path) -> None:
     assert result.node_kind == NodeKind.SEQUENCE
 
 
-def test_yaml_handler_invalid_yaml_file_structure_error(tmp_path) -> None:
+def test_yaml_handler_invalid_yaml_returns_invalid_source_node(tmp_path) -> None:
     pytest.importorskip("yaml")
     path = tmp_path / "bad.yaml"
     path.write_text("key: [\n", encoding="utf-8")
     result = YamlFileHandler().open_root(str(path), None)
-    assert isinstance(result, PreviewError)
-    assert result.code == FILE_STRUCTURE_ERROR
-    assert result.details is not None
-    assert result.details.get("parser") == "yaml"
+    assert not isinstance(result, PreviewError)
+    assert result.is_invalid is True
+    assert result.node_ref == ""
+    assert "key: [" in result.attributes.get("text", "")
+    assert "parse_error" in result.attributes
 
 
 def test_yaml_handler_resolve_node_ref_mapping_key(tmp_path) -> None:
@@ -471,3 +592,40 @@ async def test_universal_file_preview_execute_budget_py_mock_db() -> None:
     focus_text = (result.data or {}).get("focus", {}).get("text")
     assert isinstance(focus_text, str)
     assert focus_text.strip()
+
+
+@pytest.mark.asyncio
+async def test_universal_file_preview_md_annotated_full_text_without_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Preview without session_id still passes budget to MarkdownFileHandler."""
+    root = tmp_path
+    (root / "projectid").write_text(
+        json.dumps({"id": "md-preview-proj"}), encoding="utf-8"
+    )
+    md = root / "notes.md"
+    md.write_text("# Title\n\nBody line.\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_project = MagicMock()
+    mock_project.root_path = str(root)
+    mock_db.get_project.return_value = mock_project
+
+    cmd = UniversalFilePreviewCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+    ):
+        params = cmd.validate_params(
+            {
+                "project_id": "md-preview-proj",
+                "file_path": "notes.md",
+                "full_text_max_lines": 9999,
+            }
+        )
+        result = await cmd.execute(**params)
+
+    assert isinstance(result, SuccessResult)
+    focus = (result.data or {}).get("focus", {})
+    assert (focus.get("attributes") or {}).get("full_text") is True
+    assert isinstance(focus.get("text"), str)
+    assert "# Title" in focus["text"]

@@ -59,13 +59,14 @@ def test_spawn_daemon_sets_cwd_to_config_parent(
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     pidfile = tmp_path / "x.pid"
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     class _Proc:
         pid = 99999
 
-    def fake_popen(_a: object, **kwargs: object) -> _Proc:
+    def fake_popen(args: list[str], **kwargs: object) -> _Proc:
         captured["cwd"] = str(kwargs.get("cwd", ""))
+        captured["args"] = args
         assert kwargs.get("env") is not None
         return _Proc()
 
@@ -79,6 +80,28 @@ def test_spawn_daemon_sets_cwd_to_config_parent(
     pid = server_manager_cli._spawn_daemon(str(cfg), pidfile)
     assert pid == 99999
     assert captured["cwd"] == str(tmp_path.resolve())
+    args = captured["args"]
+    assert isinstance(args, list)
+    cfg_idx = args.index("--config")
+    assert args[cfg_idx + 1] == "config.json"
+
+
+def test_activate_project_root_uses_relative_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    old = Path.cwd()
+    try:
+        os.chdir(other)
+        rel = server_manager_cli._activate_project_root(str(cfg))
+        assert rel == "config.json"
+        assert Path.cwd() == tmp_path.resolve()
+    finally:
+        os.chdir(old)
 
 
 def test_wait_until_daemon_stable_or_dead_false_when_exits_immediately(
@@ -150,6 +173,45 @@ def test_find_daemon_pids_matches_via_resolved_relative(
     )
 
     assert server_manager_cli._find_daemon_pids(cfg_res) == [5000]
+
+
+def test_find_daemon_pids_matches_same_inode_different_path_strings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Container /workspace vs host path to the same bind-mounted config file."""
+
+    project = tmp_path / "project"
+    workspace = tmp_path / "workspace"
+    project.mkdir()
+    workspace.mkdir()
+    host_cfg = project / "config.json"
+    host_cfg.write_text("{}", encoding="utf-8")
+    container_cfg = workspace / "config.json"
+    os.link(host_cfg, container_cfg)
+
+    container_resolved = str(container_cfg.resolve())
+    host_resolved = str(host_cfg.resolve())
+    assert container_resolved != host_resolved
+
+    ps_line = "5000 python -m code_analysis.main --config config.json --daemon\n"
+    monkeypatch.setattr(
+        server_manager_cli.subprocess,
+        "check_output",
+        lambda *_a, **_kw: ps_line,
+    )
+
+    def fake_resolve(pid: int, cfg_argv: str) -> str | None:
+        if pid == 5000 and cfg_argv == "config.json":
+            return host_resolved
+        return None
+
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_resolved_config_path_for_daemon_pid",
+        fake_resolve,
+    )
+
+    assert server_manager_cli._find_daemon_pids(container_resolved) == [5000]
 
 
 def test_root_daemon_pids_only_drops_fork_children_with_same_cmdline(

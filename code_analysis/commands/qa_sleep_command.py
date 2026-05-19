@@ -16,7 +16,11 @@ class QASleepCommand(Command):
     """Sleep in small steps and print heartbeat logs."""
 
     name = "qa_sleep"
+    version = "1.0.0"
     descr = "Deterministic sleep command for queue lifecycle regression tests"
+    category = "qa"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
     use_queue = False
 
     @classmethod
@@ -24,10 +28,26 @@ class QASleepCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "seconds": {"type": "number", "default": 30.0},
-                "tick_seconds": {"type": "number", "default": 0.5},
+                "seconds": {
+                    "type": "number",
+                    "default": 30.0,
+                    "description": "Total sleep duration in seconds.",
+                },
+                "tick_seconds": {
+                    "type": "number",
+                    "default": 0.5,
+                    "description": "Heartbeat log interval while sleeping.",
+                },
             },
+            "required": [],
+            "additionalProperties": False,
         }
+
+    @classmethod
+    def metadata(cls: type["QASleepCommand"]) -> Dict[str, Any]:
+        from code_analysis.commands.zero_arg_commands_metadata import qa_sleep_command_metadata
+
+        return qa_sleep_command_metadata(cls)
 
     async def execute(
         self, seconds: float = 30.0, tick_seconds: float = 0.5, **kwargs: Any

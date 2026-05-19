@@ -58,6 +58,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                     "description": "Path to lock file (optional, for file_watcher)",
                 },
             },
+            "required": [],
             "additionalProperties": False,
             "examples": [
                 {},

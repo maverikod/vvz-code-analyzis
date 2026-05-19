@@ -14,14 +14,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import libcst as cst
+
 from ..base_handler import FileHandler
 from ..errors import (
     PreviewError,
-    file_structure_error,
     input_error,
     INPUT_ERROR_UNKNOWN_NODE_REF,
 )
 from ..budget import PreviewBudget
+from code_analysis.core.cst_tree.node_type_utils import get_decorator_expression
+
+from ..invalid_preview import invalid_source_node
 from ..models import Node, NodeKind
 from ..python_visualizer import render_module, render_node
 
@@ -76,6 +80,7 @@ class PythonFileHandler(FileHandler):
                 if budget is not None
                 else PreviewBudget(preview_lines=20, value_preview_len=120)
             )
+            self._last_budget = _budget
             text = render_module(tree, _budget)
             root_stable_id = (
                 tree.metadata_map[tree.root_node_id].stable_id
@@ -93,7 +98,7 @@ class PythonFileHandler(FileHandler):
                 ),
             )
         except Exception as exc:
-            return file_structure_error(parser="libcst", message=str(exc))
+            return invalid_source_node(file_path, exc)
 
     def resolve_node_ref(
         self, node_ref: str, session: Any | None
@@ -115,7 +120,8 @@ class PythonFileHandler(FileHandler):
                     "No active CST session and no cached file_path to scan.",
                     details={"node_ref": node_ref},
                 )
-            open_result = self.open_root(fp, None)
+            reopen_budget = getattr(self, "_last_budget", None)
+            open_result = self.open_root(fp, None, budget=reopen_budget)
             if isinstance(open_result, PreviewError):
                 return open_result
             session = getattr(self, "_last_session", None)
@@ -140,7 +146,8 @@ class PythonFileHandler(FileHandler):
                 f"stable_id {node_ref!r} not found in current CST.",
                 details={"node_ref": node_ref},
             )
-        text = render_node(session, node_ref)
+        _budget = getattr(self, "_last_budget", None)
+        text = render_node(session, node_ref, _budget)
         parent_cst_id = meta.node_id
         return Node(
             node_kind=NodeKind.TREE_NODE,
@@ -165,7 +172,7 @@ def _cst_preview_child_nodes(tree: Any, parent_node_id: str | None) -> list[Node
     if parent_node_id is None:
         return []
     _MEANINGFUL_KINDS = frozenset(
-        {"import", "class", "function", "method", "smallstmt"}
+        {"import", "class", "function", "method", "smallstmt", "decorator"}
     )
     _TREE_NODE_KINDS = frozenset({"class", "function", "method"})
 
@@ -217,13 +224,18 @@ def _cst_preview_child_nodes(tree: Any, parent_node_id: str | None) -> list[Node
             return _load
 
         has_children = preview_kind == NodeKind.TREE_NODE
+        attrs: dict[str, Any] = {}
+        if kind_str == "decorator" and meta.type == "Decorator":
+            cst_node = tree.node_map.get(meta.node_id)
+            if isinstance(cst_node, cst.Decorator):
+                attrs["expression"] = get_decorator_expression(cst_node)
         nodes.append(
             Node(
                 node_kind=preview_kind,
                 node_ref=meta.stable_id,
                 type_label=node_type,
                 name=meta.name,
-                attributes={},
+                attributes=attrs,
                 _children_loader=_make_loader(meta.node_id) if has_children else None,
             )
         )

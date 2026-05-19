@@ -48,6 +48,12 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    @classmethod
+    def metadata(cls: type["ListWatchDirsMCPCommand"]) -> Dict[str, Any]:
+        from ..zero_arg_commands_metadata import list_watch_dirs_metadata
+
+        return list_watch_dirs_metadata(cls)
+
     async def execute(
         self: "ListWatchDirsMCPCommand",
         **kwargs: Any,

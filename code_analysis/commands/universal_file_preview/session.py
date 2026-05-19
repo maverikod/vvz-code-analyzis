@@ -15,12 +15,93 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from .base_handler import FileHandler
-from .errors import PreviewError
+from .errors import PreviewError, INPUT_ERROR_CONFLICTING_PARAMETERS, input_error
+from .handlers.markdown_handler import MarkdownFileHandler
+from .handlers.text_handler import TextFileHandler
 
 logger = logging.getLogger(__name__)
+
+
+def _handler_uses_tree_session(handler: FileHandler) -> bool:
+    """Return True when *handler* reads an in-memory CST/JSON/YAML tree session."""
+    return not isinstance(handler, (MarkdownFileHandler, TextFileHandler))
+
+
+def merge_edit_session_into_preview_params(
+    params: dict[str, Any],
+) -> dict[str, Any] | PreviewError:
+    """Bind preview to an active universal_file_edit session when session_id is set.
+
+    Injects ``tree_id`` from the edit session so preview reads the same in-memory
+    tree as ``universal_file_edit``. For text-format sessions (no tree), sets
+    ``_preview_abs_path`` to the draft file path.
+
+    Args:
+        params: Validated preview parameters (project-relative ``file_path``).
+
+    Returns:
+        Updated params dict, or PreviewError on unknown session or mismatch.
+    """
+    session_id = params.get("session_id")
+    if session_id is None:
+        return params
+
+    from code_analysis.commands.universal_file_edit.format_group import FORMAT_TEXT
+    from code_analysis.commands.universal_file_edit.session import get_session
+
+    try:
+        edit_sess = get_session(session_id)
+    except ValueError:
+        return input_error(
+            INPUT_ERROR_CONFLICTING_PARAMETERS,
+            f"session_id {session_id!r} not found in edit session registry.",
+            details={"session_id": session_id},
+        )
+
+    rel_path = params.get("file_path")
+    if rel_path is not None and Path(edit_sess.file_path) != Path(rel_path):
+        return input_error(
+            INPUT_ERROR_CONFLICTING_PARAMETERS,
+            "session_id does not match file_path for this edit session.",
+            details={
+                "session_id": session_id,
+                "file_path": rel_path,
+                "session_file_path": edit_sess.file_path,
+            },
+        )
+
+    explicit_tree_id = params.get("tree_id")
+    if edit_sess.tree_id:
+        if explicit_tree_id is not None and explicit_tree_id != edit_sess.tree_id:
+            return input_error(
+                INPUT_ERROR_CONFLICTING_PARAMETERS,
+                "tree_id conflicts with the tree bound to session_id.",
+                details={
+                    "session_id": session_id,
+                    "tree_id": explicit_tree_id,
+                    "session_tree_id": edit_sess.tree_id,
+                },
+            )
+        return {**params, "tree_id": edit_sess.tree_id}
+
+    if explicit_tree_id is not None:
+        return input_error(
+            INPUT_ERROR_CONFLICTING_PARAMETERS,
+            "tree_id was supplied but the edit session has no in-memory tree.",
+            details={"session_id": session_id, "tree_id": explicit_tree_id},
+        )
+
+    if edit_sess.format_group == FORMAT_TEXT:
+        # Text edit sessions (.md, .txt, …) have no in-memory tree; never carry tree_id.
+        merged = {k: v for k, v in params.items() if k != "tree_id"}
+        merged["_preview_abs_path"] = str(edit_sess.draft_path)
+        return merged
+
+    return params
 
 
 def resolve_session(
@@ -47,6 +128,11 @@ def resolve_session(
     Returns:
         3-tuple or PreviewError.
     """
+    if not _handler_uses_tree_session(handler):
+        # Markdown/text handlers read source from disk and honour PreviewBudget directly;
+        # a stale tree_id from another preview must not bind a tree session here.
+        return (None, "none", None)
+
     tree_id_param = params.get("tree_id")
     if tree_id_param is not None:
         # Caller-owned: CST session registry first, then YAML tree session.
@@ -57,7 +143,13 @@ def resolve_session(
             get_tree as yaml_get_tree,
         )  # noqa: PLC0415
 
-        session = cst_get_tree(tree_id_param)
+        session: Any = cst_get_tree(tree_id_param)
+        if session is None:
+            from ...core.json_tree.tree_builder import (  # noqa: PLC0415
+                get_tree as json_get_tree,
+            )
+
+            session = json_get_tree(tree_id_param)
         if session is None:
             session = yaml_get_tree(tree_id_param)
         if session is None:

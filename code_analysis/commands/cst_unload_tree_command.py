@@ -44,6 +44,12 @@ class CSTUnloadTreeCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    @classmethod
+    def metadata(cls: type["CSTUnloadTreeCommand"]) -> Dict[str, Any]:
+        from .zero_arg_commands_metadata import cst_unload_tree_metadata
+
+        return cst_unload_tree_metadata(cls)
+
     async def execute(self, tree_id: str, **kwargs: Any) -> SuccessResult:
         was_present = remove_tree(tree_id)
         return SuccessResult(

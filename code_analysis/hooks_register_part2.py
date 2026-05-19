@@ -32,7 +32,6 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
-            CreateTextFileMCPCommand,
             DeleteFileMCPCommand,
             DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
@@ -43,7 +42,6 @@ def register_commands_part2(reg: registry) -> None:
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
-        reg.register(CreateTextFileMCPCommand, "custom")
         reg.register(DeleteFileMCPCommand, "custom")
         reg.register(DeleteFilesByMaskMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")
@@ -215,6 +213,30 @@ def register_commands_part2(reg: registry) -> None:
     except Exception as e:
         logger.error(
             "Failed to register universal_file_preview command: %s",
+            e,
+            exc_info=True,
+        )
+
+    try:
+        from .commands.universal_file_edit.open_command import UniversalFileOpenCommand
+        from .commands.universal_file_edit.edit_command import UniversalFileEditCommand
+        from .commands.universal_file_edit.write_command import (
+            UniversalFileWriteCommand,
+        )
+        from .commands.universal_file_edit.close_command import (
+            UniversalFileCloseCommand,
+        )
+
+        reg.register(UniversalFileOpenCommand, "custom")
+        reg.register(UniversalFileEditCommand, "custom")
+        reg.register(UniversalFileWriteCommand, "custom")
+        reg.register(UniversalFileCloseCommand, "custom")
+        logger.info("Registered universal_file_edit commands")
+    except ImportError as e:
+        logger.warning("Failed to import universal_file_edit commands: %s", e)
+    except Exception as e:
+        logger.error(
+            "Failed to register universal_file_edit commands: %s",
             e,
             exc_info=True,
         )

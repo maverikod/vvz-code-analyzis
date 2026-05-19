@@ -128,10 +128,15 @@ class JsonFindNodeCommand(BaseMCPCommand):
             )
 
     @classmethod
-    def metadata(cls) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-        }
+    def metadata(cls: type["JsonFindNodeCommand"]) -> Dict[str, Any]:
+        from .json_tree_commands_metadata import json_tree_command_metadata
+
+        return json_tree_command_metadata(
+            cls,
+            operation="find_node",
+            detailed_description=cls.descr,
+            example_params={
+                "tree_id": "550e8400-e29b-41d4-a716-446655440000",
+                "json_pointer": "/items/0",
+            },
+        )

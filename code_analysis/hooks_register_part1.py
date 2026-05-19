@@ -42,20 +42,6 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
-        from .commands.get_file_lines_command import GetFileLinesCommand
-
-        reg.register(GetFileLinesCommand, "custom")
-    except ImportError:
-        pass
-
-    try:
-        from .commands.replace_file_lines_command import ReplaceFileLinesCommand
-
-        reg.register(ReplaceFileLinesCommand, "custom")
-    except ImportError:
-        pass
-
-    try:
         from .commands.fs_grep_command import FsGrepCommand
         from .commands.fs_copy_move_remove_commands import (
             FsCopyCommand,
@@ -82,62 +68,6 @@ def register_commands_part1(reg: registry) -> None:
         logger.error(
             "Failed to register project text file commands: %s", e, exc_info=True
         )
-
-    try:
-        from .commands.cst_load_file_command import CSTLoadFileCommand
-        from .commands.cst_modify_tree_command import CSTModifyTreeCommand
-        from .commands.cst_save_tree_command import CSTSaveTreeCommand
-        from .commands.cst_reload_tree_command import CSTReloadTreeCommand
-        from .commands.cst_find_node_command import CSTFindNodeCommand
-        from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
-        from .commands.cst_get_node_by_range_command import CSTGetNodeByRangeCommand
-        from .commands.cst_get_node_at_line_command import CSTGetNodeAtLineCommand
-        from .commands.cst_create_file_command import CSTCreateFileCommand
-        from .commands.cst_convert_and_save_command import CSTConvertAndSaveCommand
-        from .commands.cst_list_trees_command import CSTListTreesCommand
-        from .commands.cst_unload_tree_command import CSTUnloadTreeCommand
-        from .commands.list_cst_blocks_command import ListCSTBlocksCommand
-        from .commands.query_cst_command import QueryCSTCommand
-
-        reg.register(CSTLoadFileCommand, "custom")
-        reg.register(CSTModifyTreeCommand, "custom")
-        reg.register(CSTSaveTreeCommand, "custom")
-        reg.register(CSTReloadTreeCommand, "custom")
-        reg.register(CSTFindNodeCommand, "custom")
-        reg.register(CSTGetNodeInfoCommand, "custom")
-        reg.register(CSTGetNodeByRangeCommand, "custom")
-        reg.register(CSTGetNodeAtLineCommand, "custom")
-        reg.register(CSTCreateFileCommand, "custom")
-        reg.register(CSTConvertAndSaveCommand, "custom")
-        reg.register(CSTUnloadTreeCommand, "custom")
-        reg.register(CSTListTreesCommand, "custom")
-        reg.register(ListCSTBlocksCommand, "custom")
-        reg.register(QueryCSTCommand, "custom")
-        logger.info("✅ Registered CST tree commands (incl. query_cst, list_cst_blocks)")
-    except ImportError as e:
-        logger.warning("Failed to import CST tree commands: %s", e)
-
-    try:
-        from .commands.json_find_node_command import JsonFindNodeCommand
-        from .commands.json_get_node_info_command import JsonGetNodeInfoCommand
-        from .commands.json_load_file_command import JsonLoadFileCommand
-        from .commands.json_modify_tree_command import JsonModifyTreeCommand
-        from .commands.json_reload_tree_command import JsonReloadTreeCommand
-        from .commands.json_save_tree_command import JsonSaveTreeCommand
-        from .commands.list_json_blocks_command import ListJsonBlocksCommand
-
-        reg.register(JsonLoadFileCommand, "custom")
-        reg.register(JsonGetNodeInfoCommand, "custom")
-        reg.register(JsonFindNodeCommand, "custom")
-        reg.register(JsonModifyTreeCommand, "custom")
-        reg.register(JsonSaveTreeCommand, "custom")
-        reg.register(JsonReloadTreeCommand, "custom")
-        reg.register(ListJsonBlocksCommand, "custom")
-        logger.info("✅ Registered JSON tree commands")
-    except ImportError as e:
-        logger.warning("Failed to import JSON tree commands: %s", e)
-    except Exception as e:
-        logger.error("Failed to register JSON tree commands: %s", e, exc_info=True)
 
     try:
         from .commands.list_yaml_blocks_command import ListYamlBlocksCommand
@@ -297,11 +227,3 @@ def register_commands_part1(reg: registry) -> None:
         logger.warning("Failed to import code_mapper commands: %s", e)
     except Exception as e:
         logger.error("Failed to register code_mapper commands: %s", e, exc_info=True)
-
-    try:
-        from .commands.cst_apply_buffer_command import CSTApplyBufferCommand
-
-        reg.register(CSTApplyBufferCommand, "custom")
-        logger.info("✅ Registered cst_apply_buffer command")
-    except ImportError as e:
-        logger.warning("Failed to import cst_apply_buffer command: %s", e)

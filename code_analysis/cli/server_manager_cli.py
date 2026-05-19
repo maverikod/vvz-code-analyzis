@@ -139,6 +139,41 @@ def _project_root_dir(config_path: str) -> Path:
     return Path(config_path).resolve().parent
 
 
+def _config_path_relative_to_root(config_path: str) -> str:
+    """
+    Return ``config_path`` relative to the project root (config file's parent).
+
+    Daemon argv and CLI defaults use this form (e.g. ``config.json``) so paths
+    do not embed the host filesystem prefix.
+    """
+
+    resolved = Path(config_path).resolve()
+    root = resolved.parent
+    try:
+        return str(resolved.relative_to(root))
+    except ValueError:
+        return str(resolved)
+
+
+def _activate_project_root(config_path: str) -> str:
+    """
+    Set process ``cwd`` to the project root and return a project-relative config path.
+
+    Args:
+        config_path: Path to an existing config file (absolute or relative).
+
+    Returns:
+        Config path relative to the project root.
+
+    Raises:
+        OSError: If ``chdir`` to the project root fails.
+    """
+
+    resolved = Path(config_path).resolve()
+    os.chdir(resolved.parent)
+    return _config_path_relative_to_root(str(resolved))
+
+
 def _python_executable_for_daemon(config_path: str) -> str:
     """
     Python binary used to spawn ``code_analysis.main --daemon``.
@@ -265,6 +300,24 @@ def _resolved_config_path_for_daemon_pid(pid: int, cfg_argv: str) -> Optional[st
         return str((cwd_link.resolve() / p).resolve())
     except Exception:
         return None
+
+
+def _same_config_file(path_a: Optional[str], path_b: str) -> bool:
+    """
+    True when both paths refer to the same config file.
+
+    String compare first; then inode compare (bind-mount / container ``/workspace``
+    vs host path to the same file).
+    """
+
+    if path_a is None:
+        return False
+    if path_a == path_b:
+        return True
+    try:
+        return os.path.samefile(path_a, path_b)
+    except OSError:
+        return False
 
 
 def _wait_until_daemon_stable_or_dead(
@@ -498,12 +551,14 @@ def _matching_daemon_argv_pids(config_path: str) -> list[int]:
         except Exception:
             continue
 
-        if cfg_val == config_path or cfg_val == cfg_resolved:
+        if _same_config_file(cfg_val, config_path) or _same_config_file(
+            cfg_val, cfg_resolved
+        ):
             pids.append(pid)
             continue
 
         resolved = _resolved_config_path_for_daemon_pid(pid, cfg_val)
-        if resolved == cfg_resolved:
+        if _same_config_file(resolved, cfg_resolved):
             pids.append(pid)
 
     return [p for p in sorted(set(pids)) if not _is_zombie(p)]
@@ -602,23 +657,22 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     stderr is redirected to server log file (from config server.log_dir)
     so that crash tracebacks and errors are visible in logs.
 
-    Always passes an **absolute** ``--config`` path so ``ps``/``_find_daemon_pids``
-    matches regardless of the caller's current working directory.
-
-    Sets ``cwd`` to the config file's directory (project root) so ``python -m
-    code_analysis`` resolves the package when running from a source tree.
+    Passes a **project-relative** ``--config`` (e.g. ``config.json``) and sets
+    ``cwd`` to the project root so ``ps``/``_find_daemon_pids`` and container
+    mounts do not depend on the host path prefix.
 
     Args:
-        config_path: Path to config JSON.
+        config_path: Path to config JSON (relative to project root when possible).
         pidfile: Path to pidfile to write.
 
     Returns:
         PID of spawned process.
     """
     cfg_abs = str(Path(config_path).resolve())
+    cfg_argv = _config_path_relative_to_root(cfg_abs)
     project_root = str(_project_root_dir(config_path))
     python = _python_executable_for_daemon(config_path)
-    args = [python, "-m", "code_analysis.main", "--config", cfg_abs, "--daemon"]
+    args = [python, "-m", "code_analysis.main", "--config", cfg_argv, "--daemon"]
 
     stderr_dest: _StderrDest = subprocess.DEVNULL
     log_file_path = _daemon_log_file(cfg_abs)
@@ -951,8 +1005,16 @@ def server(argv: Optional[list[str]] = None) -> int:
     sub.add_parser("status")
     ns = parser.parse_args(argv)
 
-    config_path = _resolve_config_path(ns.config)
-    if config_path is None:
+    config_path_abs = _resolve_config_path(ns.config)
+    if config_path_abs is None:
+        return 2
+    try:
+        config_path = _activate_project_root(config_path_abs)
+    except OSError as exc:
+        print(
+            f"error: cannot change to project root for config: {exc}",
+            file=sys.stderr,
+        )
         return 2
 
     if ns.cmd == "start":

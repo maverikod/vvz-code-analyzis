@@ -186,8 +186,33 @@ def _decorator_headline(meta: Any, tree: Any = None) -> str:
     return "@..."
 
 
-def _try_full_text_fallback(tree: Any, budget: PreviewBudget) -> str | None:
-    """Return raw file source when the file is shorter than ``full_text_max_lines``."""
+_UUID_PREFIX_WIDTH = 39  # "[" + 36-char UUID + "] "
+
+
+def _annotated_line_ref_priority(meta: Any) -> tuple[int, int]:
+    """Sort key for choosing one stable_id per source line (lower = preferred).
+
+    Annotated full-text must expose statement-level refs (``SimpleStatementLine``,
+    ``FunctionDef``, …) so ``universal_file_edit`` can replace whole lines. Inner
+    CST leaves (``Name``, ``Integer``, …) share the same ``start_line`` but must
+    not win the prefix slot.
+    """
+    kind = getattr(meta, "kind", None) or ""
+    typ = getattr(meta, "type", None) or ""
+    start = meta.start_line or 0
+    end = meta.end_line if meta.end_line is not None else start
+    span = max(0, end - start)
+    if kind == "stmt":
+        return (0, -span)
+    if typ in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+        return (1, -span)
+    if kind in ("function", "method", "class", "import", "smallstmt", "decorator"):
+        return (2, -span)
+    return (3, span)
+
+
+def _annotated_full_text(tree: Any, budget: PreviewBudget) -> str | None:
+    """Return source with stable_id prefixes when file < ``full_text_max_lines``."""
     if budget.full_text_max_lines <= 0:
         return None
     if not hasattr(tree, "metadata_map") or not tree.metadata_map:
@@ -200,8 +225,34 @@ def _try_full_text_fallback(tree: Any, budget: PreviewBudget) -> str | None:
         return None
     file_path = getattr(tree, "file_path", None)
     if file_path and pathlib.Path(file_path).is_file():
-        return pathlib.Path(file_path).read_text(encoding="utf-8")
-    return None
+        source_lines = pathlib.Path(file_path).read_text(encoding="utf-8").splitlines()
+    else:
+        module = getattr(tree, "module", None)
+        code = getattr(module, "code", None) if module is not None else None
+        if not isinstance(code, str) or not code:
+            return None
+        source_lines = code.splitlines()
+    line_to_stable_id: dict[int, str] = {}
+    line_priority: dict[int, tuple[int, int]] = {}
+    for meta in tree.metadata_map.values():
+        start = meta.start_line
+        if start is None:
+            continue
+        stable_id = meta.stable_id
+        if not stable_id:
+            continue
+        priority = _annotated_line_ref_priority(meta)
+        prev = line_priority.get(start)
+        if prev is None or priority < prev:
+            line_to_stable_id[start] = stable_id
+            line_priority[start] = priority
+    blank_prefix = " " * _UUID_PREFIX_WIDTH
+    out_lines: list[str] = []
+    for i, line in enumerate(source_lines, start=1):
+        sid = line_to_stable_id.get(i)
+        prefix = f"[{sid}] " if sid else blank_prefix
+        out_lines.append(prefix + line)
+    return "\n".join(out_lines)
 
 
 def render_module(tree: Any, budget: PreviewBudget) -> str:
@@ -214,7 +265,7 @@ def render_module(tree: Any, budget: PreviewBudget) -> str:
     Returns:
         Multi-line structured text of the module.
     """
-    fallback = _try_full_text_fallback(tree, budget)
+    fallback = _annotated_full_text(tree, budget)
     if fallback is not None:
         return fallback
     if not hasattr(tree, "metadata_map") or not tree.metadata_map:
@@ -395,7 +446,7 @@ def render_node(tree: Any, stable_id: str, budget: PreviewBudget | None = None) 
         Structured text for the node, or empty string if stable_id not found.
     """
     if budget is not None:
-        fallback = _try_full_text_fallback(tree, budget)
+        fallback = _annotated_full_text(tree, budget)
         if fallback is not None:
             return fallback
     meta = next(

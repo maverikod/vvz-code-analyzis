@@ -1,0 +1,435 @@
+"""Unit tests for universal_file_edit command helpers."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.commands.cst_modify_tree_ops_build import build_tree_operations
+from code_analysis.commands.universal_file_edit.edit_command import (
+    UniversalFileEditCommand,
+)
+from code_analysis.commands.universal_file_edit.sidecar_cst_apply import (
+    _normalized_cst_modify_operation,
+    _resolve_stable_to_span,
+)
+from code_analysis.commands.universal_file_edit.format_group import resolve_format_group
+from code_analysis.commands.universal_file_edit.session import (
+    create_session,
+    release_session,
+)
+from code_analysis.core.cst_tree.tree_builder import (
+    get_tree,
+    load_file_to_tree,
+    remove_tree,
+)
+from code_analysis.core.cst_tree.tree_modifier import modify_tree
+from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
+from code_analysis.commands.universal_file_edit.write_command import (
+    UniversalFileWriteCommand,
+)
+
+
+def test_normalized_cst_modify_operation_maps_type_to_action() -> None:
+    op = {"type": "replace", "node_id": "00000000-0000-4000-8000-000000000001"}
+    normalized = _normalized_cst_modify_operation(op)
+    assert normalized["action"] == "replace"
+    assert normalized["type"] == "replace"
+
+
+def test_validate_replace_snippet_via_module_accepts_assignment() -> None:
+    op = {
+        "type": "replace",
+        "node_id": "00000000-0000-4000-8000-000000000001",
+        "code_lines": ["DEFAULT_TIMEOUT = 60"],
+    }
+    normalized = _normalized_cst_modify_operation(op)
+    assert "DEFAULT_TIMEOUT = 60" in normalized.get("code", "")
+    assert "code_lines" not in normalized
+
+
+def test_normalized_cst_modify_operation_prefers_explicit_action() -> None:
+    op = {"type": "insert", "action": "delete", "node_id": "x"}
+    normalized = _normalized_cst_modify_operation(op)
+    assert normalized["action"] == "delete"
+
+
+def test_universal_file_write_command_inherits_base_mcp_command() -> None:
+    assert issubclass(UniversalFileWriteCommand, BaseMCPCommand)
+    assert hasattr(UniversalFileWriteCommand, "run")
+    assert UniversalFileWriteCommand.name == "universal_file_write"
+
+
+def test_normalized_cst_modify_operation_leaves_op_without_type_unchanged() -> None:
+    op = {"node_id": "00000000-0000-4000-8000-000000000001"}
+    normalized = _normalized_cst_modify_operation(op)
+    assert "action" not in normalized
+
+
+def test_resolve_stable_to_span_allows_second_edit_after_tree_rebuild(
+    tmp_path,
+) -> None:
+    path = tmp_path / "sample.py"
+    path.write_text(
+        "def foo():\n    return 1\n",
+        encoding="utf-8",
+    )
+    tree = load_file_to_tree(str(path))
+    try:
+        func_meta = next(
+            m
+            for m in tree.metadata_map.values()
+            if m.type == "FunctionDef" and m.name == "foo"
+        )
+        stable_id = func_meta.stable_id
+        op = {
+            "type": "replace",
+            "node_id": stable_id,
+            "code_lines": ["def foo():\n", "    return 2\n"],
+        }
+        resolved = _resolve_stable_to_span(op, tree)
+        built, err = build_tree_operations(
+            tree, [_normalized_cst_modify_operation(resolved)]
+        )
+        assert err is None and built
+        tree = modify_tree(tree.tree_id, built)
+        write_sidecar_atomic(path, tree)
+
+        resolved2 = _resolve_stable_to_span(op, tree)
+        built2, err2 = build_tree_operations(
+            tree, [_normalized_cst_modify_operation(resolved2)]
+        )
+        assert err2 is None and built2
+        assert resolved2["node_id"] in tree.metadata_map
+        assert resolved2["node_id"] != stable_id or stable_id in tree.metadata_map
+    finally:
+        remove_tree(tree.tree_id)
+
+
+@pytest.mark.asyncio
+async def test_failed_insert_rolls_back_in_memory_tree(tmp_path) -> None:
+    """Invalid insert must not leave a mutated in-memory tree (BUG-004)."""
+    path = tmp_path / "future_first.py"
+    path.write_text(
+        "from __future__ import annotations\n\nx = 1\n",
+        encoding="utf-8",
+    )
+    tree = load_file_to_tree(str(path))
+    original_code = tree.module.code
+    descriptor = resolve_format_group(path)
+    session = create_session(
+        path,
+        descriptor,
+        file_path=path.name,
+        tree_id=tree.tree_id,
+    )
+    try:
+        cmd = UniversalFileEditCommand()
+        result = await cmd.execute(
+            project_id="test-project",
+            session_id=session.session_id,
+            operations=[
+                {
+                    "type": "insert",
+                    "parent_node_id": "__root__",
+                    "position": "first",
+                    "code_lines": ["import sys"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        restored = get_tree(tree.tree_id)
+        assert restored is not None
+        assert restored.module.code == original_code
+        assert "import sys" not in restored.module.code
+    finally:
+        release_session(session.session_id)
+        remove_tree(tree.tree_id)
+
+
+_CLASS_TWO_METHODS = """
+class Foo:
+    def method_a(self) -> int:
+        return 1
+
+    def method_b(self) -> str:
+        return "original"
+"""
+
+
+def _function_stable_ids_by_name(
+    tree_id: str, names: tuple[str, ...]
+) -> dict[str, str]:
+    tree = get_tree(tree_id)
+    assert tree is not None
+    root_id = tree.root_node_id
+    found: dict[str, str] = {}
+    for meta in tree.metadata_map.values():
+        if (
+            meta.type == "FunctionDef"
+            and meta.name in names
+            and meta.parent_id != root_id
+        ):
+            found[meta.name] = meta.stable_id
+    assert set(found) == set(names)
+    return found
+
+
+_DOG_CLASSMETHOD = """
+class Dog:
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Dog':
+        return cls(data['name'])
+"""
+
+
+@pytest.mark.asyncio
+async def test_universal_file_edit_preserves_decorator_stable_id(tmp_path) -> None:
+    """Replace method body without @ lines must keep decorator stable_id (BUG-008b)."""
+    path = tmp_path / "dog.py"
+    path.write_text(_DOG_CLASSMETHOD.strip(), encoding="utf-8")
+    tree = load_file_to_tree(str(path))
+    dec_stable = fn_stable = None
+    for m in tree.metadata_map.values():
+        if m.type == "Decorator":
+            dec_stable = m.stable_id
+        if m.type == "FunctionDef" and m.name == "from_dict":
+            fn_stable = m.stable_id
+    assert dec_stable and fn_stable
+    descriptor = resolve_format_group(path)
+    session = create_session(
+        path,
+        descriptor,
+        file_path=path.name,
+        tree_id=tree.tree_id,
+    )
+    try:
+        cmd = UniversalFileEditCommand()
+        result = await cmd.execute(
+            project_id="test-project",
+            session_id=session.session_id,
+            operations=[
+                {
+                    "type": "replace",
+                    "node_id": fn_stable,
+                    "code_lines": [
+                        "def from_dict(cls, data: dict) -> 'Dog':",
+                        '    """Create from dict."""',
+                        "    return cls(**data)",
+                    ],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        updated = get_tree(session.tree_id)
+        assert updated is not None
+        dec_after = None
+        for m in updated.metadata_map.values():
+            if m.type == "Decorator":
+                dec_after = m.stable_id
+        assert dec_after == dec_stable
+        assert "@classmethod" in updated.module.code
+    finally:
+        release_session(session.session_id)
+        remove_tree(tree.tree_id)
+
+
+@pytest.mark.asyncio
+async def test_batch_two_independent_replaces(tmp_path) -> None:
+    """Two sequential replaces must both apply (refresh node_ref between edits)."""
+    path = tmp_path / "cls.py"
+    path.write_text(_CLASS_TWO_METHODS.strip(), encoding="utf-8")
+    tree = load_file_to_tree(str(path))
+    stable_ids = _function_stable_ids_by_name(tree.tree_id, ("method_a", "method_b"))
+    descriptor = resolve_format_group(path)
+    session = create_session(
+        path,
+        descriptor,
+        file_path=path.name,
+        tree_id=tree.tree_id,
+    )
+    try:
+        cmd = UniversalFileEditCommand()
+        result = await cmd.execute(
+            project_id="test-project",
+            session_id=session.session_id,
+            operations=[
+                {
+                    "type": "replace",
+                    "node_id": stable_ids["method_a"],
+                    "code_lines": [
+                        "def method_a(self) -> int:",
+                        "    return 1",
+                    ],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        updated = get_tree(session.tree_id)
+        assert updated is not None
+        method_b_stable = next(
+            m.stable_id
+            for m in updated.metadata_map.values()
+            if m.type == "FunctionDef" and m.name == "method_b"
+        )
+        result2 = await cmd.execute(
+            project_id="test-project",
+            session_id=session.session_id,
+            operations=[
+                {
+                    "type": "replace",
+                    "node_id": method_b_stable,
+                    "code_lines": [
+                        "def method_b(self) -> str:",
+                        "    return 'updated'",
+                    ],
+                },
+            ],
+        )
+        assert isinstance(result2, SuccessResult)
+        assert result2.data.get("success") is True
+        assert result2.data.get("updated") is True
+        assert session.tree_id is not None
+        final = get_tree(session.tree_id)
+        assert final is not None
+        code = final.module.code
+        assert "return 'updated'" in code
+        assert 'return "original"' not in code
+    finally:
+        release_session(session.session_id)
+        remove_tree(tree.tree_id)
+
+
+_SANDBOX_MODULE = '''"""Sandbox test module."""
+
+from __future__ import annotations
+
+
+DEFAULT_TIMEOUT = 30
+
+
+def greet(name: str) -> str:
+    """Return a greeting string."""
+    return f"Hello, {name}!"
+'''
+
+
+@pytest.mark.asyncio
+async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
+    """node_ref from annotated full-text must replace SimpleStatementLine (SUB-1)."""
+    import re
+    from unittest.mock import MagicMock, patch
+
+    from code_analysis.commands.base_mcp_command import BaseMCPCommand
+    from code_analysis.commands.universal_file_edit.open_command import (
+        UniversalFileOpenCommand,
+    )
+    from code_analysis.commands.universal_file_edit.write_command import (
+        UniversalFileWriteCommand,
+    )
+    from code_analysis.commands.universal_file_preview.budget import PreviewBudget
+    from code_analysis.commands.universal_file_preview.python_visualizer import (
+        _annotated_full_text,
+    )
+    from code_analysis.commands.universal_file_preview_command import (
+        UniversalFilePreviewCommand,
+    )
+
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / "projectid").write_text(
+        '{"id": "00000000-0000-0000-0000-000000000002"}\n',
+        encoding="utf-8",
+    )
+    rel = "sandbox_test.py"
+    path = tmp_path / rel
+    path.write_text(_SANDBOX_MODULE, encoding="utf-8")
+    tree = load_file_to_tree(str(path))
+    budget = PreviewBudget(
+        preview_lines=200,
+        value_preview_len=120,
+        full_text_max_lines=500,
+    )
+    annotated = _annotated_full_text(tree, budget)
+    assert annotated is not None
+    timeout_line = next(
+        line for line in annotated.splitlines() if "DEFAULT_TIMEOUT" in line
+    )
+    stable = re.match(r"\[([0-9a-f-]{36})\]", timeout_line).group(1)
+    stmt_meta = next(
+        m
+        for m in tree.metadata_map.values()
+        if m.type == "SimpleStatementLine" and m.start_line == 6
+    )
+    assert stable == stmt_meta.stable_id
+
+    project_id = "00000000-0000-0000-0000-000000000002"
+    db = MagicMock()
+    pr = MagicMock()
+    pr.root_path = str(tmp_path.resolve())
+    db.get_project.return_value = pr
+
+    op = UniversalFileOpenCommand()
+    with patch.object(BaseMCPCommand, "_open_database_from_config", return_value=db):
+        opened = await op.execute(
+            **op.validate_params({"project_id": project_id, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    sid = str(opened.data["session_id"])
+
+    prev = UniversalFilePreviewCommand()
+    with patch.object(BaseMCPCommand, "_open_database_from_config", return_value=db):
+        preview_res = await prev.execute(
+            **prev.validate_params(
+                {
+                    "project_id": project_id,
+                    "file_path": rel,
+                    "session_id": sid,
+                    "full_text_max_lines": 500,
+                }
+            )
+        )
+    focus_line = next(
+        line
+        for line in preview_res.data["focus"]["text"].splitlines()
+        if "DEFAULT_TIMEOUT" in line
+    )
+    preview_stable = re.match(r"\[([0-9a-f-]{36})\]", focus_line).group(1)
+
+    from code_analysis.commands.universal_file_edit.session import get_session
+
+    sess_tree = get_tree(get_session(sid).tree_id or "")
+    assert sess_tree is not None
+    session_stmt = next(
+        m
+        for m in sess_tree.metadata_map.values()
+        if m.type == "SimpleStatementLine" and m.start_line == 6
+    )
+    assert preview_stable == session_stmt.stable_id
+
+    cmd = UniversalFileEditCommand()
+    with patch.object(BaseMCPCommand, "_open_database_from_config", return_value=db):
+        edit_res = await cmd.execute(
+            project_id=project_id,
+            session_id=sid,
+            operations=[
+                {
+                    "type": "replace",
+                    "node_ref": preview_stable,
+                    "code_lines": ["DEFAULT_TIMEOUT = 60\n"],
+                }
+            ],
+        )
+        assert isinstance(edit_res, SuccessResult)
+        wr = UniversalFileWriteCommand()
+        write_preview = await wr.execute(project_id=project_id, session_id=sid)
+        diff = str(write_preview.data.get("diff", ""))
+        assert "DEFAULT_TIMEOUT = 60" in diff
+        commit = await wr.execute(project_id=project_id, session_id=sid)
+        assert commit.data.get("phase") == "committed"
+        assert "DEFAULT_TIMEOUT = 60" in path.read_text(encoding="utf-8")
+
+    release_session(sid)
+    remove_tree(tree.tree_id)

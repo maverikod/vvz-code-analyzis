@@ -142,19 +142,45 @@ class UniversalFileReadCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileReadCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "detailed_description": cls.descr,
-            "registry_discovery_python": (
-                "code_analysis.core.file_handlers.registry — get_handler_schema, "
-                "list_handler_mappings, HANDLER_IDS"
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            project_file_error_cases,
+            simple_success_return,
+        )
+
+        return build_command_metadata(
+            cls,
+            detailed_description=(
+                cls.descr
+                + " Registry discovery: code_analysis.core.file_handlers.registry "
+                "(get_handler_schema, list_handler_mappings, HANDLER_IDS)."
             ),
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-        }
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
+                {
+                    "description": "Read a markdown file",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "docs/README.md",
+                    },
+                    "explanation": "Routes by extension before I/O.",
+                },
+            ],
+            error_cases={
+                **project_file_error_cases(),
+                "UNSUPPORTED_FILE_EXTENSION": {
+                    "description": "Extension not mapped (e.g. .toml).",
+                },
+            },
+            return_value=simple_success_return(
+                data_fields={"handler_id": "text|json|yaml|python", "operation": "read"},
+            ),
+            best_practices=[
+                "Prefer this over read_project_text_file for new integrations.",
+                "Use universal_file_preview before large structured reads.",
+            ],
+        )
 
     async def execute(
         self,

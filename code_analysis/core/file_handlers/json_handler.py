@@ -27,6 +27,7 @@ from .base import (
     standard_error_result,
 )
 from .diff_support import diff_data_for_text_mutation
+from .path_utils import ensure_parent_directories
 from .registry import HANDLER_JSON, get_handler_schema
 from .text_handler import diff_context_lines_from_extra
 
@@ -232,8 +233,20 @@ class JsonFileHandler(BaseFileHandler):
                 data={
                     **diff_payload,
                     "would_change": changed,
+                    "would_create": not abs_path.exists(),
                     "serialized": after_text,
                 },
+            )
+
+        create_parent_dirs = bool(request.extra.get("create_parent_dirs", True))
+        parent_err = ensure_parent_directories(
+            abs_path, create_parent_dirs=create_parent_dirs
+        )
+        if parent_err:
+            return standard_error_result(
+                code="PARENT_DIR_MISSING",
+                message=parent_err,
+                request=request,
             )
 
         db_ex = _require_db_and_root(request)
@@ -251,6 +264,7 @@ class JsonFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 database=database,
                 backup=request.backup,
+                create_parent_dirs=create_parent_dirs,
             )
         finally:
             remove_tree(tid)

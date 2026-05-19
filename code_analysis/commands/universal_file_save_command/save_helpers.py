@@ -1,45 +1,13 @@
-"""
-MCP command: universal_file_save
-
-Registry-first full-file save: routes by extension to text, JSON, YAML, or Python
-handlers. Resolves handler before validation, backup, or writes.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
+"""Helpers for universal_file_save handler results."""
 
 from __future__ import annotations
-import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, Type
+
+from typing import Any, Dict
+
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
-from .base_mcp_command import BaseMCPCommand
-from .project_text_file_guard import reject_if_write_under_project_venv
-from .registration import (
-    MCP_FILE_MANAGEMENT_REGISTRY_HELP,
-    REGISTRY_SCHEMA_DISCOVERY_SHORT,
-)
-from ..core.backup_manager import BackupManager
-from ..core.git_integration import commit_after_write
-from ..core.exceptions import ValidationError
-from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
-from ..core.file_handlers.json_handler import JsonFileHandler
-from ..core.file_handlers.python_handler import PythonFileHandler
-from ..core.file_handlers.registry import (
-    HANDLER_JSON,
-    HANDLER_PYTHON,
-    HANDLER_TEXT,
-    HANDLER_YAML,
-    RegistryError,
-    resolve_handler,
-)
-from ..core.file_handlers.text_handler import (
-    TextFileHandler,
-    persist_plain_text_file_metadata,
-)
-from ..core.file_handlers.yaml_handler import YamlFileHandler
-from ..core.file_lock import file_lock
-from ..core.path_normalization import normalize_path_simple
+
+from code_analysis.core.file_handlers.base import FileHandlerResult
+
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
     data: Dict[str, Any] = {
@@ -55,11 +23,12 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
     return SuccessResult(data=data)
 
 
-
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
+    # FileHandlerResult.code is a string semantic code; ErrorResult is typed as int for
+    # JSON-RPC but this codebase uses str codes end-to-end for universal save.
     return ErrorResult(
         message=fr.message or fr.code,
-        code=fr.code or "VALIDATION_FAILED",
+        code=fr.code or "VALIDATION_FAILED",  # type: ignore[arg-type]
         details=fr.details
         or {
             "file_path": fr.file_path,
@@ -67,6 +36,3 @@ def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
             "operation": fr.operation,
         },
     )
-
-
-

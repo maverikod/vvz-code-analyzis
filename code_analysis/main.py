@@ -126,8 +126,7 @@ def main() -> None:
 
     run_workers_directly_and_start_monitoring(worker_manager)
 
-    # Initialize shared database before accepting requests (startup event may not run
-    # depending on ASGI server; ensure DB is set in this process).
+    # Best-effort DB before Hypercorn; startup handlers retry if this fails (degraded).
     try:
         db = open_database_from_config_impl(
             BaseMCPCommand._resolve_config_path,
@@ -137,17 +136,12 @@ def main() -> None:
         set_shared_database(db)
         main_logger.info("Shared database connection set (main)")
     except Exception as e:
-        main_logger.error(
-            "Failed to open shared database before server start: %s",
+        main_logger.warning(
+            "Shared database not available before server start (%s); "
+            "process continues — DB open will be retried from startup handlers.",
             e,
             exc_info=True,
         )
-        print(
-            f"❌ Failed to open shared database: {e}",
-            flush=True,
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     engine = ServerEngineFactory.get_engine("hypercorn")
     if not engine:

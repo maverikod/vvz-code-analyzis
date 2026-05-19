@@ -50,6 +50,7 @@ class Node:
 
     node_kind: NodeKind
     node_ref: str
+    is_invalid: bool = False
     type_label: str | None = None
     name: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)

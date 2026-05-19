@@ -29,5 +29,6 @@ outputs:
   type: response
   description: 'Contains draft_rebuilt flag: true when DraftFile was rebuilt from
     source (tree-temp mismatch only); false for text group and matching checksums.'
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

@@ -10,20 +10,83 @@ from __future__ import annotations
 
 import logging
 
-from typing import Optional, cast
+from typing import List, Optional, Union, cast
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider
 
 
 from .models import CSTTree
+from .node_stable_id import get_stable_id
 
-from .tree_modifier_ops_find import find_parent_in_module_by_position
+from .tree_modifier_ops_find import resolve_insert_parent_node
 
-from .tree_modifier_ops_parse import parse_code_snippet_or_comment
+from .tree_modifier_ops_parse import (
+    parse_code_snippet_for_insert,
+    parse_code_snippet_or_comment,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def _count_leading_blank_lines(raw: str) -> int:
+    """Count empty lines before the first non-empty line in a snippet."""
+    n_leading_blanks = 0
+    for ln in raw.splitlines():
+        if ln.strip() == "":
+            n_leading_blanks += 1
+        else:
+            break
+    return n_leading_blanks
+
+
+def _count_blank_leading_lines_on_statement(stmt: cst.CSTNode) -> int:
+    """Count leading EmptyLine nodes without comments on a definitional statement."""
+    if not isinstance(stmt, (cst.FunctionDef, cst.ClassDef)):
+        return 0
+    n = 0
+    for el in stmt.leading_lines:
+        if el.comment is not None:
+            break
+        n += 1
+    return n
+
+
+def _apply_insert_leading_blank_lines(
+    statements: List[Union[cst.BaseStatement, cst.EmptyLine]],
+    raw_code: str,
+) -> List[Union[cst.BaseStatement, cst.EmptyLine]]:
+    """
+    Attach leading empty lines from the snippet onto the first FunctionDef/ClassDef.
+
+    Parsed modules drop module-level EmptyLine nodes; blank separation belongs on
+    ``leading_lines`` of the first definitional statement instead.
+    """
+    n_leading_blanks = _count_leading_blank_lines(raw_code)
+    if n_leading_blanks <= 0 or not statements:
+        return statements
+
+    stmt_list: List[Union[cst.BaseStatement, cst.EmptyLine]] = [
+        s for s in statements if not isinstance(s, cst.EmptyLine)
+    ]
+    if not stmt_list:
+        return statements
+
+    first = stmt_list[0]
+    if not isinstance(first, (cst.FunctionDef, cst.ClassDef)):
+        return stmt_list
+
+    existing_blank = _count_blank_leading_lines_on_statement(first)
+    to_add = max(0, n_leading_blanks - existing_blank)
+    if to_add <= 0:
+        return stmt_list
+
+    extra = [cst.EmptyLine()] * to_add
+    stmt_list[0] = first.with_changes(
+        leading_lines=list(extra) + list(first.leading_lines)
+    )
+    return stmt_list
 
 
 def insert_node_at_position(
@@ -33,6 +96,7 @@ def insert_node_at_position(
     new_code: str,
     position: str = "last",
     position_after_index: Optional[int] = None,
+    parsed_statements: Optional[List[cst.BaseStatement]] = None,
 ) -> cst.Module:
     """
     Insert one or more nodes at a precise index in parent's body.
@@ -44,23 +108,19 @@ def insert_node_at_position(
     (FunctionDef, ClassDef, If, For, While, With, Try, ExceptHandler, Else, Finally, MatchCase).
     Does NOT support: SimpleStatementSuite (one-liners), Match (use MatchCase instead).
     """
-    parent_node: Optional[cst.CSTNode] = None
-    meta = tree.metadata_map.get(parent_node_id)
-    if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
-        parent_node = find_parent_in_module_by_position(
-            module, meta.start_line, meta.start_col
-        )
-    if parent_node is None:
-        parent_node = tree.node_map.get(parent_node_id)
+    parent_node = resolve_insert_parent_node(module, tree, parent_node_id)
     if not parent_node:
         raise ValueError(f"Parent node not found: {parent_node_id}")
 
-    # node_map may hold a distinct Module instance than the ``module`` being
-    # transformed; PositionInserter matches by object identity in leave_*.
-    if isinstance(parent_node, cst.Module):
-        parent_node = module
-
-    new_statements = parse_code_snippet_or_comment(code=new_code)
+    if parsed_statements is not None:
+        new_statements = cast(
+            List[Union[cst.BaseStatement, cst.EmptyLine]], parsed_statements
+        )
+    else:
+        new_statements = parse_code_snippet_for_insert(
+            tree, parent_node_id, code=new_code
+        )
+        new_statements = _apply_insert_leading_blank_lines(new_statements, new_code)
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 
@@ -179,7 +239,8 @@ def insert_node(
         raise ValueError(f"Parent node not found: {parent_node_id}")
 
     # Parse new code (supports multi-line); allow comment-only (EmptyLine with Comment)
-    new_statements = parse_code_snippet_or_comment(code=new_code)
+    new_statements = parse_code_snippet_for_insert(tree, parent_node_id, code=new_code)
+    new_statements = _apply_insert_leading_blank_lines(new_statements, new_code)
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 
@@ -304,10 +365,7 @@ def insert_node_relative(
         parent_node_id
     )
     parent_node: Optional[cst.CSTNode] = None
-    if parent_metadata and hasattr(parent_metadata, "start_line"):
-        parent_node = find_parent_in_module_by_position(
-            module, parent_metadata.start_line, parent_metadata.start_col
-        )
+    parent_node = resolve_insert_parent_node(module, tree, resolved_parent)
     if parent_node is None:
         parent_node = tree.node_map.get(resolved_parent) or tree.node_map.get(
             parent_node_id
@@ -323,13 +381,20 @@ def insert_node_relative(
         )
 
     # ── 5. Normalize target to statement level ───────────────────────────────
-    # Walk up parent_id chain until we find a node whose (start_line, start_col)
-    # matches a direct element of `body`. This handles cases like:
-    #   Import inside SimpleStatementLine  → normalize to SimpleStatementLine
-    #   Name inside FunctionDef            → normalize to FunctionDef
-    #   Any deeply nested node             → normalize to its statement ancestor
-    def _find_in_body(meta_start_line: int, meta_start_col: int) -> int:
-        """Return index of body element whose position matches, or -1."""
+    # Prefer stable_id on body FunctionDef/ClassDef (metadata positions can be stale
+    # after embed_stable_ids_into_tree replaces tree.module without re-indexing).
+    def _find_in_body_by_stable(stable_id: Optional[str]) -> int:
+        if not stable_id:
+            return -1
+        for i, stmt in enumerate(body):
+            if isinstance(stmt, (cst.FunctionDef, cst.ClassDef)):
+                stmt_stable = get_stable_id(stmt)
+                if stmt_stable and stmt_stable == stable_id:
+                    return i
+        return -1
+
+    def _find_in_body_by_position(meta_start_line: int, meta_start_col: int) -> int:
+        """Return index of body element whose fresh CST position matches, or -1."""
         for i, stmt in enumerate(body):
             pos = positions.get(stmt)
             if pos is None:
@@ -342,7 +407,11 @@ def insert_node_relative(
     current_meta = target_metadata
     target_index = -1
     while current_meta is not None:
-        target_index = _find_in_body(current_meta.start_line, current_meta.start_col)
+        target_index = _find_in_body_by_stable(current_meta.stable_id)
+        if target_index < 0:
+            target_index = _find_in_body_by_position(
+                current_meta.start_line, current_meta.start_col
+            )
         if target_index >= 0:
             break
         # Not found at this level — go one level up
@@ -352,9 +421,15 @@ def insert_node_relative(
         current_meta = tree.metadata_map.get(parent_id_up)
         if current_meta is None:
             break
-        # Stop if we've reached or passed the parent body container itself
-        # (no point going above the body we're inserting into)
-        if current_meta.node_id in (resolved_parent, parent_node_id):
+        # Stop only when we have walked above the parent body container.
+        # resolved_parent is the container whose body we search; stopping there
+        # is premature before the target statement is found.
+        parent_of_container_id = None
+        if resolved_parent:
+            container_meta = tree.metadata_map.get(resolved_parent)
+            if container_meta is not None:
+                parent_of_container_id = container_meta.parent_id
+        if parent_of_container_id and current_meta.node_id == parent_of_container_id:
             break
 
     if target_index < 0:
@@ -367,7 +442,8 @@ def insert_node_relative(
         )
 
     # ── 6. Build new body and apply ─────────────────────────────────────────
-    new_statements = parse_code_snippet_or_comment(code=new_code)
+    new_statements = parse_code_snippet_for_insert(tree, resolved_parent, code=new_code)
+    new_statements = _apply_insert_leading_blank_lines(new_statements, new_code)
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 

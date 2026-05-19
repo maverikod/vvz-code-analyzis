@@ -46,30 +46,31 @@ def validate_module_docstrings(source: str) -> Tuple[bool, Optional[str], List[s
     if not file_docstring or not file_docstring.strip():
         errors.append("File-level docstring is missing or empty")
 
-    # 2. Check classes and methods
+    # 2. Check classes (methods validated inside each class; ast.walk would
+    #    revisit nested FunctionDef nodes and duplicate method validation)
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            # Check class docstring
-            class_docstring = ast.get_docstring(node)
-            if not class_docstring or not class_docstring.strip():
-                errors.append(
-                    f"Class '{node.name}' (line {node.lineno}) is missing docstring"
-                )
-            else:
-                # Check class attributes are documented
-                class_attr_errors = _validate_class_docstring(node)
-                errors.extend(class_attr_errors)
+        if not isinstance(node, ast.ClassDef):
+            continue
 
-                # Check methods in class
-                for item in node.body:
-                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        method_errors = _validate_method_docstring(
-                            item, node.name, node.lineno
-                        )
-                        errors.extend(method_errors)
+        class_docstring = ast.get_docstring(node)
+        if not class_docstring or not class_docstring.strip():
+            errors.append(
+                f"Class '{node.name}' (line {node.lineno}) is missing docstring"
+            )
+        else:
+            class_attr_errors = _validate_class_docstring(node)
+            errors.extend(class_attr_errors)
 
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Top-level function
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    method_errors = _validate_method_docstring(
+                        item, node.name, node.lineno
+                    )
+                    errors.extend(method_errors)
+
+    # 3. Top-level functions only (not class methods)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             method_errors = _validate_method_docstring(node, None, node.lineno)
             errors.extend(method_errors)
 
@@ -190,6 +191,29 @@ def _validate_method_docstring(
     return errors
 
 
+def _collect_init_instance_attributes(
+    init_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    attributes: set[str],
+) -> None:
+    """Add ``self.attr`` names assigned at top level in ``__init__``."""
+    for stmt in init_node.body:
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
+                ):
+                    attributes.add(target.attr)
+        elif isinstance(stmt, ast.AnnAssign):
+            if (
+                isinstance(stmt.target, ast.Attribute)
+                and isinstance(stmt.target.value, ast.Name)
+                and stmt.target.value.id == "self"
+            ):
+                attributes.add(stmt.target.attr)
+
+
 def _extract_class_attributes(class_node: ast.ClassDef) -> List[str]:
     """
     Extract all class attributes from AST node.
@@ -224,33 +248,13 @@ def _extract_class_attributes(class_node: ast.ClassDef) -> List[str]:
             if isinstance(item.target, ast.Name):
                 attributes.add(item.target.id)
 
-        # 3. Properties: methods with @property decorator
+        # 3. Methods: __init__ instance attrs and @property names
         elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if item.name == "__init__":
+                _collect_init_instance_attributes(item, attributes)
             for decorator in item.decorator_list:
                 if isinstance(decorator, ast.Name) and decorator.id == "property":
-                    # Property name is the method name
                     attributes.add(item.name)
-
-        # 4. Instance variables in __init__
-        elif isinstance(item, ast.FunctionDef) and item.name == "__init__":
-            for stmt in item.body:
-                # Look for self.attr = value assignments
-                if isinstance(stmt, ast.Assign):
-                    for target in stmt.targets:
-                        if (
-                            isinstance(target, ast.Attribute)
-                            and isinstance(target.value, ast.Name)
-                            and target.value.id == "self"
-                        ):
-                            attributes.add(target.attr)
-                # Also check annotated assignments: self.attr: Type = value
-                elif isinstance(stmt, ast.AnnAssign):
-                    if (
-                        isinstance(stmt.target, ast.Attribute)
-                        and isinstance(stmt.target.value, ast.Name)
-                        and stmt.target.value.id == "self"
-                    ):
-                        attributes.add(stmt.target.attr)
 
     return sorted(list(attributes))
 

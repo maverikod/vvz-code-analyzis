@@ -25,6 +25,7 @@ from .tree_builder import (
     reload_tree_from_file,
     remove_tree,
 )
+from .node_stable_id import strip_inline_node_id_lines_from_source
 from .tree_sidecar import write_sidecar_atomic
 from .tree_save_verification import (
     FILE_CHANGED_SINCE_LOAD,
@@ -37,8 +38,6 @@ from .tree_save_verification import (
 )
 
 logger = logging.getLogger(__name__)
-
-
 def save_tree_to_file(
     tree_id: str,
     file_path: str,
@@ -232,7 +231,7 @@ def save_tree_to_file(
 
             # Step 3: Generate source code from CST tree (clean .py; sidecar holds ids).
             t0 = time.perf_counter()
-            clean_source_code = tree.module.code
+            clean_source_code = strip_inline_node_id_lines_from_source(tree.module.code)
             persisted_source = clean_source_code
             prebuilt_cst_tree_for_sync = tree
             timings["code_gen"] = time.perf_counter() - t0

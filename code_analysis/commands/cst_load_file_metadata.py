@@ -81,11 +81,6 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "type": "string",
                 "required": True,
             },
-            "root_dir": {
-                "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
-                "type": "string",
-                "required": False,
-            },
             "node_types": {
                 "description": "Optional filter by node types. Only nodes matching these types will be included in metadata.",
                 "type": "array",

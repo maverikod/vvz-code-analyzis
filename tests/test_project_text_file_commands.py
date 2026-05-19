@@ -180,6 +180,9 @@ class TestReadProjectTextFile:
         f = tmp_path / "foo.py"
         f.write_text("def foo():\n    return 42\n", encoding="utf-8")
         mock_db = MagicMock()
+        mock_project = MagicMock()
+        mock_project.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,

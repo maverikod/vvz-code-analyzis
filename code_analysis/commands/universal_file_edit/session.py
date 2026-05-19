@@ -36,6 +36,7 @@ class EditSession:
     sidecar_write_intent: Optional[str] = None
     fallback_reason: Optional[str] = None
     original_format_group: Optional[str] = None
+    is_invalid: bool = False
 
 
 def create_session(
@@ -49,6 +50,7 @@ def create_session(
     sidecar_write_intent: Optional[str] = None,
     fallback_reason: Optional[str] = None,
     original_format_group: Optional[str] = None,
+    is_invalid: bool = False,
 ) -> EditSession:
     """Create and register a new EditSession."""
     session_id = str(uuid.uuid4())
@@ -67,6 +69,7 @@ def create_session(
         sidecar_write_intent=sidecar_write_intent,
         fallback_reason=fallback_reason,
         original_format_group=original_format_group,
+        is_invalid=is_invalid,
     )
     _sessions[session_id] = session
     return session

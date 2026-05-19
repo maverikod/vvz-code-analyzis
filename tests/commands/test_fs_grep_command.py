@@ -52,4 +52,58 @@ async def test_fs_grep_streams_matching_lines(tmp_path) -> None:
 
     assert result.data is not None
     assert result.data["match_count"] == 2
-    assert [match["line"] for match in result.data["matches"]] == [1, 3]
+    assert [match["line_number"] for match in result.data["matches"]] == [1, 3]
+    for match in result.data["matches"]:
+        assert match["block_id"] is None
+        assert match["block_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_fs_grep_truncates_line_preview_len(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "a.txt").write_text("needle-" + ("x" * 50) + "\n", encoding="utf-8")
+
+    with patch.object(
+        FsGrepCommand, "_resolve_project_root", return_value=project_root
+    ):
+        cmd = FsGrepCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000003",
+            pattern="needle",
+            line_preview_len=10,
+        )
+
+    assert result.data is not None
+    assert result.data["matches"][0]["line"] == "needle-xxx"
+
+
+@pytest.mark.asyncio
+async def test_fs_grep_python_match_includes_block_id(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    py_path = project_root / "sample.py"
+    py_path.write_text(
+        "def hello():\n    return 'needle'\n",
+        encoding="utf-8",
+    )
+    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_tree
+
+    tree = load_file_to_tree(str(py_path))
+    remove_tree(tree.tree_id)
+
+    with patch.object(
+        FsGrepCommand, "_resolve_project_root", return_value=project_root
+    ):
+        cmd = FsGrepCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000004",
+            pattern="needle",
+            python_only=True,
+        )
+
+    assert result.data is not None
+    match = result.data["matches"][0]
+    assert match["relative_path"] == "sample.py"
+    assert match["block_id"] is not None
+    assert match["block_type"] is not None

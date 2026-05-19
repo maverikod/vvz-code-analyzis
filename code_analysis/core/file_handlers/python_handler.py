@@ -12,6 +12,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,13 @@ from ...commands.line_command_cst_gate import (
 )
 from ..cst_tree.tree_builder import get_tree
 from ..cst_tree.node_id_markers import strip_persisted_node_ids
+from .diff_support import diff_data_for_text_mutation
+from .text_handler import diff_context_lines_from_extra
+from ..cst_tree.create_python_file import create_new_python_file_from_source
+from .path_utils import (
+    ensure_parent_directories,
+    normalize_trailing_newline,
+)
 from .base import (
     VALIDATION_FAILED,
     BaseFileHandler,
@@ -34,6 +42,8 @@ from .base import (
     standard_error_result,
 )
 from .registry import HANDLER_PYTHON, get_handler_schema
+
+logger = logging.getLogger(__name__)
 
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
 
@@ -48,12 +58,8 @@ def ensure_python_suffix(file_path: str) -> None:
         raise ValueError(f"Not a configured Python handler suffix: {suf!r}")
 
 
-
-
 def is_registered_python_suffix(file_path: str) -> bool:
     return Path(file_path).suffix.lower() in PYTHON_SUFFIXES
-
-
 
 
 def _reject_line_mutation_params(
@@ -148,8 +154,6 @@ def read_python_lines_payload(
     }
 
 
-
-
 def _mcp_to_file_handler_result(
     request: FileHandlerRequest,
     mcp: SuccessResult | ErrorResult,
@@ -190,8 +194,6 @@ def _mcp_to_file_handler_result(
     )
 
 
-
-
 def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
     raw = request.extra.get("root_path")
     if not isinstance(raw, Path):
@@ -203,8 +205,6 @@ def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
     return raw
 
 
-
-
 def _ops_for_save_new_or_overwrite(
     content: str,
     *,
@@ -212,31 +212,32 @@ def _ops_for_save_new_or_overwrite(
     relative_file: str,
 ) -> List[Dict[str, Any]]:
     """
-    Build CST replace ops for full-document save.
+    Build CST replace ops for full-document save on an **existing** file.
 
-    New/empty files use ``module`` selector. Existing files must use a line range
-    covering the current module body: ``kind=module`` ignores ``new_code`` when
-    the file already has content (:class:`apply_replace_ops` behavior).
+    Uses a line range covering the whole file. Callers that create a new file must
+    seed disk content first (see :meth:`PythonFileHandler.save`), then invoke this
+    helper so the same overwrite pipeline runs as for established files.
     """
     target = (root / relative_file).resolve()
     if not target.exists():
-        return [{"selector": {"kind": "module"}, "new_code": content}]
+        return [
+            {
+                "selector": {"kind": "range", "start_line": 1, "end_line": 1},
+                "new_code": content,
+            }
+        ]
     try:
         existing = target.read_text(encoding="utf-8")
     except OSError:
-        return [{"selector": {"kind": "module"}, "new_code": content}]
+        existing = ""
     raw_lines = existing.splitlines(keepends=False)
-    line_count = len(raw_lines)
-    if line_count == 0:
-        return [{"selector": {"kind": "module"}, "new_code": content}]
+    line_count = max(len(raw_lines), 1)
     return [
         {
             "selector": {"kind": "range", "start_line": 1, "end_line": line_count},
             "new_code": content,
         },
     ]
-
-
 
 
 class PythonFileHandler(BaseFileHandler):
@@ -252,15 +253,12 @@ class PythonFileHandler(BaseFileHandler):
     :func:`code_analysis.commands.compose_cst_validation.ops_from_params`).
     """
 
-
     @property
     def handler_id(self) -> str:
         return HANDLER_PYTHON
 
-
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
         return get_handler_schema(HANDLER_PYTHON, operation)
-
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
         abs_path = request.extra.get("absolute_path")
@@ -365,7 +363,6 @@ class PythonFileHandler(BaseFileHandler):
             data=payload,
         )
 
-
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
         if pre is not None:
@@ -384,6 +381,114 @@ class PythonFileHandler(BaseFileHandler):
                 code=VALIDATION_FAILED,
                 message="extra.content (str) is required for Python save",
                 request=request,
+            )
+
+        create_parent_dirs = bool(request.extra.get("create_parent_dirs", True))
+        target = (root / request.file_path).resolve()
+        existed_before = target.exists()
+        parent_err = ensure_parent_directories(
+            target, create_parent_dirs=create_parent_dirs
+        )
+        if parent_err:
+            return standard_error_result(
+                code="PARENT_DIR_MISSING",
+                message=parent_err,
+                request=request,
+            )
+
+        if not existed_before and request.dry_run:
+            label = Path(request.file_path).name
+            ctx = diff_context_lines_from_extra(request.extra)
+            diff_payload = diff_data_for_text_mutation(
+                "",
+                normalize_trailing_newline(content),
+                include_diff=bool(request.diff),
+                before_label=f"a/{label}",
+                after_label=f"b/{label}",
+                context_lines=ctx,
+            )
+            normalized = normalize_trailing_newline(content)
+            return FileHandlerResult(
+                success=True,
+                handler_id=self.handler_id,
+                operation=request.operation,
+                file_path=request.file_path,
+                project_id=request.project_id,
+                dry_run=True,
+                changed=bool(normalized.strip()),
+                data={
+                    **diff_payload,
+                    "would_create": True,
+                    "created": True,
+                },
+            )
+
+        if not existed_before and not request.dry_run:
+            database = request.extra.get("database")
+            owned_db = False
+            if database is None:
+                from ...commands.base_mcp_command import BaseMCPCommand
+
+                database = BaseMCPCommand._open_database_from_config(auto_analyze=False)
+                owned_db = True
+            try:
+                created = create_new_python_file_from_source(
+                    absolute_path=target,
+                    project_id=request.project_id,
+                    root_dir=root,
+                    source_code=content,
+                    database=database,
+                    create_parent_dirs=create_parent_dirs,
+                    backup=bool(request.backup),
+                    commit_message=request.extra.get("commit_message"),
+                    validate=not bool(request.extra.get("validate_syntax_only", False)),
+                )
+            finally:
+                if owned_db:
+                    database.disconnect()
+
+            if not created.get("success"):
+                return FileHandlerResult(
+                    success=False,
+                    handler_id=self.handler_id,
+                    operation=request.operation,
+                    file_path=request.file_path,
+                    project_id=request.project_id,
+                    dry_run=False,
+                    changed=False,
+                    message=str(created.get("error", "create failed")),
+                    code=str(created.get("error_code", "CST_CREATE_ERROR")),
+                    details=created,
+                )
+
+            from ..git_integration import commit_after_write
+            from ...commands.base_mcp_command import BaseMCPCommand
+
+            git_cmd = str(
+                request.extra.get("git_command_name") or "python_file_handler_save"
+            )
+            git_ok, git_err = commit_after_write(
+                root.resolve(),
+                [target],
+                git_cmd,
+                commit_message_override=request.extra.get("commit_message"),
+                config_data=BaseMCPCommand._get_raw_config(),
+            )
+            if not git_ok and git_err:
+                logger.warning("Git commit after new Python file save: %s", git_err)
+
+            data = dict(created)
+            data["handler_id"] = self.handler_id
+            data["operation"] = request.operation
+            return FileHandlerResult(
+                success=True,
+                handler_id=self.handler_id,
+                operation=request.operation,
+                file_path=request.file_path,
+                project_id=request.project_id,
+                dry_run=False,
+                changed=True,
+                data=data,
             )
 
         ops = _ops_for_save_new_or_overwrite(
@@ -408,7 +513,6 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
@@ -449,7 +553,6 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)

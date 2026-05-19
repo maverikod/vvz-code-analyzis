@@ -312,6 +312,22 @@ class ServerConfig(BaseModel):
             "None means use the server default (200). Set to 0 to disable full-text preview."
         ),
     )
+    preview_max_chars_default: int = Field(
+        default=32_000,
+        description=(
+            "Default max characters for universal_file_preview post-render pagination."
+        ),
+    )
+    preview_value_preview_len_default: int = Field(
+        default=120,
+        description=(
+            "Default max inline scalar/name length for universal_file_preview summaries."
+        ),
+    )
+    grep_line_preview_len_default: int = Field(
+        default=120,
+        description="Default max line preview length returned by fs_grep.",
+    )
 
     @field_validator("port")
     @classmethod
@@ -390,6 +406,17 @@ class ServerConfig(BaseModel):
             raise ValueError(
                 "batch_max_response_bytes must be positive (overflow-to-file contract)"
             )
+        return v
+
+    @field_validator(
+        "preview_max_chars_default",
+        "preview_value_preview_len_default",
+        "grep_line_preview_len_default",
+    )
+    @classmethod
+    def validate_positive_preview_defaults(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("preview/grep length defaults must be >= 1")
         return v
 
     @field_validator("batch_output_dir")

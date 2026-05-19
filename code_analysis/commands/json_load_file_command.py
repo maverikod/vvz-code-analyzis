@@ -114,12 +114,15 @@ class JsonLoadFileCommand(BaseMCPCommand):
             )
 
     @classmethod
-    def metadata(cls) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-        }
+    def metadata(cls: type["JsonLoadFileCommand"]) -> Dict[str, Any]:
+        from .json_tree_commands_metadata import json_tree_command_metadata
+
+        return json_tree_command_metadata(
+            cls,
+            operation="load_file",
+            detailed_description=cls.descr,
+            example_params={
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "file_path": "config/settings.json",
+            },
+        )

@@ -40,6 +40,7 @@ def save_json_tree_to_file(
     project_id: str,
     database: Any,
     backup: bool = True,
+    create_parent_dirs: bool = True,
 ) -> Dict[str, Any]:
     """
     Atomic write (.tmp + replace), optional backup, File row + update_file_data_atomic_batch.
@@ -72,7 +73,16 @@ def save_json_tree_to_file(
     if target_path.suffix.lower() != ".json":
         raise ValueError(f"Target must be .json: {target_path}")
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if create_parent_dirs:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    elif not target_path.parent.exists():
+        return {
+            "success": False,
+            "file_path": str(target_path),
+            "backup_uuid": None,
+            "error": f"Parent directory does not exist: {target_path.parent}",
+            "error_code": "PARENT_DIR_MISSING",
+        }
 
     source_code = _serialize_document(tree.root_data)
     backup_uuid: Optional[str] = None

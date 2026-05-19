@@ -27,7 +27,7 @@ outputs:
   description: Identifier for the newly registered EditSession (C-001).
 - name: available_operations
   type: list of operation descriptors
-  description: Operations valid for this FormatGroup (C-002), each describing type,
+  description: Operations valid for this FormatGroup (C-002), each describing the operation type (insert, delete, replace).
 atomic_steps:
 - A-001
 status: draft

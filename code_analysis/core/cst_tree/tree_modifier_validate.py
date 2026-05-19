@@ -53,7 +53,9 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
             else (operation.code or "")
         )
         try:
-            if isinstance(node, cst.BaseExpression):
+            if meta and meta.type == "SimpleStatementLine":
+                parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
+            elif isinstance(node, cst.BaseExpression):
                 cst.parse_expression(text.strip())
             elif meta and meta.type == "Annotation":
                 parse_annotation_snippet(

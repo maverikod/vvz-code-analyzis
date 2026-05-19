@@ -28,6 +28,11 @@ def register_code_analysis_commands(reg: registry) -> None:
     """
     register_commands_part1(reg)
     register_commands_part2(reg)
+    from .commands.command_metadata_helpers import (
+        apply_metadata_finalization_to_registry,
+    )
+
+    apply_metadata_finalization_to_registry(reg)
 
 
 # Register hook
@@ -77,7 +82,6 @@ register_auto_import_module("code_analysis.commands.project_management_mcp_comma
 register_auto_import_module("code_analysis.commands.run_project_script_command")
 register_auto_import_module("code_analysis.commands.run_project_module_command")
 register_auto_import_module("code_analysis.commands.project_pip_commands")
-register_auto_import_module("code_analysis.commands.read_project_text_file_command")
 register_auto_import_module("code_analysis.commands.universal_file_read_command")
 register_auto_import_module(
     "code_analysis.commands.project_file_transfer_by_id_commands"
@@ -89,7 +93,6 @@ register_auto_import_module("code_analysis.commands.project_file_lock_status_com
 register_auto_import_module("code_analysis.commands.universal_file_save_command")
 register_auto_import_module("code_analysis.commands.universal_file_replace_command")
 register_auto_import_module("code_analysis.commands.universal_file_delete_command")
-register_auto_import_module("code_analysis.commands.write_project_text_lines_command")
 register_auto_import_module("code_analysis.commands.json_load_file_command")
 register_auto_import_module("code_analysis.commands.json_modify_tree_command")
 register_auto_import_module("code_analysis.commands.json_save_tree_command")

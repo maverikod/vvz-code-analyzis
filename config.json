@@ -1,7 +1,12 @@
 {
   "enable_qa_mcp_hooks": true,
+  "server_presentation": {
+    "title": "Code Analysis Server",
+    "version": "1.0.0",
+    "description": "Code analysis server for Python projects: CST editing, code indexes, semantic and fulltext search, refactoring helpers, backups, and quality checks (Black, Flake8, Mypy).\n\n### MCP Proxy (recommended)\n- Discover servers: `list_servers`\n- Discover projects: `list_projects` → use `project_id` for all project-scoped commands\n- Execute: `call_server(server_id=\"code-analysis-server\", copy_number=1, command=\"<name>\", params={...})`\n- Paths are project-relative (`file_path`); do not pass host filesystem `root_dir`\n- Long-running work returns `job_id`; poll with `queue_get_job_status` and `queue_get_job_logs`\n- Command schemas: `help(server_id=\"code-analysis-server\", command=\"<name>\")`\n\n### Direct API\n- OpenAPI document: `GET /openapi.json` (HTTPS/mTLS per `server` and `registration` in this config)\n- JSON-RPC command execution as described in the OpenAPI schema"
+  },
   "server": {
-    "host": "0.0.0.0",
+    "host": "172.18.0.1",
     "port": 15000,
     "protocol": "https",
     "servername": "code-analysis-server",
@@ -38,6 +43,12 @@
     "heartbeat_interval": 30,
     "server_id": "code-analysis-server",
     "server_name": "Code Analysis Server",
+    "metadata": {
+      "server_id": "code-analysis-server",
+      "server_name": "Code Analysis Server",
+      "description": "Code analysis server for Python projects: CST editing, code indexes, semantic and fulltext search, refactoring helpers, backups, and quality checks (Black, Flake8, Mypy).\n\n### MCP Proxy (recommended)\n- Discover servers: `list_servers`\n- Discover projects: `list_projects` → use `project_id` for all project-scoped commands\n- Execute: `call_server(server_id=\"code-analysis-server\", copy_number=1, command=\"<name>\", params={...})`\n- Paths are project-relative (`file_path`); do not pass host filesystem `root_dir`\n- Long-running work returns `job_id`; poll with `queue_get_job_status` and `queue_get_job_logs`\n- Command schemas: `help(server_id=\"code-analysis-server\", command=\"<name>\")`\n\n### Direct API\n- OpenAPI document: `GET /openapi.json` (HTTPS/mTLS per `server` and `registration` in this config)\n- JSON-RPC command execution as described in the OpenAPI schema",
+      "version": "1.0.0"
+    },
     "instance_uuid": "550e8400-e29b-41d4-a716-446655440000",
     "auto_on_startup": true,
     "auto_on_shutdown": true,

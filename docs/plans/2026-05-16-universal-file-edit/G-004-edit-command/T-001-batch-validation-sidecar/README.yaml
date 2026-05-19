@@ -23,5 +23,6 @@ outputs:
   type: None or error
   description: None when batch is valid; NESTED_BATCH_FORBIDDEN error when
     an ancestor-descendant pair is found.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

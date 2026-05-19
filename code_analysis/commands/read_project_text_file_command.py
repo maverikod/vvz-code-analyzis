@@ -149,22 +149,49 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
             "usage_examples": [
                 {
                     "description": "First 20 lines of README.md",
-                    "params": {
+                    "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "README.md",
                         "start_line": 1,
                         "end_line": 20,
                     },
+                    "explanation": "Delegates to universal_file_read for text.",
                 },
                 {
                     "description": "Python file (line read; handler_id=python)",
-                    "params": {
+                    "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "pkg/mod.py",
                         "start_line": 1,
                         "end_line": 50,
                     },
+                    "explanation": "Blocked program sources return CODE_FILE_FORBIDDEN.",
                 },
+            ],
+            "return_value": {
+                "success": {
+                    "description": "Lines returned from the routed handler.",
+                    "data": {"lines": "List of strings", "handler_id": "text | python | …"},
+                    "example": {"success": True, "handler_id": "text", "lines": ["# Hi"]},
+                },
+                "error": {
+                    "description": "Validation or routing failure.",
+                    "code": "CODE_FILE_FORBIDDEN | FILE_NOT_FOUND | …",
+                },
+            },
+            "error_cases": {
+                "CODE_FILE_FORBIDDEN": {
+                    "description": "Path is a blocked program-source suffix.",
+                    "solution": "Use CST commands for Python sources.",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "Path not found under project root.",
+                    "solution": "Confirm path with list_project_files.",
+                },
+            },
+            "best_practices": [
+                "Prefer universal_file_read for new integrations.",
+                "Use project-relative paths from list_projects root.",
             ],
             "error_codes": [
                 "CODE_FILE_FORBIDDEN",

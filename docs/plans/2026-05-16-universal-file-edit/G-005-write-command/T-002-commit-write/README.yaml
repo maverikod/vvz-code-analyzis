@@ -37,5 +37,6 @@ outputs:
 - name: write_error
   type: ErrorCodes (C-014) entry
   description: WRITE_FAILED when code generation fails; original restored from backup.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

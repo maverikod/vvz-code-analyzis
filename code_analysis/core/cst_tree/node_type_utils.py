@@ -8,8 +8,35 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from typing import Optional
+import uuid
 
 import libcst as cst
+
+
+def get_decorator_expression(node: cst.Decorator) -> str:
+    """Return ``@...`` source text for a LibCST Decorator node."""
+    try:
+        expr = node.decorator
+        if isinstance(expr, cst.Name):
+            return f"@{expr.value}"
+        if isinstance(expr, cst.Attribute):
+            parts: list[str] = []
+            cur: cst.BaseExpression = expr
+            while isinstance(cur, cst.Attribute):
+                parts.append(cur.attr.value)
+                cur = cur.value
+            if isinstance(cur, cst.Name):
+                parts.append(cur.value)
+            return "@" + ".".join(reversed(parts))
+        return f"@{expr}"
+    except Exception:
+        return "@decorator"
+
+
+def decorator_stable_id(parent_qualname: Optional[str], index: int) -> str:
+    """Deterministic stable_id for a decorator from parent qualname and index."""
+    key = f"{parent_qualname or 'module'}:decorator:{index}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
 
 def get_node_name(node: cst.CSTNode) -> Optional[str]:
@@ -25,6 +52,8 @@ def get_node_kind(node: cst.CSTNode, class_stack: list[str]) -> str:
     """Return the semantic kind used by CST commands and selectors."""
     if isinstance(node, cst.Module):
         return "module"
+    if isinstance(node, cst.Decorator):
+        return "decorator"
     if isinstance(node, cst.ClassDef):
         return "class"
     if isinstance(node, cst.FunctionDef):

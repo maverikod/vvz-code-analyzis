@@ -20,8 +20,10 @@ from .tree_modifier_ops_find import (
 )
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    replacement_text_includes_decorators,
     parse_annotation_snippet,
     parse_code_snippet,
+    parse_code_snippet_for_def_replace,
     parse_param_snippet,
 )
 
@@ -89,15 +91,33 @@ def replace_node(
             replacements_list = [cst.parse_expression(stripped)]
         except cst.ParserSyntaxError as exc:
             raise ValueError(f"Invalid expression syntax for replace: {exc}") from exc
+    elif isinstance(node, (cst.FunctionDef, cst.ClassDef)):
+        replacements_list = cast(
+            List[cst.CSTNode],
+            list(
+                parse_code_snippet_for_def_replace(
+                    new_code, tree=tree, target_metadata=metadata
+                )
+            ),
+        )
     else:
         replacements_list = cast(List[cst.CSTNode], list(parse_code_snippet(new_code)))
+
+    if (
+        len(replacements_list) == 1
+        and isinstance(node, (cst.FunctionDef, cst.ClassDef))
+        and isinstance(replacements_list[0], (cst.FunctionDef, cst.ClassDef))
+        and not replacement_text_includes_decorators(new_code)
+    ):
+        old_def = node
+        new_def = replacements_list[0]
+        if old_def.decorators:
+            replacements_list = [new_def.with_changes(decorators=old_def.decorators)]
 
     node_type = metadata.type if metadata else "unknown"
     parent_id = metadata.parent_id if metadata else None
     parent_metadata = tree.metadata_map.get(parent_id) if parent_id else None
     parent_type = parent_metadata.type if parent_metadata else "unknown"
-
-    # Use LibCST transformer to replace the node
     class NodeReplacer(cst.CSTTransformer):
         def __init__(self, target_node: cst.CSTNode, replacements: list[cst.CSTNode]):
             self.target_node = target_node
@@ -111,7 +131,17 @@ def replace_node(
             if original_node is self.target_node:
                 if len(self.replacements) == 1:
                     self.replaced = True
-                    return self.replacements[0]
+                    repl = self.replacements[0]
+                    if (
+                        hasattr(original_node, "leading_lines")
+                        and hasattr(repl, "leading_lines")
+                        and not repl.leading_lines
+                        and original_node.leading_lines
+                    ):
+                        repl = repl.with_changes(
+                            leading_lines=original_node.leading_lines
+                        )
+                    return repl
             return updated_node
 
         def leave_Module(
@@ -124,9 +154,18 @@ def replace_node(
                 new_body: list[cst.BaseStatement] = []
                 for stmt in original_node.body:
                     if stmt is self.target_node:
-                        new_body.extend(
-                            cast(List[cst.BaseStatement], self.replacements)
-                        )
+                        repls = list(cast(List[cst.BaseStatement], self.replacements))
+                        if (
+                            repls
+                            and hasattr(stmt, "leading_lines")
+                            and hasattr(repls[0], "leading_lines")
+                            and not repls[0].leading_lines
+                            and stmt.leading_lines
+                        ):
+                            repls[0] = repls[0].with_changes(
+                                leading_lines=stmt.leading_lines
+                            )
+                        new_body.extend(repls)
                         self.replaced = True
                     else:
                         new_body.append(stmt)
@@ -146,9 +185,18 @@ def replace_node(
                 new_body: list[cst.BaseStatement] = []
                 for stmt in body_to_check:
                     if stmt is self.target_node:
-                        new_body.extend(
-                            cast(List[cst.BaseStatement], self.replacements)
-                        )
+                        repls = list(cast(List[cst.BaseStatement], self.replacements))
+                        if (
+                            repls
+                            and hasattr(stmt, "leading_lines")
+                            and hasattr(repls[0], "leading_lines")
+                            and not repls[0].leading_lines
+                            and stmt.leading_lines
+                        ):
+                            repls[0] = repls[0].with_changes(
+                                leading_lines=stmt.leading_lines
+                            )
+                        new_body.extend(repls)
                         self.replaced = True
                     else:
                         new_body.append(stmt)

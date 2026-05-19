@@ -39,6 +39,7 @@ class HandlerDispatcher:
         _registry: dict[str, FileHandler] — mapping of lowercase extension
                  string to the registered FileHandler instance.
     """
+
     def __init__(self) -> None:
         """Initialise dispatcher with the default extension-to-handler registry."""
         self._registry: dict[str, FileHandler] = {

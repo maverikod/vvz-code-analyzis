@@ -198,6 +198,8 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     if not remover.removed:
         raise ValueError(f"Node {node_id} was not removed")
     return result
+
+
 def find_node_in_module_by_position(
     module: cst.Module,
     start_line: int,
@@ -368,6 +370,40 @@ def find_leaf_node_in_module_by_position(
     max_d = max(d for _n, d in candidates)
     deepest = [n for n, d in candidates if d == max_d]
     return deepest[0]
+
+
+_COMPOUND_INSERT_PARENT_TYPES = frozenset({"Module", "ClassDef", "FunctionDef"})
+
+
+def resolve_insert_parent_node(
+    module: cst.Module,
+    tree: CSTTree,
+    parent_node_id: str,
+) -> Optional[cst.CSTNode]:
+    """
+    Resolve an insert/move parent to the current ``module`` graph.
+
+    For ClassDef, FunctionDef, and Module parents, uses metadata + identity
+    re-alignment instead of span containment (which would pick an inner method body).
+    """
+    meta = tree.metadata_map.get(parent_node_id)
+    if meta and meta.type in _COMPOUND_INSERT_PARENT_TYPES:
+        node = tree.node_map.get(parent_node_id)
+        if node is not None:
+            resolved = resolve_replace_target_to_current_module(module, node, meta)
+            if isinstance(resolved, cst.Module):
+                return module
+            return resolved
+    if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
+        found = find_parent_in_module_by_position(
+            module, meta.start_line, meta.start_col
+        )
+        if found is not None:
+            return found
+    parent_node = tree.node_map.get(parent_node_id)
+    if isinstance(parent_node, cst.Module):
+        return module
+    return parent_node
 
 
 def find_parent_in_module_by_position(

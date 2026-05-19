@@ -109,6 +109,7 @@ It is **critical** to keep code in small files: after each write step, run code_
 
 ### 2.11 Docstrings and author
 
+- **CST-enforced layout:** [PYTHON_DOCSTRING_STANDARD.md](PYTHON_DOCSTRING_STANDARD.md) (module/class/method docstrings, `Attributes:`, type hints, patterns accepted on save).
 - In every code file, documentation file, and project file, the header docstring must contain:
   - **Author:** Vasiliy Zdanovskiy  
   - **email:** vasilyvz@gmail.com

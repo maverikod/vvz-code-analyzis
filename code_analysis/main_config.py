@@ -19,6 +19,7 @@ from code_analysis.core.storage_paths import (
     ensure_storage_dirs,
     resolve_storage_paths,
 )
+from code_analysis.main_server_presentation import sync_registration_presentation
 from code_analysis.main_validation import report_validation_failure
 
 
@@ -117,11 +118,32 @@ def ensure_storage_and_load_app_config(
     )
 
     app_config = simple_config.to_dict()
+    _merge_config_sections(app_config, full_config)
+    sync_registration_presentation(app_config)
+
+    return (app_config, simple_config, server_host, server_port)
+
+
+def _merge_config_sections(
+    app_config: dict[str, Any],
+    full_config: dict[str, Any],
+) -> None:
+    """Merge top-level and ``registration`` keys from raw JSON into app_config."""
     for key, value in full_config.items():
+        if key == "registration":
+            continue
         if key not in app_config:
             app_config[key] = value
 
-    return (app_config, simple_config, server_host, server_port)
+    src_reg = full_config.get("registration")
+    if not isinstance(src_reg, dict):
+        return
+    dst_reg = app_config.get("registration")
+    if not isinstance(dst_reg, dict):
+        app_config["registration"] = dict(src_reg)
+        return
+    for reg_key, reg_value in src_reg.items():
+        dst_reg[reg_key] = reg_value
 
 
 def apply_global_config(
@@ -138,6 +160,8 @@ def apply_global_config(
     cfg.config_data = app_config
     if hasattr(cfg, "feature_manager"):
         cfg.feature_manager.config_data = cfg.config_data
+
+    sync_registration_presentation(cfg.config_data)
 
     if app_config.get("enable_qa_mcp_hooks") is True:
         if not (os.environ.get("CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS") or "").strip():

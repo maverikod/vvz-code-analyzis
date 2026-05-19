@@ -86,7 +86,7 @@ class TestUniversalFileSaveRouting:
                 return_value=f,
             ),
             patch(
-                "code_analysis.commands.universal_file_save_command.BackupManager"
+                "code_analysis.commands.universal_file_save_command.save_command.BackupManager"
             ) as bm_cls,
         ):
             cmd = UniversalFileSaveCommand()
@@ -118,7 +118,7 @@ class TestUniversalFileSaveRouting:
                 return_value=f,
             ),
             patch(
-                "code_analysis.commands.universal_file_save_command.BackupManager"
+                "code_analysis.commands.universal_file_save_command.save_command.BackupManager"
             ) as bm_cls,
         ):
             cmd = UniversalFileSaveCommand()
@@ -192,7 +192,7 @@ class TestUniversalFileSaveRouting:
                 return_value=f,
             ),
             patch(
-                "code_analysis.commands.universal_file_save_command.persist_plain_text_file_metadata",
+                "code_analysis.commands.universal_file_save_command.save_command.persist_plain_text_file_metadata",
                 side_effect=_fake_persist,
             ),
         ):
@@ -212,3 +212,183 @@ class TestUniversalFileSaveRouting:
         assert d["changed"] is True
         assert "diff" in d
         assert f.read_text(encoding="utf-8") == "z\n"
+
+    async def test_text_create_missing_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "docs" / "new_note.md"
+        assert not target.exists()
+        mock_db = MagicMock()
+        mock_project = MagicMock()
+        mock_project.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_project
+        mock_db.select.return_value = []
+
+        def _fake_persist(**_: object) -> dict:
+            return {"success": True, "file_id": "fid"}
+
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=target,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command.save_command.persist_plain_text_file_metadata",
+                side_effect=_fake_persist,
+            ),
+        ):
+            cmd = UniversalFileSaveCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="docs/new_note.md",
+                content="# Title\n\nbody\n",
+                backup=False,
+            )
+        assert isinstance(result, SuccessResult)
+        d = result.data
+        _assert_universal_save_ok_fields(d)
+        assert d["handler_id"] == "text"
+        assert d["created"] is True
+        assert target.read_text(encoding="utf-8") == "# Title\n\nbody\n"
+
+    async def test_python_create_missing_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "pkg" / "new_mod.py"
+        assert not target.exists()
+        mock_db = MagicMock()
+        mock_project = MagicMock()
+        mock_project.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_project
+        mock_db.select.return_value = []
+        mock_db.begin_transaction.return_value = "txn-1"
+        mock_db.commit_transaction.return_value = True
+
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=target,
+            ),
+            patch(
+                "code_analysis.core.database.file_edit_lock.acquire_file_edit_lock_with_retry",
+                return_value=True,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command.save_command.commit_after_write",
+                return_value=(True, None),
+            ),
+        ):
+            cmd = UniversalFileSaveCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="pkg/new_mod.py",
+                content='"""New module."""\n\nanswer = 42\n',
+                backup=False,
+            )
+        assert isinstance(result, SuccessResult)
+        d = result.data
+        _assert_universal_save_ok_fields(d)
+        assert d["handler_id"] == "python"
+        assert d["created"] is True
+        text = target.read_text(encoding="utf-8")
+        assert "answer = 42" in text
+
+    async def test_json_create_missing_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "cfg" / "app.json"
+        assert not target.exists()
+        mock_db = MagicMock()
+        mock_project = MagicMock()
+        mock_project.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_project
+        mock_db.select.return_value = []
+        mock_db.begin_transaction.return_value = "txn-1"
+        mock_db.commit_transaction.return_value = True
+        mock_db.create_file.return_value = MagicMock(id=1)
+
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=target,
+            ),
+            patch(
+                "code_analysis.core.json_tree.json_saver.acquire_file_edit_lock_with_retry",
+                return_value=True,
+            ),
+            patch(
+                "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
+                return_value={"success": True},
+            ),
+            patch(
+                "code_analysis.core.json_tree.json_saver.release_file_edit_lock",
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command.save_command.commit_after_write",
+                return_value=(True, None),
+            ),
+        ):
+            cmd = UniversalFileSaveCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="cfg/app.json",
+                content='{"enabled": true}\n',
+                backup=False,
+            )
+        assert isinstance(result, SuccessResult)
+        d = result.data
+        _assert_universal_save_ok_fields(d)
+        assert d["handler_id"] == "json"
+        assert d["created"] is True
+        assert target.exists()
+        assert '"enabled"' in target.read_text(encoding="utf-8")
+
+    async def test_yaml_create_missing_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "deploy" / "svc.yaml"
+        assert not target.exists()
+        mock_db = MagicMock()
+        mock_project = MagicMock()
+        mock_project.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_project
+
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=target,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command.save_command.commit_after_write",
+                return_value=(True, None),
+            ),
+        ):
+            cmd = UniversalFileSaveCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="deploy/svc.yaml",
+                content="replicas: 1\n",
+                backup=False,
+            )
+        assert isinstance(result, SuccessResult)
+        d = result.data
+        _assert_universal_save_ok_fields(d)
+        assert d["handler_id"] == "yaml"
+        assert d["created"] is True
+        assert "replicas: 1" in target.read_text(encoding="utf-8")

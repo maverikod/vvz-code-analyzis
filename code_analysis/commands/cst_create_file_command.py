@@ -18,8 +18,8 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
-from ..core.cst_tree.tree_builder import create_tree_from_code
-from ..core.cst_tree.tree_saver import save_tree_to_file
+from ..core.cst_tree.create_python_file import create_new_python_file_from_source
+from ..core.cst_tree.tree_builder import get_tree
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -204,35 +204,27 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     final_source = docstring_value
 
                 t_create = time.perf_counter()
-                tree = create_tree_from_code(
-                    file_path=str(target),
-                    source_code=final_source,
-                )
-                logger.info(
-                    "[TIMING] command=cst_create_file step=create_tree elapsed_sec=%.4f",
-                    time.perf_counter() - t_create,
-                )
-                t_save = time.perf_counter()
-                result = save_tree_to_file(
-                    tree_id=tree.tree_id,
-                    file_path=str(target),
-                    root_dir=project_root,
+                result = create_new_python_file_from_source(
+                    absolute_path=target,
                     project_id=project_id,
+                    root_dir=project_root,
+                    source_code=final_source,
                     database=database,
-                    validate=True,
+                    create_parent_dirs=True,
                     backup=False,
                     commit_message=commit_message or None,
+                    validate=True,
                 )
-
                 if not result.get("success"):
                     return ErrorResult(
-                        message=result.get("error", "Failed to save tree"),
-                        code="CST_SAVE_ERROR",
+                        message=result.get("error", "Failed to create file"),
+                        code=str(result.get("error_code", "CST_SAVE_ERROR")),
                         details=result,
                     )
+                tree = get_tree(str(result["tree_id"]))
                 logger.info(
-                    "[TIMING] command=cst_create_file step=save_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
-                    time.perf_counter() - t_save,
+                    "[TIMING] command=cst_create_file step=create_and_save elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_create,
                     time.perf_counter() - t_start,
                 )
                 git_ok, git_err = commit_after_write(
@@ -245,19 +237,19 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 if not git_ok and git_err:
                     logger.warning("Git commit after cst_create_file: %s", git_err)
 
-                nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
                 data = {
                     "success": True,
-                    "tree_id": tree.tree_id,
+                    "tree_id": result["tree_id"],
                     "file_path": str(target),
-                    "nodes": nodes,
-                    "total_nodes": len(nodes),
                 }
-                if target.exists():
-                    data["file_size_bytes"] = target.stat().st_size
-                    data["file_lines"] = len(
-                        target.read_text(encoding="utf-8").splitlines()
-                    )
+                if tree is not None:
+                    nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
+                    data["nodes"] = nodes
+                    data["total_nodes"] = len(nodes)
+                if result.get("file_size_bytes") is not None:
+                    data["file_size_bytes"] = result["file_size_bytes"]
+                if result.get("file_lines") is not None:
+                    data["file_lines"] = result["file_lines"]
                 return SuccessResult(data=data)
 
             finally:

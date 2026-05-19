@@ -47,255 +47,58 @@ class CheckVectorsCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["CheckVectorsCommand"]) -> Dict[str, Any]:
-        """
-        Get detailed command metadata (man-page style documentation).
+        """Extended metadata aligned with get_schema() (project_id only)."""
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            simple_success_return,
+        )
 
-        Returns:
-            Dictionary with comprehensive command documentation including:
-            - detailed_description: Full command description
-            - parameters: Detailed parameter descriptions with examples
-            - usage_examples: Real-world usage examples
-            - error_cases: All possible error codes and their meanings
-            - return_value: Detailed return value structure
-            - best_practices: Recommended usage patterns
-        """
-        return {
-            "detailed_description": (
-                "The `check_vectors` command provides a comprehensive overview of the "
-                "vectorization status of code chunks stored in the database. "
-                "It reports on the total number of chunks, how many are ANN-ready "
-                "(FAISS: non-null `vector_id`; PostgreSQL pgvector: non-null `embedding_vec`), "
-                "how many have an `embedding_model` specified, and how many are "
-                "still pending ANN indexing. It also calculates the overall "
-                "vectorization percentage and provides a sample of indexed chunks "
-                "(FAISS ID may be null when using pgvector). "
-                "The field `vector_ann_backend` in the result is `faiss` or `pgvector`."
+        return build_command_metadata(
+            cls,
+            detailed_description=(
+                "Reports vectorization statistics for code chunks in the project: totals, "
+                "ANN-ready count (FAISS vector_id or pgvector embedding_vec), pending work, "
+                "percentage, and sample rows. Result includes vector_ann_backend (faiss|pgvector)."
             ),
-            "parameters": {
-                "root_dir": {
-                    "description": (
-                        "The root directory path of the project OR a project UUID4 identifier. "
-                        "If a valid UUID4 string is provided (e.g., '550e8400-e29b-41d4-a716-446655440000'), "
-                        "the command will look up the project in the database and use its stored root_path. "
-                        "If a file system path is provided (e.g., '/home/user/my_project' or './current_project'), "
-                        "it will be used directly. The database will be located at "
-                        "{root_dir}/data/code_analysis.db. This parameter is required."
-                    ),
-                    "type": "string",
-                    "required": True,
-                    "examples": [
-                        "/home/user/my_project",
-                        "./current_project",
-                        "550e8400-e29b-41d4-a716-446655440000",
-                    ],
-                },
-                "project_id": {
-                    "description": (
-                        "Optional. A UUID4 string representing the project identifier. "
-                        "If provided, the statistics will be filtered to include only "
-                        "chunks belonging to this specific project. If omitted, "
-                        "statistics for all projects in the database will be returned. "
-                        "This parameter is useful when you want to filter results by a different "
-                        "project than the one specified in `root_dir`. "
-                        "Example: '550e8400-e29b-41d4-a716-446655440000'"
-                    ),
-                    "type": "string",
-                    "required": False,
-                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
-                },
-            },
-            "usage_examples": [
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
                 {
-                    "title": "Get vectorization status for entire database using project path",
-                    "command": "check_vectors --root-dir /path/to/your/project",
-                    "output": {
-                        "total_chunks": 100,
-                        "chunks_with_vector": 80,
-                        "chunks_with_model": 80,
-                        "chunks_pending_vectorization": 20,
-                        "vectorization_percentage": 80.0,
-                        "sample_chunks": [
-                            {
-                                "id": 1,
-                                "chunk_type": "DocBlock",
-                                "vector_id": 42,
-                                "embedding_model": "text-embedding-ada-002",
-                                "source_type": "docstring",
-                                "text_preview": "This function performs...",
-                            }
-                        ],
-                        "root_dir": "/path/to/your/project",
-                    },
-                },
-                {
-                    "title": "Get vectorization status using project UUID",
-                    "command": "check_vectors --root-dir 550e8400-e29b-41d4-a716-446655440000",
-                    "output": {
-                        "total_chunks": 50,
-                        "chunks_with_vector": 45,
-                        "chunks_with_model": 45,
-                        "chunks_pending_vectorization": 5,
-                        "vectorization_percentage": 90.0,
-                        "sample_chunks": [...],
+                    "description": "Vectorization status for one project",
+                    "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
-                        "root_dir": "/resolved/project/path",
                     },
-                },
-                {
-                    "title": "Get vectorization status for a specific project with explicit project_id filter",
-                    "command": "check_vectors --root-dir /path/to/project --project-id 550e8400-e29b-41d4-a716-446655440000",
-                    "output": {
-                        "total_chunks": 30,
-                        "chunks_with_vector": 25,
-                        "chunks_with_model": 25,
-                        "chunks_pending_vectorization": 5,
-                        "vectorization_percentage": 83.33,
-                        "sample_chunks": [...],
-                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
-                        "root_dir": "/path/to/project",
-                    },
+                    "explanation": "Uses server-configured database for the deployment.",
                 },
             ],
-            "error_cases": {
-                "MISSING_PARAMETER": {
-                    "description": "Occurs when `root_dir` parameter is not provided or is empty.",
-                    "resolution": "Ensure `root_dir` is provided with either a valid file system path or a UUID4 project identifier.",
-                },
+            error_cases={
                 "PROJECT_NOT_FOUND": {
-                    "description": (
-                        "Occurs in two scenarios: "
-                        "1) When `root_dir` is a UUID4 but no matching project is found in the database. "
-                        "2) When `project_id` parameter is provided but no matching project is found."
-                    ),
-                    "resolution": (
-                        "Verify that the project UUID exists in the database using `list_projects` command. "
-                        "Ensure the project has been indexed using `update_indexes` command."
-                    ),
+                    "description": "project_id is not registered.",
+                    "solution": "Call list_projects and retry.",
                 },
                 "CHECK_VECTORS_ERROR": {
-                    "description": (
-                        "A general error indicating a failure during command execution. "
-                        "Common causes include: database access issues, corrupted database, "
-                        "missing database file, or unexpected data format."
-                    ),
-                    "resolution": (
-                        "Check the error details in the response. Verify database integrity using "
-                        "`get_database_status`. Ensure the database file exists and is accessible. "
-                        "Check server logs for detailed error information."
-                    ),
+                    "description": "Database or query failure.",
+                    "solution": "Check get_database_status and server logs.",
                 },
             },
-            "return_value": {
-                "type": "object",
-                "properties": {
-                    "total_chunks": {
-                        "type": "integer",
-                        "description": "Total number of code chunks in the database (or filtered by project_id if provided).",
-                    },
-                    "chunks_with_vector": {
-                        "type": "integer",
-                        "description": (
-                            "Chunks ready for semantic ANN search: non-null `vector_id` "
-                            "(FAISS) or non-null `embedding_vec` (pgvector on PostgreSQL)."
-                        ),
-                    },
-                    "chunks_with_model": {
-                        "type": "integer",
-                        "description": (
-                            "Number of chunks that have an `embedding_model` specified. "
-                            "This indicates which embedding model was used to generate the vector."
-                        ),
-                    },
-                    "chunks_pending_vectorization": {
-                        "type": "integer",
-                        "description": (
-                            "Chunks not yet ANN-indexed (null `vector_id` for FAISS, "
-                            "or null `embedding_vec` for pgvector), excluding "
-                            "`vectorization_skipped` rows."
-                        ),
-                    },
-                    "vectorization_percentage": {
-                        "type": "number",
-                        "description": (
-                            "Percentage of chunks that have been vectorized (0.0-100.0). "
-                            "Calculated as (chunks_with_vector / total_chunks * 100). "
-                            "A value of 100.0 indicates all chunks are vectorized."
-                        ),
-                    },
-                    "sample_chunks": {
-                        "type": "array",
-                        "description": (
-                            "A list of up to 5 sample vectorized chunks with detailed metadata. "
-                            "This provides a representative sample of what has been vectorized."
-                        ),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {
-                                    "type": "string",
-                                    "description": (
-                                        "code_chunks.id primary key (UUID string after DB UUID migration)."
-                                    ),
-                                },
-                                "chunk_type": {
-                                    "type": "string",
-                                    "description": "Type of the chunk (e.g., 'DocBlock', 'CodeBlock', 'Comment').",
-                                },
-                                "vector_id": {
-                                    "type": "integer",
-                                    "description": (
-                                        "FAISS index slot when using FAISS; often null with pgvector "
-                                        "(ANN storage is embedding_vec)."
-                                    ),
-                                },
-                                "embedding_model": {
-                                    "type": "string",
-                                    "description": "Name of the embedding model used (e.g., 'text-embedding-ada-002').",
-                                },
-                                "source_type": {
-                                    "type": "string",
-                                    "description": (
-                                        "Source of the chunk: 'docstring', 'comment', 'file_docstring', etc. "
-                                        "Indicates where the chunk text was extracted from."
-                                    ),
-                                },
-                                "text_preview": {
-                                    "type": "string",
-                                    "description": "First 100 characters of the chunk's text content (truncated with '...' if longer).",
-                                },
-                            },
-                        },
-                    },
-                    "project_id": {
-                        "type": "string",
-                        "description": (
-                            "The project ID if the results were filtered by a specific project "
-                            "(either via `root_dir` UUID or `project_id` parameter). "
-                            "This field is only present when filtering by project."
-                        ),
-                        "optional": True,
-                    },
-                    "root_dir": {
-                        "type": "string",
-                        "description": (
-                            "The resolved root directory path used for the query. "
-                            "If `root_dir` was provided as a UUID, this will be the resolved path from the database. "
-                            "If `root_dir` was provided as a path, this will be the normalized absolute path."
-                        ),
-                    },
+            return_value=simple_success_return(
+                data_fields={
+                    "total_chunks": "integer",
+                    "chunks_with_vector": "integer",
+                    "vectorization_percentage": "float 0-100",
+                    "sample_chunks": "up to 5 sample rows",
                 },
-            },
-            "best_practices": [
-                "Always specify `root_dir` to ensure the correct database is accessed.",
-                "Use UUID4 format for `root_dir` when you know the project ID but not the exact path.",
-                "Use `project_id` parameter to filter results when you want statistics for a different project than the one in `root_dir`.",
-                "Monitor `chunks_pending_vectorization` to identify backlogs in the vectorization pipeline.",
-                "Check `embedding_model` in `sample_chunks` to verify that the expected models are being used.",
-                "Use this command regularly to monitor vectorization progress, especially after large code changes.",
-                "If `vectorization_percentage` is low, check the vectorization worker status using `get_worker_status`.",
+                example={
+                    "total_chunks": 10,
+                    "chunks_with_vector": 8,
+                    "vectorization_percentage": 80.0,
+                },
+            ),
+            best_practices=[
+                "Run after update_indexes and vectorization worker activity.",
+                "Pair with get_worker_status when percentage is low.",
             ],
-        }
+        )
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:

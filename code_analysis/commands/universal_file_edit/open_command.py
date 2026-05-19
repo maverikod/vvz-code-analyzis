@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
-import os
 
 import shutil
 from pathlib import Path
@@ -32,9 +31,14 @@ from code_analysis.commands.universal_file_edit.format_group import (
     draft_path_for,
     lockfile_path_for,
     resolve_format_group,
-    write_lockfile_pid,
 )
-from code_analysis.commands.universal_file_edit.session import create_session
+from code_analysis.commands.universal_file_edit.open_command_metadata import (
+    get_universal_file_open_metadata,
+)
+from code_analysis.commands.universal_file_edit.session import (
+    active_session_uses_abs_path,
+    create_session,
+)
 from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
     acquire_tree_temp_for_open,
 )
@@ -114,6 +118,15 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     )
         return params
 
+    @classmethod
+    def metadata(cls: "type[UniversalFileOpenCommand]") -> Dict[str, Any]:
+        """Return extended AI/docs metadata for universal_file_open.
+
+        Returns:
+            Metadata dict with description, parameters, examples, errors.
+        """
+        return cast(Dict[str, Any], get_universal_file_open_metadata(cls))
+
     async def execute(  # type: ignore[override]
         self,
         project_id: str,
@@ -150,6 +163,13 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 return error_result_from_make_error(
                     make_error(PARSE_ERROR, f"File is locked by session {lock_owner}")
                 )
+        if active_session_uses_abs_path(abs_path):
+            return error_result_from_make_error(
+                make_error(
+                    PARSE_ERROR,
+                    "Another edit session is already open for this file.",
+                )
+            )
 
         created = False
         if not abs_path.exists():
@@ -190,6 +210,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             session_extra["original_format_group"] = fallback_info[
                 "original_format_group"
             ]
+            session_extra["is_invalid"] = fallback_info.get("is_invalid", False)
         if tree_temp_kwargs is not None:
             session = create_session(
                 abs_path=abs_path,
@@ -206,7 +227,6 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 tree_id=tree_id,
                 **session_extra,
             )
-        write_lockfile_pid(abs_path, os.getpid(), session.session_id)
         data: Dict[str, Any] = {
             "success": True,
             "session_id": session.session_id,
@@ -218,6 +238,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         if fallback_info is not None:
             data["fallback_reason"] = fallback_info["fallback_reason"]
             data["original_format_group"] = fallback_info["original_format_group"]
+        if session.is_invalid:
+            data["is_invalid"] = True
         return SuccessResult(data=data)
 
     def _resolve_abs_path(self, project_id: str, file_path: str) -> Optional[Path]:
@@ -290,9 +312,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             tree_id = self._write_draft(abs_path, descriptor, project_id)
             descriptor.__dict__["tree_id"] = tree_id
         except Exception as exc:
-            # For tree-temp (JSON/YAML) fall back to text-mode so the file
-            # remains accessible despite syntax errors.
-            if original_fg == FORMAT_TREE_TEMP:
+            # Fall back to text-mode so broken source remains editable.
+            if original_fg in (FORMAT_TREE_TEMP, FORMAT_SIDECAR):
                 try:
                     text_descriptor = FormatDescriptor(
                         format_group=FORMAT_TEXT,
@@ -306,6 +327,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     text_descriptor.__dict__["_fallback_info"] = {
                         "fallback_reason": "PARSE_ERROR",
                         "original_format_group": original_fg,
+                        "is_invalid": True,
                     }
                     return text_descriptor
                 except Exception:

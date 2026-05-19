@@ -26,5 +26,6 @@ outputs:
 - name: lockfile_written
   type: boolean
   description: True when WriteLockfile (C-004) has been written with current PID.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

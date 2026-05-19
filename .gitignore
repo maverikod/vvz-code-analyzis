@@ -175,4 +175,8 @@ test_reports/
 backups/
 
 
+.cst//.terminals/
+/.mcp_terminal/
 .cst/
+.trees/
+.terminals/

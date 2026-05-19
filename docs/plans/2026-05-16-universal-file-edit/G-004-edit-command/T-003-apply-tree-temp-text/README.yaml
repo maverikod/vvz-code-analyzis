@@ -29,5 +29,6 @@ outputs:
   type: node list or line count
   description: 'Tree-temp: updated top-level node list. Text: line count of draft
     after operations.'
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

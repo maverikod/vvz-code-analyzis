@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -36,16 +37,82 @@ logger = logging.getLogger(__name__)
 
 _md = MarkdownIt()
 
+_UUID_PREFIX_WIDTH = 39  # "[" + 36-char UUID + "] "
+_MD_SKIP_TOKEN_TYPES = frozenset({"inline"})
+
+
+def _source_line_count(raw: str) -> int:
+    if not raw:
+        return 0
+    return raw.count("\n") + (1 if not raw.endswith("\n") else 0)
+
+
+def _iter_md_block_tokens(tokens: list[Any]) -> Any:
+    for token in tokens:
+        if token.map is None or token.type in _MD_SKIP_TOKEN_TYPES:
+            continue
+        if token.type.endswith("_close"):
+            continue
+        yield token
+
+
+def _md_block_node_ref(file_path: str, token: Any) -> str:
+    start = token.map[0]
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}:{token.type}:{start}"))
+
+
+def _build_line_to_node_ref(tokens: list[Any], file_path: str) -> dict[int, str]:
+    line_to_ref: dict[int, str] = {}
+    level_at_line: dict[int, int] = {}
+    for token in tokens:
+        start = token.map[0]
+        if start in line_to_ref and token.level <= level_at_line[start]:
+            continue
+        line_to_ref[start] = _md_block_node_ref(file_path, token)
+        level_at_line[start] = token.level
+    return line_to_ref
+
+
+def _block_token_to_node(file_path: str, token: Any) -> Node:
+    assert token.map is not None
+    return Node(
+        node_kind=NodeKind.TREE_NODE,
+        node_ref=_md_block_node_ref(file_path, token),
+        type_label=token.type,
+        attributes={
+            "start_line": token.map[0] + 1,
+            "end_line": token.map[1],
+        },
+    )
+
+
+def _annotated_full_text(
+    source: str,
+    file_path: str,
+    budget: PreviewBudget,
+) -> tuple[str, list[Node], dict[str, Any]] | None:
+    """Annotated source and top-level block nodes when file < ``full_text_max_lines``."""
+    if budget.full_text_max_lines <= 0:
+        return None
+    if _source_line_count(source) >= budget.full_text_max_lines:
+        return None
+    lines = source.splitlines()
+    block_tokens = list(_iter_md_block_tokens(_md.parse(source)))
+    line_to_ref = _build_line_to_node_ref(block_tokens, file_path)
+    token_by_ref = {_md_block_node_ref(file_path, t): t for t in block_tokens}
+    blank = " " * _UUID_PREFIX_WIDTH
+    out_lines = [
+        (f"[{line_to_ref[i]}] {line}" if i in line_to_ref else blank + line)
+        for i, line in enumerate(lines)
+    ]
+    top_blocks = [
+        _block_token_to_node(file_path, t) for t in block_tokens if t.level == 0
+    ]
+    return "\n".join(out_lines), top_blocks, token_by_ref
+
 
 def _slugify(text: str) -> str:
-    """Convert heading text to a URL-safe slug for use in node_ref.
-
-    Args:
-        text: Raw heading text.
-
-    Returns:
-        Lowercase alphanumeric slug with hyphens replacing non-word chars.
-    """
+    """Lowercase slug with hyphens for heading node_ref paths."""
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
@@ -53,14 +120,7 @@ def _slugify(text: str) -> str:
 
 
 def _token_text(token: Any) -> str:
-    """Extract plain text from a markdown-it token and its children.
-
-    Args:
-        token: A markdown-it Token object.
-
-    Returns:
-        Concatenated text content from the token tree.
-    """
+    """Plain text from a markdown-it token subtree."""
     parts: list[str] = []
     if token.children:
         for child in token.children:
@@ -74,16 +134,7 @@ def _token_text(token: Any) -> str:
 
 
 class _Section:
-    """Internal mutable representation of one Markdown section.
-
-    Attributes:
-        level: Heading level (1-6). 0 means the document root.
-        title: Raw heading text (empty string for root).
-        slug: URL-safe slug derived from title.
-        node_ref: Dot-separated path from the root.
-        content_lines: Accumulated non-heading content lines.
-        children: Ordered child _Section objects.
-    """
+    """One Markdown section (heading level, slug path, nested children)."""
 
     def __init__(
         self,
@@ -92,14 +143,6 @@ class _Section:
         slug: str,
         node_ref: str,
     ) -> None:
-        """Initialise a section node.
-
-        Args:
-            level: Heading level (0 = root, 1-6 = headings).
-            title: Raw heading text.
-            slug: URL-safe slug for the section.
-            node_ref: Dot-separated path from root to this section.
-        """
         self.level = level
         self.title = title
         self.slug = slug
@@ -108,12 +151,7 @@ class _Section:
         self.children: list[_Section] = []
 
     def to_node(self) -> Node:
-        """Convert this section and its subtree to a Node.
-
-        Returns:
-            A Node of kind MAPPING with child Nodes for content
-            blocks and nested sections.
-        """
+        """Mapping Node for this section and descendants."""
         child_nodes: list[Node] = []
         if self.content_lines:
             content_text = "\n".join(self.content_lines).strip()
@@ -144,18 +182,7 @@ class _Section:
 
 
 def _build_section_tree(source: str) -> _Section:
-    """Parse Markdown source into a section tree.
-
-    Uses markdown-it-py to tokenise the source, then assembles a tree
-    of _Section objects from heading tokens, collecting all non-heading
-    content tokens as text lines under the nearest parent section.
-
-    Args:
-        source: Raw Markdown text.
-
-    Returns:
-        A _Section representing the document root (level 0).
-    """
+    """Section tree from markdown-it heading and content tokens."""
     tokens = _md.parse(source)
     root = _Section(level=0, title="", slug="", node_ref="")
     stack: list[_Section] = [root]
@@ -204,15 +231,7 @@ def _build_section_tree(source: str) -> _Section:
 
 
 def _find_section(root: _Section, node_ref: str) -> _Section | None:
-    """Locate a _Section by its node_ref via depth-first search.
-
-    Args:
-        root: The root _Section to search from.
-        node_ref: Dot-separated path to the target section.
-
-    Returns:
-        The matching _Section, or None if not found.
-    """
+    """DFS lookup of a section by dot-separated slug path."""
     if root.node_ref == node_ref:
         return root
     for child in root.children:
@@ -223,30 +242,15 @@ def _find_section(root: _Section, node_ref: str) -> _Section | None:
 
 
 class MarkdownFileHandler(FileHandler):
-    """FileHandler for Markdown files (.md) (C-017 extension).
-
-    Parses the file into a section tree using markdown-it-py.
-    Root NodeKind: mapping (document root).
-    Children: nested sections (mapping) and content blocks (scalar).
-    node_ref: dot-separated slug path, e.g. '2.etapy-pajplajjna'.
-    Empty string refers to the document root.
-
-    Attributes:
-        supported_extensions: Frozenset containing '.md'.
-    """
+    """FileHandler for .md: section tree or annotated full-text (C-017)."""
 
     def __init__(self) -> None:
-        """Initialise MarkdownFileHandler state."""
         self._last_file_path: str | None = None
         self._last_tree: _Section | None = None
+        self._last_block_tokens: dict[str, Any] = {}
 
     @property
     def supported_extensions(self) -> frozenset[str]:
-        """Frozenset of lowercase extensions this handler supports.
-
-        Returns:
-            Frozenset containing the single extension '.md'.
-        """
         return frozenset({".md"})
 
     def open_root(
@@ -255,42 +259,32 @@ class MarkdownFileHandler(FileHandler):
         session: Any | None,
         budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
-        """Parse the Markdown file and return the document root Node.
-
-        When *budget* is provided and ``budget.full_text_max_lines`` is a positive
-        integer, and the file has fewer lines than that threshold, returns a
-        ``NodeKind.SCALAR`` node whose ``value`` attribute holds the entire file
-        source.  This mirrors the C-023 full-text fallback implemented for the
-        Python handler and lets callers read small Markdown files in one step.
-
-        Args:
-            file_path: Absolute or project-relative path to the .md file.
-            session: Ignored for Markdown files.
-            budget: Optional PreviewBudget; when provided, full_text_max_lines
-                    is honoured.
-
-        Returns:
-            Scalar Node with full text when file is below the line threshold,
-            otherwise a mapping root Node representing the document.
-        """
+        """Root Node: annotated TREE_NODE below full_text_max_lines, else section mapping."""
         self._last_file_path = file_path
         try:
             source = Path(file_path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             source = ""
-        if (
-            budget is not None
-            and budget.full_text_max_lines > 0
-            and source.count("\n") + (1 if source and not source.endswith("\n") else 0)
-            < budget.full_text_max_lines
-        ):
+        effective_budget = (
+            budget
+            if budget is not None
+            else PreviewBudget(preview_lines=20, value_preview_len=120)
+        )
+        full = _annotated_full_text(source, file_path, effective_budget)
+        if full is not None:
+            annotated, block_nodes, token_by_ref = full
+            self._last_block_tokens = token_by_ref
+            self._last_tree = None
             return Node(
-                node_kind=NodeKind.SCALAR,
+                node_kind=NodeKind.TREE_NODE,
                 node_ref="",
-                attributes={"value": source, "full_text": True},
+                type_label="markdown_document",
+                attributes={"text": annotated, "full_text": True},
+                _children=block_nodes,
             )
         tree = _build_section_tree(source)
         self._last_tree = tree
+        self._last_block_tokens = {}
         return tree.to_node()
 
     def resolve_node_ref(
@@ -298,26 +292,12 @@ class MarkdownFileHandler(FileHandler):
         node_ref: str,
         session: Any | None,
     ) -> Node | PreviewError:
-        """Resolve a node_ref to the corresponding Node.
+        """Resolve uuid5 block id, slug path, or ``/__content`` section body."""
+        token = self._last_block_tokens.get(node_ref)
+        if token is not None:
+            fp = self._last_file_path or ""
+            return _block_token_to_node(fp, token)
 
-        Handles two kinds of node_ref:
-
-        * Dot-separated slug path (e.g. ``'introduction'``, ``'1.overview'``)
-          — navigates the section tree and returns the section's mapping Node.
-        * ``/__content`` suffix (e.g. ``'introduction/__content'``,
-          ``'__content'`` for the root) — the content scalar child of a section.
-          These refs are produced by ``_Section.to_node()`` but live only inside
-          the returned Node graph, not in the ``_Section`` tree itself.  This
-          method resolves them by locating the parent section first, then
-          returning the matching scalar child from ``section.to_node().children``.
-
-        Args:
-            node_ref: Slug path or slug path with ``/__content`` suffix.
-            session: Ignored for Markdown files.
-
-        Returns:
-            The addressed Node, or a PreviewError when not found.
-        """
         if self._last_tree is None:
             fp = self._last_file_path or ""
             try:

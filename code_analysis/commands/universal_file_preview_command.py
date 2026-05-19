@@ -332,20 +332,27 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
 
                     try:
                         edit_rec = get_edit_session(str(sid_here))
-                        tt_roots_payload = edit_rec.tree_temp_roots
+                        if edit_rec.is_invalid:
+                            tt_roots_payload = None
+                        else:
+                            tt_roots_payload = edit_rec.tree_temp_roots
                     except ValueError:
                         tt_roots_payload = None
                 if tt_roots_payload is None:
                     proj_abs = Path(str(project_root)).resolve()
                     source_abs_fp = Path(abs_file_path).resolve()
                     hid = "json" if isinstance(handler, JsonFileHandler) else "yaml"
-                    tt_roots_payload = acquire_tree_temp_for_open(
-                        project_root=proj_abs,
-                        source_abs=source_abs_fp,
-                        handler_id=hid,
-                        raw_source_bytes=source_abs_fp.read_bytes(),
-                    ).roots
-                nav_kwargs["tree_temp_roots"] = tt_roots_payload
+                    try:
+                        tt_roots_payload = acquire_tree_temp_for_open(
+                            project_root=proj_abs,
+                            source_abs=source_abs_fp,
+                            handler_id=hid,
+                            raw_source_bytes=source_abs_fp.read_bytes(),
+                        ).roots
+                    except Exception:
+                        tt_roots_payload = None
+                if tt_roots_payload is not None:
+                    nav_kwargs["tree_temp_roots"] = tt_roots_payload
 
             budget = PreviewBudget(
                 preview_lines=int(kwargs["preview_lines"]),
@@ -353,6 +360,9 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 full_text_max_lines=int(kwargs["full_text_max_lines"]),
             )
             nav_kwargs["file_path"] = abs_file_path
+            # Thread caps through nav_kwargs so open_root receives budget even when
+            # resolve_session returns session=None (plain preview, text edit session).
+            nav_kwargs["preview_budget"] = budget
             navigation_result = navigate(handler, nav_kwargs, budget)
             if isinstance(navigation_result, PreviewError):
                 return ErrorResult(

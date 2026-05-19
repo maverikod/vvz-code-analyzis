@@ -222,7 +222,7 @@ def build_tree_operations(
                     start_node_id=op_dict.get("start_node_id"),
                     end_node_id=op_dict.get("end_node_id"),
                     replace_all_child_nodes=bool(
-                        op_dict.get("replace_all_child_nodes", True)
+                        op_dict.get("replace_all_child_nodes", False)
                     ),
                 )
             )

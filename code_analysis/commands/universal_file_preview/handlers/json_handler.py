@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +28,83 @@ from ..budget import PreviewBudget
 from ..errors import (
     INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
-    file_structure_error,
     input_error,
 )
+from ..invalid_preview import invalid_source_node
 from ..models import Node, NodeKind
 
 logger = logging.getLogger(__name__)
+
+
+def _source_line_count(raw: str) -> int:
+    if not raw:
+        return 0
+    return raw.count("\n") + (1 if not raw.endswith("\n") else 0)
+
+
+def _line_for_json_pointer(lines: list[str], pointer: str) -> int | None:
+    if not lines:
+        return None
+    if pointer == "":
+        for i, line in enumerate(lines, start=1):
+            if line.strip():
+                return i
+        return 1
+    parts = [
+        p.replace("~1", "/").replace("~0", "~") for p in pointer.strip("/").split("/")
+    ]
+    if not parts:
+        return 1
+    last = parts[-1]
+    key_pat = re.compile(rf'["\']{re.escape(last)}["\']\s*:')
+    for i, line in enumerate(lines, start=1):
+        if key_pat.search(line):
+            return i
+    if last.isdigit():
+        for i, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if (
+                stripped in ("{", "[")
+                or stripped.endswith("{")
+                or stripped.endswith("[")
+            ):
+                continue
+            if stripped.startswith("{") or stripped.startswith("["):
+                return i
+    return None
+
+
+def _build_line_to_node_ref(
+    metadata_map: dict[str, Any],
+    source_lines: list[str],
+) -> dict[int, str]:
+    by_line: defaultdict[int, list[str]] = defaultdict(list)
+    for meta in metadata_map.values():
+        start = getattr(meta, "start_line", None)
+        if start is None:
+            start = _line_for_json_pointer(source_lines, meta.json_pointer)
+        if start is None:
+            continue
+        by_line[start].append(meta.json_pointer)
+    return {line: max(refs, key=len) for line, refs in by_line.items()}
+
+
+def _annotated_full_text(
+    raw: str,
+    metadata_map: dict[str, Any],
+    budget: PreviewBudget,
+) -> str | None:
+    """Return source with JSON Pointer prefixes when file < ``full_text_max_lines``."""
+    if budget.full_text_max_lines <= 0:
+        return None
+    if _source_line_count(raw) >= budget.full_text_max_lines:
+        return None
+    line_to_ref = _build_line_to_node_ref(metadata_map, raw.splitlines())
+    out_lines: list[str] = []
+    for i, line in enumerate(raw.splitlines(), start=1):
+        ref = line_to_ref.get(i)
+        out_lines.append(f"[{ref}] {line}" if ref else line)
+    return "\n".join(out_lines)
 
 
 class JsonFileHandler(FileHandler):
@@ -73,30 +146,36 @@ class JsonFileHandler(FileHandler):
         """
         try:
             self._last_file_path = file_path
+            self._last_budget = budget
             if session is not None:
                 doc = session  # assume session is the parsed object
+                raw = Path(file_path).read_text(encoding="utf-8", errors="replace")
             else:
                 raw = Path(file_path).read_text(encoding="utf-8", errors="replace")
                 doc = json.loads(raw)
             self._doc = doc
-            # Same node_id ⇄ JSON Pointer mapping as list_json_blocks / JSONTree.
-            self._pointer_by_node_id = dict(
-                build_tree_from_data(
-                    str(Path(file_path).resolve()),
-                    doc,
-                    register=False,
-                ).pointer_by_id
+            self._last_raw = raw
+            tree = build_tree_from_data(
+                str(Path(file_path).resolve()),
+                doc,
+                register=False,
             )
+            # Same node_id ⇄ JSON Pointer mapping as list_json_blocks / JSONTree.
+            self._pointer_by_node_id = dict(tree.pointer_by_id)
+            self._metadata_map = tree.metadata_map
+            if budget is not None:
+                annotated = _annotated_full_text(raw, tree.metadata_map, budget)
+                if annotated is not None:
+                    return Node(
+                        node_kind=NodeKind.SCALAR,
+                        node_ref="",
+                        attributes={"text": annotated, "full_text": True},
+                    )
             return _json_value_to_node(doc, "")
         except json.JSONDecodeError as exc:
-            return file_structure_error(
-                parser="json",
-                message=str(exc),
-                line_start=exc.lineno,
-                line_end=exc.lineno,
-            )
+            return invalid_source_node(file_path, exc)
         except Exception as exc:
-            return file_structure_error(parser="json", message=str(exc))
+            return invalid_source_node(file_path, exc)
 
     def resolve_node_ref(
         self,
@@ -124,6 +203,17 @@ class JsonFileHandler(FileHandler):
                 "open_root must be called before resolve_node_ref.",
                 details={"node_ref": node_ref},
             )
+        _budget = getattr(self, "_last_budget", None)
+        _raw = getattr(self, "_last_raw", None)
+        _meta_map = getattr(self, "_metadata_map", None)
+        if _budget is not None and _raw is not None and _meta_map is not None:
+            annotated = _annotated_full_text(_raw, _meta_map, _budget)
+            if annotated is not None:
+                return Node(
+                    node_kind=NodeKind.SCALAR,
+                    node_ref=node_ref,
+                    attributes={"text": annotated, "full_text": True},
+                )
         # Dispatch: JSON Pointer strings start with '/' or are the empty string.
         if node_ref == "" or node_ref.startswith("/"):
             result = _resolve_json_pointer(doc, node_ref)

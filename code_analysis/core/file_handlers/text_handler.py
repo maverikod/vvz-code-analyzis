@@ -19,6 +19,7 @@ from .base import (
     standard_error_result,
 )
 from .diff_support import diff_data_for_text_mutation
+from .path_utils import ensure_parent_directories
 from .registry import HANDLER_TEXT, get_handler_schema
 from .text_ranges import (
     LineRange,
@@ -468,10 +469,24 @@ class TextFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 dry_run=True,
                 changed=changed,
-                data={**diff_payload, "would_change": changed},
+                data={
+                    **diff_payload,
+                    "would_change": changed,
+                    "would_create": not abs_path.exists(),
+                },
             )
 
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        create_parent_dirs = bool(request.extra.get("create_parent_dirs", True))
+        parent_err = ensure_parent_directories(
+            abs_path, create_parent_dirs=create_parent_dirs
+        )
+        if parent_err:
+            return standard_error_result(
+                code="PARENT_DIR_MISSING",
+                message=parent_err,
+                request=request,
+            )
+
         abs_path.write_text(content, encoding="utf-8")
         out_data: Dict[str, Any] = (
             dict(diff_payload)

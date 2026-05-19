@@ -55,7 +55,7 @@ Rule IDs: `CR-*`, `LAYOUT-*`, `NAME-*`. A matching file in `.cursor/agents/*.md`
 | **CR-006** | 1 | If `USE_CODE_MAP` = yes: after each logically finished structural change, refresh indices (project code-map → under `code_analysis/`). |
 | **CR-007** | 1 | After production code changes, run required format/lint/typecheck on touched paths (this repo: `black`, `flake8`, `mypy`). |
 | **CR-008** | 1 | Python module size: ~350 lines → prefer split; ≤ ~400 OK; ≥ ~450 → must split. |
-| **CR-009** | 1 | Docstrings / types for public API; non-obvious logic: short comments. Abstract API → explicit failure, not silent stubs. |
+| **CR-009** | 1 | Docstrings / types for public API; non-obvious logic: short comments. Abstract API → explicit failure, not silent stubs. CST saves: [docs/standards/PYTHON_DOCSTRING_STANDARD.md](standards/PYTHON_DOCSTRING_STANDARD.md). |
 | **CR-010** | 1 | Chat: `CHAT_LOCALE`; artifacts: `ARTIFACT_LOCALE` unless user specifies otherwise. |
 | **CR-011** | 2 | Commit after a logical batch; push only when the user asks. |
 | **CR-012** | 2 | Headers: `HEADER_AUTHOR` and `HEADER_EMAIL` where the project requires them. |

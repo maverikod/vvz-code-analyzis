@@ -4,16 +4,31 @@ alwaysApply: true
 
 ## Code Analysis Server (daemon)
 
-After `pip install -e .` and `source .venv/bin/activate`, use:
+Run commands from the **project root** (directory that contains `config.json`).
+`casmgr` and `python -m code_analysis.cli.server_manager_cli` change `cwd` there automatically.
 
-`casmgr <command>` (config is resolved automatically) or `casmgr --config <path/to/config.json> <command>`
+After `pip install -e .`:
 
-Config path priority: CLI `--config` → `CASMGR_CONFIG` → `/etc/casmgr/config.json` → `./config.json` in the current working directory.
+```bash
+cd /path/to/code_analysis   # project root
+casmgr status
+# or
+casmgr --config config.json start
+```
 
-Equivalent: `python -m code_analysis.cli.server_manager_cli ... <command>`
+Config path priority: CLI `--config` → `CASMGR_CONFIG` → `/etc/casmgr/config.json` → `./config.json` in the current directory.
+
+Prefer **project-relative** config paths (`config.json`, not host absolute paths).
+
+Equivalent:
+
+```bash
+python -m code_analysis.cli.server_manager_cli status --config config.json
+```
 
 Commands: `start` | `stop` | `restart` | `status`
 
-- The manager resolves **`.venv/bin/python`** (or `venv`) walking up from the config file and uses that for the daemon when present, plus **`cwd`** = config directory — so it works even if `python` in PATH is system Python.
-- Override interpreter: **`CODE_ANALYSIS_DAEMON_PYTHON=/abs/path/to/python`**
-- `start` / `status` / `stop` use the same process discovery (not pidfile alone). If `start` reports multiple daemons, run **`stop`** once, then **`start`** again.
+- Daemon is started with **`cwd`** = project root and **`--config config.json`** (relative).
+- Interpreter: `.venv/bin/python` or `venv/bin/python` next to the config (if executable), else CLI Python; override with **`CODE_ANALYSIS_DAEMON_PYTHON`**.
+- In containers: do not rely on a host `.venv` mount; use image Python or `CASMGR_PYTHON`.
+- `start` / `status` / `stop` use process discovery, not pidfile alone. Multiple daemons → `stop` then `start`.

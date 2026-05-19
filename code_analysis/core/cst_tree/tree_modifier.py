@@ -136,6 +136,7 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
 def _apply_single_op(tree: CSTTree, op: TreeOperation) -> CSTTree:
     """Apply a single validated operation to a tree with full cycle."""
     from .tree_stable_data import extract_stable_data, restore_stable_data
+
     decorator_map = extract_stable_data(tree)
     modified_module = _apply_operation(tree.module, tree, op)
     tree.module = modified_module
@@ -208,7 +209,11 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
             if op.node_id:
                 stable = op.node_id
                 current_nid = next(
-                    (nid for nid, m in tree.metadata_map.items() if m.stable_id == stable),
+                    (
+                        nid
+                        for nid, m in tree.metadata_map.items()
+                        if m.stable_id == stable
+                    ),
                     stable,
                 )
                 op = dataclasses.replace(op, node_id=current_nid)
@@ -273,8 +278,8 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
 
     Resolves stale UUIDs via tree.node_id_aliases before lookup.
     Walks up the parent_id chain until it finds a node whose type is one of:
-    Module, IndentedBlock, ClassDef, FunctionDef — i.e. a node that can serve
-    as parent_node_id for insert_node_relative / insert_node_at_position.
+    Module, ClassDef, FunctionDef — i.e. a node that can serve as parent_node_id
+    for insert_node_relative / insert_node_at_position (same types as preview).
 
     This means callers can pass any node_id (e.g. Import inside
     SimpleStatementLine, Name inside FunctionDef) and always get back a
@@ -287,8 +292,8 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
     Returns:
         Parent node_id of nearest insertable container, or None if not found
     """
-    # Statement-body container types — these are valid parent_node_id values
-    INSERTABLE_TYPES = {"Module", "IndentedBlock", "ClassDef", "FunctionDef"}
+    # Statement-body container types — valid parent_node_id values (not IndentedBlock)
+    INSERTABLE_TYPES = {"Module", "ClassDef", "FunctionDef"}
 
     # Resolve alias: after insert the target node may have a new UUID
     resolved = tree.node_id_aliases.get(node_id, node_id)
@@ -483,11 +488,12 @@ def _apply_operation(
                     f"Parent node not found: {parent_id_raw}. "
                     "Use __root__ for module-level placement."
                 )
-            # Map legacy "before"/"after"/"end" to first/last when no target
-            if position == "before":
-                position = "first"
-            elif position in ("after", "end"):
-                position = "last"
+            # Map legacy "before"/"after"/"end" to first/last when no sibling index
+            if operation.position_after_index is None:
+                if position == "before":
+                    position = "first"
+                elif position in ("after", "end"):
+                    position = "last"
             return insert_node_at_position(
                 module,
                 tree,

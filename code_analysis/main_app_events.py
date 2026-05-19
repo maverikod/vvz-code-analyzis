@@ -155,36 +155,39 @@ def register_startup_shutdown_events(
             thread = threading.Thread(target=_open_shared_database_once, daemon=True)
             thread.start()
 
-            # Do not accept requests until shared database is set (or open failed).
+            # Wait for background DB open; on failure the HTTP server still runs (degraded).
             timeout_sec = 60.0
             if not _db_open_done.wait(timeout=timeout_sec):
-                logger.error(
-                    "❌ [STARTUP] Timed out waiting for shared database (%.1fs)",
+                logger.warning(
+                    "⚠️ [STARTUP] Timed out waiting for shared database (%.1fs); "
+                    "HTTP server stays up (degraded).",
                     timeout_sec,
                 )
                 print(
-                    "❌ [STARTUP EVENT] Timed out waiting for database; aborting.",
+                    "⚠️ [STARTUP EVENT] Timed out waiting for database; "
+                    "server running degraded.",
                     flush=True,
-                    file=sys.stderr,
                 )
-                sys.exit(1)
-            if _db_open_error[0] is not None:
-                logger.error(
-                    "❌ [STARTUP] Shared database open failed: %s; aborting.",
+            elif _db_open_error[0] is not None:
+                logger.warning(
+                    "⚠️ [STARTUP] Shared database open failed: %s; "
+                    "HTTP server stays up (degraded).",
                     _db_open_error[0],
                 )
                 print(
-                    f"❌ [STARTUP EVENT] Database open failed: {_db_open_error[0]}",
+                    f"⚠️ [STARTUP EVENT] Database unavailable: {_db_open_error[0]}; "
+                    "server running degraded.",
                     flush=True,
-                    file=sys.stderr,
                 )
-                sys.exit(1)
+            else:
+                print(
+                    "✅ [STARTUP EVENT] Workers startup completed (shared DB set)",
+                    flush=True,
+                )
+                logger.info(
+                    "✅ [STARTUP EVENT] Workers startup completed (shared DB set)"
+                )
 
-            print(
-                "✅ [STARTUP EVENT] Workers startup completed (shared DB set)",
-                flush=True,
-            )
-            logger.info("✅ [STARTUP EVENT] Workers startup completed (shared DB set)")
             start_cst_tree_ttl_cleanup()
         except Exception as e:
             print(

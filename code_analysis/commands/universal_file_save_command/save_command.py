@@ -13,19 +13,25 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Type
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
-from .base_mcp_command import BaseMCPCommand
-from .project_text_file_guard import reject_if_write_under_project_venv
-from .registration import (
+
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.commands.project_text_file_guard import (
+    reject_if_write_under_project_venv,
+)
+from code_analysis.commands.registration import (
     MCP_FILE_MANAGEMENT_REGISTRY_HELP,
     REGISTRY_SCHEMA_DISCOVERY_SHORT,
 )
-from ..core.backup_manager import BackupManager
-from ..core.git_integration import commit_after_write
-from ..core.exceptions import ValidationError
-from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
-from ..core.file_handlers.json_handler import JsonFileHandler
-from ..core.file_handlers.python_handler import PythonFileHandler
-from ..core.file_handlers.registry import (
+from code_analysis.commands.universal_file_save_command.save_helpers import (
+    _error_from_handler,
+    _success_from_handler,
+)
+from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.exceptions import ValidationError
+from code_analysis.core.file_handlers.base import FileHandlerRequest, FileHandlerResult
+from code_analysis.core.file_handlers.json_handler import JsonFileHandler
+from code_analysis.core.file_handlers.python_handler import PythonFileHandler
+from code_analysis.core.file_handlers.registry import (
     HANDLER_JSON,
     HANDLER_PYTHON,
     HANDLER_TEXT,
@@ -33,14 +39,17 @@ from ..core.file_handlers.registry import (
     RegistryError,
     resolve_handler,
 )
-from ..core.file_handlers.text_handler import (
+from code_analysis.core.file_handlers.text_handler import (
     TextFileHandler,
     persist_plain_text_file_metadata,
 )
-from ..core.file_handlers.yaml_handler import YamlFileHandler
-from ..core.file_lock import file_lock
-from ..core.path_normalization import normalize_path_simple
-from .save_helpers import _error_from_handler, _success_from_handler
+from code_analysis.core.file_handlers.yaml_handler import YamlFileHandler
+from code_analysis.core.file_lock import file_lock
+from code_analysis.core.git_integration import commit_after_write
+from code_analysis.core.path_normalization import normalize_path_simple
+
+logger = logging.getLogger(__name__)
+
 
 class UniversalFileSaveCommand(BaseMCPCommand):
     """Save project files via handler registry (extension routing before side effects)."""
@@ -459,4 +468,3 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                 changed=fr.changed,
                 data=out,
             )
-

@@ -8,10 +8,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 import uuid
-from typing import Optional
-from code_analysis.core.database_client.client import DatabaseClient
 
 logger = logging.getLogger(__name__)
 

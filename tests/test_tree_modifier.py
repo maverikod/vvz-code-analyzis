@@ -13,7 +13,11 @@ from __future__ import annotations
 import libcst as cst
 import pytest
 
-from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
+from code_analysis.core.cst_tree.models import (
+    ROOT_NODE_ID_SENTINEL,
+    TreeOperation,
+    TreeOperationType,
+)
 from code_analysis.core.cst_tree.tree_builder import (
     create_tree_from_code,
     get_tree,
@@ -44,6 +48,16 @@ class X:
 
 def foo():
     return 1
+'''
+
+SOURCE_CLASS_WITH_DOCSTRING_METHOD = '''"""Doc."""
+
+
+class Sample:
+    @classmethod
+    def get_schema(cls):
+        """Old summary."""
+        return {}
 '''
 
 
@@ -337,6 +351,451 @@ class TestReplaceRangeFailureDiagnostics:
         assert "Hint:" in msg or "consecutive" in msg.lower()
 
 
+SOURCE_CLASS_BATCH_TWO_METHODS = '''
+class MyClass:
+    """A class.
+
+    Attributes:
+        x: An integer.
+    """
+
+    def method_a(self) -> int:
+        """Method A.
+
+        Returns:
+            Zero.
+        """
+        return 0
+
+    def method_b(self) -> str:
+        """Method B.
+
+        Returns:
+            Empty string.
+        """
+        return ""
+'''
+
+
+class TestBatchReplacePreservesClassDocstring:
+    """BUG-009: two REPLACE ops in one modify_tree must not corrupt class docstring."""
+
+    def test_batch_two_method_replaces_preserve_class_docstring_indent(self, tmp_path):
+        path = str(tmp_path / "batch_class_doc.py")
+        tree = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
+        tree_id = tree.tree_id
+        try:
+            method_ids: dict[str, str] = {}
+            t = get_tree(tree_id)
+            assert t is not None
+            for nid, meta in t.metadata_map.items():
+                if meta.type == "FunctionDef" and meta.name in ("method_a", "method_b"):
+                    method_ids[meta.name] = nid
+            assert set(method_ids) == {"method_a", "method_b"}
+
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_ids["method_a"],
+                        code_lines=[
+                            "def method_a(self) -> int:",
+                            '    """Method A — batch replaced.',
+                            "",
+                            "    Returns:",
+                            "        One.",
+                            '    """',
+                            "    return 1",
+                        ],
+                    ),
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_ids["method_b"],
+                        code_lines=[
+                            "def method_b(self) -> str:",
+                            '    """Method B — batch replaced.',
+                            "",
+                            "    Returns:",
+                            "        Updated.",
+                            '    """',
+                            '    return "updated"',
+                        ],
+                    ),
+                ],
+            )
+            code = modified.module.code
+            assert "    Attributes:" in code
+            assert "            Attributes:" not in code
+            assert "Method A — batch replaced." in code
+            assert 'return "updated"' in code
+            assert not any(line and line.rstrip() != line for line in code.splitlines())
+            compile(code, "<string>", "exec")
+        finally:
+            remove_tree(tree_id)
+
+    def test_batch_replace_delete_insert_clean_diff(self, tmp_path):
+        """BUG-009b: batches with DELETE use LibCST path; class docstring stays clean."""
+        from code_analysis.core.cst_tree.tree_modifier import _use_mutable_batch_path
+
+        path = str(tmp_path / "batch_mixed_ops.py")
+        tree = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
+        tree_id = tree.tree_id
+        try:
+            method_ids: dict[str, str] = {}
+            t = get_tree(tree_id)
+            assert t is not None
+            for nid, meta in t.metadata_map.items():
+                if meta.type == "FunctionDef" and meta.name in ("method_a", "method_b"):
+                    method_ids[meta.name] = nid
+            assert set(method_ids) == {"method_a", "method_b"}
+
+            mixed_ops = [
+                TreeOperation(
+                    action=TreeOperationType.REPLACE,
+                    node_id=method_ids["method_a"],
+                    code_lines=["def method_a(self):", "    return 1"],
+                ),
+                TreeOperation(
+                    action=TreeOperationType.DELETE,
+                    node_id=method_ids["method_b"],
+                ),
+                TreeOperation(
+                    action=TreeOperationType.INSERT,
+                    target_node_id=method_ids["method_a"],
+                    position="after",
+                    code_lines=["def method_c(self):", "    return True"],
+                ),
+            ]
+            assert _use_mutable_batch_path(mixed_ops, t) is False
+
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_ids["method_a"],
+                        code_lines=[
+                            "def method_a(self) -> int:",
+                            '    """Method A — mixed batch.',
+                            "",
+                            "    Returns:",
+                            "        One.",
+                            '    """',
+                            "    return 1",
+                        ],
+                    ),
+                    TreeOperation(
+                        action=TreeOperationType.DELETE,
+                        node_id=method_ids["method_b"],
+                    ),
+                ],
+            )
+            code = modified.module.code
+            assert "    Attributes:" in code
+            assert "            Attributes:" not in code
+            assert "Method A — mixed batch." in code
+            assert "def method_b" not in code
+            assert not any(line and line.rstrip() != line for line in code.splitlines())
+            compile(code, "<string>", "exec")
+
+            tree2 = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
+            tree_id2 = tree2.tree_id
+            try:
+                t2 = get_tree(tree_id2)
+                assert t2 is not None
+                ids2 = {
+                    meta.name: nid
+                    for nid, meta in t2.metadata_map.items()
+                    if meta.type == "FunctionDef"
+                    and meta.name in ("method_a", "method_b")
+                }
+                modified2 = modify_tree(
+                    tree_id2,
+                    [
+                        TreeOperation(
+                            action=TreeOperationType.DELETE,
+                            node_id=ids2["method_b"],
+                        ),
+                        TreeOperation(
+                            action=TreeOperationType.INSERT,
+                            target_node_id=ids2["method_a"],
+                            position="after",
+                            code_lines=[
+                                "def method_c(self) -> bool:",
+                                '    """Method C inserted after A.',
+                                "",
+                                "    Returns:",
+                                "        True.",
+                                '    """',
+                                "    return True",
+                            ],
+                        ),
+                    ],
+                )
+                code2 = modified2.module.code
+                assert "    Attributes:" in code2
+                assert "            Attributes:" not in code2
+                assert "def method_c" in code2
+                assert "Method C inserted after A." in code2
+                compile(code2, "<string>", "exec")
+            finally:
+                remove_tree(tree_id2)
+        finally:
+            remove_tree(tree_id)
+
+
+SOURCE_BATCH_REPLACE_DELETE_STABLE = """
+def existing_func():
+    return 0
+
+
+def method_a():
+    return 1
+
+
+def method_b():
+    return 2
+"""
+
+SOURCE_CLASS_DECORATOR_STABLE = """
+def deco(fn):
+    return fn
+
+
+class Widget:
+    @deco
+    def method_a(self):
+        return 1
+
+    def method_b(self):
+        return 2
+"""
+
+
+def _is_descendant_of(tree, node_id: str, ancestor_id: str) -> bool:
+    current: str | None = node_id
+    while current:
+        if current == ancestor_id:
+            return True
+        meta = tree.metadata_map.get(current)
+        current = meta.parent_id if meta else None
+    return False
+
+
+def _function_stable_ids_by_name(
+    tree_id: str,
+    names: tuple[str, ...],
+    *,
+    class_name: str | None = None,
+) -> dict[str, str]:
+    """Map FunctionDef name -> stable_id (methods inside class_name when set)."""
+    tree = get_tree(tree_id)
+    assert tree is not None
+    class_node_id = None
+    if class_name is not None:
+        for meta in tree.metadata_map.values():
+            if meta.type == "ClassDef" and meta.name == class_name:
+                class_node_id = meta.node_id
+                break
+        assert class_node_id is not None
+    found: dict[str, str] = {}
+    for meta in tree.metadata_map.values():
+        if meta.type != "FunctionDef" or meta.name not in names:
+            continue
+        if class_node_id is not None and not _is_descendant_of(
+            tree, meta.node_id, class_node_id
+        ):
+            continue
+        if class_node_id is None and meta.parent_id != tree.root_node_id:
+            continue
+        found[meta.name] = meta.stable_id
+    assert set(found) == set(names)
+    return found
+
+
+def _decorator_stable_id_for_method(tree_id: str, method_name: str) -> str:
+    tree = get_tree(tree_id)
+    assert tree is not None
+    method_meta = None
+    for meta in tree.metadata_map.values():
+        if meta.type == "FunctionDef" and meta.name == method_name:
+            method_meta = meta
+            break
+    assert method_meta is not None
+    for meta in tree.metadata_map.values():
+        if meta.type == "Decorator" and meta.parent_id == method_meta.node_id:
+            return meta.stable_id
+    pytest.fail(f"No decorator on {method_name!r}")
+
+
+class TestBatchStableIdMarkerRoundTrip:
+    """BUG-008-FINAL: marker round-trip preserves stable_id across batch ops."""
+
+    def test_batch_replace_then_delete_preserves_untouched_node_stable_id(
+        self, tmp_path
+    ):
+        path = str(tmp_path / "batch_replace_delete_stable.py")
+        tree = create_tree_from_code(path, SOURCE_BATCH_REPLACE_DELETE_STABLE.strip())
+        tree_id = tree.tree_id
+        try:
+            stable_before = _function_stable_ids_by_name(
+                tree_id, ("existing_func", "method_a", "method_b")
+            )
+            t = get_tree(tree_id)
+            assert t is not None
+            node_ids = {
+                meta.name: nid
+                for nid, meta in t.metadata_map.items()
+                if meta.type == "FunctionDef"
+                and meta.name in stable_before
+                and meta.parent_id == t.root_node_id
+            }
+            modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=node_ids["existing_func"],
+                        code_lines=["def existing_func():", "    return 99"],
+                    ),
+                    TreeOperation(
+                        action=TreeOperationType.DELETE,
+                        node_id=node_ids["method_b"],
+                    ),
+                ],
+            )
+            stable_after = _function_stable_ids_by_name(
+                tree_id, ("existing_func", "method_a")
+            )
+            assert stable_after["method_a"] == stable_before["method_a"]
+        finally:
+            remove_tree(tree_id)
+
+    def test_batch_replace_delete_insert_three_ops(self, tmp_path):
+        path = str(tmp_path / "batch_three_ops_stable.py")
+        tree = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
+        tree_id = tree.tree_id
+        try:
+            stable_before = _function_stable_ids_by_name(
+                tree_id, ("method_a", "method_b"), class_name="MyClass"
+            )
+            t = get_tree(tree_id)
+            assert t is not None
+            method_node_ids = {
+                meta.name: nid
+                for nid, meta in t.metadata_map.items()
+                if meta.type == "FunctionDef" and meta.name in stable_before
+            }
+            modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_node_ids["method_a"],
+                        code_lines=["def method_a(self):", "    return 1"],
+                    ),
+                    TreeOperation(
+                        action=TreeOperationType.DELETE,
+                        node_id=method_node_ids["method_b"],
+                    ),
+                    TreeOperation(
+                        action=TreeOperationType.INSERT,
+                        target_node_id=method_node_ids["method_a"],
+                        position="after",
+                        code_lines=["def method_c(self):", "    return True"],
+                    ),
+                ],
+            )
+            stable_after = _function_stable_ids_by_name(
+                tree_id, ("method_a", "method_c"), class_name="MyClass"
+            )
+            assert stable_after["method_a"] == stable_before["method_a"]
+            assert "method_c" in stable_after
+        finally:
+            remove_tree(tree_id)
+
+    def test_batch_decorator_stable_id_preserved_after_sibling_replace(self, tmp_path):
+        path = str(tmp_path / "decorator_stable_batch.py")
+        tree = create_tree_from_code(path, SOURCE_CLASS_DECORATOR_STABLE.strip())
+        tree_id = tree.tree_id
+        try:
+            dec_stable_before = _decorator_stable_id_for_method(tree_id, "method_a")
+            stable_before = _function_stable_ids_by_name(
+                tree_id, ("method_a", "method_b"), class_name="Widget"
+            )
+            t = get_tree(tree_id)
+            assert t is not None
+            method_b_id = next(
+                nid
+                for nid, meta in t.metadata_map.items()
+                if meta.type == "FunctionDef" and meta.name == "method_b"
+            )
+            modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_b_id,
+                        code_lines=["def method_b(self):", "    return 42"],
+                    ),
+                ],
+            )
+            dec_stable_after = _decorator_stable_id_for_method(tree_id, "method_a")
+            stable_after = _function_stable_ids_by_name(
+                tree_id, ("method_a", "method_b"), class_name="Widget"
+            )
+            assert dec_stable_after == dec_stable_before
+            assert stable_after["method_a"] == stable_before["method_a"]
+            assert stable_after["method_b"] == stable_before["method_b"]
+        finally:
+            remove_tree(tree_id)
+
+
+class TestReplaceClassMethodPreservesDocstringIndent:
+    """Replace FunctionDef inside ClassDef: docstring interior keeps method-body indent."""
+
+    def test_replace_method_with_sectioned_docstring(self, tmp_path):
+        path = str(tmp_path / "sample.py")
+        tree = create_tree_from_code(path, SOURCE_CLASS_WITH_DOCSTRING_METHOD.strip())
+        tree_id = tree.tree_id
+        try:
+            method_id = None
+            t = get_tree(tree_id)
+            assert t is not None
+            for nid, meta in t.metadata_map.items():
+                if meta.type == "FunctionDef" and meta.name == "get_schema":
+                    method_id = nid
+                    break
+            assert method_id is not None
+
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=method_id,
+                        code_lines=[
+                            "def get_schema(cls) -> int:",
+                            '    """Return the JSON schema.',
+                            "",
+                            "    Returns:",
+                            "        JSON schema dict.",
+                            '    """',
+                            "    return 0",
+                        ],
+                    )
+                ],
+            )
+            code = modified.module.code
+            assert "\n        Returns:" in code
+            assert "\n    Returns:" not in code
+            assert "@classmethod" in code
+            assert "return 0" in code
+        finally:
+            remove_tree(tree_id)
+
+
 class TestReplaceClassDefStaleNodeMap:
     """
     node_map may reference CST nodes from a different parse than tree.module;
@@ -374,5 +833,361 @@ class TestReplaceClassDefStaleNodeMap:
             )
             assert "class X:" in modified.module.code
             assert "def method" not in modified.module.code
+        finally:
+            remove_tree(tree_id)
+
+
+MOVE_FIXTURE_SOURCE = '''"""Move fixture."""
+from __future__ import annotations
+
+
+class Alpha:
+    """First class."""
+
+    def alpha_one(self):
+        return 1
+
+    def alpha_two(self):
+        return 2
+
+
+class Beta:
+    """Second class."""
+
+    def beta_one(self):
+        return 10
+
+    class Inner:
+        def inner_method(self):
+            return 0
+
+
+def module_func():
+    return 99
+'''
+
+
+def _find_function_in_class(tree_id: str, class_name: str, method_name: str) -> str:
+    t = get_tree(tree_id)
+    assert t is not None
+    class_id = _find_classdef_node_id(tree_id, class_name)
+    for nid, meta in t.metadata_map.items():
+        if meta.type != "FunctionDef" or meta.name != method_name:
+            continue
+        current: str | None = nid
+        while current:
+            if current == class_id:
+                return nid
+            parent_meta = t.metadata_map.get(current)
+            current = parent_meta.parent_id if parent_meta else None
+    pytest.fail(f"No method {method_name!r} in class {class_name!r}")
+
+
+def _find_module_function(tree_id: str, name: str) -> str:
+    t = get_tree(tree_id)
+    assert t is not None
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "FunctionDef" and meta.name == name:
+            parent_meta = t.metadata_map.get(meta.parent_id) if meta.parent_id else None
+            if parent_meta and parent_meta.type == "Module":
+                return nid
+    pytest.fail(f"No module-level function {name!r}")
+
+
+@pytest.fixture
+def move_tree_id(tmp_path):
+    path = str(tmp_path / "move_sample.py")
+    tree = create_tree_from_code(path, MOVE_FIXTURE_SOURCE.strip())
+    yield tree.tree_id
+    remove_tree(tree.tree_id)
+
+
+class TestMoveOperations:
+    """Cross-container and same-container MOVE via modify_tree."""
+
+    def test_reorder_within_same_class(self, move_tree_id: str) -> None:
+        alpha_two = _find_function_in_class(move_tree_id, "Alpha", "alpha_two")
+        alpha_class = _find_classdef_node_id(move_tree_id, "Alpha")
+        modified = modify_tree(
+            move_tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.MOVE,
+                    node_id=alpha_two,
+                    parent_node_id=alpha_class,
+                    position="first",
+                )
+            ],
+        )
+        code = modified.module.code
+        idx_one = code.index("def alpha_one")
+        idx_two = code.index("def alpha_two")
+        assert idx_two < idx_one
+
+    def test_move_method_to_other_class(self, move_tree_id: str) -> None:
+        alpha_one = _find_function_in_class(move_tree_id, "Alpha", "alpha_one")
+        beta_class = _find_classdef_node_id(move_tree_id, "Beta")
+        modified = modify_tree(
+            move_tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.MOVE,
+                    node_id=alpha_one,
+                    parent_node_id=beta_class,
+                    position="last",
+                )
+            ],
+        )
+        code = modified.module.code
+        alpha_body = code.split("class Alpha:")[1].split("class Beta:")[0]
+        assert "def alpha_one" not in alpha_body
+        beta_section = code.split("class Beta:")[1]
+        assert "def alpha_one" in beta_section
+        assert "\n    def alpha_one" in code
+
+    def test_move_module_function_into_nested_class(self, move_tree_id: str) -> None:
+        module_func = _find_module_function(move_tree_id, "module_func")
+        inner_class = _find_classdef_node_id(move_tree_id, "Inner")
+        modified = modify_tree(
+            move_tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.MOVE,
+                    node_id=module_func,
+                    parent_node_id=inner_class,
+                    position="last",
+                )
+            ],
+        )
+        code = modified.module.code
+        inner_section = code.split("class Inner:")[1]
+        assert "def module_func" in inner_section
+        assert "\n        def module_func" in code
+        before_inner = code.split("class Inner:")[0]
+        assert "def module_func" not in before_inner
+
+    def test_move_method_to_module_level(self, move_tree_id: str) -> None:
+        beta_one = _find_function_in_class(move_tree_id, "Beta", "beta_one")
+        modified = modify_tree(
+            move_tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.MOVE,
+                    node_id=beta_one,
+                    parent_node_id=ROOT_NODE_ID_SENTINEL,
+                    position="last",
+                )
+            ],
+        )
+        code = modified.module.code
+        beta_section = code.split("class Beta:")[1].split("def module_func")[0]
+        assert "def beta_one" not in beta_section
+        idx = code.index("def beta_one")
+        line_start = code.rfind("\n", 0, idx) + 1
+        assert code[line_start:idx] == ""
+
+    def test_move_into_own_descendant_rejected(self, move_tree_id: str) -> None:
+        alpha_one = _find_function_in_class(move_tree_id, "Alpha", "alpha_one")
+        alpha_class = _find_classdef_node_id(move_tree_id, "Alpha")
+        with pytest.raises(ValueError, match="descendant"):
+            modify_tree(
+                move_tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.MOVE,
+                        node_id=alpha_class,
+                        parent_node_id=alpha_one,
+                        position="last",
+                    )
+                ],
+            )
+
+    def test_move_unknown_node_rejected(self, move_tree_id: str) -> None:
+        beta_class = _find_classdef_node_id(move_tree_id, "Beta")
+        with pytest.raises(ValueError, match="Node not found for move"):
+            modify_tree(
+                move_tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.MOVE,
+                        node_id="00000000-0000-4000-8000-000000000099",
+                        parent_node_id=beta_class,
+                        position="last",
+                    )
+                ],
+            )
+
+    def test_move_method_cross_class_preserves_docstring_indent(
+        self,
+        tmp_path,
+    ) -> None:
+        """Moving a method between classes must not corrupt docstring indentation."""
+        source = '''"""Doc."""
+class Alpha:
+    """First class."""
+
+    def alpha_one(self) -> str:
+        """Method one of Alpha.
+
+        Returns:
+            String.
+        """
+        return "alpha_one"
+
+    def alpha_two(self):
+        return 2
+
+
+class Beta:
+    """Second class."""
+    pass
+'''
+        path = str(tmp_path / "move_docstring.py")
+        tree = create_tree_from_code(path, source.strip())
+        tree_id = tree.tree_id
+        try:
+            alpha_one = _find_function_in_class(tree_id, "Alpha", "alpha_one")
+            beta_class = _find_classdef_node_id(tree_id, "Beta")
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.MOVE,
+                        node_id=alpha_one,
+                        parent_node_id=beta_class,
+                        position="last",
+                    )
+                ],
+            )
+            code = modified.module.code
+            beta_section = code.split("class Beta:")[1]
+            assert "def alpha_one" in beta_section
+            returns_line = next(
+                ln for ln in beta_section.splitlines() if "Returns:" in ln
+            )
+            assert (
+                returns_line == "        Returns:"
+            ), f"expected 8 leading spaces before Returns:, got {returns_line!r}"
+        finally:
+            remove_tree(tree_id)
+
+    def test_move_module_func_into_nested_class_preserves_docstring_indent(
+        self,
+        tmp_path,
+    ) -> None:
+        """module_func (0-base) into nested class keeps 8-space def and 12-space Returns:."""
+        source = '''"""Doc."""
+class Beta:
+    class Inner:
+        def inner_method(self):
+            return 0
+
+
+def module_func() -> str:
+    """A module-level function.
+
+    Returns:
+        A string.
+    """
+    return "module"
+'''
+        path = str(tmp_path / "move_module_to_inner.py")
+        tree = create_tree_from_code(path, source.strip())
+        tree_id = tree.tree_id
+        try:
+            module_func = _find_module_function(tree_id, "module_func")
+            inner_class = _find_classdef_node_id(tree_id, "Inner")
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.MOVE,
+                        node_id=module_func,
+                        parent_node_id=inner_class,
+                        position="last",
+                    )
+                ],
+            )
+            code = modified.module.code
+            inner_section = code.split("class Inner:")[1]
+            assert "\n        def module_func" in code
+            returns_line = next(
+                ln for ln in inner_section.splitlines() if "Returns:" in ln
+            )
+            assert (
+                returns_line == "            Returns:"
+            ), f"expected 12 leading spaces before Returns:, got {returns_line!r}"
+        finally:
+            remove_tree(tree_id)
+
+
+class TestInsertMethodIntoClassPreservesDocstringIndent:
+    """Inserting a FunctionDef into a class body keeps docstring interior indent."""
+
+    def test_insert_method_into_class_preserves_docstring_indent(
+        self,
+        tmp_path,
+    ) -> None:
+        source = '''"""Doc."""
+class Sample:
+    """A sample class."""
+
+    def method_a(self) -> str:
+        """Method A."""
+        return "a"
+
+    def method_b(self) -> str:
+        return "b"
+'''
+        path = str(tmp_path / "insert_docstring.py")
+        tree = create_tree_from_code(path, source.strip())
+        tree_id = tree.tree_id
+        try:
+            method_a = _find_function_in_class(tree_id, "Sample", "method_a")
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.INSERT,
+                        target_node_id=method_a,
+                        position="after",
+                        code_lines=[
+                            "def method_c(self, name: str) -> str:",
+                            '    """Method C with a parameter.',
+                            "",
+                            "    Args:",
+                            "        name: A name string.",
+                            "",
+                            "    Returns:",
+                            "        Greeting.",
+                            '    """',
+                            '    return f"Hello, {name}"',
+                        ],
+                    )
+                ],
+            )
+            code = modified.module.code
+            sample_section = code.split("class Sample:")[1]
+            assert "def method_c" in sample_section
+            args_line = next(ln for ln in sample_section.splitlines() if "Args:" in ln)
+            name_line = next(
+                ln for ln in sample_section.splitlines() if "name: A name string." in ln
+            )
+            returns_line = next(
+                ln for ln in sample_section.splitlines() if "Returns:" in ln
+            )
+            greeting_line = next(
+                ln for ln in sample_section.splitlines() if "Greeting." in ln
+            )
+            assert args_line == "        Args:", f"expected 8 spaces, got {args_line!r}"
+            assert (
+                name_line == "            name: A name string."
+            ), f"expected 12 spaces, got {name_line!r}"
+            assert (
+                returns_line == "        Returns:"
+            ), f"expected 8 spaces, got {returns_line!r}"
+            assert (
+                greeting_line == "            Greeting."
+            ), f"expected 12 spaces, got {greeting_line!r}"
         finally:
             remove_tree(tree_id)

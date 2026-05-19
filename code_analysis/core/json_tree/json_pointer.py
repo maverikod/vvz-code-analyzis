@@ -139,6 +139,40 @@ def insert_into_object(root: Any, parent_pointer: str, key: str, value: Any) -> 
     parent[key] = value
 
 
+def insert_into_object_relative(
+    root: Any,
+    parent_pointer: str,
+    key: str,
+    value: Any,
+    *,
+    before_key: Optional[str] = None,
+    after_key: Optional[str] = None,
+) -> None:
+    """Insert key into object at a position relative to an existing sibling key."""
+    parent = get_value_at(root, parent_pointer)
+    if not isinstance(parent, dict):
+        raise TypeError("insert_into_object_relative: parent is not an object")
+    if key in parent:
+        raise KeyError(f"Key already exists: {key!r}")
+    anchor = before_key if before_key is not None else after_key
+    if anchor is None:
+        raise ValueError("insert_into_object_relative requires before_key or after_key")
+    if anchor not in parent:
+        raise KeyError(f"Sibling key not found: {anchor!r}")
+    new_dict: dict[str, Any] = {}
+    for k, v in parent.items():
+        if after_key is not None and k == anchor:
+            new_dict[k] = v
+            new_dict[key] = value
+        elif before_key is not None and k == anchor:
+            new_dict[key] = value
+            new_dict[k] = v
+        else:
+            new_dict[k] = v
+    parent.clear()
+    parent.update(new_dict)
+
+
 def insert_into_array(
     root: Any, parent_pointer: str, value: Any, index: Optional[int] = None
 ) -> None:

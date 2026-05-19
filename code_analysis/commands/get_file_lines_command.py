@@ -62,6 +62,46 @@ class GetFileLinesCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    @classmethod
+    def metadata(cls: type["GetFileLinesCommand"]) -> Dict[str, Any]:
+        from .command_metadata_helpers import (
+            build_command_metadata,
+            parameters_from_schema,
+            project_file_error_cases,
+            simple_success_return,
+        )
+
+        return build_command_metadata(
+            cls,
+            detailed_description=cls.descr,
+            parameters=parameters_from_schema(cls.get_schema()),
+            usage_examples=[
+                {
+                    "description": "Read lines when CST parse fails",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "broken.py",
+                        "start_line": 1,
+                        "end_line": 40,
+                    },
+                    "explanation": "Raw lines without LibCST; use for syntax-error recovery.",
+                },
+            ],
+            error_cases={
+                **project_file_error_cases(),
+                "INVALID_RANGE": {
+                    "description": "start_line > end_line or < 1.",
+                },
+            },
+            return_value=simple_success_return(
+                data_fields={"lines": "List of line strings"},
+            ),
+            best_practices=[
+                "Prefer cst_load_file when the file parses cleanly.",
+                "For Python with healthy parse, routing may still use this for line view.",
+            ],
+        )
+
     async def execute(
         self,
         project_id: str,

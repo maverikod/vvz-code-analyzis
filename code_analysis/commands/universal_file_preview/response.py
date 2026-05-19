@@ -53,6 +53,8 @@ def build_envelope(
             k: v for k, v in (focus.attributes or {}).items() if k != "text"
         },
     }
+    if focus.is_invalid:
+        focus_dict["is_invalid"] = True
     if focus_text is not None:
         focus_dict["text"] = focus_text
 

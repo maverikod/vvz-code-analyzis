@@ -68,6 +68,12 @@ class BaseMCPCommand(Command):
     - Standardized error handling
     - Common validation methods
 
+    Command description contract (``mcp-proxy-adapter`` >= 8.10.13):
+    - ``get_schema()`` — machine-readable input JSON Schema for validation and help.
+    - ``metadata()`` — extended AI/docs fields; merged by the adapter into help payloads.
+      Do not duplicate schema fields inside ``metadata()``; see
+      ``docs/standards/METADATA_SCHEMA_STANDARD.md``.
+
     Notes:
         This base class also includes a SQLite physical integrity check.
         If the database file is corrupted (e.g. "database disk image is malformed"),

@@ -23,5 +23,6 @@ outputs:
 - name: updated_node_list
   type: list of node descriptors
   description: Top-level CST nodes after all operations applied.
-atomic_steps: []
+atomic_steps:
+- A-001
 status: draft

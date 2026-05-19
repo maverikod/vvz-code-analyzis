@@ -133,11 +133,58 @@ The universal file edit workflow (open -> edit -> write -> close) is extended:
 - `universal_file_close` without prior write: discard in-memory changes;
   on-disk sidecar is unchanged.
 
+## Parsers and Serializers
+
+For each supported format, two components work together:
+
+- A **SourceParser** reads the source file bytes and produces a TreeNode tree,
+  applying CommentOwnershipRule during parsing.
+- A **SourceSerializer** consumes a TreeNode tree and produces source file bytes,
+  restoring comments at the positions recorded in the tree.
+
+Neither component touches the Sidecar or the EditSession directly.
+
 ## Preview Navigation
 
-`universal_file_preview` with a `node_ref` pointing to a container node (`object`
-or `array`) returns that node's children, enabling drill-down navigation. This
-works because sidecar UUIDs persist across sessions and server restarts.
+For **tree-temp** sources (JSON and YAML), the same navigation rules apply to both
+formats.
+
+`universal_file_preview` accepts an optional `node_ref` equal to a TreeNode
+`stable_id` from the Sidecar-backed tree. Because Sidecar UUIDs are persistent
+across sessions and server restarts, `node_ref` values obtained in one session
+remain valid in subsequent sessions on the same file.
+
+When no `node_ref` is provided, the command returns the root-level blocks
+(**root_view**).
+
+**Container focus.** When `node_ref` identifies a **container** node (`type` is
+`object` or `array`), behaviour is unchanged: the command returns that node's
+**ordered children** as the block list—the same semantics as
+`container_drill_down` in PreviewNavigation (C-009).
+
+**Scalar focus (tree-temp / sidecar).** When `node_ref` identifies a **scalar**
+node (`type` is `string`, `number`, `boolean`, or `null`):
+
+1. Resolve the node in the Sidecar-backed tree.
+2. Walk **up the parent chain** to the **nearest ancestor** whose `type` is
+   **`object` or `array`**.
+3. Use **that container** as the **effective focus** for preview: return its
+   **ordered children** as the block list (same block-list contract as
+   `container_drill_down`).
+4. If **no** `object` or `array` ancestor exists—for example, the document root
+   is a scalar—treat **`node_ref` as absent** and return **root_view** (same as
+   omitting the parameter).
+
+**Errors.** An unknown or unresolvable `stable_id` remains an input or resolution
+error; the scalar-focus rule does not apply to failed resolution.
+
+**Relation to generic preview.** The frozen plan `2026-05-12-universal-file-preview`
+defines a generic preview **NavigationProcedure** in which focus on a **scalar**
+node yields an **empty** block set. This tree-temp Sidecar integration
+**specialises** that procedure for persistent drill-down: a scalar `node_ref` is
+remapped to the nearest enclosing container, or to **root_view** when no such
+ancestor exists. This plan does **not** claim to change the frozen
+`2026-05-12-universal-file-preview` specification.
 
 ## Formats in Scope
 

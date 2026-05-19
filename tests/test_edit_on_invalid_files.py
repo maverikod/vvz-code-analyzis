@@ -1,0 +1,227 @@
+"""Tests for invalid-file preview and universal_file_write lockfile fix."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from mcp_proxy_adapter.commands.result import SuccessResult
+
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.commands.universal_file_edit.edit_command import (
+    UniversalFileEditCommand,
+)
+from code_analysis.commands.universal_file_edit.open_command import (
+    UniversalFileOpenCommand,
+)
+from code_analysis.commands.universal_file_edit.write_command import (
+    UniversalFileWriteCommand,
+)
+from code_analysis.commands.universal_file_preview.budget import PreviewBudget
+from code_analysis.commands.universal_file_preview.handlers.json_handler import (
+    JsonFileHandler,
+)
+from code_analysis.commands.universal_file_preview.errors import PreviewError
+from code_analysis.commands.universal_file_preview.handlers.python_handler import (
+    PythonFileHandler,
+)
+from code_analysis.core.cst_tree.tree_builder import get_tree, remove_tree
+
+_PROJECT_UUID = "cafebabe-cafe-4caf-babe-cafebabecafe"
+
+
+def _db_for(tmp: Path) -> MagicMock:
+    m = MagicMock()
+    p = MagicMock()
+    p.root_path = str(tmp.resolve())
+    m.get_project.return_value = p
+    return m
+
+
+def _ensure_project_root(tmp: Path) -> None:
+    marker = tmp / "projectid"
+    if not marker.exists():
+        marker.write_text(
+            '{"id": "00000000-0000-0000-0000-000000000002"}\n',
+            encoding="utf-8",
+        )
+
+
+def test_json_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
+    bad = tmp_path / "broken.json"
+    bad.write_text('{"a": ', encoding="utf-8")
+    node = JsonFileHandler().open_root(
+        str(bad), None, PreviewBudget(preview_lines=20, value_preview_len=120)
+    )
+    assert not isinstance(node, PreviewError)
+    assert node.is_invalid is True
+    assert node.node_ref == ""
+    assert '{"a": ' in node.attributes["text"]
+    assert "parse_error" in node.attributes
+
+
+def test_python_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
+    bad = tmp_path / "broken.py"
+    bad.write_text("def f(\n", encoding="utf-8")
+    node = PythonFileHandler().open_root(
+        str(bad), None, PreviewBudget(preview_lines=20, value_preview_len=120)
+    )
+    assert node.is_invalid is True
+    assert "def f(" in node.attributes["text"]
+
+
+@pytest.mark.asyncio
+async def test_open_does_not_preempt_write_preview_phase(tmp_path: Path) -> None:
+    """First universal_file_write after open must be preview, not commit."""
+    _ensure_project_root(tmp_path)
+    rel = "sample.py"
+    p = tmp_path / rel
+    p.write_text(
+        "def foo():\n    return 1\n",
+        encoding="utf-8",
+    )
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    sid = str(opened.data["session_id"])
+    ed = UniversalFileEditCommand()
+    tree_id: str | None = None
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        from code_analysis.commands.universal_file_edit.session import get_session
+
+        sess = get_session(sid)
+        tree_id = sess.tree_id
+        tree = get_tree(tree_id or "")
+        assert tree is not None
+        stable = next(
+            m.stable_id
+            for m in tree.metadata_map.values()
+            if m.type == "FunctionDef" and m.name == "foo"
+        )
+        await ed.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            operations=[
+                {
+                    "type": "replace",
+                    "node_ref": stable,
+                    "code_lines": [
+                        "def foo():\n",
+                        "    return 2\n",
+                    ],
+                }
+            ],
+        )
+        wr = UniversalFileWriteCommand()
+        preview = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            write_mode="preview",
+        )
+    assert isinstance(preview, SuccessResult)
+    assert preview.data.get("phase") == "preview"
+    diff = str(preview.data.get("diff", ""))
+    assert "return 2" in diff
+    if tree_id:
+        remove_tree(tree_id)
+
+
+@pytest.mark.asyncio
+async def test_open_invalid_json_sets_is_invalid_and_allows_raw_edit(
+    tmp_path: Path,
+) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    p = tmp_path / rel
+    p.write_text('{"ok": true', encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    assert opened.data.get("is_invalid") is True
+    assert opened.data.get("format_group") == "text"
+    sid = str(opened.data["session_id"])
+    fixed = '{"ok": true}\n'
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        await ed.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            operations=[{"type": "replace", "node_ref": "", "content": fixed}],
+        )
+        wr = UniversalFileWriteCommand()
+        preview = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+        )
+        assert isinstance(preview, SuccessResult)
+        assert preview.data.get("phase") == "preview"
+        commit = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+        )
+        assert isinstance(commit, SuccessResult)
+        assert commit.data.get("phase") == "committed"
+    assert p.read_text(encoding="utf-8") == fixed
+
+
+def test_json_handler_invalid_preserves_broken_trailing_text(tmp_path: Path) -> None:
+    """Broken JSON must surface raw bytes, not an empty object placeholder."""
+    broken = '{"key": "value", broken'
+    bad = tmp_path / "broken.json"
+    bad.write_text(broken, encoding="utf-8")
+    node = JsonFileHandler().open_root(
+        str(bad), None, PreviewBudget(preview_lines=20, value_preview_len=120)
+    )
+    assert not isinstance(node, PreviewError)
+    assert node.is_invalid is True
+    assert node.attributes.get("text") == broken
+    assert node.attributes.get("full_text") is True
+    assert "{}" not in node.attributes.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_preview_broken_json_with_uuid_node_ref_returns_raw_text(
+    tmp_path: Path,
+) -> None:
+    """UUID node_ref must not force tree-temp parse error on invalid JSON."""
+    from code_analysis.commands.universal_file_preview_command import (
+        UniversalFilePreviewCommand,
+    )
+
+    _ensure_project_root(tmp_path)
+    broken = '{"key": "value", broken'
+    rel = "broken.json"
+    (tmp_path / rel).write_text(broken, encoding="utf-8")
+    prev = UniversalFilePreviewCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        result = await prev.execute(
+            **prev.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "file_path": rel,
+                    "node_ref": "3aeb19cf-4a9d-45d6-b3af-a0e4975bf874",
+                }
+            )
+        )
+    assert isinstance(result, SuccessResult)
+    focus = result.data.get("focus", {})
+    assert focus.get("is_invalid") is True
+    assert broken in str(focus.get("text", ""))
+    assert focus.get("text") != "{}"

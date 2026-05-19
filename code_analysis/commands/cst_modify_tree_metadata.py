@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .command_metadata_helpers import parameters_from_schema
+from .cst_modify_tree_schema import get_cst_modify_tree_schema
+
 CMD_NAME = "cst_modify_tree"
 CMD_VERSION = "1.0.0"
 CMD_DESCR = "Modify CST tree with atomic operations (replace, insert, delete)"
@@ -24,7 +27,7 @@ def get_cst_modify_tree_metadata() -> Dict[str, Any]:
     Returns:
         Dictionary with command metadata.
     """
-    return {
+    result: Dict[str, Any] = {
         "name": CMD_NAME,
         "version": CMD_VERSION,
         "description": CMD_DESCR,
@@ -368,3 +371,9 @@ def get_cst_modify_tree_metadata() -> Dict[str, Any]:
             "If any operation fails, all operations are rolled back",
         ],
     }
+    schema_params = parameters_from_schema(get_cst_modify_tree_schema())
+    ops_doc = result["parameters"].get("operations")
+    result["parameters"] = schema_params
+    if ops_doc:
+        result["parameters"]["operations"] = ops_doc
+    return result

@@ -11,15 +11,39 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence, cast
+
+from code_analysis.core.tree_temp.tree_node import TreeNode
 
 from .base_handler import FileHandler
 from .block_handlers import render_block
 from .budget import PreviewBudget
-from .errors import PreviewError
-from .models import Block, NavigationResult, Node
+from .errors import (
+    INPUT_ERROR_UNKNOWN_NODE_REF,
+    PreviewError,
+    input_error,
+)
+from .handlers.json_handler import JsonFileHandler
+from .handlers.yaml_handler import YamlFileHandler
+from .models import Block, NavigationResult, Node, NodeKind
 from .selector import apply_selector
 from .session import resolve_session
+from .tree_temp_preview_focus import (
+    TreeTempPreviewResolveError,
+    looks_like_sidecar_stable_id,
+    resolve_tree_temp_preview_focus,
+    tree_temp_preview_children_to_preview_nodes,
+)
+
+# Preview Navigation — tree-temp Sidecar / HRS (summary): Scalar ``node_ref`` (stable_id
+# pointing at a Sidecar JSON string | number | boolean | null leaf) resolves to that leaf
+# in the Sidecar-backed tree, walks up toward the forest root until the nearest ancestor
+# whose discriminator is ``object`` or ``array``, and exposes that ancestor's ordered
+# children as the preview block list. If no such ancestor exists, behavior matches
+# omitting ``node_ref`` (root_view). Referencing ``object`` | ``array`` by stable_id
+# drills straight into that node's children. An unknown Sidecar stable_id yields an input
+# error—the scalar remap policy does not apply when the uuid is missing from the indexed
+# tree.
 
 
 def navigate(
@@ -50,12 +74,59 @@ def navigate(
         return session_result
     session, session_origin, tree_id = session_result
 
-    open_result = handler.open_root(params["file_path"], session, budget=budget)
+    preview_budget = params.get("preview_budget") or budget
+    open_result = handler.open_root(params["file_path"], session, budget=preview_budget)
     if isinstance(open_result, PreviewError):
         return open_result
     focus_node: Node = open_result
-    if params.get("node_ref") is not None:
-        resolve_result = handler.resolve_node_ref(params["node_ref"], session)
+    node_ref_raw = params.get("node_ref")
+    roots_for_tree_preview = params.get("tree_temp_roots")
+    uuid_sidecar = looks_like_sidecar_stable_id(node_ref_raw)
+    tree_temp_sidecar_preview = (
+        roots_for_tree_preview is not None
+        and uuid_sidecar
+        and isinstance(handler, (JsonFileHandler, YamlFileHandler))
+    )
+    if tree_temp_sidecar_preview:
+        try:
+            trimmed_ref = (
+                node_ref_raw.strip()
+                if isinstance(node_ref_raw, str)
+                else str(node_ref_raw)
+            )
+            assert roots_for_tree_preview is not None
+            focus_spec = resolve_tree_temp_preview_focus(
+                roots=list(cast(Sequence[TreeNode], roots_for_tree_preview)),
+                node_ref=trimmed_ref,
+            )
+        except TreeTempPreviewResolveError as exc:
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                str(exc),
+                details={"node_ref": node_ref_raw},
+            )
+
+        branches = tree_temp_preview_children_to_preview_nodes(
+            list(focus_spec.container.children or [])
+        )
+
+        nc = focus_spec.navigation_context
+        focus_attrs: dict[str, Any] = {
+            "effective_mode": focus_spec.effective_mode,
+            "resolved_stable_id": nc.get("resolved_stable_id"),
+            "effective_focus_stable_id": nc.get("effective_focus_stable_id"),
+            "depth_hint": nc.get("depth_hint"),
+        }
+        focus_node = Node(
+            node_kind=NodeKind.TREE_NODE,
+            node_ref=focus_spec.container.stable_id,
+            type_label="tree_sidecar_focus",
+            name=None,
+            attributes=focus_attrs,
+            _children=branches,
+        )
+    elif node_ref_raw is not None and not focus_node.is_invalid:
+        resolve_result = handler.resolve_node_ref(node_ref_raw, session)
         if isinstance(resolve_result, PreviewError):
             return resolve_result
         focus_node = resolve_result

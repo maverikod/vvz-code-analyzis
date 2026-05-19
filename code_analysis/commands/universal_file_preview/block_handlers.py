@@ -70,10 +70,41 @@ def _render_sequence(node: Node, vpl: int) -> dict[str, Any]:  # noqa: ARG001
 
 
 def _render_mapping(node: Node, vpl: int) -> dict[str, Any]:
-    """Rule 4: key count and key name list, each truncated. No values."""
+    """Rule 4: key count, key name list (each truncated), and leaf scalar values.
+
+    Two cases:
+
+    1. The node is a YAML mapping **entry** whose value is a primitive scalar.
+       Such nodes carry ``value`` (and ``value_kind``) in their own
+       ``attributes`` and have zero children.  We surface the value inline
+       so the caller sees it without a separate drill-down call.
+
+    2. The node is a regular mapping (dict root or nested object).  We list
+       its children's names and, for any child that itself is a scalar entry
+       (``attributes['value']`` present), include the value in ``key_values``
+       at the matching index.  Children that are nested mappings or sequences
+       get ``None`` at that position.
+    """
+    attrs = node.attributes or {}
+    # Case 1: leaf mapping entry — value already in attributes.
+    if "value" in attrs and not node.children:
+        val = attrs["value"]
+        return {
+            "key_count": 0,
+            "key_names": [],
+            "key_values": [],
+            "value": str(val)[:vpl],
+            "value_kind": attrs.get("value_kind", "str"),
+        }
+    # Case 2: regular mapping — enumerate children.
     children = node.children
-    keys = [c.name[:vpl] if c.name else "" for c in children]
-    return {"key_count": len(children), "key_names": keys}
+    keys: list[str] = []
+    values: list[str | None] = []
+    for c in children:
+        keys.append(c.name[:vpl] if c.name else "")
+        raw_val = (c.attributes or {}).get("value")
+        values.append(str(raw_val)[:vpl] if raw_val is not None else None)
+    return {"key_count": len(children), "key_names": keys, "key_values": values}
 
 
 def _render_tree_node(node: Node, vpl: int) -> dict[str, Any]:
@@ -85,11 +116,15 @@ def _render_tree_node(node: Node, vpl: int) -> dict[str, Any]:
     """
     text = node.attributes.get("text") if node.attributes else None
     attrs = {k: v for k, v in (node.attributes or {}).items() if k != "text"}
+    preview_children = attrs.pop("tree_preview_child_count", None)
+    resolved_child_count = (
+        preview_children if isinstance(preview_children, int) else len(node.children)
+    )
     summary: dict[str, Any] = {
         "type": (node.type_label or "")[:vpl],
         "name": node.name[:vpl] if node.name else None,
         "attributes": attrs,
-        "child_count": len(node.children),
+        "child_count": resolved_child_count,
     }
     if text is not None:
         summary["text"] = text

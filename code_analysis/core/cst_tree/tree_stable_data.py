@@ -103,10 +103,8 @@ def restore_stable_data(tree: CSTTree, decorator_map: dict[str, list]) -> CSTTre
     Returns:
         Updated CSTTree with restored decorators and rebuilt index
     """
-    # Ensure all nodes have stable_id (new nodes get fresh ones)
-    new_module = tree.module.visit(_StableDataInjector())
-    # Restore decorators for nodes that lost them
-    new_module = new_module.visit(_StableDataRestorer({}, decorator_map))
+    # Restore decorators for nodes that lost them (no stable_id injection into source)
+    new_module = tree.module.visit(_StableDataRestorer({}, decorator_map))
     tree.module = new_module
 
     # Rebuild full index

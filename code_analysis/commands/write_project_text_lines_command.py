@@ -211,7 +211,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             "usage_examples": [
                 {
                     "description": "Replace first line only in README.md",
-                    "params": {
+                    "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "README.md",
                         "start_line": 1,
@@ -219,17 +219,43 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                         "new_lines": ["# Title"],
                         "backup": True,
                     },
+                    "explanation": "Creates backup when backup=true (default).",
                 },
                 {
-                    "description": "Replace lines 2–3 in notes.txt (default backup=true)",
-                    "params": {
+                    "description": "Replace lines 2–3 in notes.txt",
+                    "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "notes.txt",
                         "start_line": 2,
                         "end_line": 3,
                         "new_lines": ["a", "b"],
                     },
+                    "explanation": "Python paths are rejected; use CST for .py files.",
                 },
+            ],
+            "return_value": {
+                "success": {
+                    "description": "File updated on disk and DB metadata refreshed.",
+                    "example": {"success": True, "file_path": "README.md"},
+                },
+                "error": {
+                    "description": "Validation, backup, or write failure.",
+                    "code": "PYTHON_FILE_FORBIDDEN | BACKUP_REQUIRED | …",
+                },
+            },
+            "error_cases": {
+                "PYTHON_FILE_FORBIDDEN": {
+                    "description": "Target is a .py file.",
+                    "solution": "Use cst_modify_tree / cst_save_tree instead.",
+                },
+                "BACKUP_REQUIRED": {
+                    "description": "backup=true but backup failed.",
+                    "solution": "Fix old_code permissions or set backup=false if allowed.",
+                },
+            },
+            "best_practices": [
+                "Use line ranges inclusive (1-based).",
+                "Do not embed newline characters inside new_lines items.",
             ],
             "error_codes": [
                 "PYTHON_FILE_FORBIDDEN",

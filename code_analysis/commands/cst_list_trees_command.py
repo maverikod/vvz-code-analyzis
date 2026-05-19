@@ -36,8 +36,15 @@ class CSTListTreesCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {},
+            "required": [],
             "additionalProperties": False,
         }
+
+    @classmethod
+    def metadata(cls: type["CSTListTreesCommand"]) -> Dict[str, Any]:
+        from .zero_arg_commands_metadata import cst_list_trees_metadata
+
+        return cst_list_trees_metadata(cls)
 
     async def execute(self, **kwargs: Any) -> SuccessResult:
         now = time.monotonic()

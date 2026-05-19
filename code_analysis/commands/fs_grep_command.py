@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .grep_block_resolver import GrepBlockResolver
+from .preview_config_defaults import get_preview_config_defaults
 from .file_management.relative_path_list_pattern import (
     canonical_relative_path,
     effective_listing_pattern,
@@ -31,7 +33,7 @@ class FsGrepCommand(BaseMCPCommand):
     """Scan files on disk for a pattern (regex or literal)."""
 
     name = "fs_grep"
-    version = "1.1.0"
+    version = "1.2.0"
     descr = (
         "Search file contents on disk (grep-style). Does not use the database full-text index; "
         "use ``fulltext_search`` for indexed search. Respects the same walk rules as "
@@ -92,6 +94,14 @@ class FsGrepCommand(BaseMCPCommand):
                     ),
                     "default": 5242880,
                 },
+                "line_preview_len": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Max characters returned per matching line. Default from server config."
+                    ),
+                    "nullable": True,
+                },
                 "show_venv": {"type": "boolean", "default": False},
                 "python_only": {"type": "boolean", "default": False},
                 "include_venv_ignore_exceptions": {"type": "boolean", "default": False},
@@ -111,6 +121,7 @@ class FsGrepCommand(BaseMCPCommand):
         glob: Optional[str] = None,
         max_matches: int = 500,
         max_file_bytes: int = 5 * 1024 * 1024,
+        line_preview_len: Optional[int] = None,
         show_venv: bool = False,
         python_only: bool = False,
         include_venv_ignore_exceptions: bool = False,
@@ -128,6 +139,7 @@ class FsGrepCommand(BaseMCPCommand):
             glob: Alias for file_pattern.
             max_matches: Stop after this many matching lines.
             max_file_bytes: Skip files larger than this before opening.
+            line_preview_len: Max characters per matching line in the response.
             show_venv: Include venv directories.
             python_only: Only scan Python files.
             include_venv_ignore_exceptions: Include venv ignore exceptions.
@@ -136,7 +148,8 @@ class FsGrepCommand(BaseMCPCommand):
 
         Returns:
             SuccessResult with matches list where each entry has
-            relative_path, line_number (int), and line (str content).
+            relative_path, line_number (int), line (str content),
+            block_id (str | null), and block_type (str | null).
             ErrorResult on validation failure.
         """
         if not (pattern or "").strip():
@@ -156,6 +169,15 @@ class FsGrepCommand(BaseMCPCommand):
                 message="max_file_bytes must be >= 0",
                 code="INVALID_LIMIT",
                 details={"max_file_bytes": max_file_bytes},
+            )
+        cfg = get_preview_config_defaults()
+        if line_preview_len is None:
+            line_preview_len = int(cfg["grep_line_preview_len_default"])
+        if line_preview_len < 1:
+            return ErrorResult(
+                message="line_preview_len must be >= 1",
+                code="INVALID_LIMIT",
+                details={"line_preview_len": line_preview_len},
             )
         try:
             started_at = perf_counter()
@@ -205,6 +227,7 @@ class FsGrepCommand(BaseMCPCommand):
                     )
 
             matches: List[Dict[str, Any]] = []
+            block_resolver = GrepBlockResolver()
             files_scanned = 0
             files_skipped_large = 0
             files_skipped_io = 0
@@ -244,11 +267,19 @@ class FsGrepCommand(BaseMCPCommand):
                                 assert regex is not None
                                 ok = regex.search(raw_line) is not None
                             if ok:
+                                line_text = raw_line
+                                if len(line_text) > line_preview_len:
+                                    line_text = line_text[:line_preview_len]
+                                block_id, block_type = block_resolver.resolve(
+                                    abs_path, i
+                                )
                                 matches.append(
                                     {
                                         "relative_path": rel,
                                         "line_number": i,
-                                        "line": raw_line,
+                                        "line": line_text,
+                                        "block_id": block_id,
+                                        "block_type": block_type,
                                     }
                                 )
                 except OSError as e:
@@ -257,6 +288,7 @@ class FsGrepCommand(BaseMCPCommand):
                     continue
 
             elapsed = perf_counter() - started_at
+            block_resolver.cleanup()
             logger.info(
                 "fs_grep done project_id=%s elapsed=%.3fs matches=%s "
                 "files_scanned=%s files_skipped_large=%s files_skipped_io=%s truncated=%s",
@@ -348,6 +380,12 @@ class FsGrepCommand(BaseMCPCommand):
                     "required": False,
                     "default": 5242880,
                 },
+                "line_preview_len": {
+                    "description": "Max characters returned per matching line.",
+                    "type": "integer",
+                    "required": False,
+                    "default": 120,
+                },
             },
             "return_value": {
                 "success": {
@@ -383,5 +421,6 @@ class FsGrepCommand(BaseMCPCommand):
                 "Narrow with file_pattern when possible — scanning huge trees is expensive.",
                 "Keep max_file_bytes enabled for broad searches; skipped files are returned in the result.",
                 "Prefer fulltext_search when the project is indexed and you need docstring/body FTS.",
+                "Use block_id from matches on .py/.json/.yaml/.md files to drill into universal_file_preview.",
             ],
         }

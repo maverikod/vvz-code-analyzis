@@ -240,10 +240,16 @@ class JsonSaveTreeCommand(BaseMCPCommand):
             )
 
     @classmethod
-    def metadata(cls) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-        }
+    def metadata(cls: type["JsonSaveTreeCommand"]) -> Dict[str, Any]:
+        from .json_tree_commands_metadata import json_tree_command_metadata
+
+        return json_tree_command_metadata(
+            cls,
+            operation="save_tree",
+            detailed_description=cls.descr,
+            example_params={
+                "tree_id": "550e8400-e29b-41d4-a716-446655440000",
+                "project_id": "550e8400-e29b-41d4-a716-446655440001",
+                "file_path": "config/settings.json",
+            },
+        )

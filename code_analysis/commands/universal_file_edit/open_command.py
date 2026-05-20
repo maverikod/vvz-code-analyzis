@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
+import os
 
 import shutil
 from pathlib import Path
@@ -31,18 +32,15 @@ from code_analysis.commands.universal_file_edit.format_group import (
     draft_path_for,
     lockfile_path_for,
     resolve_format_group,
+    write_lockfile_pid,
 )
 from code_analysis.commands.universal_file_edit.open_command_metadata import (
     get_universal_file_open_metadata,
 )
-from code_analysis.commands.universal_file_edit.session import (
-    active_session_uses_abs_path,
-    create_session,
-)
+from code_analysis.commands.universal_file_edit.session import create_session
 from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
     acquire_tree_temp_for_open,
 )
-from code_analysis.core.file_handlers.text_handler import TEXT_SUFFIXES
 
 
 class UniversalFileOpenCommand(BaseMCPCommand):
@@ -94,11 +92,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     "type": "string",
                     "description": (
                         "Initial file content used only when create=True. "
-                        "For Python (.py): source written to disk before the CST tree "
-                        "is built via load_file_to_tree (required when create=True). "
-                        "For JSON/YAML: raw text written as-is (not parsed before write); "
-                        "invalid syntax opens in text mode with is_invalid=true. "
-                        "For other formats: ignored (empty file is created)."
+                        "For Python (.py): valid Python source code written to disk "
+                        "before the CST tree is built via load_file_to_tree. "
+                        "For other formats: ignored (file is created empty)."
                     ),
                 },
             },
@@ -120,14 +116,14 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                         details={"file_path": file_path},
                     )
         return params
-
     @classmethod
     def metadata(cls: "type[UniversalFileOpenCommand]") -> Dict[str, Any]:
         """Return extended AI/docs metadata for universal_file_open.
 
-        Returns:
-            Metadata dict with description, parameters, examples, errors.
-        """
+    Returns:
+        Metadata dict with description, parameters, examples, errors.
+    """
+        from typing import cast
         return cast(Dict[str, Any], get_universal_file_open_metadata(cls))
 
     async def execute(  # type: ignore[override]
@@ -144,7 +140,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             project_id: Project UUID.
             file_path: Path relative to project root.
             create: When True, create the file if it does not exist.
-            initial_content: Initial source for new files (create=True).
+            initial_content: Initial source for new .py files (create=True).
             **kwargs: Unused; accepted for adapter compatibility.
 
         Returns:
@@ -166,13 +162,6 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 return error_result_from_make_error(
                     make_error(PARSE_ERROR, f"File is locked by session {lock_owner}")
                 )
-        if active_session_uses_abs_path(abs_path):
-            return error_result_from_make_error(
-                make_error(
-                    PARSE_ERROR,
-                    "Another edit session is already open for this file.",
-                )
-            )
 
         created = False
         if not abs_path.exists():
@@ -185,17 +174,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             if suffix == ".py":
                 abs_path.write_text(initial_content, encoding="utf-8")
             elif suffix == ".json":
-                abs_path.write_text(
-                    initial_content if initial_content else "{}\n",
-                    encoding="utf-8",
-                )
+                abs_path.write_text("{}\n", encoding="utf-8")
             elif suffix in (".yaml", ".yml"):
-                abs_path.write_text(
-                    initial_content if initial_content else "{}\n",
-                    encoding="utf-8",
-                )
-            elif suffix in TEXT_SUFFIXES:
-                abs_path.write_text(initial_content or "", encoding="utf-8")
+                abs_path.write_text("{}\n", encoding="utf-8")
             else:
                 abs_path.write_text("", encoding="utf-8")
             created = True
@@ -221,7 +202,6 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             session_extra["original_format_group"] = fallback_info[
                 "original_format_group"
             ]
-            session_extra["is_invalid"] = fallback_info.get("is_invalid", False)
         if tree_temp_kwargs is not None:
             session = create_session(
                 abs_path=abs_path,
@@ -238,6 +218,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 tree_id=tree_id,
                 **session_extra,
             )
+        write_lockfile_pid(abs_path, os.getpid(), session.session_id)
         data: Dict[str, Any] = {
             "success": True,
             "session_id": session.session_id,
@@ -249,8 +230,6 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         if fallback_info is not None:
             data["fallback_reason"] = fallback_info["fallback_reason"]
             data["original_format_group"] = fallback_info["original_format_group"]
-        if session.is_invalid:
-            data["is_invalid"] = True
         return SuccessResult(data=data)
 
     def _resolve_abs_path(self, project_id: str, file_path: str) -> Optional[Path]:
@@ -323,8 +302,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             tree_id = self._write_draft(abs_path, descriptor, project_id)
             descriptor.__dict__["tree_id"] = tree_id
         except Exception as exc:
-            # Fall back to text-mode so broken source remains editable.
-            if original_fg in (FORMAT_TREE_TEMP, FORMAT_SIDECAR):
+            # For tree-temp (JSON/YAML) fall back to text-mode so the file
+            # remains accessible despite syntax errors.
+            if original_fg == FORMAT_TREE_TEMP:
                 try:
                     text_descriptor = FormatDescriptor(
                         format_group=FORMAT_TEXT,
@@ -338,7 +318,6 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     text_descriptor.__dict__["_fallback_info"] = {
                         "fallback_reason": "PARSE_ERROR",
                         "original_format_group": original_fg,
-                        "is_invalid": True,
                     }
                     return text_descriptor
                 except Exception:

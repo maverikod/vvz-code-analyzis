@@ -17,6 +17,7 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_table_sql_postgres,
 )
 from code_analysis.core.database_driver_pkg.drivers.postgres_migrations import (
+    idempotent_ensure_client_session_tables,
     idempotent_ensure_project_activity_locks_table,
 )
 from code_analysis.core.database_driver_pkg.drivers.sqlite_migrations import (
@@ -53,6 +54,17 @@ def test_schema_definition_includes_project_activity_locks() -> None:
         "lock_mode",
         "refcount",
     }.issubset(lease_cols)
+    for table in (
+        "client_sessions",
+        "session_file_locks",
+        "roles",
+        "role_permissions",
+        "session_roles",
+    ):
+        assert table in sd["tables"]
+    assert any(
+        i.get("name") == "idx_client_sessions_last_active" for i in sd["indexes"]
+    )
 
 
 def test_postgres_ddl_uses_create_if_not_exists() -> None:
@@ -130,4 +142,21 @@ def test_idempotent_ensure_postgres_runs_table_and_index() -> None:
     assert any("idx_project_activity_locks_lease_until" in stmt for stmt in statements)
     assert any("runtime_lock_sessions" in stmt for stmt in statements)
     assert any("file_advisory_lock_leases" in stmt for stmt in statements)
+    conn.commit.assert_called_once()
+
+
+def test_idempotent_ensure_postgres_client_session_tables() -> None:
+    cur = MagicMock()
+    ctx = MagicMock()
+    ctx.__enter__ = lambda *a, **k: cur
+    ctx.__exit__ = lambda *a, **k: None
+    conn = MagicMock()
+    conn.cursor = MagicMock(return_value=ctx)
+    idempotent_ensure_client_session_tables(conn, get_schema_definition())
+    assert cur.execute.call_count >= 6
+    statements = [call[0][0] for call in cur.execute.call_args_list]
+    assert any("client_sessions" in stmt for stmt in statements)
+    assert any("session_file_locks" in stmt for stmt in statements)
+    assert any("roles" in stmt for stmt in statements)
+    assert any("idx_client_sessions_last_active" in stmt for stmt in statements)
     conn.commit.assert_called_once()

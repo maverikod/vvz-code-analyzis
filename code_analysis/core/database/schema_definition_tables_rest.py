@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 
 def get_tables_rest() -> Dict[str, Any]:
-    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_errors, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes, project_activity_locks."""
+    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_errors, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes, project_activity_locks, client_sessions, session_file_locks, roles, role_permissions, session_roles."""
     return {
         "code_duplicates": {
             "columns": [
@@ -467,6 +467,129 @@ def get_tables_rest() -> Dict[str, Any]:
             ],
             "foreign_keys": [],
             "unique_constraints": [],
+            "check_constraints": [],
+        },
+        "client_sessions": {
+            "columns": [
+                {
+                    "name": "session_id",
+                    "type": "TEXT",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {
+                    "name": "comment",
+                    "type": "TEXT",
+                    "not_null": True,
+                    "default": "''",
+                },
+                {
+                    "name": "created_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+                {
+                    "name": "last_active_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+            ],
+            "foreign_keys": [],
+            "unique_constraints": [],
+            "check_constraints": [],
+        },
+        "session_file_locks": {
+            "columns": [
+                {"name": "session_id", "type": "TEXT", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {
+                    "name": "locked_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["session_id"],
+                    "references_table": "client_sessions",
+                    "references_columns": ["session_id"],
+                    "on_delete": "CASCADE",
+                },
+                {
+                    "columns": ["project_id"],
+                    "references_table": "projects",
+                    "references_columns": ["id"],
+                    "on_delete": "CASCADE",
+                },
+                {
+                    "columns": ["file_id"],
+                    "references_table": "files",
+                    "references_columns": ["id"],
+                    "on_delete": "CASCADE",
+                },
+            ],
+            "unique_constraints": [
+                {"columns": ["session_id", "project_id", "file_id"]}
+            ],
+            "check_constraints": [],
+        },
+        "roles": {
+            "columns": [
+                {
+                    "name": "role_id",
+                    "type": "TEXT",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {"name": "name", "type": "TEXT", "not_null": True},
+            ],
+            "foreign_keys": [],
+            "unique_constraints": [{"columns": ["name"]}],
+            "check_constraints": [],
+        },
+        "role_permissions": {
+            "columns": [
+                {"name": "role_id", "type": "TEXT", "not_null": True},
+                {"name": "command_name", "type": "TEXT", "not_null": True},
+                {"name": "server_uuid", "type": "TEXT", "not_null": True},
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["role_id"],
+                    "references_table": "roles",
+                    "references_columns": ["role_id"],
+                    "on_delete": "CASCADE",
+                }
+            ],
+            "unique_constraints": [
+                {"columns": ["role_id", "command_name", "server_uuid"]}
+            ],
+            "check_constraints": [],
+        },
+        "session_roles": {
+            "columns": [
+                {"name": "session_id", "type": "TEXT", "not_null": True},
+                {"name": "role_id", "type": "TEXT", "not_null": True},
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["session_id"],
+                    "references_table": "client_sessions",
+                    "references_columns": ["session_id"],
+                    "on_delete": "CASCADE",
+                },
+                {
+                    "columns": ["role_id"],
+                    "references_table": "roles",
+                    "references_columns": ["role_id"],
+                    "on_delete": "CASCADE",
+                },
+            ],
+            "unique_constraints": [{"columns": ["session_id", "role_id"]}],
             "check_constraints": [],
         },
     }

@@ -319,3 +319,268 @@ async def test_yaml_batch_invalid_first_operation(tmp_path: Path) -> None:
         )
     assert isinstance(out, ErrorResult)
     assert _sha((tmp_path / _REL).read_bytes()) == h0
+
+
+@pytest.mark.asyncio
+async def test_yaml_replace_one_element_list_commits_as_sequence(
+    tmp_path: Path,
+) -> None:
+    """Criterion A: replace with one-element list of dicts stays a YAML sequence."""
+    rel = "records/single_seq.yml"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("source_ranges: []\n", encoding="utf-8")
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _YAML_PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _YAML_PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "json_pointer": "/source_ranges",
+                            "value": [{"start": 1336, "end": 1353}],
+                        }
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _YAML_PROJECT_UUID, "session_id": sid}
+            )
+        )
+    text = p.read_text(encoding="utf-8")
+    assert "\n- " in text or text.strip().startswith("- ")
+    data = yaml.safe_load(text)
+    assert isinstance(data["source_ranges"], list)
+    assert data["source_ranges"] == [{"start": 1336, "end": 1353}]
+
+
+@pytest.mark.asyncio
+async def test_yaml_replace_one_element_scalar_list_commits_as_sequence(
+    tmp_path: Path,
+) -> None:
+    """Criterion B: replace with one-element scalar list stays a sequence."""
+    rel = "records/scalar_seq.yml"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("tags: []\n", encoding="utf-8")
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _YAML_PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _YAML_PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "json_pointer": "/tags",
+                            "value": ["x"],
+                        }
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _YAML_PROJECT_UUID, "session_id": sid}
+            )
+        )
+    text = p.read_text(encoding="utf-8")
+    assert "- x" in text or "- 'x'" in text or '- "x"' in text
+    data = yaml.safe_load(text)
+    assert isinstance(data["tags"], list)
+    assert data["tags"] == ["x"]
+
+
+@pytest.mark.asyncio
+async def test_yaml_insert_one_element_list_into_mapping_commits_as_sequence(
+    tmp_path: Path,
+) -> None:
+    """Criterion C: insert one-element list value under a mapping key."""
+    rel = "records/insert_seq.yml"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("meta:\n  tag: old\n", encoding="utf-8")
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _YAML_PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _YAML_PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "parent_json_pointer": "",
+                            "key": "items",
+                            "value": [{"a": 1}],
+                        }
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _YAML_PROJECT_UUID, "session_id": sid}
+            )
+        )
+    text = p.read_text(encoding="utf-8")
+    assert "- a:" in text or "\n- " in text
+    data = yaml.safe_load(text)
+    assert isinstance(data["items"], list)
+    assert data["items"] == [{"a": 1}]
+
+
+@pytest.mark.asyncio
+async def test_yaml_top_level_one_element_list_roundtrips_as_sequence(
+    tmp_path: Path,
+) -> None:
+    """Criterion F: replacing a multi-item list with one item stays a YAML sequence."""
+    rel = "records/top_level_seq.yml"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        "source_ranges:\n  - start: 1\n    end: 2\n  - start: 3\n    end: 4\n",
+        encoding="utf-8",
+    )
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _YAML_PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _YAML_PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "json_pointer": "/source_ranges",
+                            "value": [{"start": 1336, "end": 1353}],
+                        }
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _YAML_PROJECT_UUID, "session_id": sid}
+            )
+        )
+    text = p.read_text(encoding="utf-8")
+    assert "\n- " in text
+    data = yaml.safe_load(text)
+    assert isinstance(data["source_ranges"], list)
+    assert len(data["source_ranges"]) == 1
+    assert data["source_ranges"][0] == {"start": 1336, "end": 1353}
+
+
+@pytest.mark.asyncio
+async def test_yaml_empty_list_and_dict_roundtrip(tmp_path: Path) -> None:
+    """Criterion G: empty list and empty dict preserve container types."""
+    rel = "records/empty_containers.yml"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("items:\n  - id: 1\nslots: {}\n", encoding="utf-8")
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _YAML_PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _YAML_PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {"type": "replace", "json_pointer": "/items", "value": []},
+                        {"type": "replace", "json_pointer": "/slots", "value": {}},
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _YAML_PROJECT_UUID, "session_id": sid}
+            )
+        )
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert isinstance(data["items"], list)
+    assert data["items"] == []
+    assert isinstance(data["slots"], dict)
+    assert data["slots"] == {}

@@ -18,7 +18,7 @@ from code_analysis.main_app_factory import (
     create_app_with_events,
     setup_main_logger_file_handler,
 )
-from code_analysis.main_cleanup import register_cleanup_handlers
+from code_analysis.main_cleanup import log_daemon_shutdown, register_cleanup_handlers
 from code_analysis.main_config import (
     apply_global_config,
     ensure_storage_and_load_app_config,
@@ -122,7 +122,12 @@ def main() -> None:
         except Exception:
             pass
 
-    register_cleanup_handlers(worker_manager, app_config, main_logger)
+    register_cleanup_handlers(
+        worker_manager,
+        app_config,
+        main_logger,
+        heartbeat_stop=heartbeat_stop,
+    )
 
     run_workers_directly_and_start_monitoring(worker_manager)
 
@@ -165,8 +170,7 @@ def main() -> None:
         )
         raise
     finally:
-        if heartbeat_stop is not None:
-            heartbeat_stop.set()
+        log_daemon_shutdown(main_logger, "main_server_loop_ended")
         main_logger.info("main() exiting after server loop")
 
 

@@ -23,6 +23,7 @@ from code_analysis.commands.universal_file_edit.errors import (
 )
 from code_analysis.commands.universal_file_edit.format_group import (
     FORMAT_SIDECAR,
+    FORMAT_TEXT,
     FORMAT_TREE_TEMP,
     delete_lockfile,
     read_lockfile_pid,
@@ -62,8 +63,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
     version = "1.0.0"
 
     descr = (
-        "Write universal file edit draft: preview/commit for tree-temp; "
-        "two-phase PID lockfile for sidecar/text."
+        "Write universal file edit draft: preview/commit for tree-temp and text; "
+        "two-phase PID lockfile for sidecar when write_mode is omitted."
     )
 
     category = "file_management"
@@ -100,9 +101,12 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                     "enum": ["preview", "commit"],
                     "default": "preview",
                     "description": (
-                        "Tree-temp only: preview returns a diff without writing or "
-                        "lockfile side effects; commit persists source and sidecar. "
-                        "Ignored for sidecar/text (two-phase PID protocol)."
+                        "preview: return unified diff without writing the canonical file. "
+                        "commit: backup and persist draft to disk. "
+                        "Required semantics for tree-temp and text. "
+                        "For sidecar (.py), omitted write_mode uses two-phase PID lockfile "
+                        "(first call preview+lockfile, second call commit); explicit "
+                        "write_mode always takes priority."
                     ),
                 },
             },
@@ -113,7 +117,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate optional write_mode."""
         params = super().validate_params(params)
-        wm = params.get("write_mode", "preview")
+        wm_raw = params.get("write_mode")
+        wm = "preview" if wm_raw is None else wm_raw
         if wm not in ("preview", "commit"):
             raise ValidationError(
                 "write_mode must be 'preview' or 'commit'",
@@ -121,6 +126,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 details={"write_mode": wm},
             )
         params["write_mode"] = wm
+        params["write_mode_explicit"] = wm_raw is not None
         return params
 
     @classmethod
@@ -137,6 +143,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         project_id: str,
         session_id: str,
         write_mode: str = "preview",
+        write_mode_explicit: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute the write command.
@@ -147,7 +154,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         Args:
             project_id: Project UUID.
             session_id: Active session identifier.
-            write_mode: For tree-temp: preview vs commit; ignored otherwise.
+            write_mode: preview vs commit (tree-temp, text; sidecar when explicit).
+            write_mode_explicit: True when the client sent write_mode (sidecar legacy).
             **kwargs: Adapter context.
 
         Returns:
@@ -166,6 +174,11 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 return self._tree_temp_preview(session)
             return self._tree_temp_write_commit(session, project_id)
 
+        if session.format_group == FORMAT_TEXT:
+            if write_mode == "preview":
+                return self._text_preview(session)
+            return self._text_write_commit(session, project_id)
+
         current_pid = os.getpid()
         lock = read_lockfile_pid(session.abs_path)
         is_second_call = (
@@ -173,6 +186,10 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             and lock[0] == current_pid
             and lock[1] == session.session_id
         )
+        if write_mode == "commit":
+            return self._second_call(session, project_id)
+        if write_mode_explicit:
+            return self._sidecar_preview(session)
         if is_second_call:
             return self._second_call(session, project_id)
         return self._first_call(session, current_pid)
@@ -281,6 +298,61 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             return serialize_tree_temp_session_source(session)
         return str(session.draft_path.read_text())
 
+    def _text_preview(self, session: EditSession) -> SuccessResult | ErrorResult:
+        """Text preview: diff draft vs canonical file; no lockfile or disk write."""
+        try:
+            code = self._generate_code(session)
+        except Exception as exc:
+            return error_result_from_make_error(
+                make_error(WRITE_FAILED, f"Preview generation failed: {exc}")
+            )
+        original = session.abs_path.read_text(encoding="utf-8")
+        diff = unified_diff_text(
+            original,
+            code,
+            before_label=str(session.abs_path),
+            after_label=str(session.abs_path),
+        )
+        return SuccessResult(
+            data={
+                "success": True,
+                "phase": "preview",
+                "write_mode": "preview",
+                "diff": diff,
+            }
+        )
+
+    def _text_write_commit(
+        self, session: EditSession, project_id: str
+    ) -> SuccessResult | ErrorResult:
+        """Text commit: backup, atomic write from draft, delete lockfile if any."""
+        _ = project_id
+        return self._second_call(session, project_id)
+
+    def _sidecar_preview(self, session: EditSession) -> SuccessResult | ErrorResult:
+        """Sidecar explicit preview: diff only, no lockfile side effects."""
+        try:
+            code = self._generate_code(session)
+        except Exception as exc:
+            return error_result_from_make_error(
+                make_error(WRITE_FAILED, f"Preview generation failed: {exc}")
+            )
+        original = session.abs_path.read_text(encoding="utf-8")
+        diff = unified_diff_text(
+            original,
+            code,
+            before_label=str(session.abs_path),
+            after_label=str(session.abs_path),
+        )
+        return SuccessResult(
+            data={
+                "success": True,
+                "phase": "preview",
+                "write_mode": "preview",
+                "diff": diff,
+            }
+        )
+
     def _first_call(
         self, session: EditSession, current_pid: int
     ) -> SuccessResult | ErrorResult:
@@ -372,6 +444,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             data={
                 "success": True,
                 "phase": "committed",
+                "write_mode": "commit",
                 "diff": diff,
                 "is_invalid": session.is_invalid,
             }

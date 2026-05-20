@@ -44,5 +44,5 @@ outputs:
   name: session_list_file_locks command
   type: MCP command
 parent_global_step: G-003
-status: draft
+status: done
 step_id: T-002

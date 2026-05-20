@@ -9,14 +9,28 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
+import time
 from time import perf_counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.progress_tracker import get_progress_tracker_from_context
 from .base_mcp_command import BaseMCPCommand
+from .fs_grep_budget import (
+    GREP_BUDGET_EXCEEDED,
+    GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
+    GREP_TIMEOUT,
+    FsGrepBudgetState,
+    cap_candidate_paths,
+    limits_for_queue,
+    limits_for_sync,
+    resolve_execution_mode,
+)
 from .grep_block_resolver import GrepBlockResolver
 from .preview_config_defaults import get_preview_config_defaults
 from .file_management.relative_path_list_pattern import (
@@ -30,19 +44,20 @@ logger = logging.getLogger(__name__)
 
 
 class FsGrepCommand(BaseMCPCommand):
-    """Scan files on disk for a pattern (regex or literal)."""
+    """Scan files on disk for a pattern (grep-style)."""
 
     name = "fs_grep"
-    version = "1.2.0"
+    version = "1.3.0"
     descr = (
         "Search file contents on disk (grep-style). Does not use the database full-text index; "
         "use ``fulltext_search`` for indexed search. Respects the same walk rules as "
-        "``list_project_files``."
+        "``list_project_files``. Sync calls enforce wall-time and file budgets; use "
+        "``use_queue=true`` for full scans."
     )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -85,6 +100,8 @@ class FsGrepCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Stop after this many matching lines (default 500).",
                     "default": 500,
+                    "minimum": 1,
+                    "maximum": 10000,
                 },
                 "max_file_bytes": {
                     "type": "integer",
@@ -102,6 +119,37 @@ class FsGrepCommand(BaseMCPCommand):
                     ),
                     "nullable": True,
                 },
+                "fast_text_only": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Phase-1 text scan only (no CST/sidecar block resolver). Default true "
+                        "for responsive sync grep."
+                    ),
+                },
+                "enrich_blocks": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "When true, run phase-2 structural enrichment (block_id/block_type) for "
+                        "the first enrich_max_results matches only."
+                    ),
+                },
+                "enrich_max_results": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Max matches to enrich when enrich_blocks=true.",
+                },
+                "grep_sync_max_wall_seconds": {
+                    "type": "number",
+                    "minimum": 5,
+                    "maximum": 600,
+                    "description": (
+                        "Sync-only total wall-time budget. Ignored when executed via job queue."
+                    ),
+                },
                 "show_venv": {"type": "boolean", "default": False},
                 "python_only": {"type": "boolean", "default": False},
                 "include_venv_ignore_exceptions": {"type": "boolean", "default": False},
@@ -110,6 +158,21 @@ class FsGrepCommand(BaseMCPCommand):
             "required": ["project_id", "pattern"],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        params = super().validate_params(params)
+        params["max_matches"] = max(
+            1, min(10000, int(params.get("max_matches") or 500))
+        )
+        params["enrich_max_results"] = max(
+            0, min(200, int(params.get("enrich_max_results") or 20))
+        )
+        if params.get("grep_sync_max_wall_seconds") is not None:
+            params["grep_sync_max_wall_seconds"] = max(
+                5.0,
+                min(600.0, float(params["grep_sync_max_wall_seconds"])),
+            )
+        return params
 
     async def execute(
         self,
@@ -122,36 +185,96 @@ class FsGrepCommand(BaseMCPCommand):
         max_matches: int = 500,
         max_file_bytes: int = 5 * 1024 * 1024,
         line_preview_len: Optional[int] = None,
+        fast_text_only: bool = True,
+        enrich_blocks: bool = False,
+        enrich_max_results: int = 20,
+        grep_sync_max_wall_seconds: Optional[float] = None,
         show_venv: bool = False,
         python_only: bool = False,
         include_venv_ignore_exceptions: bool = False,
         show_hidden: bool = False,
+        max_files_scanned: Optional[int] = None,
+        wall_time_budget_s: Optional[float] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Execute the fs_grep command.
+        """Run grep off the event loop; enforce sync wall-time via asyncio.wait_for."""
+        context = kwargs.get("context") or {}
+        in_queue = get_progress_tracker_from_context(context) is not None
+        if in_queue:
+            limits = limits_for_queue(max_matches=max_matches)
+        else:
+            limits = limits_for_sync(
+                max_matches=max_matches,
+                grep_sync_max_wall_seconds=grep_sync_max_wall_seconds,
+            )
+        if max_files_scanned is not None:
+            limits.max_files_scanned = max(1, int(max_files_scanned))
+        wall_budget = (
+            float(wall_time_budget_s)
+            if wall_time_budget_s is not None
+            else limits.max_wall_seconds
+        )
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._execute_sync,
+                    project_id,
+                    pattern,
+                    literal,
+                    case_sensitive,
+                    file_pattern,
+                    glob,
+                    max_matches,
+                    max_file_bytes,
+                    line_preview_len,
+                    fast_text_only,
+                    enrich_blocks,
+                    enrich_max_results,
+                    show_venv,
+                    python_only,
+                    include_venv_ignore_exceptions,
+                    show_hidden,
+                    limits,
+                    in_queue,
+                    wall_budget,
+                ),
+                timeout=wall_budget + 15.0,
+            )
+        except asyncio.TimeoutError:
+            return ErrorResult(
+                message=(
+                    "fs_grep exceeded sync wall-time budget; retry with use_queue=true"
+                ),
+                code=GREP_TIMEOUT,
+                details={
+                    "wall_time_budget_s": wall_budget,
+                    "suggestion": "call_server(..., use_queue=true)",
+                },
+            )
 
-        Args:
-            project_id: Project UUID.
-            pattern: Search pattern (literal substring or regex).
-            literal: If True, match as plain substring.
-            case_sensitive: If False, case-insensitive matching.
-            file_pattern: Optional project-relative path filter.
-            glob: Alias for file_pattern.
-            max_matches: Stop after this many matching lines.
-            max_file_bytes: Skip files larger than this before opening.
-            line_preview_len: Max characters per matching line in the response.
-            show_venv: Include venv directories.
-            python_only: Only scan Python files.
-            include_venv_ignore_exceptions: Include venv ignore exceptions.
-            show_hidden: Include hidden files.
-            **kwargs: Ignored extra parameters.
-
-        Returns:
-            SuccessResult with matches list where each entry has
-            relative_path, line_number (int), line (str content),
-            block_id (str | null), and block_type (str | null).
-            ErrorResult on validation failure.
-        """
+    def _execute_sync(
+        self,
+        project_id: str,
+        pattern: str,
+        literal: bool,
+        case_sensitive: bool,
+        file_pattern: Optional[str],
+        glob: Optional[str],
+        max_matches: int,
+        max_file_bytes: int,
+        line_preview_len: Optional[int],
+        fast_text_only: bool,
+        enrich_blocks: bool,
+        enrich_max_results: int,
+        show_venv: bool,
+        python_only: bool,
+        include_venv_ignore_exceptions: bool,
+        show_hidden: bool,
+        limits: Any,
+        in_queue: bool,
+        wall_budget: float,
+    ) -> SuccessResult | ErrorResult:
+        """Phase-1 fast text scan; optional phase-2 block enrichment."""
         if not (pattern or "").strip():
             return ErrorResult(
                 message="pattern must be non-empty",
@@ -179,6 +302,11 @@ class FsGrepCommand(BaseMCPCommand):
                 code="INVALID_LIMIT",
                 details={"line_preview_len": line_preview_len},
             )
+
+        budget = FsGrepBudgetState(limits=limits)
+        budget.limits.max_wall_seconds = wall_budget
+        effective_max_matches = min(max_matches, limits.max_matches)
+
         try:
             started_at = perf_counter()
             project_root = self._resolve_project_root(project_id).resolve()
@@ -198,21 +326,26 @@ class FsGrepCommand(BaseMCPCommand):
                         canonical_relative_path(project_root, p), effective_pattern
                     )
                 ]
+            fs_paths = cap_candidate_paths(fs_paths, budget)
 
             logger.info(
                 "fs_grep start project_id=%s root=%s pattern=%r literal=%s "
                 "case_sensitive=%s file_pattern=%r max_matches=%s max_file_bytes=%s "
-                "candidate_files=%s",
+                "candidate_files=%s fast_text_only=%s enrich_blocks=%s mode=%s",
                 project_id,
                 project_root,
                 pattern,
                 literal,
                 case_sensitive,
                 effective_pattern,
-                max_matches,
+                effective_max_matches,
                 max_file_bytes,
-                len(fs_paths),
+                budget.usage.candidate_files,
+                fast_text_only,
+                enrich_blocks,
+                limits.mode,
             )
+
             flags = 0 if case_sensitive else re.IGNORECASE
             needle = pattern
             regex: Optional[re.Pattern[str]] = None
@@ -226,95 +359,92 @@ class FsGrepCommand(BaseMCPCommand):
                         details={"pattern": needle},
                     )
 
-            matches: List[Dict[str, Any]] = []
-            block_resolver = GrepBlockResolver()
-            files_scanned = 0
-            files_skipped_large = 0
-            files_skipped_io = 0
-            skipped_large_samples: List[Dict[str, Any]] = []
-            for abs_path in fs_paths:
-                if len(matches) >= max_matches:
-                    break
-                rel = canonical_relative_path(project_root, abs_path)
-                try:
-                    size = abs_path.stat().st_size
-                except OSError as e:
-                    files_skipped_io += 1
-                    logger.debug("fs_grep skip stat %s: %s", abs_path, e)
-                    continue
-                if max_file_bytes and size > max_file_bytes:
-                    files_skipped_large += 1
-                    if len(skipped_large_samples) < 20:
-                        skipped_large_samples.append(
-                            {"relative_path": rel, "size_bytes": size}
-                        )
-                    continue
-                files_scanned += 1
-                try:
-                    with abs_path.open("r", encoding="utf-8", errors="replace") as fh:
-                        for i, raw_line in enumerate(fh, start=1):
-                            if len(matches) >= max_matches:
-                                break
-                            if "\0" in raw_line:
-                                break
-                            raw_line = raw_line.rstrip("\r\n")
-                            ok = False
-                            if literal:
-                                hay = raw_line if case_sensitive else raw_line.lower()
-                                nd = needle if case_sensitive else needle.lower()
-                                ok = nd in hay
-                            else:
-                                assert regex is not None
-                                ok = regex.search(raw_line) is not None
-                            if ok:
-                                line_text = raw_line
-                                if len(line_text) > line_preview_len:
-                                    line_text = line_text[:line_preview_len]
-                                block_id, block_type = block_resolver.resolve(
-                                    abs_path, i
-                                )
-                                matches.append(
-                                    {
-                                        "relative_path": rel,
-                                        "line_number": i,
-                                        "line": line_text,
-                                        "block_id": block_id,
-                                        "block_type": block_type,
-                                    }
-                                )
-                except OSError as e:
-                    files_skipped_io += 1
-                    logger.debug("fs_grep skip read %s: %s", abs_path, e)
-                    continue
+            matches, scan_stats = _phase1_text_scan(
+                project_root=project_root,
+                fs_paths=fs_paths,
+                needle=needle,
+                literal=literal,
+                case_sensitive=case_sensitive,
+                regex=regex,
+                max_matches=effective_max_matches,
+                max_file_bytes=max_file_bytes,
+                line_preview_len=line_preview_len,
+                budget=budget,
+            )
+
+            do_enrich = enrich_blocks and not fast_text_only
+            if do_enrich and matches:
+                _phase2_enrich_blocks(
+                    project_root=project_root,
+                    matches=matches,
+                    enrich_max_results=enrich_max_results,
+                    budget=budget,
+                )
+            elif enrich_blocks and fast_text_only and matches:
+                budget.add_warning(
+                    GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
+                    "Structural enrichment skipped because fast_text_only=true.",
+                    enrich_max_results=enrich_max_results,
+                )
+
+            budget.usage.matches_returned = len(matches)
+            budget.usage.files_scanned = scan_stats["files_scanned"]
+            budget.finalize()
+
+            if budget.usage.budget_exceeded:
+                budget.warnings.append(budget.budget_warning())
+
+            execution_mode = resolve_execution_mode(
+                in_queue=in_queue,
+                budget=budget,
+                candidate_files=budget.usage.candidate_files,
+            )
 
             elapsed = perf_counter() - started_at
-            block_resolver.cleanup()
             logger.info(
                 "fs_grep done project_id=%s elapsed=%.3fs matches=%s "
-                "files_scanned=%s files_skipped_large=%s files_skipped_io=%s truncated=%s",
+                "files_scanned=%s files_skipped_large=%s files_skipped_io=%s "
+                "truncated=%s budget_exceeded=%s execution_mode=%s",
                 project_id,
                 elapsed,
                 len(matches),
-                files_scanned,
-                files_skipped_large,
-                files_skipped_io,
-                len(matches) >= max_matches,
+                scan_stats["files_scanned"],
+                scan_stats["files_skipped_large"],
+                scan_stats["files_skipped_io"],
+                len(matches) >= effective_max_matches,
+                budget.usage.budget_exceeded,
+                execution_mode,
             )
-            return SuccessResult(
-                data={
-                    "success": True,
-                    "pattern": needle,
-                    "literal": literal,
-                    "case_sensitive": case_sensitive,
-                    "matches": matches,
-                    "match_count": len(matches),
-                    "files_scanned": files_scanned,
-                    "files_skipped_large": files_skipped_large,
-                    "files_skipped_io": files_skipped_io,
-                    "skipped_large_samples": skipped_large_samples,
-                    "truncated": len(matches) >= max_matches,
-                }
-            )
+
+            payload: Dict[str, Any] = {
+                "success": True,
+                "pattern": needle,
+                "literal": literal,
+                "case_sensitive": case_sensitive,
+                "matches": matches,
+                "match_count": len(matches),
+                "files_scanned": scan_stats["files_scanned"],
+                "files_skipped_large": scan_stats["files_skipped_large"],
+                "files_skipped_io": scan_stats["files_skipped_io"],
+                "skipped_large_samples": scan_stats["skipped_large_samples"],
+                "truncated": len(matches) >= effective_max_matches,
+                "budget_exceeded": budget.usage.budget_exceeded,
+                "budget_reason": budget.usage.exceed_reason,
+                "execution_mode": execution_mode,
+                "grep_budget": {
+                    "limits": budget.limits.as_dict(),
+                    "usage": budget.usage.as_dict(),
+                },
+                "warnings": list(budget.warnings),
+                "fast_text_only": fast_text_only,
+                "enrich_blocks": enrich_blocks,
+            }
+            if execution_mode == "queued_recommended":
+                payload["use_queue_recommended"] = True
+
+            _trim_response_payload(payload, budget)
+
+            return SuccessResult(data=payload)
         except Exception as e:
             return self._handle_error(e, "FS_GREP_ERROR", "fs_grep")
 
@@ -328,10 +458,11 @@ class FsGrepCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "Walks the project tree like ``list_project_files``, streams each file as UTF-8 "
-                "(with replacement), skips files larger than ``max_file_bytes`` before opening "
-                "them, skips binary-looking content (NUL byte), and collects matching lines. "
-                "For corpus-wide indexed search use ``fulltext_search``."
+                "Two-phase grep: phase-1 streams UTF-8 lines with ``fast_text_only=true`` "
+                "(default, no CST/DB). Optional phase-2 ``enrich_blocks`` resolves block_id "
+                "for the first ``enrich_max_results`` hits only. Sync calls enforce "
+                "wall-time, scanned-file, and match budgets; heavy scans should use "
+                "``use_queue=true`` (command class sets use_queue)."
             ),
             "parameters": {
                 "project_id": {
@@ -344,27 +475,17 @@ class FsGrepCommand(BaseMCPCommand):
                     "type": "string",
                     "required": True,
                 },
-                "literal": {
-                    "description": "When true, match pattern as a plain substring.",
+                "fast_text_only": {
+                    "description": "Skip structural block resolution during scan (default true).",
                     "type": "boolean",
                     "required": False,
                     "default": True,
                 },
-                "case_sensitive": {
-                    "description": "When false, perform case-insensitive matching.",
+                "enrich_blocks": {
+                    "description": "Run phase-2 enrichment for first enrich_max_results matches.",
                     "type": "boolean",
                     "required": False,
-                    "default": True,
-                },
-                "file_pattern": {
-                    "description": "Optional project-relative listing pattern.",
-                    "type": "string",
-                    "required": False,
-                },
-                "glob": {
-                    "description": "Alias for file_pattern; file_pattern wins when both are set.",
-                    "type": "string",
-                    "required": False,
+                    "default": False,
                 },
                 "max_matches": {
                     "description": "Stop after this many matching lines.",
@@ -372,55 +493,225 @@ class FsGrepCommand(BaseMCPCommand):
                     "required": False,
                     "default": 500,
                 },
-                "max_file_bytes": {
-                    "description": (
-                        "Skip files larger than this limit before opening them. Use 0 to disable."
-                    ),
-                    "type": "integer",
-                    "required": False,
-                    "default": 5242880,
-                },
-                "line_preview_len": {
-                    "description": "Max characters returned per matching line.",
-                    "type": "integer",
-                    "required": False,
-                    "default": 120,
-                },
             },
             "return_value": {
                 "success": {
-                    "description": "Matches and scan stats.",
+                    "description": "Matches, scan stats, grep_budget, warnings.",
                     "data": {},
                     "example": {},
                 },
                 "error": {
-                    "description": "Validation or IO failure.",
+                    "description": "Validation, budget timeout, or IO failure.",
                     "code": "FS_GREP_ERROR",
                     "message": "Human-readable message",
                 },
             },
-            "usage_examples": [],
+            "usage_examples": [
+                {
+                    "description": "Fast sync grep (default)",
+                    "command": {
+                        "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                        "pattern": "xpath",
+                        "file_pattern": "code_analysis",
+                        "max_matches": 50,
+                    },
+                    "explanation": "Returns within sync budgets; block_id null unless enrich_blocks.",
+                },
+            ],
             "error_cases": {
                 "INVALID_PATTERN": {
                     "description": "The pattern is empty or whitespace only.",
                     "message": "pattern must be non-empty",
                     "solution": "Pass a non-empty search string.",
                 },
-                "INVALID_LIMIT": {
-                    "description": "max_matches or max_file_bytes is outside the supported range.",
-                    "message": "max_matches must be >= 1 or max_file_bytes must be >= 0",
-                    "solution": "Use max_matches >= 1 and max_file_bytes >= 0.",
+                "GREP_TIMEOUT": {
+                    "description": "Sync wall-time budget exceeded at transport layer.",
+                    "message": "fs_grep exceeded sync wall-time budget",
+                    "solution": "Use use_queue=true on call_server.",
                 },
-                "INVALID_REGEX": {
-                    "description": "literal=false and pattern is not valid Python regex syntax.",
-                    "message": "Invalid regex: {details}",
-                    "solution": "Fix the regular expression or set literal=true.",
+                "GREP_BUDGET_EXCEEDED": {
+                    "description": "Scan stopped due to file/match/time budget (success with warnings).",
+                    "message": "Grep scan stopped early",
+                    "solution": "Narrow file_pattern or use use_queue=true.",
+                },
+                "GREP_TOO_MANY_FILES": {
+                    "description": "Too many candidate paths for sync; list was capped.",
+                    "message": "Candidate file list truncated",
+                    "solution": "Use file_pattern or use_queue=true.",
                 },
             },
             "best_practices": [
-                "Narrow with file_pattern when possible — scanning huge trees is expensive.",
-                "Keep max_file_bytes enabled for broad searches; skipped files are returned in the result.",
-                "Prefer fulltext_search when the project is indexed and you need docstring/body FTS.",
-                "Use block_id from matches on .py/.json/.yaml/.md files to drill into universal_file_preview.",
+                "Keep fast_text_only=true for broad sync grep.",
+                "Use enrich_blocks only when you need block_id on a small result set.",
+                "Heavy scans: call_server(..., use_queue=true) and poll queue_get_job_status.",
+                "Narrow with file_pattern whenever possible.",
             ],
         }
+
+
+def _phase1_text_scan(
+    *,
+    project_root: Any,
+    fs_paths: List[Any],
+    needle: str,
+    literal: bool,
+    case_sensitive: bool,
+    regex: Optional[re.Pattern[str]],
+    max_matches: int,
+    max_file_bytes: int,
+    line_preview_len: int,
+    budget: FsGrepBudgetState,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    matches: List[Dict[str, Any]] = []
+    files_scanned = 0
+    files_skipped_large = 0
+    files_skipped_io = 0
+    skipped_large_samples: List[Dict[str, Any]] = []
+
+    for abs_path in fs_paths:
+        if len(matches) >= max_matches:
+            break
+        if budget.should_stop_scan(
+            matches_count=len(matches), files_scanned=files_scanned
+        ):
+            break
+
+        rel = canonical_relative_path(project_root, abs_path)
+        try:
+            size = abs_path.stat().st_size
+        except OSError:
+            files_skipped_io += 1
+            continue
+        if max_file_bytes and size > max_file_bytes:
+            files_skipped_large += 1
+            if len(skipped_large_samples) < 20:
+                skipped_large_samples.append({"relative_path": rel, "size_bytes": size})
+            continue
+
+        files_scanned += 1
+        try:
+            with abs_path.open("r", encoding="utf-8", errors="replace") as fh:
+                for i, raw_line in enumerate(fh, start=1):
+                    if len(matches) >= max_matches:
+                        break
+                    if budget.should_stop_scan(
+                        matches_count=len(matches),
+                        files_scanned=files_scanned,
+                    ):
+                        break
+                    if "\0" in raw_line:
+                        break
+                    raw_line = raw_line.rstrip("\r\n")
+                    ok = _line_matches(
+                        raw_line,
+                        needle=needle,
+                        literal=literal,
+                        case_sensitive=case_sensitive,
+                        regex=regex,
+                    )
+                    if ok:
+                        line_text = raw_line
+                        if len(line_text) > line_preview_len:
+                            line_text = line_text[:line_preview_len]
+                        matches.append(
+                            {
+                                "relative_path": rel,
+                                "line_number": i,
+                                "line": line_text,
+                                "block_id": None,
+                                "block_type": None,
+                            }
+                        )
+        except OSError:
+            files_skipped_io += 1
+            continue
+
+    return matches, {
+        "files_scanned": files_scanned,
+        "files_skipped_large": files_skipped_large,
+        "files_skipped_io": files_skipped_io,
+        "skipped_large_samples": skipped_large_samples,
+    }
+
+
+def _line_matches(
+    raw_line: str,
+    *,
+    needle: str,
+    literal: bool,
+    case_sensitive: bool,
+    regex: Optional[re.Pattern[str]],
+) -> bool:
+    if literal:
+        hay = raw_line if case_sensitive else raw_line.lower()
+        nd = needle if case_sensitive else needle.lower()
+        return nd in hay
+    assert regex is not None
+    return regex.search(raw_line) is not None
+
+
+def _phase2_enrich_blocks(
+    *,
+    project_root: Any,
+    matches: List[Dict[str, Any]],
+    enrich_max_results: int,
+    budget: FsGrepBudgetState,
+) -> None:
+    if enrich_max_results <= 0:
+        budget.add_warning(
+            GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
+            "enrich_max_results=0; no structural enrichment performed.",
+        )
+        return
+
+    resolver = GrepBlockResolver()
+    try:
+        limit = min(len(matches), enrich_max_results)
+        for row in matches[:limit]:
+            if budget.should_stop_scan(
+                matches_count=len(matches),
+                files_scanned=budget.usage.files_scanned,
+            ):
+                break
+            abs_path = (project_root / row["relative_path"]).resolve()
+            block_id, block_type = resolver.resolve(abs_path, int(row["line_number"]))
+            row["block_id"] = block_id
+            row["block_type"] = block_type
+        if len(matches) > enrich_max_results:
+            budget.add_warning(
+                GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
+                (
+                    f"Structural enrichment applied to first {enrich_max_results} "
+                    f"of {len(matches)} matches only."
+                ),
+                enrich_max_results=enrich_max_results,
+                matches_total=len(matches),
+            )
+    finally:
+        resolver.cleanup()
+
+
+def _trim_response_payload(payload: Dict[str, Any], budget: FsGrepBudgetState) -> None:
+    try:
+        size = len(json.dumps(payload, default=str).encode("utf-8"))
+    except Exception:
+        return
+    if size <= budget.limits.max_response_bytes:
+        return
+    matches = payload.get("matches")
+    if not isinstance(matches, list):
+        return
+    while matches:
+        matches.pop()
+        size = len(json.dumps(payload, default=str).encode("utf-8"))
+        if size <= budget.limits.max_response_bytes:
+            payload["match_count"] = len(matches)
+            budget.mark_exceeded("max_response_bytes")
+            budget.warnings.append(
+                {
+                    "code": GREP_BUDGET_EXCEEDED,
+                    "message": "Matches truncated to fit response size budget.",
+                    "suggestion": "call_server(..., use_queue=true)",
+                }
+            )
+            return

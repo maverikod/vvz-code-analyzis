@@ -141,7 +141,7 @@ Constraints:
 - File must not exceed 110 lines.
 - All type annotations required.
 - Google-style docstrings."
-status: draft
+status: done
 step_id: A-001
 target_file: code_analysis/commands/sessions/session_open_file_command.py
 verification:

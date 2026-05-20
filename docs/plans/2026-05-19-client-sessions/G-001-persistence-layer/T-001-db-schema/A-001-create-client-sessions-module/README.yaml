@@ -74,7 +74,7 @@ prompt: "Create a new Python file at the exact path:\n  code_analysis/core/clien
   for ensure_client_session_tables).\n- Type annotations on all function parameters
   and return types.\n- Do not add any data-access functions to this file — only DDL,
   exceptions, and migration."
-status: draft
+status: done
 step_id: A-001
 target_file: code_analysis/core/client_sessions.py
 verification:

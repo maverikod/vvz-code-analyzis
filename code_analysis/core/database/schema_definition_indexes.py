@@ -502,6 +502,34 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
             "unique": False,
             "where_clause": None,
         },
+        {
+            "name": "idx_client_sessions_last_active",
+            "table": "client_sessions",
+            "columns": ["last_active_at"],
+            "unique": False,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_session_file_locks_session",
+            "table": "session_file_locks",
+            "columns": ["session_id"],
+            "unique": False,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_session_file_locks_file",
+            "table": "session_file_locks",
+            "columns": ["project_id", "file_id"],
+            "unique": False,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_role_permissions_role",
+            "table": "role_permissions",
+            "columns": ["role_id"],
+            "unique": False,
+            "where_clause": None,
+        },
     ]
 
 

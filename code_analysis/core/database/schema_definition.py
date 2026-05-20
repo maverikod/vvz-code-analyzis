@@ -16,7 +16,7 @@ from .schema_definition_tables_mid import get_tables_mid
 from .schema_definition_tables_rest import get_tables_rest
 
 # Schema version constant
-SCHEMA_VERSION = "1.7.0"  # runtime lock sessions + file advisory leases
+SCHEMA_VERSION = "1.8.0"  # client sessions + session file locks + roles
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations

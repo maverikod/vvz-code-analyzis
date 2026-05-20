@@ -15,9 +15,18 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
+
+from code_analysis.core.client_sessions import (
+    count_session_file_locks,
+    list_client_sessions,
+    list_locked_files,
+)
+from code_analysis.core.database_client.factory import (
+    create_database_client_from_config_path,
+)
 
 # For stderr redirect: DEVNULL (int) or open file (TextIO)
 _StderrDest = Union[int, io.TextIOWrapper]
@@ -791,6 +800,102 @@ def _cmd_status(config_path: str) -> int:
     return 0
 
 
+def _cmd_sessions(config_path: str) -> int:
+    """
+    Print all client sessions as an aligned table.
+
+    Reads client sessions via SessionService using DatabaseClient.
+    Always shows session_id (operator interface; ignores show_session_ids config).
+
+    Columns: session_id | comment | created_at | last_active_at | locks
+
+    Args:
+        config_path: Path to server config JSON.
+
+    Returns:
+        Exit code.
+    """
+    try:
+        db = create_database_client_from_config_path(Path(config_path))
+        rows = list_client_sessions(db)
+        print(
+            f"{'session_id':<36}  {'comment':<30}  {'created_at':<19}  {'last_active_at':<19}  locks"
+        )
+        print("-" * 120)
+        for row in rows:
+            session_id = str(row["session_id"])
+            cnt = count_session_file_locks(db, session_id)
+            created_at = row.get("created_at")
+            created = _julianday_to_iso(
+                float(created_at) if isinstance(created_at, (int, float)) else None
+            )
+            last_active = row.get("last_active_at")
+            active = _julianday_to_iso(
+                float(last_active) if isinstance(last_active, (int, float)) else None
+            )
+            comment = str(row.get("comment") or "")[:30]
+            print(
+                f"{session_id:<36}  {comment:<30}  {created:<19}  {active:<19}  {cnt}"
+            )
+        print(f"\n{len(rows)} session(s).")
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_locks(config_path: str) -> int:
+    """
+    Print all locked files as an aligned table (session_id intentionally omitted).
+
+    Reads all SessionFileLocks via SessionService using DatabaseClient.
+
+    Columns: project_id | file_id | locked_at
+
+    Args:
+        config_path: Path to server config JSON.
+
+    Returns:
+        Exit code.
+    """
+    try:
+        db = create_database_client_from_config_path(Path(config_path))
+        rows = list_locked_files(db)
+        print(f"{'project_id':<36}  {'file_id':<36}  locked_at")
+        print("-" * 95)
+        for row in rows:
+            locked_at = row.get("locked_at")
+            locked = _julianday_to_iso(
+                float(locked_at) if isinstance(locked_at, (int, float)) else None
+            )
+            print(f"{str(row['project_id']):<36}  {str(row['file_id']):<36}  {locked}")
+        print(f"\n{len(rows)} lock(s).")
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _julianday_to_iso(jd: Optional[float]) -> str:
+    """
+    Convert a SQLite julianday float to an ISO 8601 datetime string (UTC).
+
+    Args:
+        jd: Julian day number as float, or None.
+
+    Returns:
+        ISO datetime string 'YYYY-MM-DD HH:MM:SS', or '-' if jd is None.
+    """
+    if jd is None:
+        return "-"
+    try:
+        unix_ts = (jd - 2440587.5) * 86400.0
+        dt = datetime.fromtimestamp(unix_ts, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(jd)
+
+
 def _cmd_stop(config_path: str) -> int:
     """
     Stop daemon process.
@@ -1003,6 +1108,8 @@ def server(argv: Optional[list[str]] = None) -> int:
     sub.add_parser("stop")
     sub.add_parser("restart")
     sub.add_parser("status")
+    sub.add_parser("sessions", help="List all client sessions.")
+    sub.add_parser("locks", help="List all file locks across all sessions.")
     ns = parser.parse_args(argv)
 
     config_path_abs = _resolve_config_path(ns.config)
@@ -1025,6 +1132,10 @@ def server(argv: Optional[list[str]] = None) -> int:
         return _cmd_restart(config_path)
     if ns.cmd == "status":
         return _cmd_status(config_path)
+    if ns.cmd == "sessions":
+        return _cmd_sessions(config_path)
+    if ns.cmd == "locks":
+        return _cmd_locks(config_path)
 
     raise RuntimeError(f"Unknown command: {ns.cmd}")
 

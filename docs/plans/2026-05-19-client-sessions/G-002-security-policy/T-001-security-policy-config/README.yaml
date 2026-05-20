@@ -44,5 +44,5 @@ outputs:
   name: Policy evaluator contract
   type: domain contract
 parent_global_step: G-002
-status: draft
+status: done
 step_id: T-001

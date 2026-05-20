@@ -35,5 +35,5 @@ outputs:
   name: SessionListVisibilityPolicy generator default
   type: domain contract
 parent_global_step: G-002
-status: draft
+status: done
 step_id: T-002

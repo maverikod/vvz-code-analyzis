@@ -110,6 +110,56 @@ class FileLockConfig(BaseModel):
         return float(v)
 
 
+class SessionsConfig(BaseModel):
+    """Client session subsystem configuration."""
+
+    model_config = {"extra": "forbid"}
+
+    show_session_ids: bool = Field(
+        default=False,
+        description=(
+            "When False (default): session_list may be called without session_id "
+            "and session_id is never included in output. "
+            "When True: session_id is required in session_list and is included in output."
+        ),
+    )
+
+    @field_validator("show_session_ids", mode="before")
+    @classmethod
+    def validate_show_session_ids(cls, v: object) -> object:
+        """Validate show_session_ids is a boolean."""
+        if not isinstance(v, bool):
+            raise ValueError("sessions.show_session_ids must be a boolean")
+        return v
+
+
+class SecurityConfig(BaseModel):
+    """Security policy configuration for MCP command access control."""
+
+    model_config = {"extra": "forbid"}
+
+    policy: Literal["disabled", "allowlist", "denylist"] = Field(
+        default="disabled",
+        description=(
+            "Access control policy mode. "
+            "disabled: no checks performed, all commands pass. "
+            "allowlist: only commands explicitly granted via role_permissions are allowed. "
+            "denylist: all commands permitted except those explicitly denied via role_permissions."
+        ),
+    )
+
+    @field_validator("policy")
+    @classmethod
+    def validate_policy(cls, v: str) -> str:
+        """Validate security policy mode."""
+        allowed = {"disabled", "allowlist", "denylist"}
+        if v not in allowed:
+            raise ValueError(
+                f"security.policy must be one of: {', '.join(sorted(allowed))}"
+            )
+        return v
+
+
 class ServerConfig(BaseModel):
     """MCP server configuration."""
 
@@ -311,6 +361,14 @@ class ServerConfig(BaseModel):
             "Maximum lines for full-text preview of Python files. "
             "None means use the server default (200). Set to 0 to disable full-text preview."
         ),
+    )
+    sessions: Optional[SessionsConfig] = Field(
+        default=None,
+        description="Client session subsystem configuration.",
+    )
+    security: Optional[SecurityConfig] = Field(
+        default=None,
+        description="Security policy configuration for MCP command access control.",
     )
     preview_max_chars_default: int = Field(
         default=32_000,

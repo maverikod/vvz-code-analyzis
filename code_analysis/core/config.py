@@ -79,6 +79,12 @@ def generate_config(
             "poll_interval_seconds": 0.05,
             "default_read_mode": "full",
         },
+        "sessions": {
+            "show_session_ids": False,
+        },
+        "security": {
+            "policy": "disabled",
+        },
     }
     if log:
         log_path = Path(log)

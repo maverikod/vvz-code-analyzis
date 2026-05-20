@@ -119,7 +119,7 @@ prompt: "Modify the existing file at the exact path:\n  code_analysis/core/clien
   in all functions.\n- Do not use f-strings in SQL queries; use ? placeholders.\n\
   - COUNT(*) query: use alias 'cnt' and access as row[\"cnt\"] (DatabaseClient returns
   dicts, not tuples)."
-status: draft
+status: done
 step_id: A-001
 target_file: code_analysis/core/client_sessions.py
 verification:

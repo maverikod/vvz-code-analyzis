@@ -240,3 +240,29 @@ def register_commands_part2(reg: registry) -> None:
             e,
             exc_info=True,
         )
+
+    try:
+        from .commands.sessions.session_create_command import SessionCreateCommand
+        from .commands.sessions.session_delete_command import SessionDeleteCommand
+        from .commands.sessions.session_list_command import SessionListCommand
+
+        reg.register(SessionCreateCommand, "session_management")
+        reg.register(SessionDeleteCommand, "session_management")
+        reg.register(SessionListCommand, "session_management")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.sessions.session_open_file_command import SessionOpenFileCommand
+        from .commands.sessions.session_close_file_command import (
+            SessionCloseFileCommand,
+        )
+        from .commands.sessions.session_list_file_locks_command import (
+            SessionListFileLocksCommand,
+        )
+
+        reg.register(SessionOpenFileCommand, "session_management")
+        reg.register(SessionCloseFileCommand, "session_management")
+        reg.register(SessionListFileLocksCommand, "session_management")
+    except ImportError:
+        pass

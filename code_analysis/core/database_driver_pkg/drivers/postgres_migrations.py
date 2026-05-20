@@ -97,6 +97,45 @@ def idempotent_ensure_project_activity_locks_table(
     idempotent_ensure_runtime_lock_tables(conn, schema_definition)
 
 
+_CLIENT_SESSION_TABLES = (
+    "client_sessions",
+    "session_file_locks",
+    "roles",
+    "role_permissions",
+    "session_roles",
+)
+
+
+def idempotent_ensure_client_session_tables(
+    conn: Any, schema_definition: Dict[str, Any]
+) -> None:
+    """
+    Create client-session tables and indexes if missing.
+
+    Uses the same DDL as create_postgresql_schema for these tables (CREATE IF NOT EXISTS).
+    Safe to run repeatedly; no SQLite-only syntax.
+    """
+    with conn.cursor() as cur:
+        for table_name in _CLIENT_SESSION_TABLES:
+            if table_name not in schema_definition.get("tables", {}):
+                continue
+            cur.execute(
+                generate_create_table_sql_postgres(schema_definition, table_name)
+            )
+        for idx in schema_definition.get("indexes", []):
+            if idx.get("table") not in _CLIENT_SESSION_TABLES:
+                continue
+            idef = IndexDef(
+                name=idx["name"],
+                table=idx["table"],
+                columns=list(idx["columns"]),
+                unique=bool(idx.get("unique")),
+                where_clause=idx.get("where_clause"),
+            )
+            cur.execute(generate_create_index_sql_postgres(idef))
+    conn.commit()
+
+
 def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
     """Create pgvector extension (if permitted), ``embedding_vec``, and HNSW index."""
     try:
@@ -160,6 +199,7 @@ def ensure_postgres_schema(
         create_postgresql_schema(conn, schema_definition)
         # Explicit idempotent pass for runtime lock tables and indexes.
         idempotent_ensure_runtime_lock_tables(conn, schema_definition)
+        idempotent_ensure_client_session_tables(conn, schema_definition)
         _ensure_missing_column(
             conn,
             table_name="code_chunks",

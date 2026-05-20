@@ -6,6 +6,9 @@ import pytest
 
 from code_analysis.core.tree_temp.tree_node import TreeNode, kind_as_str
 from code_analysis.core.tree_temp.yaml_frontend import parse_yaml_source_to_roots
+from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
+    _value_to_single_node,
+)
 
 
 def _first_root_must_be_objects_or_array(parsed: list[TreeNode]) -> TreeNode:
@@ -46,6 +49,19 @@ def test_yaml_sequence_three_elements_under_array_root() -> None:
     assert all(kind_as_str(x) == "number" for x in roots)
     for idx, expected in enumerate((1, 2, 3)):
         assert float(roots[idx].value) == float(expected)
+
+
+def test_yaml_sequence_single_element_under_array_root() -> None:
+    """One-element list payloads must become array TreeNodes, not bare objects."""
+    node = _value_to_single_node("yaml", [{"start": 1336, "end": 1353}])
+    assert kind_as_str(node) == "array"
+    assert node.children is not None
+    assert len(node.children) == 1
+    child = node.children[0]
+    assert kind_as_str(child) == "object"
+    assert child.children is not None
+    keys = {c.key for c in child.children}
+    assert keys == {"start", "end"}
 
 
 def test_yaml_mapping_order_not_alphabetical() -> None:

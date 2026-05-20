@@ -47,7 +47,7 @@ prompt: "Modify the existing file at the exact path:\n  code_analysis/core/confi
   \    )\n\nConstraints:\n- Do not modify any existing content.\n- Do not add any
   other imports.\n- Both new classes must use model_config = {'extra': 'forbid'}.\n\
   - File must not exceed 400 lines after modification."
-status: draft
+status: done
 step_id: A-001
 target_file: code_analysis/core/config_server.py
 verification:

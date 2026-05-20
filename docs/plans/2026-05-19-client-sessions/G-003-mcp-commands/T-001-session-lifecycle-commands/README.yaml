@@ -49,5 +49,5 @@ outputs:
   name: session_list command
   type: MCP command
 parent_global_step: G-003
-status: draft
+status: done
 step_id: T-001

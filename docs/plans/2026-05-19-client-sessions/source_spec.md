@@ -189,23 +189,36 @@ registered proxy server. Table role_permissions:
 Roles are assigned to a session at creation time via role_ids list in
 session_create. A session accumulates all permissions of all its assigned
 roles. A session with no roles has no permissions under allowlist policy.
+## 12. Resource policy for authorized principals
 
-## 12. Security policy
+Authentication and transport-level authorization are outside this subsystem.
+They are handled by mcp_proxy_adapter via API keys, bearer tokens, mTLS,
+certificates, roles, and proxy-side permission middleware.
 
-The server configuration contains a security policy mode under the security
+ClientSession is not an authentication token and must not be treated as one.
+It is a resource ownership context for an already authenticated user, service,
+editor, script, or AI agent.
+
+The server configuration may contain a resource policy mode under the security
 section:
 
   security:
     policy: disabled
 
 Three modes:
-- disabled: no access checks are performed; roles are ignored; all commands
-  pass unconditionally. This is the default for backward compatibility.
-- allowlist: only (role, command_name, server_uuid) triples explicitly present
-  in role_permissions are allowed. A session with no roles cannot execute
-  any command. A command not covered by any role permission is rejected.
-- denylist: all commands are permitted except those explicitly denied via
-  role_permissions. A session with no roles can execute all commands.
+- disabled: no additional session-level resource-action restrictions are
+  applied after proxy authentication; all valid sessions may execute all
+  resource actions.
+- allowlist: only explicitly permitted resource-action triples are allowed.
+  A session with no assigned roles cannot execute restricted resource actions.
+- denylist: all resource actions are permitted except those explicitly denied.
+  A session with no assigned roles can execute all non-denied resource actions.
+
+The policy applies after the incoming request has already been authenticated by
+mcp_proxy_adapter. It restricts what the already authenticated principal may do
+through this ClientSession: open or close files, acquire workspace write access,
+run terminals, claim or release plans, force-clean resources, and perform other
+resource-affecting actions.
 
 The config validator must verify that policy is one of the three allowed
 values. The config generator must emit policy: disabled as the default.
@@ -213,6 +226,11 @@ values. The config generator must emit policy: disabled as the default.
 ## 13. CLI as operator interface
 
 The casmgr CLI subcommands (sessions, locks) are an operator interface that
+reads the database directly without going through MCP or session validation.
+They are not subject to ResourcePolicy or SessionTouchRule. They always
+display session_id regardless of show_session_ids config.
+They are not subject to ResourcePolicy or SessionTouchRule. They always
+display session_id regardless of show_session_ids config.
 reads the database directly without going through MCP or session validation.
 They are not subject to SecurityPolicy or SessionTouchRule. They always
 display session_id regardless of show_session_ids config.

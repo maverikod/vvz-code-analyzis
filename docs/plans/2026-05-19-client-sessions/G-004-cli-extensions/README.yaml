@@ -22,7 +22,7 @@ source_ranges:
   start: 132
 - end: 220
   start: 217
-status: draft
+status: done
 step_id: G-004
 tactical_steps:
 - T-001

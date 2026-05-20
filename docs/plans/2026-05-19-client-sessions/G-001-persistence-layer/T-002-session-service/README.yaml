@@ -57,5 +57,5 @@ outputs:
   name: Role and RolePermission operations
   type: domain contract
 parent_global_step: G-001
-status: draft
+status: done
 step_id: T-002

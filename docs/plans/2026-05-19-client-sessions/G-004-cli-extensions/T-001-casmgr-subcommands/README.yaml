@@ -41,5 +41,5 @@ outputs:
   name: casmgr locks subcommand
   type: CLI command
 parent_global_step: G-004
-status: draft
+status: done
 step_id: T-001

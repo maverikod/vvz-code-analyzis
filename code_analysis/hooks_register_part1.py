@@ -199,6 +199,9 @@ def register_commands_part1(reg: registry) -> None:
         reg.register(FulltextSearchMCPCommand, "custom")
         reg.register(ListClassMethodsMCPCommand, "custom")
         reg.register(FindClassesMCPCommand, "custom")
+        from .commands.project_cross_search_command import ProjectCrossSearchCommand
+
+        reg.register(ProjectCrossSearchCommand, "custom")
         logger.info("✅ Registered search commands")
     except ImportError as e:
         logger.warning("Failed to import search commands: %s", e)

@@ -52,5 +52,5 @@ outputs:
   name: Migration hook
   type: domain contract modification
 parent_global_step: G-001
-status: draft
+status: done
 step_id: T-001

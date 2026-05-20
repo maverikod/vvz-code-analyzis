@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 from code_analysis.commands.base_mcp_command_open_db import _sqlite_master_has_table
 from code_analysis.core.database_driver_pkg.drivers.sqlite_migrations import (
+    _SqliteConnMigrateAdapter,
     _sqlite_table_exists,
     run_all_ensure,
 )
@@ -21,6 +22,40 @@ from code_analysis.core.database_driver_pkg.drivers.sqlite_schema import (
     SQLiteSchemaManager,
 )
 from code_analysis.core.database.schema_creation_migrate import run_migrate_schema
+
+_CORE_SCHEMA_TABLES = frozenset(
+    {
+        "projects",
+        "files",
+        "code_chunks",
+        "issues",
+        "functions",
+        "methods",
+        "classes",
+    }
+)
+
+_CONNECTION_TIME_TABLES = frozenset(
+    {
+        "runtime_lock_sessions",
+        "file_advisory_lock_leases",
+        "entity_cross_ref",
+        "indexing_worker_stats",
+        "indexing_errors",
+        "client_sessions",
+        "session_file_locks",
+        "roles",
+        "role_permissions",
+        "session_roles",
+    }
+)
+
+
+def _user_table_names(conn: sqlite3.Connection) -> set[str]:
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    )
+    return {r[0] for r in cur.fetchall()}
 
 
 def test_sqlite_table_exists_false_on_empty_db() -> None:
@@ -33,8 +68,8 @@ def test_sqlite_table_exists_false_on_empty_db() -> None:
             conn.close()
 
 
-def test_run_all_ensure_noop_when_no_projects_table() -> None:
-    """Must not create side tables or run ALTERs on a completely empty file."""
+def test_run_all_ensure_skips_core_schema_on_empty_db() -> None:
+    """Connection-time ensure_* tables are created; core schema is not bootstrapped."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "e.db"
         conn = sqlite3.connect(str(p))
@@ -42,22 +77,32 @@ def test_run_all_ensure_noop_when_no_projects_table() -> None:
         try:
             sm = SQLiteSchemaManager(conn)
             run_all_ensure(conn, sm, p)
-            cur = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-            names = [r[0] for r in cur.fetchall()]
-            assert "projects" not in names
-            assert "indexing_errors" not in names
+            names = _user_table_names(conn)
+            assert _CORE_SCHEMA_TABLES.isdisjoint(names)
+            assert _CONNECTION_TIME_TABLES <= names
         finally:
             conn.close()
 
 
-def test_run_migrate_schema_noop_when_no_projects() -> None:
-    db = MagicMock()
-    db._fetchone.return_value = None
-    db._get_table_info = MagicMock()
-    run_migrate_schema(db)
-    db._get_table_info.assert_not_called()
+def test_run_migrate_schema_probes_without_creating_core_schema() -> None:
+    """run_migrate_schema inspects missing tables but only creates connection-time DDL."""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "e.db"
+        conn = sqlite3.connect(str(p))
+        conn.row_factory = sqlite3.Row
+        try:
+            sm = SQLiteSchemaManager(conn)
+            run_migrate_schema(_SqliteConnMigrateAdapter(conn, sm))
+            names = _user_table_names(conn)
+            assert _CORE_SCHEMA_TABLES.isdisjoint(names)
+            assert {
+                "runtime_lock_sessions",
+                "file_advisory_lock_leases",
+                "entity_cross_ref",
+            } <= names
+            assert "client_sessions" not in names
+        finally:
+            conn.close()
 
 
 def test_sqlite_master_has_table_uses_execute_data_shape() -> None:

@@ -288,3 +288,55 @@ async def test_batch_abort_on_second_invalid_operation(tmp_path: Path) -> None:
         )
     assert isinstance(out, ErrorResult)
     assert _sha((tmp_path / _REL).read_bytes()) == h0
+
+
+@pytest.mark.asyncio
+async def test_json_replace_one_element_list_stays_array(tmp_path: Path) -> None:
+    """Criterion E: one-element JSON list must remain a JSON array after commit."""
+    rel = "records/single_array.json"
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"items":[]}\n', encoding="utf-8")
+    _ensure_project_root(tmp_path)
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        ores = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(ores.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        await ed.execute(
+            **ed.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "json_pointer": "/items",
+                            "value": [{"a": 1}],
+                        }
+                    ],
+                }
+            )
+        )
+    await _two_phase_write(tmp_path, sid)
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        await UniversalFileCloseCommand().execute(
+            **UniversalFileCloseCommand().validate_params(
+                {"project_id": _PROJECT_UUID, "session_id": sid}
+            )
+        )
+    body = p.read_text(encoding="utf-8")
+    assert '"items"' in body
+    assert "[" in body
+    data = json.loads(body)
+    assert isinstance(data["items"], list)
+    assert data["items"] == [{"a": 1}]

@@ -153,7 +153,7 @@ Constraints:
 - No other functions or classes.
 - All type annotations required.
 - Google-style docstrings."
-status: draft
+status: done
 step_id: A-003
 target_file: code_analysis/commands/sessions/session_delete_command.py
 verification:

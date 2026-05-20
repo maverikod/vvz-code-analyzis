@@ -20,7 +20,7 @@ prompt: "Modify the existing file at the exact path:\n  code_analysis/hooks_regi
   'session_management')\n        reg.register(SessionListFileLocksCommand, 'session_management')\n\
   \    except ImportError:\n        pass\n\nDo not modify any other part of the file.
   Do not reformat existing code."
-status: draft
+status: done
 step_id: A-004
 target_file: code_analysis/hooks_register_part2.py
 verification:

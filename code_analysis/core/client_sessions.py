@@ -8,12 +8,13 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
 import uuid
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from code_analysis.core.database_client.client import DatabaseClient
 
 logger = logging.getLogger(__name__)
-
-# --- TABLE NAME CONSTANTS ---
 
 CLIENT_SESSIONS_TABLE: str = "client_sessions"
 SESSION_FILE_LOCKS_TABLE: str = "session_file_locks"
@@ -21,78 +22,50 @@ ROLES_TABLE: str = "roles"
 ROLE_PERMISSIONS_TABLE: str = "role_permissions"
 SESSION_ROLES_TABLE: str = "session_roles"
 
-# --- DDL STRINGS ---
-
 CLIENT_SESSIONS_DDL: str = (
-    "CREATE TABLE IF NOT EXISTS client_sessions ("
-    "    session_id TEXT PRIMARY KEY,"
-    "    comment TEXT NOT NULL DEFAULT '',"
-    "    created_at REAL DEFAULT (julianday('now')),"
-    "    last_active_at REAL DEFAULT (julianday('now'))"
-    ")"
+    "CREATE TABLE IF NOT EXISTS client_sessions (session_id TEXT PRIMARY KEY, "
+    "comment TEXT NOT NULL DEFAULT '', created_at REAL DEFAULT (julianday('now')), "
+    "last_active_at REAL DEFAULT (julianday('now')))"
 )
-
 CLIENT_SESSIONS_IDX: str = (
-    "CREATE INDEX IF NOT EXISTS idx_client_sessions_last_active"
-    " ON client_sessions(last_active_at)"
+    "CREATE INDEX IF NOT EXISTS idx_client_sessions_last_active "
+    "ON client_sessions(last_active_at)"
 )
-
 SESSION_FILE_LOCKS_DDL: str = (
-    "CREATE TABLE IF NOT EXISTS session_file_locks ("
-    "    session_id TEXT NOT NULL,"
-    "    project_id TEXT NOT NULL,"
-    "    file_id TEXT NOT NULL,"
-    "    locked_at REAL DEFAULT (julianday('now')),"
-    "    PRIMARY KEY (session_id, project_id, file_id),"
-    "    FOREIGN KEY (session_id) REFERENCES client_sessions(session_id) ON DELETE CASCADE,"
-    "    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,"
-    "    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE"
-    ")"
+    "CREATE TABLE IF NOT EXISTS session_file_locks (session_id TEXT NOT NULL, "
+    "project_id TEXT NOT NULL, file_id TEXT NOT NULL, "
+    "locked_at REAL DEFAULT (julianday('now')), "
+    "PRIMARY KEY (session_id, project_id, file_id), "
+    "FOREIGN KEY (session_id) REFERENCES client_sessions(session_id) ON DELETE CASCADE, "
+    "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE, "
+    "FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE)"
 )
-
 SESSION_FILE_LOCKS_IDX_SESSION: str = (
-    "CREATE INDEX IF NOT EXISTS idx_session_file_locks_session"
-    " ON session_file_locks(session_id)"
+    "CREATE INDEX IF NOT EXISTS idx_session_file_locks_session "
+    "ON session_file_locks(session_id)"
 )
-
 SESSION_FILE_LOCKS_IDX_FILE: str = (
-    "CREATE INDEX IF NOT EXISTS idx_session_file_locks_file"
-    " ON session_file_locks(project_id, file_id)"
+    "CREATE INDEX IF NOT EXISTS idx_session_file_locks_file "
+    "ON session_file_locks(project_id, file_id)"
 )
-
 ROLES_DDL: str = (
-    "CREATE TABLE IF NOT EXISTS roles ("
-    "    role_id TEXT PRIMARY KEY,"
-    "    name TEXT UNIQUE NOT NULL"
-    ")"
+    "CREATE TABLE IF NOT EXISTS roles (role_id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL)"
 )
-
 ROLE_PERMISSIONS_DDL: str = (
-    "CREATE TABLE IF NOT EXISTS role_permissions ("
-    "    role_id TEXT NOT NULL,"
-    "    command_name TEXT NOT NULL,"
-    "    server_uuid TEXT NOT NULL,"
-    "    PRIMARY KEY (role_id, command_name, server_uuid),"
-    "    FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE"
-    ")"
+    "CREATE TABLE IF NOT EXISTS role_permissions (role_id TEXT NOT NULL, "
+    "command_name TEXT NOT NULL, server_uuid TEXT NOT NULL, "
+    "PRIMARY KEY (role_id, command_name, server_uuid), "
+    "FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE)"
 )
-
 ROLE_PERMISSIONS_IDX: str = (
-    "CREATE INDEX IF NOT EXISTS idx_role_permissions_role"
-    " ON role_permissions(role_id)"
+    "CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role_id)"
 )
-
 SESSION_ROLES_DDL: str = (
-    "CREATE TABLE IF NOT EXISTS session_roles ("
-    "    session_id TEXT NOT NULL,"
-    "    role_id TEXT NOT NULL,"
-    "    PRIMARY KEY (session_id, role_id),"
-    "    FOREIGN KEY (session_id) REFERENCES client_sessions(session_id) ON DELETE CASCADE,"
-    "    FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE"
-    ")"
+    "CREATE TABLE IF NOT EXISTS session_roles (session_id TEXT NOT NULL, role_id TEXT NOT NULL, "
+    "PRIMARY KEY (session_id, role_id), "
+    "FOREIGN KEY (session_id) REFERENCES client_sessions(session_id) ON DELETE CASCADE, "
+    "FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE)"
 )
-
-# --- DOMAIN EXCEPTIONS ---
 
 
 class SessionNotFoundError(ValueError):
@@ -107,14 +80,10 @@ class SessionHasLocksError(ValueError):
     """Raised when a session has open file locks and force=False."""
 
     def __init__(self, session_id: str, lock_count: int) -> None:
-        super().__init__(
-            f"Session {session_id} has {lock_count} open file lock(s). Use force=True to release."
-        )
+        msg = f"Session {session_id} has {lock_count} open file lock(s). Use force=True to release."
+        super().__init__(msg)
         self.session_id = session_id
         self.lock_count = lock_count
-
-
-# --- MIGRATION FUNCTION ---
 
 
 def ensure_client_session_tables(conn: Any) -> None:
@@ -129,7 +98,7 @@ def ensure_client_session_tables(conn: Any) -> None:
 
     Args:
         conn: An active SQLite connection object with .execute(), .commit(),
-              and .rollback() methods. If falsy, returns immediately.
+            and .rollback() methods. If falsy, returns immediately.
     """
     if not conn:
         return

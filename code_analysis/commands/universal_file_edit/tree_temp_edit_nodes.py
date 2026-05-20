@@ -150,6 +150,12 @@ def _value_to_single_node(handler_id: str, value: Any) -> TreeNode:
     array TreeNode so the caller always receives exactly one node,
     consistent with JSON behaviour.
 
+    For YAML, container shape is taken from the Python ``value`` (list -> array,
+    dict -> object) because ``parse_yaml_source`` returns one root per top-level
+    sequence element and loses the array wrapper when N=1. The same ambiguity
+    affects ``parse_json_source`` for one-element lists, so both handlers use the
+    Python value here instead of inferring container type from parsed roots.
+
     Args:
         handler_id: Format handler identifier ('json' or 'yaml').
         value: Python value to convert.
@@ -157,10 +163,34 @@ def _value_to_single_node(handler_id: str, value: Any) -> TreeNode:
     Returns:
         Single TreeNode representing the value.
     """
+    if isinstance(value, list):
+        return TreeNode(
+            stable_id=str(uuid.uuid4()),
+            type="array",
+            key=None,
+            value=None,
+            children=[
+                _value_to_single_node(handler_id, element) for element in value
+            ],
+        )
+    if isinstance(value, dict):
+        children: List[TreeNode] = []
+        for key, item in value.items():
+            child = _value_to_single_node(handler_id, item)
+            child.key = str(key)
+            children.append(child)
+        return TreeNode(
+            stable_id=str(uuid.uuid4()),
+            type="object",
+            key=None,
+            value=None,
+            children=children,
+        )
+
     roots = _value_to_tree_roots(handler_id, value)
     if len(roots) == 1:
         return roots[0]
-    # YAML top-level sequence: parser returns one root per element.
+    # YAML top-level sequence (>=2 elements): parser returns one root per element.
     # Wrap them into a single array TreeNode so replace/insert always
     # receive exactly one node, consistent with JSON behaviour.
     return TreeNode(

@@ -34,14 +34,14 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  3. universal_file_write — preview diff, then commit to disk  (THIS COMMAND)\n"
             "  4. universal_file_close — release the session\n\n"
             "Two protocols depending on format_group:\n\n"
-            "tree-temp (.json, .yaml, .yml) — explicit write_mode:\n"
-            "  write_mode=preview (default): compute and return the diff; no disk write, no lockfile.\n"
-            "  write_mode=commit: backup original, write atomically, update indexes.\n"
+            "tree-temp (.json, .yaml, .yml) and text (.md, .txt, …) — explicit write_mode:\n"
+            "  write_mode=preview (default): unified diff vs canonical file; no disk write.\n"
+            "  write_mode=commit: backup original, atomic write from draft, delete lockfile.\n"
             "  Always call preview first, inspect the diff, then call commit.\n\n"
-            "sidecar (.py) and text — two-phase PID lockfile protocol:\n"
-            "  First call: compute diff, write lockfile with current server PID. Returns phase=preview.\n"
-            "  Second call (same session, lockfile valid): backup, atomic write, delete lockfile. Returns phase=committed.\n"
-            "  The write_mode parameter is ignored for sidecar/text.\n\n"
+            "sidecar (.py) — legacy two-phase when write_mode is omitted:\n"
+            "  First call: diff + lockfile, phase=preview.\n"
+            "  Second call (lockfile matches PID+session): commit, phase=committed.\n"
+            "  Explicit write_mode=preview or commit overrides the lockfile phase.\n\n"
             "A backup of the original file is always created before the commit write."
         ),
         "parameters": {
@@ -61,8 +61,9 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "write_mode": {
                 "description": (
-                    "Tree-temp only: preview returns a diff without writing; "
-                    "commit persists the file. Ignored for sidecar/text (two-phase PID protocol)."
+                    "preview: diff only (tree-temp, text; also sidecar when sent explicitly). "
+                    "commit: persist draft (tree-temp, text; sidecar). "
+                    "Omitted on sidecar: two-phase PID lockfile (first preview, second commit)."
                 ),
                 "type": "string",
                 "required": False,
@@ -104,7 +105,19 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 ),
             },
             {
-                "description": "Two-phase write for a Python file (sidecar)",
+                "description": "Preview then commit a Markdown file (text)",
+                "command": {
+                    "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                    "session_id": "<from universal_file_open>",
+                    "write_mode": "preview",
+                },
+                "explanation": (
+                    "Preview does not change the file on disk. "
+                    "Call again with write_mode=commit to persist."
+                ),
+            },
+            {
+                "description": "Two-phase write for a Python file (sidecar, omit write_mode)",
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "session_id": "<from universal_file_open>",
@@ -130,8 +143,9 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "For tree-temp: always call write_mode=preview first and inspect the diff before committing.",
-            "For sidecar/text: the first call is automatically preview; the second is commit — do not skip the first.",
+            "For tree-temp and text: always call write_mode=preview first, then write_mode=commit.",
+            "For sidecar without write_mode: first call is preview, second is commit.",
+            "Repeated write_mode=preview must never commit; phase must match the action.",
             "After a successful commit, call format_code and lint_code on the file path.",
             "If the server restarts between preview and commit, the lockfile is stale; re-open the session.",
         ],

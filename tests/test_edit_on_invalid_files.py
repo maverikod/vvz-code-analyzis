@@ -244,6 +244,7 @@ async def test_open_invalid_json_sets_is_invalid_and_allows_raw_edit(
         commit = await wr.execute(
             project_id=_PROJECT_UUID,
             session_id=sid,
+            write_mode="commit",
         )
         assert isinstance(commit, SuccessResult)
         assert commit.data.get("phase") == "committed"

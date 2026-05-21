@@ -295,7 +295,7 @@ bugs:
       formats.
     verified: true
   yaml_pointer_line_resolution_ignores_index_and_collides_on_keys:
-    status: open
+    status: fixed
     severity: high
     file: code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
     related_files:
@@ -326,7 +326,7 @@ bugs:
       / SafeLoader start_mark.line) and stored on YamlNodeMetadata, so span and 
       annotation logic use real positions instead of the positional-blind 
       _line_for_yaml_pointer fallback.
-    verified: false
+    verified: true
 yaml_write_quirks:
   context: "universal_file_open create=True writes initial_content as-is before YAML
     parsing. Bare scalars with ': ' or inline comments cause parse failure -> text-mode

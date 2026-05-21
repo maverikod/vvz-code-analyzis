@@ -79,9 +79,14 @@ Hard timeout and cancellation rules must apply to dynamic scanning, tree reconst
 
 When a model or client starts a search, the server must immediately create a dedicated search session directory before search execution begins. The directory stores the session manifest, page files, temporary page writes, and service metadata for that search.
 
+
+Search session manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
+
 Search result records must be appended progressively by the running search process and published as separate immutable page files. Clients retrieve ready pages through ordinary HTTP requests; the implementation must not require streaming transport for normal result inspection.
 
 Every successful HTTP access to a session page, status, or manifest must refresh the session last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
+
+Temporary page writes must be finalized through atomic page publication. Clients and HTTP readers must consume only finalized immutable page files and must never observe partially written page content.
 
 The session manifest must include the identity of the main server process that owns the session. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the session is dead or orphaned.
 

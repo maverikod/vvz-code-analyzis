@@ -24,7 +24,7 @@ from typing import Any
 
 from ....core.yaml_tree.models import YamlTree
 from ....core.yaml_tree.resolve import resolve_yaml_node
-from ....core.yaml_tree.tree_builder import build_yaml_tree_from_data
+from ....core.yaml_tree.tree_builder import build_yaml_tree_from_text
 
 from ..base_handler import FileHandler
 from ..budget import PreviewBudget
@@ -62,10 +62,6 @@ def _line_for_yaml_pointer(lines: list[str], pointer: str) -> int | None:
     for i, line in enumerate(lines, start=1):
         if key_pat.search(line) or quoted_pat.search(line):
             return i
-    if last.isdigit():
-        for i, line in enumerate(lines, start=1):
-            if line.strip().startswith("- "):
-                return i
     return None
 
 
@@ -87,11 +83,16 @@ def _line_span_for_pointer(
         ptr = meta.yaml_pointer
         if not _pointer_in_subtree(ptr, pointer):
             continue
-        start = getattr(meta, "start_line", None)
-        if start is None:
-            start = _line_for_yaml_pointer(source_lines, ptr)
+        start = meta.start_line
         if start is not None:
             lines.append(start)
+            end = meta.end_line
+            if end is not None:
+                lines.append(end)
+            continue
+        fallback = _line_for_yaml_pointer(source_lines, ptr)
+        if fallback is not None:
+            lines.append(fallback)
     if not lines:
         sole = _line_for_yaml_pointer(source_lines, pointer)
         if sole is None:
@@ -113,7 +114,7 @@ def _annotated_lines_in_range(
         ptr = meta.yaml_pointer
         if not _pointer_in_subtree(ptr, root_pointer):
             continue
-        line = getattr(meta, "start_line", None)
+        line = meta.start_line
         if line is None:
             line = _line_for_yaml_pointer(source_lines, ptr)
         if line is None or line < start_line or line > end_line:
@@ -278,7 +279,7 @@ class YamlFileHandler(FileHandler):
             if doc is None:
                 doc = {}
             self._doc = doc
-            tree = build_yaml_tree_from_data(resolved_path, doc, register=False)
+            tree = build_yaml_tree_from_text(resolved_path, raw, register=False)
             self._pointer_by_node_id = dict(tree.pointer_by_id)
             self._metadata_map = tree.metadata_map
 

@@ -10,8 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from ..json_tree.models import stable_node_id_for_pointer
-
 
 @dataclass
 class YamlNodeMetadata:
@@ -24,6 +22,8 @@ class YamlNodeMetadata:
     key: Optional[str]
     index: Optional[int]
     children_ids: List[str] = field(default_factory=list)
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,6 +35,8 @@ class YamlNodeMetadata:
             "index": self.index,
             "children_ids": list(self.children_ids),
             "children_count": len(self.children_ids),
+            "start_line": self.start_line,
+            "end_line": self.end_line,
         }
 
 

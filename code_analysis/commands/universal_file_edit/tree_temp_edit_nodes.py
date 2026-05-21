@@ -16,6 +16,9 @@ from code_analysis.core.json_tree.json_pointer import (
     pointer_to_segments,
     segments_to_pointer,
 )
+from code_analysis.commands.universal_file_edit.insert_position import (
+    coalesce_tree_temp_insert_position,
+)
 from code_analysis.core.tree_temp.tree_node import TreeNode
 
 
@@ -403,14 +406,14 @@ def _apply_insert(
     """Apply an insert operation to the tree.
 
     Supported positioning for arrays:
+    - ``position: 'before:<json_pointer>'`` / ``'after:<json_pointer>'`` (preferred).
     - ``before_node_id`` / ``after_node_id``: sibling-relative by stable UUID.
-    - ``before_json_pointer`` / ``after_json_pointer``: resolve pointer to a
-      sibling node, then use the same logic as ``before_node_id`` /
-      ``after_node_id``.
+    - ``before_json_pointer`` / ``after_json_pointer``: same as colon form.
     - ``index``: explicit integer index (0-based).
     - ``position: 'last'`` or no positioning fields: append to end.
 
     Supported positioning for objects:
+    - ``position: 'before:<key>'`` / ``'after:<key>'`` (preferred).
     - ``before_key`` / ``after_key``: sibling-relative by key name.
     - ``position: 'last'`` or no positioning fields: append to end.
 
@@ -426,6 +429,7 @@ def _apply_insert(
     """
     if "value" not in mop:
         raise ValueError("insert requires value")
+    coalesce_tree_temp_insert_position(mop)
     parent = _resolve_insert_parent(roots, mop, idx_map)
     new_node = _value_to_single_node(handler_id, mop["value"])
     fresh = _regenerate_stable_ids(new_node)

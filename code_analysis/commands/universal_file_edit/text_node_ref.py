@@ -17,6 +17,9 @@ from code_analysis.commands.universal_file_edit.errors import (
     UNKNOWN_NODE_REF,
     error_result_for_edit,
 )
+from code_analysis.commands.universal_file_edit.insert_position import (
+    resolve_text_insert_side_and_node_ref,
+)
 from code_analysis.commands.universal_file_preview.errors import PreviewError
 from code_analysis.commands.universal_file_preview.handlers.markdown_line_ranges import (
     resolve_markdown_line_range,
@@ -35,7 +38,27 @@ def resolve_text_operation_line_range(
     op: Dict[str, Any],
 ) -> Optional[ErrorResult]:
     """When ``node_ref`` is set, fill ``start_line``/``end_line`` on ``op`` in place."""
+    op_type = op.get("type", "replace")
     node_ref = op.get("node_ref")
+
+    if op_type == "insert":
+        try:
+            side, embedded_ref = resolve_text_insert_side_and_node_ref(op)
+        except ValueError as exc:
+            return error_result_for_edit(
+                str(exc),
+                LINE_OUT_OF_RANGE,
+                {"position": op.get("position")},
+            )
+        if side == "last":
+            return None
+        if embedded_ref not in (None, ""):
+            node_ref = embedded_ref
+            op["node_ref"] = embedded_ref
+        insert_side = side
+    else:
+        insert_side = None
+
     if node_ref in (None, ""):
         return None
 
@@ -69,20 +92,14 @@ def resolve_text_operation_line_range(
         start_line = idx + 1
         end_line = start_line
 
-    op_type = op.get("type", "replace")
     if op_type == "insert":
-        position = op.get("position", "after")
-        if position not in (None, "after", "before", "last"):
-            return error_result_for_edit(
-                f"insert position must be 'before' or 'after', got {position!r}",
-                LINE_OUT_OF_RANGE,
-                {"position": position, "node_ref": node_ref},
-            )
-        if position == "before":
+        assert insert_side in ("before", "after")
+        if insert_side == "before":
             op["start_line"] = start_line
         else:
             op["start_line"] = end_line + 1
         op.pop("end_line", None)
+        op.pop("position", None)
     else:
         op["start_line"] = start_line
         op["end_line"] = end_line

@@ -19,6 +19,10 @@ from .json_pointer import (
     insert_into_object_relative,
     set_value_at,
 )
+from code_analysis.commands.universal_file_edit.insert_position import (
+    coalesce_tree_temp_insert_position,
+)
+
 from .json_query import resolve_node_id_from_pointer
 from .models import ROOT_POINTER, JSONTree
 from .tree_builder import _build_index, get_tree
@@ -174,9 +178,10 @@ def _validate_insert_sibling_options(op: Dict[str, Any], parent_kind: str) -> No
 
 
 def _op_insert(tree: JSONTree, op: Dict[str, Any]) -> None:
-    parent_pointer = _resolve_parent_pointer(tree, op)
     if "value" not in op:
         raise ValueError("insert requires value")
+    coalesce_tree_temp_insert_position(op)
+    parent_pointer = _resolve_parent_pointer(tree, op)
     value = _deep_json_value(op["value"])
     parent_val = get_value_at(tree.root_data, parent_pointer)
 

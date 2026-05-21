@@ -53,3 +53,60 @@ def test_insert_before_json_pointer_orders_array() -> None:
     )
     values = [ch.value for ch in parent.children or []]
     assert values == ["a", "x", "b", "c"]
+
+
+def test_insert_position_before_colon_json_pointer() -> None:
+    a = _array_item("a")
+    b = _array_item("b")
+    parent = TreeNode(
+        stable_id=str(uuid.uuid4()),
+        type="array",
+        key="items",
+        value=None,
+        children=[a, b],
+    )
+    root = TreeNode(
+        stable_id=str(uuid.uuid4()),
+        type="object",
+        key=None,
+        value=None,
+        children=[parent],
+    )
+    roots = [root]
+    _apply_insert(
+        roots,
+        "json",
+        {
+            "parent_json_pointer": "/items",
+            "value": "z",
+            "position": "before:/items/1",
+        },
+        _stable_index(roots),
+    )
+    assert [ch.value for ch in parent.children or []] == ["a", "z", "b"]
+
+
+def test_insert_position_after_colon_key() -> None:
+    first = _array_item("1", key="first")
+    third = _array_item("3", key="third")
+    parent = TreeNode(
+        stable_id=str(uuid.uuid4()),
+        type="object",
+        key=None,
+        value=None,
+        children=[first, third],
+    )
+    roots = [parent]
+    _apply_insert(
+        roots,
+        "json",
+        {
+            "parent_json_pointer": "",
+            "key": "second",
+            "value": 2,
+            "position": "after:first",
+        },
+        _stable_index(roots),
+    )
+    keys = [ch.key for ch in parent.children or []]
+    assert keys == ["first", "second", "third"]

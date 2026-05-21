@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.universal_file_edit.close_command import (
@@ -249,3 +249,93 @@ async def test_text_second_edit_after_preview_before_commit(tmp_path: Path) -> N
     assert commit.data.get("phase") == "committed"
     assert target.read_text(encoding="utf-8") == "first edit\nsecond edit\n"
     assert "second edit" in str(commit.data.get("diff", ""))
+
+
+@pytest.mark.asyncio
+async def test_text_edit_rejects_stale_line_number_after_prior_edit(
+    tmp_path: Path,
+) -> None:
+    """Out-of-range start_line after a prior edit must fail, not corrupt the draft."""
+    rel = "notes/sample.txt"
+    sid, target = await _open_text(tmp_path, rel)
+
+    edit = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        first = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "start_line": 1,
+                            "content": "inserted\n",
+                        }
+                    ],
+                }
+            )
+        )
+        assert isinstance(first, SuccessResult)
+        assert first.data.get("line_count") == 3
+
+        stale = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "start_line": 10,
+                            "end_line": 10,
+                            "content": "wrong target\n",
+                        }
+                    ],
+                }
+            )
+        )
+
+    assert isinstance(stale, ErrorResult)
+    assert stale.code == "LINE_OUT_OF_RANGE"
+    assert target.read_text(encoding="utf-8") == "line one\nline two\n"
+
+
+@pytest.mark.asyncio
+async def test_text_edit_anchor_mismatch_rejects_stale_coordinates(
+    tmp_path: Path,
+) -> None:
+    rel = "notes/sample.txt"
+    sid, _target = await _open_text(tmp_path, rel)
+
+    edit = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        result = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "start_line": 2,
+                            "end_line": 2,
+                            "content": "updated\n",
+                            "anchor_head": "wrong",
+                            "anchor_tail": "wrong",
+                        }
+                    ],
+                }
+            )
+        )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "ANCHOR_MISMATCH"

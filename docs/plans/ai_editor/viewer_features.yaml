@@ -372,3 +372,104 @@ feature_gaps:
       node_view so caller can drill into them and get their body stable_ids.
     status: open
     task_id: fix-preview-drilldown-elif-else-branches
+  NQ001_full_text_threshold_mode:
+    severity: MEDIUM
+    topic: full_text_threshold mode not specified in ai_editor plan
+    description: When file line count < full_text_max_lines (default 200), 
+      preview returns the entire source as an annotated text block instead of a 
+      structural tree. Implemented by python, yaml, json, markdown handlers. Not
+      implemented by text, jsonl. In ai_editor plan (G-003) AbstractFormatter 
+      describes get_unit / iter_units / render_skeleton but has no concept of a 
+      'full_text mode' fast-path. The formatter must either implement this mode 
+      or explicitly exclude it from scope before G-003 T-004 / T-013 are 
+      executed.
+    plan_location: G-003 T-001 AbstractFormatter, G-003 T-004 YamlFormatter, 
+      G-003 T-013 JsonFormatter
+    action_required: 'Design decision: support full_text_threshold in ai_editor formatters
+      (render annotated raw text when file < N lines) or explicitly mark as out-of-scope
+      in T-001 description.'
+    status: resolved
+    resolution: 'Include: when file line count reaches full_text_max_lines threshold,
+      return full subtree/file content with all markers intact. Editing continues
+      via markers unchanged. AbstractFormatter must expose full_text_max_lines: int
+      = 200 and implement fast-path returning annotated full text.'
+  NQ005_yaml_start_line_heuristic:
+    severity: MEDIUM
+    topic: YAML heuristic start_line fallback not specified in plan
+    description: "YamlFileHandler builds annotated full_text by mapping each source
+      line to its longest JSON Pointer. When PyYAML metadata lacks start_line, it
+      falls back to heuristic key-search in source: regex r'^\\s*{last_part}\\s*:'
+      for string keys, r'^\\s*[\\\"\\'][last_part}[\\\"\\']\\s*:' for quoted keys,
+      first '- ' line for numeric last_part. Without this heuristic the full_text
+      annotation is incomplete (many lines get no pointer prefix). ai_editor YamlFormatter
+      plan (G-003 T-004) describes stable_id address but does not specify how stable_ids
+      map to source lines when tree metadata lacks start_line."
+    plan_location: G-003 T-004 YamlFormatter (yaml_address.py, 
+      yaml_formatter.py)
+    action_required: Add heuristic line-search fallback spec to G-003 T-004 
+      description or A-001/A-002 prompt before implementation.
+    status: resolved
+    resolution: "Specified in T-004 yaml_address.py: heuristic key-search fallback
+      when metadata lacks start_line. String keys: regex r'^\\s*{last_part}\\s*:';
+      quoted keys: r'^\\s*[\"\\'][last_part}[\"\\'\\]\\s*:'; numeric last_part (list
+      index): first '- ' line in subtree."
+  NQ006_json_yaml_inline_value_asymmetry:
+    severity: HIGH
+    topic: JSON vs YAML inline scalar value asymmetry — design decision required
+    description: 'In code_analysis: YAML mapping children expose scalar values inline
+      as attributes.value (inline_value_surfacing). JSON mapping children do NOT —
+      caller must drill down. This is a deliberate asymmetry in the current implementation.
+      In ai_editor plan both YamlFormatter and JsonFormatter use unified TreeNode
+      with no mention of this difference. Decision must be made before G-003 T-004
+      / T-013 implementation: (A) replicate asymmetry — YamlFormatter surfaces scalar
+      values inline, JsonFormatter does not; (B) unify both to surface inline; (C)
+      unify both to not surface inline (caller always drills). Choice affects get_unit
+      / list_commands output shape and AI-client prompt patterns.'
+    plan_location: G-003 T-004 YamlFormatter, G-003 T-013 JsonFormatter
+    action_required: Owner must pick A/B/C and document chosen behaviour in 
+      G-003 T-004 and T-013 descriptions before AS execution.
+    status: resolved
+    options:
+      A_replicate_asymmetry: YAML surfaces scalar inline; JSON does not. Matches
+        code_analysis behaviour exactly.
+      B_unify_inline_both: Both formatters surface scalar values inline in 
+        mapping children. Simpler for AI clients.
+      C_unify_no_inline: Neither formatter surfaces inline. Caller always drills
+        to scalar. Symmetric but more round-trips.
+    resolution: 'Option B: unify both formatters to surface scalar values inline in
+      mapping children (attributes.value). JSON formatter to be completed to match
+      YAML inline behaviour. Asymmetry in code_analysis is a historical gap, not a
+      design intent.'
+  NQ008_no_self_content_child:
+    severity: HIGH
+    topic: Transparent parent / no-self-content-child rule not in plan or 
+      viewer_features
+    description: "Rule (verified by test test_tree_temp_no_self_content_child.py,
+      AC-5): when previewing a node whose children have content, the node itself must
+      NOT appear as a synthetic child block duplicating its own body. Specifically:
+      (1) preview of a YAML/JSON mapping root returns only key-children (e.g. /title,
+      /body, /nested) — total_blocks equals key count; (2) no /__content or __content
+      block is injected at the mapping level; (3) when the caller drills into a scalar
+      child (e.g. node_ref='/body'), the focus node is SCALAR with total_blocks=0
+      and blocks=[] — the value is in focus.attributes.value, not in a child block.
+      This rule prevents duplication: a node's body is shown once — either as focus
+      or as children, never both. Applies to JSON and YAML (tree-temp format group).
+      Not documented anywhere in viewer_features.yaml before this entry. Not reflected
+      in ai_editor plan G-003."
+    rule_formal: If focus_node.children is non-empty, return children as 
+      block_set. Do not add a synthetic block whose content mirrors the focus 
+      node body. A scalar focus with no children returns total_blocks=0 and 
+      blocks=[].
+    verified_by: 
+      code_analysis/tests/commands/universal_file_preview/test_tree_temp_no_self_content_child.py
+    plan_location: G-003 T-001 AbstractFormatter (get_unit / render_skeleton), 
+      G-003 T-004 YamlFormatter, G-003 T-013 JsonFormatter
+    action_required: Add no-self-content-child invariant to G-003 T-001 
+      description (AbstractFormatter contract) and to 
+      executor_brief.formatter_backends entries for YamlFormatter and 
+      JsonFormatter. Add test spec to corresponding AS prompts.
+    status: resolved
+    resolution: 'Documented as AbstractFormatter contract in T-001 description and
+      in T-013 description. Rule: if focus has children return children as block_set;
+      scalar focus returns total_blocks=0 and blocks=[]. No synthetic self-content
+      block injected at mapping level.'

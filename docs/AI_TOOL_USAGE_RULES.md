@@ -236,13 +236,20 @@ Insert/delete: see `help(universal_file_edit)` — container vs sibling `positio
 ]
 ```
 
-**text** — line ranges (1-based); map preview `node_ref` with `start_line = int(node_ref) + 1`:
+**text** — line ranges (1-based) on the **current draft**; map preview `node_ref` with `start_line = int(node_ref) + 1`:
 
 ```python
 "operations": [
     {"type": "replace", "start_line": 10, "end_line": 12, "content": "New paragraph.\n"}
 ]
 ```
+
+**Text line numbers go stale after every edit.** Do not reuse `start_line`/`end_line` from `fulltext_search` or from a preview taken before a prior `universal_file_edit` call — each successful edit shifts subsequent lines. Before **each** line-targeted operation:
+
+1. Re-run `universal_file_preview` with the same `session_id` (reads the draft, not the on-disk file), **or**
+2. Pass optional `anchor_head` + `anchor_tail` (first/last five non-whitespace characters of the target range's first/last lines) so the server rejects stale coordinates with `ANCHOR_MISMATCH`.
+
+Multiple line-targeted operations in **one** `universal_file_edit` batch are sorted bottom-up automatically; sequential **calls** still require fresh line numbers between calls.
 
 You may call `universal_file_edit` multiple times before write.
 
@@ -514,6 +521,7 @@ Do not document or call via MCP: `cst_load_file`, `cst_modify_tree`, `cst_save_t
 | Wrong `node_ref` / no match in preview | Re-run `universal_file_preview`; confirm `format_group` |
 | `json_pointer` vs `node_id` confusion (tree-temp) | Use RFC 6901 pointer in `json_pointer`, not CST UUID |
 | Text line off-by-one | `start_line = int(node_ref) + 1` from preview |
+| Text edit at wrong position / file bloated | Stale line numbers — re-run `universal_file_preview` with `session_id` before each edit; optional `anchor_head`/`anchor_tail` |
 | Validation error on commit (Python) | Fix docstrings/types in `code_lines`; retry `write` |
 | `session_id` invalid | Server restarted — `open` again |
 | Parse error on open | Fix syntax via small `edit`+`write` or report to user; do not use removed `get_file_lines` |

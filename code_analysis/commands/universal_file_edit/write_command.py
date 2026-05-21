@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.universal_file_edit.errors import (
+    FORMAT_INVALID_ON_OPEN,
     SESSION_NOT_FOUND,
     WRITE_FAILED,
     error_result_from_make_error,
@@ -47,7 +48,9 @@ from code_analysis.core.exceptions import ValidationError
 from code_analysis.core.file_handlers.diff_support import unified_diff_text
 from code_analysis.core.git_integration import commit_after_write
 from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    restore_session_format_after_recovery,
     try_clear_invalid_after_write,
+    validate_invalid_session_for_commit,
 )
 
 
@@ -248,7 +251,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             )
 
         delete_lockfile(session.abs_path)
-        try_clear_invalid_after_write(session)
+        if not session.is_invalid:
+            try_clear_invalid_after_write(session)
         try:
             commit_after_write(
                 root_dir,
@@ -326,8 +330,48 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         self, session: EditSession, project_id: str
     ) -> SuccessResult | ErrorResult:
         """Text commit: backup, atomic write from draft, delete lockfile if any."""
-        _ = project_id
+        if session.is_invalid:
+            return self._invalid_text_write_commit(session, project_id)
         return self._second_call(session, project_id)
+
+    def _invalid_text_write_commit(
+        self, session: EditSession, project_id: str
+    ) -> SuccessResult | ErrorResult:
+        """Commit for invalid-on-open sessions: re-parse gate then format recovery."""
+        try:
+            draft_text = session.draft_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return error_result_from_make_error(
+                make_error(WRITE_FAILED, f"Cannot read draft: {exc}")
+            )
+        ok, parse_errors = validate_invalid_session_for_commit(session, draft_text)
+        if not ok:
+            return error_result_from_make_error(
+                make_error(
+                    FORMAT_INVALID_ON_OPEN,
+                    "File still has parse errors; write blocked. Fix errors and retry.",
+                    details={
+                        "parse_errors": parse_errors,
+                        "format": session.original_format_group,
+                    },
+                )
+            )
+        result = self._second_call(session, project_id)
+        if not isinstance(result, SuccessResult):
+            return result
+        try:
+            recovered = restore_session_format_after_recovery(session, project_id)
+        except Exception as exc:
+            return error_result_from_make_error(
+                make_error(
+                    WRITE_FAILED,
+                    f"Write succeeded but format recovery failed: {exc}",
+                )
+            )
+        payload = dict(result.data)
+        payload.update(recovered)
+        payload["is_invalid"] = False
+        return SuccessResult(data=payload)
 
     def _sidecar_preview(self, session: EditSession) -> SuccessResult | ErrorResult:
         """Sidecar explicit preview: diff only, no lockfile side effects."""
@@ -430,7 +474,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             before_label=str(session.abs_path),
             after_label=str(session.abs_path),
         )
-        try_clear_invalid_after_write(session)
+        if not session.is_invalid:
+            try_clear_invalid_after_write(session)
         try:
             commit_after_write(
                 root_dir,

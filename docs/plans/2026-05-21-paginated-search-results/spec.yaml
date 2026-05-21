@@ -23,7 +23,9 @@ concepts:
   - start: 73
     end: 75
   - start: 80
-    end: 90
+    end: 95
+  - start: 97
+    end: 107
 - concept_id: C-002
   name: SearchSessionDirectory
   definition: Filesystem directory created for a SearchSession to store result 
@@ -50,7 +52,7 @@ concepts:
     may operate concurrently.
   source_ranges:
   - start: 80
-    end: 90
+    end: 95
 - concept_id: C-004
   name: SearchPageFile
   definition: Immutable result page or block file written inside a 
@@ -65,7 +67,9 @@ concepts:
   - start: 21
     end: 27
   - start: 80
-    end: 82
+    end: 85
+  - start: 89
+    end: 89
 - concept_id: C-005
   name: HTTPResultAccess
   definition: Simple HTTP retrieval mechanism for reading SearchSession pages, 
@@ -77,8 +81,8 @@ concepts:
   - Returns a page-not-ready response when the session is running but the 
     requested page has not been published yet.
   source_ranges:
-  - start: 82
-    end: 84
+  - start: 85
+    end: 89
 - concept_id: C-006
   name: LastAccessTimestamp
   definition: Timestamp recorded for a SearchSession and refreshed whenever a 
@@ -90,8 +94,8 @@ concepts:
   source_ranges:
   - start: 31
     end: 33
-  - start: 84
-    end: 84
+  - start: 87
+    end: 87
 - concept_id: C-007
   name: SessionTTLPolicy
   definition: Configuration policy controlling how long inactive 
@@ -105,8 +109,8 @@ concepts:
   source_ranges:
   - start: 33
     end: 33
-  - start: 84
-    end: 90
+  - start: 87
+    end: 95
 - concept_id: C-008
   name: ServerProcessIdentity
   definition: Identity of the main server process that created or owns a 
@@ -119,8 +123,8 @@ concepts:
   - A missing process or mismatched process_start_time makes the session dead or
     orphaned.
   source_ranges:
-  - start: 86
-    end: 86
+  - start: 91
+    end: 91
 - concept_id: C-009
   name: SessionHeartbeat
   definition: Periodic liveness timestamp written by the search execution path 
@@ -131,8 +135,8 @@ concepts:
   - Older-than-hard-timeout heartbeat marks a running session as timed_out or 
     orphaned.
   source_ranges:
-  - start: 88
-    end: 88
+  - start: 93
+    end: 93
 - concept_id: C-010
   name: DeadSessionDetection
   definition: Rule set for deciding that a SearchSession is dead or orphaned 
@@ -143,10 +147,10 @@ concepts:
   - Treats stale heartbeat beyond hard timeout as timed_out or orphaned.
   - May be applied by status reads and by the background cleaner.
   source_ranges:
-  - start: 86
-    end: 88
-  - start: 90
-    end: 90
+  - start: 91
+    end: 93
+  - start: 95
+    end: 95
 - concept_id: C-011
   name: BackgroundSessionCleaner
   definition: Background maintenance process that removes expired, closed, or 
@@ -160,8 +164,8 @@ concepts:
     are valid.
   - Detects orphan running sessions through DeadSessionDetection.
   source_ranges:
-  - start: 90
-    end: 90
+  - start: 95
+    end: 95
 - concept_id: C-012
   name: IndexedFileSet
   definition: Set of files that can be searched through the database or index 
@@ -302,8 +306,8 @@ concepts:
   - Must not be replaced by an incompatible greenfield subsystem.
   - May be extended through optional parameters or compatible bridge commands.
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
 - concept_id: C-022
   definition: Compatibility layer that adds paginated and session-backed 
     behavior around existing command implementations without breaking current 
@@ -316,8 +320,8 @@ concepts:
     direct payloads, structural results, and preview references.
   - Must avoid duplicating working search logic.
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
 - concept_id: C-023
   definition: Public command contract that keeps current behavior stable while 
     allowing optional paginated extensions.
@@ -328,8 +332,8 @@ concepts:
   - Existing callers do not need to change.
   - Bridge commands must be documented when used.
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
 - concept_id: C-024
   definition: Optional request or response fields that enable 
     paginated/session-backed behavior without changing default command behavior.
@@ -340,8 +344,8 @@ concepts:
   - Must not be required for existing non-paginated callers.
   - Must be documented in command schemas and metadata when exposed.
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
 - concept_id: C-025
   definition: Inventory that separates behavior already present in the codebase 
     from behavior introduced by this plan.
@@ -352,8 +356,20 @@ concepts:
   - Prevents the implementation plan from duplicating existing search logic.
   - Helps global steps target migration work instead of greenfield replacement.
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
+- concept_id: C-026
+  name: AtomicPagePublication
+  definition: Publication protocol that prevents clients and HTTP readers from 
+    observing partially written page content.
+  properties:
+  - Writes page content through a temporary or unpublished intermediate state.
+  - Publishes a page only after the page content is complete.
+  - Makes finalized immutable page files visible to HTTP readers.
+  - Prevents readers from consuming partially written page content.
+  source_ranges:
+  - start: 89
+    end: 89
 relations:
 - from_concept: C-001
   to_concept: C-002
@@ -406,48 +422,48 @@ relations:
   type: owns
   description: SearchSessionManifest stores main server process identity.
   source_ranges:
-  - start: 86
-    end: 86
+  - start: 91
+    end: 91
 - from_concept: C-003
   to_concept: C-009
   type: owns
   description: SearchSessionManifest stores heartbeat information for running 
     searches.
   source_ranges:
-  - start: 88
-    end: 88
+  - start: 93
+    end: 93
 - from_concept: C-010
   to_concept: C-008
   type: uses
   description: DeadSessionDetection uses main PID and process start time to 
     detect missing or reused server processes.
   source_ranges:
-  - start: 86
-    end: 86
+  - start: 91
+    end: 91
 - from_concept: C-010
   to_concept: C-009
   type: uses
   description: DeadSessionDetection uses stale heartbeat to detect stuck or 
     orphan sessions.
   source_ranges:
-  - start: 88
-    end: 88
+  - start: 93
+    end: 93
 - from_concept: C-011
   to_concept: C-010
   type: uses
   description: BackgroundSessionCleaner uses dead-session detection before 
     deleting orphaned running sessions.
   source_ranges:
-  - start: 90
-    end: 90
+  - start: 95
+    end: 95
 - from_concept: C-011
   to_concept: C-002
   type: consumes
   description: BackgroundSessionCleaner removes session directories when cleanup
     policy allows it.
   source_ranges:
-  - start: 90
-    end: 90
+  - start: 95
+    end: 95
 - from_concept: C-014
   to_concept: C-012
   type: produces
@@ -520,46 +536,62 @@ relations:
     commands.
   from_concept: C-022
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-021
   type: uses
 - description: ExistingSearchCommand owns a backward-compatible public contract.
   from_concept: C-021
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-023
   type: owns
 - description: OptionalPaginationParameters extend the command contract without 
     changing default behavior.
   from_concept: C-024
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-023
   type: extends
 - description: ExistingBehaviorInventory depends on inspecting existing working 
     commands.
   from_concept: C-025
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-021
   type: depends_on
 - description: SearchSession-backed behavior extends existing command behavior 
     when pagination is requested; it does not replace the command by default.
   from_concept: C-001
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-021
   type: extends
 - description: IncrementalCompatibilityLayer may route paginated execution 
     through SearchSession.
   from_concept: C-022
   source_ranges:
-  - end: 102
-    start: 92
+  - start: 97
+    end: 107
   to_concept: C-001
   type: uses
+- from_concept: C-004
+  to_concept: C-026
+  type: depends_on
+  description: SearchPageFile publication depends on atomic page publication so 
+    readers only see finalized immutable page files.
+  source_ranges:
+  - start: 89
+    end: 89
+- from_concept: C-005
+  to_concept: C-026
+  type: depends_on
+  description: HTTPResultAccess depends on atomic page publication to avoid 
+    reading partial page content.
+  source_ranges:
+  - start: 89
+    end: 89

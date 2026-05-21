@@ -22,6 +22,9 @@ from code_analysis.commands.universal_file_edit.errors import (
     error_result_from_make_error,
     make_error,
 )
+from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    open_fallback_warning,
+)
 from code_analysis.commands.universal_file_edit.format_group import (
     FORMAT_SIDECAR,
     FORMAT_TEXT,
@@ -279,6 +282,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         tree_id: Optional[str] = getattr(descriptor, "tree_id", None)
         session_extra: Dict[str, Any] = {}
         if fallback_info is not None:
+            session_extra["is_invalid"] = True
             session_extra["fallback_reason"] = fallback_info["fallback_reason"]
             session_extra["original_format_group"] = fallback_info[
                 "original_format_group"
@@ -309,8 +313,12 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         if created:
             data["created"] = True
         if fallback_info is not None:
-            data["fallback_reason"] = fallback_info["fallback_reason"]
-            data["original_format_group"] = fallback_info["original_format_group"]
+            orig_fg = fallback_info["original_format_group"]
+            reason = fallback_info["fallback_reason"]
+            data["is_invalid"] = True
+            data["fallback_reason"] = reason
+            data["original_format_group"] = orig_fg
+            data["warning"] = open_fallback_warning(orig_fg, reason)
         return SuccessResult(data=data)
 
     def _resolve_abs_path(self, project_id: str, file_path: str) -> Optional[Path]:
@@ -383,29 +391,40 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             tree_id = self._write_draft(abs_path, descriptor, project_id)
             descriptor.__dict__["tree_id"] = tree_id
         except Exception as exc:
-            # For tree-temp (JSON/YAML) fall back to text-mode so the file
-            # remains accessible despite syntax errors.
-            if original_fg == FORMAT_TREE_TEMP:
+            # For tree-temp (JSON/YAML) and sidecar (.py) fall back to text-mode
+            # so the file remains accessible despite syntax errors.
+            if original_fg in (FORMAT_TREE_TEMP, FORMAT_SIDECAR):
                 try:
-                    text_descriptor = FormatDescriptor(
-                        format_group=FORMAT_TEXT,
-                        handler_id="text",
-                        draft_path=draft_path_for(abs_path, FORMAT_TEXT),
-                        lockfile_path=lockfile_path_for(abs_path),
-                        available_operations=["insert", "delete", "replace"],
+                    return self._text_fallback_descriptor(
+                        abs_path, original_fg, str(exc)
                     )
-                    shutil.copy2(str(abs_path), str(text_descriptor.draft_path))
-                    text_descriptor.__dict__["tree_id"] = None
-                    text_descriptor.__dict__["_fallback_info"] = {
-                        "fallback_reason": "PARSE_ERROR",
-                        "original_format_group": original_fg,
-                    }
-                    return text_descriptor
                 except Exception:
                     pass  # fall through to original error
             return make_error(PARSE_ERROR, f"Cannot parse file: {exc}")
 
         return descriptor
+
+    def _text_fallback_descriptor(
+        self,
+        abs_path: Path,
+        original_fg: str,
+        parse_error: str,
+    ) -> FormatDescriptor:
+        """Build a text-mode descriptor after parse failure at open."""
+        text_descriptor = FormatDescriptor(
+            format_group=FORMAT_TEXT,
+            handler_id="text",
+            draft_path=draft_path_for(abs_path, FORMAT_TEXT),
+            lockfile_path=lockfile_path_for(abs_path),
+            available_operations=["insert", "delete", "replace"],
+        )
+        shutil.copy2(str(abs_path), str(text_descriptor.draft_path))
+        text_descriptor.__dict__["tree_id"] = None
+        text_descriptor.__dict__["_fallback_info"] = {
+            "fallback_reason": parse_error,
+            "original_format_group": original_fg,
+        }
+        return text_descriptor
 
     def _create_initial_backup(self, project_id: str, abs_path: Path) -> None:
         """Create initial backup if file has no backup history.

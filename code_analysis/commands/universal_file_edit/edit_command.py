@@ -25,6 +25,9 @@ from code_analysis.commands.universal_file_edit.format_group import (
     FORMAT_SIDECAR,
     FORMAT_TREE_TEMP,
 )
+from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    invalid_session_warning,
+)
 from code_analysis.commands.universal_file_edit.session import EditSession, get_session
 from code_analysis.commands.universal_file_edit.sidecar_cst_apply import (
     run_sidecar_cst_edit_batch,
@@ -139,10 +142,17 @@ class UniversalFileEditCommand(BaseMCPCommand):
             validation = validate_sidecar_nested_batch(operations, session.tree_id)
             if validation is not None:
                 return error_result_from_make_error(validation)
-            return await self._apply_sidecar(session, operations)
-        if fg == FORMAT_TREE_TEMP:
-            return await self._apply_tree_temp(session, operations)
-        return await self._apply_text(session, operations)
+            result = await self._apply_sidecar(session, operations)
+        elif fg == FORMAT_TREE_TEMP:
+            result = await self._apply_tree_temp(session, operations)
+        else:
+            result = await self._apply_text(session, operations)
+
+        if session.is_invalid and isinstance(result, SuccessResult):
+            payload = dict(result.data)
+            payload["warning"] = invalid_session_warning(session)
+            return SuccessResult(data=payload)
+        return result
 
     async def _apply_sidecar(
         self, session: EditSession, operations: List[Dict[str, Any]]

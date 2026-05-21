@@ -1,0 +1,44 @@
+step_id: G-002
+name: Search session lifecycle and manifest state
+description: >
+  Define the search session as the durable owner of its directory, manifest,
+  status, phase, progress metrics, last-access timestamp, heartbeat, and server
+  process identity.
+concepts:
+  - C-001
+  - C-002
+  - C-003
+  - C-006
+  - C-008
+  - C-009
+  - C-020
+relations:
+  - from_concept: C-001
+    to_concept: C-002
+    type: owns
+  - from_concept: C-002
+    to_concept: C-003
+    type: owns
+  - from_concept: C-005
+    to_concept: C-006
+    type: produces
+  - from_concept: C-003
+    to_concept: C-008
+    type: owns
+  - from_concept: C-003
+    to_concept: C-009
+    type: owns
+  - from_concept: C-001
+    to_concept: C-020
+    type: owns
+source_ranges:
+  - start: 19
+    end: 33
+  - start: 71
+    end: 87
+  - start: 91
+    end: 93
+depends_on:
+  - G-001
+tactical_steps: []
+status: draft

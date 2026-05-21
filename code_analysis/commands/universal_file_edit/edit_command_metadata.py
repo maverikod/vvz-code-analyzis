@@ -55,11 +55,20 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  sibling-relative: before_key|after_key (object), before_node_id|after_node_id (array).\n"
             "  parent_json_pointer='' targets the document root object.\n\n"
             "text (.txt, .md, .rst, .adoc, others):\n"
-            "  Operations target line ranges (1-based, inclusive).\n"
+            "  Operations target line ranges (1-based, inclusive) on the **current draft**.\n"
             "  universal_file_preview returns node_ref as zero-based index string (e.g. '1' for line 2).\n"
             "  Convert: start_line = int(node_ref) + 1.\n"
             "  Fields: type, start_line, end_line, content.\n"
-            "  Use position: 'last' (without start_line) to append content at end of file.\n\n"
+            "  Optional safety: anchor_head + anchor_tail (five non-whitespace chars from the\n"
+            "  first/last line of the target range). When supplied, the server rejects the\n"
+            "  operation if the draft lines no longer match — use after locating content via\n"
+            "  fulltext_search or an earlier preview.\n"
+            "  Use position: 'last' (without start_line) to append content at end of file.\n"
+            "  **Never reuse line numbers from fulltext_search or an earlier preview after a\n"
+            "  prior universal_file_edit call.** Each edit shifts line numbers. Before every\n"
+            "  line-targeted operation, re-run universal_file_preview with the same session_id\n"
+            "  (reads the draft) or pass anchor_head/anchor_tail from the intended target lines.\n"
+            "  Multiple line-targeted operations in one batch are sorted bottom-up automatically.\n\n"
             "The original file on disk is never touched by this command. "
             "Changes reach disk only after universal_file_write (commit phase)."
         ),
@@ -278,6 +287,24 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "message": "Invalid action: {action}",
                 "solution": "Use one of: replace, insert, delete.",
             },
+            "LINE_OUT_OF_RANGE": {
+                "description": "Text only: start_line/end_line are outside the current draft bounds.",
+                "message": "line range {start_line}-{end_line} is out of range (draft has {line_count} lines)",
+                "solution": (
+                    "Re-run universal_file_preview with session_id to read the current draft. "
+                    "Do not reuse line numbers from fulltext_search or a preview taken before "
+                    "a prior universal_file_edit call."
+                ),
+            },
+            "ANCHOR_MISMATCH": {
+                "description": "Text only: anchor_head/anchor_tail do not match the draft lines at start_line/end_line.",
+                "message": "anchor_head mismatch at lines {start_line}-{end_line}",
+                "solution": (
+                    "The draft shifted since line numbers were collected. Re-run "
+                    "universal_file_preview with session_id and retry with fresh line numbers "
+                    "or updated anchors."
+                ),
+            },
             "INVALID_OPERATION": {
                 "description": "Operation rejected: unknown node_id, out-of-range lines, or unknown JSON Pointer.",
                 "message": "No operations built from edit payload",
@@ -314,6 +341,8 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "For JSON object sibling insert: before_key or after_key to preserve key order.",
             "For JSON/YAML (tree-temp): pass node_ref from preview into json_pointer, not node_id.",
             "For text: convert zero-based node_ref to 1-based start_line = int(node_ref) + 1.",
+            "For text: never reuse line numbers from fulltext_search or an earlier preview after universal_file_edit — re-run universal_file_preview with session_id before each line-targeted edit.",
+            "For text: pass anchor_head and anchor_tail together to verify the target range before replace/delete.",
             "For text append: use position='last' without start_line — no need to know the line count.",
             "Multiple operations in one batch are validated together before any modification is applied.",
             "The original file is never touched until universal_file_write (commit phase).",

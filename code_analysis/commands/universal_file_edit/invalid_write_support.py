@@ -1,5 +1,5 @@
 """
-Post-write re-parse for sessions opened on syntactically invalid files.
+Post-write re-parse and format-group recovery for invalid-on-open sessions.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -9,16 +9,187 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from code_analysis.commands.universal_file_edit.session import EditSession
 
-from code_analysis.commands.universal_file_edit.format_group import FORMAT_SIDECAR
+from code_analysis.commands.universal_file_edit.format_group import (
+    FORMAT_SIDECAR,
+    FORMAT_TREE_TEMP,
+    _FORMAT_AVAILABLE_OPERATIONS,
+    resolve_format_group,
+)
+
+
+def _parse_error_entry(
+    *,
+    line: int = 0,
+    col: int = 0,
+    message: str,
+) -> Dict[str, Any]:
+    return {"line": line, "col": col, "message": message}
+
+
+def _errors_from_exception(exc: BaseException) -> List[Dict[str, Any]]:
+    if isinstance(exc, json.JSONDecodeError):
+        return [
+            _parse_error_entry(
+                line=int(exc.lineno or 0),
+                col=int(exc.colno or 0),
+                message=str(exc.msg),
+            )
+        ]
+    if isinstance(exc, SyntaxError):
+        return [
+            _parse_error_entry(
+                line=int(exc.lineno or 0),
+                col=int(exc.offset or 0),
+                message=str(exc.msg or exc),
+            )
+        ]
+    line = getattr(exc, "editor_line", None) or getattr(exc, "lineno", None) or 0
+    col = getattr(exc, "editor_column", None) or getattr(exc, "colno", None) or 0
+    return [_parse_error_entry(line=int(line), col=int(col), message=str(exc))]
+
+
+def try_parse_content(
+    text: str,
+    path: Path,
+    format_group: str,
+) -> Tuple[bool, List[Dict[str, Any]]]:
+    """Attempt to parse *text* with the formatter for *format_group*.
+
+    Returns:
+        ``(True, [])`` when parsing succeeds; otherwise ``(False, parse_errors)``.
+    """
+    try:
+        if format_group == FORMAT_SIDECAR or path.suffix.lower() in (
+            ".py",
+            ".pyi",
+            ".pyw",
+        ):
+            import libcst as cst
+
+            cst.parse_module(text)
+        elif path.suffix.lower() == ".json":
+            json.loads(text)
+        elif path.suffix.lower() in (".yaml", ".yml"):
+            import yaml
+
+            yaml.safe_load(text)
+        else:
+            return True, []
+    except Exception as exc:
+        errors = _errors_from_exception(exc)
+        if isinstance(exc, Exception):
+            try:
+                import yaml
+
+                if isinstance(exc, yaml.YAMLError):
+                    mark = getattr(exc, "problem_mark", None)
+                    if mark is not None:
+                        errors = [
+                            _parse_error_entry(
+                                line=int(mark.line) + 1,
+                                col=int(mark.column) + 1,
+                                message=str(exc),
+                            )
+                        ]
+            except ImportError:
+                pass
+        return False, errors
+    return True, []
+
+
+def validate_invalid_session_for_commit(
+    session: "EditSession",
+    draft_text: str,
+) -> Tuple[bool, List[Dict[str, Any]]]:
+    """Re-parse draft content against ``session.original_format_group``."""
+    orig = session.original_format_group
+    if not orig:
+        return True, []
+    return try_parse_content(draft_text, session.abs_path, orig)
+
+
+def restore_session_format_after_recovery(
+    session: "EditSession",
+    project_id: str,
+) -> Dict[str, Any]:
+    """Switch session back to the original format group and rebuild in-memory state."""
+    orig = session.original_format_group
+    if not orig:
+        raise ValueError("Session has no original_format_group to recover")
+
+    descriptor = resolve_format_group(session.abs_path)
+    session.format_group = orig
+    session.handler_id = descriptor.handler_id
+    session.is_invalid = False
+    session.fallback_reason = None
+    session.draft_path = descriptor.draft_path
+    session.lockfile_path = descriptor.lockfile_path
+
+    if orig == FORMAT_SIDECAR:
+        from code_analysis.core.cst_tree import tree_builder as cst_builder
+        from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
+
+        tree = cst_builder.load_file_to_tree(str(session.abs_path))
+        write_sidecar_atomic(session.abs_path, tree)
+        session.tree_id = str(tree.tree_id)
+        session.tree_temp_roots = None
+        session.sidecar_write_intent = None
+        session.source_sha256_at_open = None
+    elif orig == FORMAT_TREE_TEMP:
+        from code_analysis.commands.base_mcp_command import BaseMCPCommand
+        from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
+            acquire_tree_temp_for_open,
+        )
+
+        project_root = Path(BaseMCPCommand._resolve_project_root(project_id)).resolve()
+        raw_bytes = session.abs_path.read_bytes()
+        acq = acquire_tree_temp_for_open(
+            project_root=project_root,
+            source_abs=session.abs_path,
+            handler_id=descriptor.handler_id,
+            raw_source_bytes=raw_bytes,
+        )
+        session.tree_temp_roots = acq.roots
+        session.source_sha256_at_open = acq.source_sha256
+        session.sidecar_write_intent = acq.sidecar_write_intent.value
+        session.tree_id = None
+        if descriptor.handler_id == "json":
+            from code_analysis.core.tree_temp.json_source_serializer import (
+                serialize_json_source,
+            )
+
+            draft_text = serialize_json_source(acq.roots)
+        else:
+            from code_analysis.core.tree_temp.yaml_source_serializer import (
+                serialize_yaml_source,
+            )
+
+            draft_text = serialize_yaml_source(acq.roots)
+        session.draft_path.write_text(draft_text, encoding="utf-8")
+    else:
+        session.tree_id = None
+        session.tree_temp_roots = None
+        session.sidecar_write_intent = None
+        session.source_sha256_at_open = None
+
+    available_ops = list(_FORMAT_AVAILABLE_OPERATIONS.get(orig, []))
+    return {
+        "recovered_format_group": orig,
+        "available_operations": available_ops,
+    }
 
 
 def try_clear_invalid_after_write(session: "EditSession") -> None:
-    """If the file now parses, clear ``session.is_invalid``."""
+    """If the file now parses, clear ``session.is_invalid`` (legacy hook).
+
+    Prefer ``restore_session_format_after_recovery`` when format-group switch is
+    required; this helper remains for callers that only need the boolean flag.
+    """
     if not session.is_invalid:
         return
     path = session.abs_path
@@ -27,22 +198,28 @@ def try_clear_invalid_after_write(session: "EditSession") -> None:
     except OSError:
         return
     orig = session.original_format_group or session.format_group
-    try:
-        if orig == FORMAT_SIDECAR or path.suffix.lower() in (".py", ".pyi", ".pyw"):
-            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+    ok, _ = try_parse_content(text, path, orig)
+    if ok:
+        session.is_invalid = False
 
-            tree = load_file_to_tree(str(path))
-            from code_analysis.core.cst_tree.tree_builder import remove_tree
 
-            remove_tree(tree.tree_id)
-        elif path.suffix.lower() == ".json":
-            json.loads(text)
-        elif path.suffix.lower() in (".yaml", ".yml"):
-            import yaml
+def invalid_session_warning(session: "EditSession") -> str:
+    """Human-readable warning for sessions opened in text-mode fallback."""
+    orig = session.original_format_group or "unknown"
+    reason = session.fallback_reason or "parse error"
+    return (
+        "File opened in text-mode fallback due to parse errors. "
+        f"Original format: {orig}. "
+        f"Reason: {reason}. "
+        "Structural edits unavailable until parse errors are fixed and file is written."
+    )
 
-            yaml.safe_load(text)
-        else:
-            return
-    except Exception:
-        return
-    session.is_invalid = False
+
+def open_fallback_warning(original_format_group: str, fallback_reason: str) -> str:
+    """Human-readable warning for universal_file_open fallback responses."""
+    return (
+        "File has parse errors. Opened in text-mode fallback. "
+        f"Original format: {original_format_group}. "
+        f"Parse error: {fallback_reason}. "
+        f"Fix the file content and write to restore {original_format_group} editing."
+    )

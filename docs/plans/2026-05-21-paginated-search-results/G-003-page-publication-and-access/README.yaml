@@ -1,0 +1,32 @@
+step_id: G-003
+name: Page publication and result access
+description: >
+  Define how generated search records become immutable page files, how readers
+  access finalized pages, and how atomic publication prevents clients from
+  observing partial page content.
+concepts:
+  - C-004
+  - C-005
+  - C-026
+relations:
+  - from_concept: C-002
+    to_concept: C-004
+    type: owns
+  - from_concept: C-005
+    to_concept: C-004
+    type: consumes
+  - from_concept: C-004
+    to_concept: C-026
+    type: depends_on
+  - from_concept: C-005
+    to_concept: C-026
+    type: depends_on
+source_ranges:
+  - start: 21
+    end: 27
+  - start: 80
+    end: 89
+depends_on:
+  - G-002
+tactical_steps: []
+status: draft

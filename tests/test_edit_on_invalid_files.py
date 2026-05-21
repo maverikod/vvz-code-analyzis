@@ -6,15 +6,17 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.universal_file_edit.edit_command import (
     UniversalFileEditCommand,
 )
+from code_analysis.commands.universal_file_edit.errors import FORMAT_INVALID_ON_OPEN
 from code_analysis.commands.universal_file_edit.open_command import (
     UniversalFileOpenCommand,
 )
+from code_analysis.commands.universal_file_edit.session import get_session
 from code_analysis.commands.universal_file_edit.write_command import (
     UniversalFileWriteCommand,
 )
@@ -297,3 +299,174 @@ async def test_preview_broken_json_with_uuid_node_ref_returns_raw_text(
     assert focus.get("is_invalid") is True
     assert broken in str(focus.get("text", ""))
     assert focus.get("text") != "{}"
+
+
+@pytest.mark.asyncio
+async def test_open_invalid_yaml_sets_is_invalid_and_warning(tmp_path: Path) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.yaml"
+    (tmp_path / rel).write_text("key: [unclosed\n", encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    assert opened.data.get("format_group") == "text"
+    assert opened.data.get("is_invalid") is True
+    assert opened.data.get("original_format_group") == "tree-temp"
+    assert opened.data.get("warning")
+    assert "text-mode fallback" in str(opened.data.get("warning"))
+
+
+@pytest.mark.asyncio
+async def test_open_invalid_py_falls_back_to_text(tmp_path: Path) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.py"
+    (tmp_path / rel).write_text("def f(\n", encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    assert opened.data.get("format_group") == "text"
+    assert opened.data.get("is_invalid") is True
+    assert opened.data.get("original_format_group") == "sidecar"
+    assert opened.data.get("warning")
+
+
+@pytest.mark.asyncio
+async def test_edit_invalid_session_returns_warning(tmp_path: Path) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    (tmp_path / rel).write_text('{"a": ', encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    assert isinstance(opened, SuccessResult)
+    sid = str(opened.data["session_id"])
+    ed = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        result = await ed.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            operations=[{"type": "replace", "node_ref": "", "content": '{"a": 1}\n'}],
+        )
+    assert isinstance(result, SuccessResult)
+    assert result.data.get("warning")
+    assert "text-mode fallback" in str(result.data.get("warning"))
+
+
+@pytest.mark.asyncio
+async def test_write_commit_invalid_session_still_broken_returns_error(
+    tmp_path: Path,
+) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    (tmp_path / rel).write_text('{"a": ', encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(opened.data["session_id"])
+    ed = UniversalFileEditCommand()
+    wr = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        await ed.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            operations=[{"type": "replace", "node_ref": "", "content": '{"still": '}],
+        )
+        commit = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            write_mode="commit",
+        )
+    assert isinstance(commit, ErrorResult)
+    assert commit.code == FORMAT_INVALID_ON_OPEN
+    assert commit.details is not None
+    assert commit.details.get("format") == "tree-temp"
+    assert commit.details.get("parse_errors")
+
+
+@pytest.mark.asyncio
+async def test_write_commit_invalid_session_fixed_restores_format_group(
+    tmp_path: Path,
+) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    p = tmp_path / rel
+    p.write_text('{"ok": true', encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(opened.data["session_id"])
+    fixed = '{"ok": true}\n'
+    ed = UniversalFileEditCommand()
+    wr = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        await ed.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            operations=[{"type": "replace", "node_ref": "", "content": fixed}],
+        )
+        commit = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            write_mode="commit",
+        )
+    assert isinstance(commit, SuccessResult)
+    assert commit.data.get("recovered_format_group") == "tree-temp"
+    assert commit.data.get("is_invalid") is False
+    sess = get_session(sid)
+    assert sess.format_group == "tree-temp"
+    assert sess.is_invalid is False
+    assert p.read_text(encoding="utf-8") == fixed
+
+
+@pytest.mark.asyncio
+async def test_write_preview_invalid_session_always_succeeds(tmp_path: Path) -> None:
+    _ensure_project_root(tmp_path)
+    rel = "broken.json"
+    (tmp_path / rel).write_text('{"a": ', encoding="utf-8")
+    op = UniversalFileOpenCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        opened = await op.execute(
+            **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
+        )
+    sid = str(opened.data["session_id"])
+    wr = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp_path)
+    ):
+        preview = await wr.execute(
+            project_id=_PROJECT_UUID,
+            session_id=sid,
+            write_mode="preview",
+        )
+    assert isinstance(preview, SuccessResult)
+    assert preview.data.get("phase") == "preview"

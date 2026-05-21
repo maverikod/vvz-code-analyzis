@@ -270,7 +270,7 @@ bugs:
       If node)
     task_id: fix-replace-else-branch-cst-error
   content_node_listed_as_child_block:
-    status: open
+    status: fixed
     severity: medium
     file: 
       code_analysis/commands/universal_file_preview/handlers/markdown_handler.py
@@ -293,7 +293,7 @@ bugs:
       inline on the focus node (focus.text), and the children/blocks list must 
       contain only genuine descendant nodes. Rule applies uniformly across all 
       formats.
-    verified: false
+    verified: true
 yaml_write_quirks:
   context: "universal_file_open create=True writes initial_content as-is before YAML
     parsing. Bare scalars with ': ' or inline comments cause parse failure -> text-mode

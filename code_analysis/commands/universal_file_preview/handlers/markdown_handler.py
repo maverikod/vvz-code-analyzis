@@ -146,6 +146,8 @@ def _token_text(token: Any) -> str:
     elif token.content:
         parts.append(token.content)
     return "".join(parts)
+
+
 def _collect_list_text(tokens: list[Any], start: int) -> tuple[str, int]:
     """Collect list item text from tokens starting at list_open token.
 
@@ -184,6 +186,14 @@ def _collect_list_text(tokens: list[Any], start: int) -> tuple[str, int]:
     return "\n".join(lines), i
 
 
+def _section_content_text(section: _Section) -> str | None:
+    """Return stripped section body text, or None when the section has no body."""
+    if not section.content_lines:
+        return None
+    content_text = "\n".join(section.content_lines).strip()
+    return content_text if content_text else None
+
+
 class _Section:
     """One Markdown section (heading level, slug path, nested children)."""
 
@@ -203,31 +213,20 @@ class _Section:
 
     def to_node(self) -> Node:
         """Mapping Node for this section and descendants."""
-        child_nodes: list[Node] = []
-        if self.content_lines:
-            content_text = "\n".join(self.content_lines).strip()
-            if content_text:
-                content_ref = (
-                    self.node_ref + "/__content" if self.node_ref else "__content"
-                )
-                child_nodes.append(
-                    Node(
-                        node_kind=NodeKind.SCALAR,
-                        node_ref=content_ref,
-                        attributes={"value": content_text},
-                    )
-                )
-        for child in self.children:
-            child_nodes.append(child.to_node())
+        child_nodes = [child.to_node() for child in self.children]
         title_attr = self.title if self.title else "(document root)"
+        attributes: dict[str, str] = {
+            "title": title_attr,
+            "level": str(self.level),
+            "slug": self.slug,
+        }
+        content_text = _section_content_text(self)
+        if content_text is not None:
+            attributes["text"] = content_text
         return Node(
             node_kind=NodeKind.MAPPING,
             node_ref=self.node_ref,
-            attributes={
-                "title": title_attr,
-                "level": str(self.level),
-                "slug": self.slug,
-            },
+            attributes=attributes,
             _children=child_nodes,
         )
 
@@ -273,7 +272,12 @@ def _build_section_tree(source: str) -> _Section:
                 current.content_lines.append(list_text)
             i = close_idx + 1
             continue
-        if token.type not in ("heading_close", "inline"):
+        if token.type == "inline":
+            if token.content:
+                stack[-1].content_lines.append(token.content)
+            i += 1
+            continue
+        if token.type not in ("heading_close",):
             current = stack[-1]
             if token.content:
                 current.content_lines.append(token.content)
@@ -374,14 +378,17 @@ class MarkdownFileHandler(FileHandler):
                     f"Markdown node_ref {node_ref!r} not found in document.",
                     details={"node_ref": node_ref},
                 )
-            parent_node = parent_section.to_node()
-            for child in parent_node.children:
-                if child.node_ref == node_ref:
-                    return child
-            return input_error(
-                INPUT_ERROR_UNKNOWN_NODE_REF,
-                f"Markdown node_ref {node_ref!r} not found: section has no content block.",
-                details={"node_ref": node_ref},
+            content_text = _section_content_text(parent_section)
+            if content_text is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"Markdown node_ref {node_ref!r} not found: section has no content block.",
+                    details={"node_ref": node_ref},
+                )
+            return Node(
+                node_kind=NodeKind.SCALAR,
+                node_ref=node_ref,
+                attributes={"value": content_text},
             )
 
         # Regular section slug path.

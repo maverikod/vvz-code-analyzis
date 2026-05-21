@@ -37,8 +37,9 @@ def merge_edit_session_into_preview_params(
     """Bind preview to an active universal_file_edit session when session_id is set.
 
     Injects ``tree_id`` from the edit session so preview reads the same in-memory
-    tree as ``universal_file_edit``. For text-format sessions (no tree), sets
-    ``_preview_abs_path`` to the draft file path.
+    tree as ``universal_file_edit``. For text and tree-temp sessions (no
+    registered ``tree_id``), sets ``_preview_abs_path`` to the draft file path
+    so preview reflects uncommitted edits.
 
     Args:
         params: Validated preview parameters (project-relative ``file_path``).
@@ -50,7 +51,10 @@ def merge_edit_session_into_preview_params(
     if session_id is None:
         return params
 
-    from code_analysis.commands.universal_file_edit.format_group import FORMAT_TEXT
+    from code_analysis.commands.universal_file_edit.format_group import (
+        FORMAT_TEXT,
+        FORMAT_TREE_TEMP,
+    )
     from code_analysis.commands.universal_file_edit.session import get_session
 
     try:
@@ -95,8 +99,8 @@ def merge_edit_session_into_preview_params(
             details={"session_id": session_id, "tree_id": explicit_tree_id},
         )
 
-    if edit_sess.format_group == FORMAT_TEXT:
-        # Text edit sessions (.md, .txt, …) have no in-memory tree; never carry tree_id.
+    if edit_sess.format_group in (FORMAT_TEXT, FORMAT_TREE_TEMP):
+        # Text and tree-temp sessions have no registered tree_id; preview draft text.
         merged = {k: v for k, v in params.items() if k != "tree_id"}
         merged["_preview_abs_path"] = str(edit_sess.draft_path)
         return merged

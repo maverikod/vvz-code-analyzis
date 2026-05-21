@@ -43,6 +43,71 @@ from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
 )
 
 
+def _fix_yaml_string_values(text: str) -> str:
+    """Quote YAML scalar values containing ': ' or inline comments.
+
+    Args:
+        text: Raw YAML text.
+
+    Returns:
+        YAML text with problematic values double-quoted.
+    """
+    import re as _re
+
+    _YAML_SCALARS = frozenset({"true", "false", "null", "~", "yes", "no", "on", "off"})
+    lines = text.splitlines(keepends=True)
+    result: list[str] = []
+    in_block_scalar = False
+    block_indent = 0
+    for line in lines:
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if in_block_scalar:
+            if stripped and indent <= block_indent and not stripped[0].isspace():
+                in_block_scalar = False
+            else:
+                result.append(line)
+                continue
+        if stripped.startswith("#"):
+            result.append(line)
+            continue
+        if _re.match(r"^(\s*)[\w_-]+:\s*[>|](\s*#.*)?$", line.rstrip()):
+            in_block_scalar = True
+            block_indent = indent
+            result.append(line)
+            continue
+        m = _re.match(r"^(\s*)([\w_-]+):\s+(.+)$", line.rstrip())
+        if not m:
+            result.append(line)
+            continue
+        key_indent, key, value = m.group(1), m.group(2), m.group(3)
+        if value.startswith(("'", '"')) or value.startswith(("{", "[")):
+            result.append(line)
+            continue
+        if value.lower() in _YAML_SCALARS:
+            result.append(line)
+            continue
+        if _re.match(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$", value):
+            result.append(line)
+            continue
+        cm = _re.search(r"\s+#\s", value)
+        if cm:
+            val_part = value[: cm.start()].strip()
+            comment_part = "  " + value[cm.start() :].strip()
+        else:
+            val_part = value
+            comment_part = ""
+        needs_quote = ": " in val_part or (
+            comment_part and not val_part.startswith(("'", '"'))
+        )
+        if not needs_quote:
+            result.append(line)
+            continue
+        escaped = val_part.replace("\\", "\\\\").replace('"', '\\"')
+        result.append(f'{key_indent}{key}: "{escaped}"{comment_part}\n')
+    return "".join(result)
+
+
 class UniversalFileOpenCommand(BaseMCPCommand):
     """MCP command that starts an editing session for one file.
 
@@ -85,7 +150,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                     "description": (
                         "When True, create the file if it does not exist. "
                         "Requires initial_content for Python files (.py). "
-                        "For all other formats creates an empty file."
+                        "For other formats uses initial_content when provided, "
+                        "otherwise a format-specific empty default."
                     ),
                 },
                 "initial_content": {
@@ -94,7 +160,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                         "Initial file content used only when create=True. "
                         "For Python (.py): valid Python source code written to disk "
                         "before the CST tree is built via load_file_to_tree. "
-                        "For other formats: ignored (file is created empty)."
+                        "For JSON: written as-is when non-empty, else `{}\\n`. "
+                        "For YAML: written as-is when non-empty, else `{}\\n`. "
+                        "For other text formats: written as-is when non-empty, else empty."
                     ),
                 },
             },
@@ -116,14 +184,16 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                         details={"file_path": file_path},
                     )
         return params
+
     @classmethod
     def metadata(cls: "type[UniversalFileOpenCommand]") -> Dict[str, Any]:
         """Return extended AI/docs metadata for universal_file_open.
 
-    Returns:
-        Metadata dict with description, parameters, examples, errors.
-    """
+        Returns:
+            Metadata dict with description, parameters, examples, errors.
+        """
         from typing import cast
+
         return cast(Dict[str, Any], get_universal_file_open_metadata(cls))
 
     async def execute(  # type: ignore[override]
@@ -174,11 +244,22 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             if suffix == ".py":
                 abs_path.write_text(initial_content, encoding="utf-8")
             elif suffix == ".json":
-                abs_path.write_text("{}\n", encoding="utf-8")
+                abs_path.write_text(
+                    initial_content if initial_content else "{}\n",
+                    encoding="utf-8",
+                )
             elif suffix in (".yaml", ".yml"):
-                abs_path.write_text("{}\n", encoding="utf-8")
+                abs_path.write_text(
+                    _fix_yaml_string_values(
+                        initial_content if initial_content else "{}\n"
+                    ),
+                    encoding="utf-8",
+                )
             else:
-                abs_path.write_text("", encoding="utf-8")
+                abs_path.write_text(
+                    initial_content if initial_content else "",
+                    encoding="utf-8",
+                )
             created = True
 
         cleanup_result = self._cleanup_stale(abs_path)

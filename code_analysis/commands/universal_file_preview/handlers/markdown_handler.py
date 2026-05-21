@@ -146,6 +146,42 @@ def _token_text(token: Any) -> str:
     elif token.content:
         parts.append(token.content)
     return "".join(parts)
+def _collect_list_text(tokens: list[Any], start: int) -> tuple[str, int]:
+    """Collect list item text from tokens starting at list_open token.
+
+    Descends into list_item / inline tokens and collects visible text.
+    Returns (rendered_text, index_of_list_close_token).
+    """
+    is_ordered = tokens[start].type == "ordered_list_open"
+    lines: list[str] = []
+    item_index = 1
+    depth = 0
+    i = start
+    while i < len(tokens):
+        t = tokens[i]
+        if t.type in ("bullet_list_open", "ordered_list_open"):
+            depth += 1
+            i += 1
+            continue
+        if t.type in ("bullet_list_close", "ordered_list_close"):
+            depth -= 1
+            if depth == 0:
+                return "\n".join(lines), i
+            i += 1
+            continue
+        if t.type == "list_item_open" and depth == 1:
+            j = i + 1
+            while j < len(tokens) and tokens[j].type != "inline":
+                j += 1
+            if j < len(tokens) and tokens[j].type == "inline":
+                text = tokens[j].content.strip()
+                if is_ordered:
+                    lines.append(f"{item_index}. {text}")
+                else:
+                    lines.append(f"- {text}")
+                item_index += 1
+        i += 1
+    return "\n".join(lines), i
 
 
 class _Section:
@@ -197,7 +233,11 @@ class _Section:
 
 
 def _build_section_tree(source: str) -> _Section:
-    """Section tree from markdown-it heading and content tokens."""
+    """Section tree from markdown-it heading and content tokens.
+
+    Lists (bullet and ordered) are expanded: each list item is rendered
+    as a readable line ('- text' or 'N. text') instead of a placeholder.
+    """
     tokens = _md.parse(source)
     root = _Section(level=0, title="", slug="", node_ref="")
     stack: list[_Section] = [root]
@@ -226,6 +266,13 @@ def _build_section_tree(source: str) -> _Section:
             stack.append(section)
             i += 3
             continue
+        if token.type in ("bullet_list_open", "ordered_list_open"):
+            current = stack[-1]
+            list_text, close_idx = _collect_list_text(tokens, i)
+            if list_text:
+                current.content_lines.append(list_text)
+            i = close_idx + 1
+            continue
         if token.type not in ("heading_close", "inline"):
             current = stack[-1]
             if token.content:
@@ -234,8 +281,6 @@ def _build_section_tree(source: str) -> _Section:
                 "fence",
                 "code_block",
                 "html_block",
-                "bullet_list_open",
-                "ordered_list_open",
                 "blockquote_open",
                 "table_open",
                 "hr",

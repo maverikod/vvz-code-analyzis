@@ -190,6 +190,28 @@ artifacts:
       depends_on:    "list of G-NNN step_ids; execution order only, not semantic"
       tactical_steps: "list of T-NNN step_ids"
       status:        "see statuses section"
+      executor_brief: |
+        OPTIONAL. A compact, executor-facing localisation of the HRS+MRS material
+        for this global step, expressed with machine_spec concept_ids. Added to
+        satisfy cycle_2 c7 (triple autonomy) without bloating `description` or
+        paraphrasing upper levels (must respect c9: add executor-level detail,
+        not bare restatement). It does not introduce concepts or relations beyond
+        those already in `concepts`/`relations`; it organises them for the coder.
+        Recommended sub-fields (all optional, include only what the step needs):
+          owns_paths:          code/doc paths this step owns
+          base_class_owns:     responsibilities retained by a base class, if any
+          subclass_hooks_only: hooks a subclass must implement, with signatures
+          insert_position:     positioning rule for structural inserts, if any
+          replace_node:        node-replacement semantics, if any
+          write_pipeline_steps: ordered steps of the write/commit pipeline, if any
+          sidecar_locations:   session/project sidecar paths and header, if any
+          formatter_backends:  per-format node model notes, if any
+          validation_chain:    ordered validation path on write, if any
+          display_quirks_ref:  pointer to the live display-quirks file, if any
+        Constraints:
+          - references only concept_ids/relations present in machine_spec
+          - adds executor detail; never a bare paraphrase of HRS/MRS (cycle_2 c9)
+          - does not alter `concepts`, `relations`, or `source_ranges`
 
   - level: 4
     name: tactical_step

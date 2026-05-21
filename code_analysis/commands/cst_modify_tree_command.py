@@ -33,6 +33,7 @@ from ..core.cst_tree.tree_builder import (
     rollback_tree_to_code,
 )
 from ..core.cst_tree.tree_modifier import modify_tree
+from ..core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from ..core.cst_tree.tree_save_verification import (
     CST_REPLAY_MISMATCH,
     FILE_CHANGED_SINCE_LOAD,
@@ -286,7 +287,9 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     op.code or op.code_lines
                 ):
                     entry["code"] = (
-                        "\n".join(op.code_lines) if op.code_lines else (op.code or "")
+                        join_code_lines(op.code_lines)
+                        if op.code_lines
+                        else (op.code or "")
                     )
                 elif op.action == TreeOperationType.DELETE:
                     entry["code"] = ""

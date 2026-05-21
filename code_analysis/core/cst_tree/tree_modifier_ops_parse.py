@@ -45,11 +45,22 @@ def class_or_function_snippet_needs_full_replace(code: str) -> bool:
     )
 
 
+def join_code_lines(lines: List[str]) -> str:
+    """Join ``code_lines`` into one string without double newlines.
+
+    Elements may include a trailing ``\\n`` (standard convention) or be bare
+    lines without a newline. Trailing newlines are stripped before joining.
+    """
+    if not lines:
+        return ""
+    return "\n".join(str(line).rstrip("\n") for line in lines)
+
+
 def _snippet_as_string(code: Optional[str], code_lines: Optional[List[str]]) -> str:
     if code_lines is not None:
         if code is not None:
             raise ValueError("Cannot provide both code and code_lines")
-        return "\n".join(code_lines)
+        return join_code_lines(code_lines)
     if code is None:
         return ""
     return code
@@ -511,7 +522,7 @@ def parse_code_snippet(
     if code_lines is not None:
         if code is not None:
             raise ValueError("Cannot provide both code and code_lines")
-        code = "\n".join(code_lines)
+        code = join_code_lines(code_lines)
     elif code is None:
         return []
 
@@ -572,7 +583,7 @@ def parse_code_snippet_or_comment(
     statements = parse_code_snippet(code=code, code_lines=code_lines)
     if statements:
         return cast(List[Union[cst.BaseStatement, cst.EmptyLine]], statements)
-    raw = ("\n".join(code_lines) if code_lines is not None else code) or ""
+    raw = (join_code_lines(code_lines) if code_lines is not None else code) or ""
     stripped = raw.strip()
     if not stripped or not stripped.startswith("#"):
         return []

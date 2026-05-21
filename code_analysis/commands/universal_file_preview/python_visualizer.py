@@ -192,10 +192,12 @@ _UUID_PREFIX_WIDTH = 39  # "[" + 36-char UUID + "] "
 def _annotated_line_ref_priority(meta: Any) -> tuple[int, int]:
     """Sort key for choosing one stable_id per source line (lower = preferred).
 
-    Annotated full-text must expose statement-level refs (``SimpleStatementLine``,
-    ``FunctionDef``, …) so ``universal_file_edit`` can replace whole lines. Inner
-    CST leaves (``Name``, ``Integer``, …) share the same ``start_line`` but must
-    not win the prefix slot.
+    Module-level annotated full-text prefers the outermost statement on a line
+    (larger span wins among ``kind == 'stmt'`` rows) so compound headers cover
+    their whole block in the module overview.
+
+    Inner CST leaves (``Name``, ``Integer``, …) share the same ``start_line`` but
+    must not win the prefix slot.
     """
     kind = getattr(meta, "kind", None) or ""
     typ = getattr(meta, "type", None) or ""
@@ -211,6 +213,112 @@ def _annotated_line_ref_priority(meta: Any) -> tuple[int, int]:
     return (3, span)
 
 
+def _annotated_line_ref_priority_drill_down(meta: Any) -> tuple[int, int]:
+    """Sort key for node-scoped drill-down: innermost statement wins per line."""
+    kind = getattr(meta, "kind", None) or ""
+    typ = getattr(meta, "type", None) or ""
+    start = meta.start_line or 0
+    end = meta.end_line if meta.end_line is not None else start
+    span = max(0, end - start)
+    if typ == "SimpleStatementLine" and kind == "stmt":
+        return (0, span)
+    if typ in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+        return (1, span)
+    if typ in ("If", "For", "While", "Try", "With", "Match"):
+        return (2, span)
+    if kind == "stmt":
+        return (2, span)
+    return (3, span)
+
+
+def _source_lines_for_tree(tree: Any) -> list[str] | None:
+    """Return split source lines from disk or in-memory module code."""
+    file_path = getattr(tree, "file_path", None)
+    if file_path and pathlib.Path(file_path).is_file():
+        return pathlib.Path(file_path).read_text(encoding="utf-8").splitlines()
+    module = getattr(tree, "module", None)
+    code = getattr(module, "code", None) if module is not None else None
+    if isinstance(code, str) and code:
+        return code.splitlines()
+    return None
+
+
+def _render_annotated_line_range(
+    source_lines: list[str],
+    *,
+    start_line: int,
+    end_line: int,
+    line_to_stable_id: dict[int, str],
+) -> str:
+    """Format ``start_line``..``end_line`` with optional stable_id prefixes."""
+    blank_prefix = " " * _UUID_PREFIX_WIDTH
+    out_lines: list[str] = []
+    for i in range(start_line, end_line + 1):
+        if i < 1 or i > len(source_lines):
+            continue
+        sid = line_to_stable_id.get(i)
+        prefix = f"[{sid}] " if sid else blank_prefix
+        out_lines.append(prefix + source_lines[i - 1])
+    return "\n".join(out_lines)
+
+
+def _build_line_to_stable_id(
+    metadata_map: Any,
+    *,
+    start_line: int,
+    end_line: int,
+    priority_fn: Any,
+) -> dict[int, str]:
+    """Map 1-based source lines to winning stable_id inside ``start_line``..``end_line``."""
+    line_to_stable_id: dict[int, str] = {}
+    line_priority: dict[int, tuple[int, int]] = {}
+    for meta in metadata_map.values():
+        line = meta.start_line
+        if line is None or line < start_line or line > end_line:
+            continue
+        stable_id = meta.stable_id
+        if not stable_id:
+            continue
+        priority = priority_fn(meta)
+        prev = line_priority.get(line)
+        if prev is None or priority < prev:
+            line_to_stable_id[line] = stable_id
+            line_priority[line] = priority
+    return line_to_stable_id
+
+
+def _annotated_full_text_for_node(
+    tree: Any, meta: Any, budget: PreviewBudget
+) -> str | None:
+    """Return node-scoped annotated source when span <= ``full_text_max_lines``."""
+    if budget.full_text_max_lines <= 0:
+        return None
+    if not hasattr(tree, "metadata_map") or not tree.metadata_map:
+        return None
+    start_line = meta.start_line
+    if start_line is None:
+        return None
+    end_line = meta.end_line if meta.end_line is not None else start_line
+    node_line_count = end_line - start_line + 1
+    if node_line_count > budget.full_text_max_lines:
+        return None
+    source_lines = _source_lines_for_tree(tree)
+    if source_lines is None:
+        return None
+    line_to_stable_id = _build_line_to_stable_id(
+        tree.metadata_map,
+        start_line=start_line,
+        end_line=end_line,
+        priority_fn=_annotated_line_ref_priority_drill_down,
+    )
+    return _render_annotated_line_range(
+        source_lines,
+        start_line=start_line,
+        end_line=end_line,
+        line_to_stable_id=line_to_stable_id,
+    )
+
+
 def _annotated_full_text(tree: Any, budget: PreviewBudget) -> str | None:
     """Return source with stable_id prefixes when file < ``full_text_max_lines``."""
     if budget.full_text_max_lines <= 0:
@@ -223,36 +331,21 @@ def _annotated_full_text(tree: Any, budget: PreviewBudget) -> str | None:
     )
     if file_line_count >= budget.full_text_max_lines:
         return None
-    file_path = getattr(tree, "file_path", None)
-    if file_path and pathlib.Path(file_path).is_file():
-        source_lines = pathlib.Path(file_path).read_text(encoding="utf-8").splitlines()
-    else:
-        module = getattr(tree, "module", None)
-        code = getattr(module, "code", None) if module is not None else None
-        if not isinstance(code, str) or not code:
-            return None
-        source_lines = code.splitlines()
-    line_to_stable_id: dict[int, str] = {}
-    line_priority: dict[int, tuple[int, int]] = {}
-    for meta in tree.metadata_map.values():
-        start = meta.start_line
-        if start is None:
-            continue
-        stable_id = meta.stable_id
-        if not stable_id:
-            continue
-        priority = _annotated_line_ref_priority(meta)
-        prev = line_priority.get(start)
-        if prev is None or priority < prev:
-            line_to_stable_id[start] = stable_id
-            line_priority[start] = priority
-    blank_prefix = " " * _UUID_PREFIX_WIDTH
-    out_lines: list[str] = []
-    for i, line in enumerate(source_lines, start=1):
-        sid = line_to_stable_id.get(i)
-        prefix = f"[{sid}] " if sid else blank_prefix
-        out_lines.append(prefix + line)
-    return "\n".join(out_lines)
+    source_lines = _source_lines_for_tree(tree)
+    if source_lines is None:
+        return None
+    line_to_stable_id = _build_line_to_stable_id(
+        tree.metadata_map,
+        start_line=1,
+        end_line=file_line_count,
+        priority_fn=_annotated_line_ref_priority,
+    )
+    return _render_annotated_line_range(
+        source_lines,
+        start_line=1,
+        end_line=file_line_count,
+        line_to_stable_id=line_to_stable_id,
+    )
 
 
 def render_module(tree: Any, budget: PreviewBudget) -> str:
@@ -445,15 +538,15 @@ def render_node(tree: Any, stable_id: str, budget: PreviewBudget | None = None) 
     Returns:
         Structured text for the node, or empty string if stable_id not found.
     """
-    if budget is not None:
-        fallback = _annotated_full_text(tree, budget)
-        if fallback is not None:
-            return fallback
     meta = next(
         (m for m in tree.metadata_map.values() if m.stable_id == stable_id), None
     )
     if meta is None:
         return ""
+    if budget is not None:
+        fallback = _annotated_full_text_for_node(tree, meta, budget)
+        if fallback is not None:
+            return fallback
     node_id = next(
         (nid for nid, m in tree.metadata_map.items() if m.stable_id == stable_id),
         None,

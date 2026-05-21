@@ -15,7 +15,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 
-SourceType = Literal["semantic", "fulltext", "grep"]
+SourceType = Literal[
+    "semantic",
+    "fulltext",
+    "grep",
+    "fulltext_index",
+    "grep_unindexed",
+    "grep_changed",
+    "grep_draft",
+]
 Confidence = Literal["high", "medium", "low"]
 Mode = Literal[
     "union",
@@ -36,6 +44,12 @@ MODES: Tuple[Mode, ...] = (
     "fulltext_first",
 )
 PROFILES: Tuple[Profile, ...] = ("generic", "command_audit")
+
+GREP_LINE_ONLY_IGNORED = "GREP_LINE_ONLY_IGNORED"
+
+STRUCTURAL_GREP_SOURCES: frozenset[str] = frozenset(
+    {"grep_unindexed", "grep_changed", "grep_draft"}
+)
 
 COMMAND_AUDIT_GREP_PATTERNS: Tuple[str, ...] = (
     "get_schema",
@@ -385,6 +399,49 @@ def normalize_fulltext_hit(
     }
 
 
+def is_structural_grep_evidence(item: Dict[str, Any]) -> bool:
+    """
+    True when grep hit is safe to merge as cross-search evidence.
+
+    Line-only grep must not count toward evidence_score or confidence.
+    """
+    meta = item.get("metadata") or {}
+    status = meta.get("enrichment_status") or item.get("enrichment_status")
+    if status != "enriched":
+        return False
+    preview = meta.get("preview") or item.get("preview")
+    if not preview:
+        return False
+    node_ref = meta.get("node_ref") or item.get("node_ref")
+    selector = meta.get("selector") or item.get("selector")
+    if not node_ref and not selector:
+        return False
+    source = str(item.get("source") or "")
+    return source in STRUCTURAL_GREP_SOURCES
+
+
+def partition_grep_for_cross_search(
+    hits: Sequence[Dict[str, Any]],
+    *,
+    require_structural: bool = True,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    """
+    Split normalized grep hits into structural evidence vs line-only rejects.
+
+    Returns (structural_hits, line_only_hits, line_only_count).
+    """
+    if not require_structural:
+        return list(hits), [], 0
+    structural: List[Dict[str, Any]] = []
+    line_only: List[Dict[str, Any]] = []
+    for hit in hits:
+        if is_structural_grep_evidence(hit):
+            structural.append(hit)
+        else:
+            line_only.append(hit)
+    return structural, line_only, len(line_only)
+
+
 def normalize_grep_hit(
     row: Dict[str, Any],
     pattern: str,
@@ -395,19 +452,43 @@ def normalize_grep_hit(
         rel = row.get("file_path") or ""
     line = json_safe_line_number(row.get("line_number"))
     metadata: Dict[str, Any] = {"pattern": pattern}
-    for key in ("block_id", "block_type"):
+    for key in (
+        "block_id",
+        "block_type",
+        "node_ref",
+        "selector",
+        "preview",
+        "session_id",
+        "enrichment_status",
+        "start_line",
+        "end_line",
+        "qualname",
+        "grep_source",
+    ):
         if row.get(key) is not None:
             metadata[key] = row.get(key)
+    raw_source = row.get("source")
+    if raw_source in (
+        "grep_unindexed",
+        "grep_changed",
+        "grep_draft",
+        "fulltext_index",
+    ):
+        source_label = str(raw_source)
+    else:
+        source_label = "grep"
+    end_line = json_safe_line_number(row.get("end_line")) or line
     return {
-        "source": "grep",
+        "source": source_label,
         "file_path": normalize_file_path(str(rel or ""), project_root),
         "line_start": line,
-        "line_end": line,
+        "line_end": end_line,
         "score": None,
         "text": row.get("line") if row.get("line") is not None else None,
         "entity_type": row.get("block_type"),
         "entity_name": None,
         "metadata": metadata,
+        "enrichment_status": metadata.get("enrichment_status"),
     }
 
 
@@ -459,10 +540,14 @@ def merge_evidence(
     limit: int,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, int]]:
     """Group normalized evidence by file_path, score, filter by mode, and truncate."""
+    structural_grep_count = sum(1 for i in grep if is_structural_grep_evidence(i))
     source_counts = {
         "semantic": len(semantic),
         "fulltext": len(fulltext),
-        "grep": len(grep),
+        "grep": structural_grep_count,
+        "grep_raw": len(grep),
+        "grep_structural": structural_grep_count,
+        "grep_line_only_ignored": max(0, len(grep) - structural_grep_count),
     }
     grouped: Dict[str, Dict[str, Any]] = {}
 
@@ -487,6 +572,8 @@ def merge_evidence(
         if bucket is not None:
             bucket["evidence"]["fulltext"].append(item)
     for item in grep:
+        if not is_structural_grep_evidence(item):
+            continue
         bucket = _ensure(str(item.get("file_path") or ""))
         if bucket is not None:
             bucket["evidence"]["grep"].append(item)
@@ -494,17 +581,18 @@ def merge_evidence(
     candidates: List[Dict[str, Any]] = []
     for path, bucket in grouped.items():
         ev = bucket["evidence"]
+        structural_grep = ev["grep"]
         sources = {
             "semantic": bool(ev["semantic"]),
             "fulltext": bool(ev["fulltext"]),
-            "grep": bool(ev["grep"]),
+            "grep": bool(structural_grep),
         }
         evidence_score = sum(1 for v in sources.values() if v)
         confidence = _confidence_label(evidence_score)
         ranking_score = float(_CONFIDENCE_BASE[confidence])
         ranking_score += _best_semantic_score(ev["semantic"]) * 100.0
         ranking_score += _normalized_fulltext_score(ev["fulltext"])
-        ranking_score += float(min(len(ev["grep"]), 20))
+        ranking_score += float(min(len(structural_grep), 20))
 
         why: List[str] = []
         if sources["semantic"]:
@@ -512,7 +600,7 @@ def merge_evidence(
         if sources["fulltext"]:
             why.append("full-text index matched identifiers or content")
         if sources["grep"]:
-            why.append("filesystem grep found exact line matches")
+            why.append("filesystem grep found preview-compatible structural blocks")
 
         candidates.append(
             {

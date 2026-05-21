@@ -51,6 +51,175 @@ def test_validate_replace_snippet_via_module_accepts_assignment() -> None:
     assert "code_lines" not in normalized
 
 
+def test_validate_replace_snippet_via_module_dedents_indented_code_lines() -> None:
+    op = {
+        "type": "replace",
+        "node_id": "00000000-0000-4000-8000-000000000001",
+        "code_lines": [
+            "            abs_path.write_text('x', encoding='utf-8')\n",
+        ],
+    }
+    normalized = _normalized_cst_modify_operation(op)
+    assert "abs_path.write_text('x', encoding='utf-8')" in normalized.get("code", "")
+
+
+def test_validate_replace_snippet_via_module_no_double_newlines() -> None:
+    op = {
+        "type": "replace",
+        "node_id": "00000000-0000-4000-8000-000000000001",
+        "code_lines": [
+            "def foo() -> str:\n",
+            '    return "bar"\n',
+        ],
+    }
+    normalized = _normalized_cst_modify_operation(op)
+    code = normalized.get("code", "")
+    assert "def foo() -> str:\n    return" in code
+    assert "def foo() -> str:\n\n    return" not in code
+
+
+def test_validate_replace_snippet_rejects_compound_clause_header() -> None:
+    op = {
+        "type": "replace",
+        "node_id": "00000000-0000-4000-8000-000000000001",
+        "code_lines": ["elif suffix == '.yaml':\n", "    pass\n"],
+    }
+    with pytest.raises(ValueError, match="compound clause header"):
+        _normalized_cst_modify_operation(op)
+
+
+def test_replace_simple_statement_in_nested_elif_branch(tmp_path) -> None:
+    path = tmp_path / "nested_elif.py"
+    path.write_text(
+        "def create():\n"
+        "    if True:\n"
+        "        first()\n"
+        "    elif suffix == '.yaml':\n"
+        "        write_yaml()\n"
+        "    else:\n"
+        "        write_other()\n",
+        encoding="utf-8",
+    )
+    tree = load_file_to_tree(str(path))
+    try:
+        target = next(
+            m
+            for m in tree.metadata_map.values()
+            if m.type == "SimpleStatementLine" and m.start_line == 5
+        )
+        op = _normalized_cst_modify_operation(
+            {
+                "type": "replace",
+                "node_id": target.node_id,
+                "code_lines": ["        write_yaml_fixed()\n"],
+            }
+        )
+        built, err = build_tree_operations(tree, [op])
+        assert err is None and built
+        tree = modify_tree(tree.tree_id, built)
+        assert "write_yaml_fixed()" in tree.module.code
+        assert "write_yaml()" not in tree.module.code
+    finally:
+        remove_tree(tree.tree_id)
+
+
+def test_replace_stable_id_in_elif_body_matches_preview_line(tmp_path) -> None:
+    """stable_id from preview must replace the elif-body line, not the prior sibling."""
+    path = tmp_path / "open_like.py"
+    path.write_text(
+        "def execute(self):\n"
+        "    if not abs_path.exists():\n"
+        "        abs_path.parent.mkdir(parents=True, exist_ok=True)\n"
+        "        suffix = abs_path.suffix.lower()\n"
+        "        if suffix == '.py':\n"
+        "            abs_path.write_text('py', encoding='utf-8')\n"
+        "        elif suffix in ('.yaml', '.yml'):\n"
+        '            abs_path.write_text("{}", encoding="utf-8")\n'
+        "        else:\n"
+        '            abs_path.write_text("", encoding="utf-8")\n',
+        encoding="utf-8",
+    )
+    tree = load_file_to_tree(str(path))
+    try:
+        yaml_stmt = next(
+            m
+            for m in tree.metadata_map.values()
+            if m.type == "SimpleStatementLine" and m.start_line == 8 and m.stable_id
+        )
+        op = _normalized_cst_modify_operation(
+            {
+                "type": "replace",
+                "node_id": yaml_stmt.stable_id,
+                "code_lines": [
+                    '            abs_path.write_text("YAML_FIXED", encoding="utf-8")\n',
+                ],
+            }
+        )
+        resolved = _resolve_stable_to_span(op, tree)
+        built, err = build_tree_operations(tree, [resolved])
+        assert err is None and built
+        tree = modify_tree(tree.tree_id, built)
+        assert "YAML_FIXED" in tree.module.code
+        assert 'write_text("{}", encoding="utf-8")' not in tree.module.code
+        assert "suffix = abs_path.suffix.lower()" in tree.module.code
+        logical_lines = [
+            line
+            for line in tree.module.code.splitlines()
+            if not line.strip().startswith("# @node-id:")
+        ]
+        yaml_logical_line = next(
+            i + 1 for i, line in enumerate(logical_lines) if "YAML_FIXED" in line
+        )
+        suffix_logical_line = next(
+            i + 1
+            for i, line in enumerate(logical_lines)
+            if "suffix = abs_path.suffix.lower()" in line
+        )
+        assert yaml_logical_line == 8
+        assert suffix_logical_line < yaml_logical_line
+    finally:
+        remove_tree(tree.tree_id)
+
+
+def test_replace_simple_statement_in_for_and_try_bodies(tmp_path) -> None:
+    for_loop_source = (
+        "def run():\n" "    for item in items:\n" "        process(item)\n"
+    )
+    try_source = (
+        "def run():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except ValueError:\n"
+        "        handle()\n"
+    )
+    for source, line_no, replacement, needle in (
+        (for_loop_source, 3, "process_fast(item)", "process_fast(item)"),
+        (try_source, 5, "handle_value_error()", "handle_value_error()"),
+    ):
+        path = tmp_path / f"nested_{line_no}.py"
+        path.write_text(source, encoding="utf-8")
+        tree = load_file_to_tree(str(path))
+        try:
+            target = next(
+                m
+                for m in tree.metadata_map.values()
+                if m.type == "SimpleStatementLine" and m.start_line == line_no
+            )
+            op = _normalized_cst_modify_operation(
+                {
+                    "type": "replace",
+                    "node_id": target.node_id,
+                    "code_lines": [f"        {replacement}\n"],
+                }
+            )
+            built, err = build_tree_operations(tree, [op])
+            assert err is None and built
+            tree = modify_tree(tree.tree_id, built)
+            assert needle in tree.module.code
+        finally:
+            remove_tree(tree.tree_id)
+
+
 def test_normalized_cst_modify_operation_prefers_explicit_action() -> None:
     op = {"type": "insert", "action": "delete", "node_id": "x"}
     normalized = _normalized_cst_modify_operation(op)

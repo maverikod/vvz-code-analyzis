@@ -8,7 +8,10 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from code_analysis.core.structure_extraction.models import StructureDocument
 
 from code_analysis.commands.universal_file_preview.handlers.json_handler import (
     _line_for_json_pointer,
@@ -53,24 +56,47 @@ _CacheKey = tuple[str, float]
 
 
 class GrepBlockResolver:
-    """Per-file cached lookup from 1-based line number to block id/type."""
+    """Per-file cached lookup from 1-based line number to block id/type.
+
+    Prefer :func:`code_analysis.core.structure_extraction.extract_structure` for
+    new code; this class remains for legacy callers.
+    """
 
     def __init__(self) -> None:
         self._indexes: dict[_CacheKey, _LineBlockIndex | None] = {}
+        self._documents: dict[_CacheKey, "StructureDocument | None"] = {}
 
     def resolve(
         self, abs_path: Path, line_number: int
     ) -> tuple[str | None, str | None]:
+        from code_analysis.core.structure_extraction.extractor import (
+            extract_structure,
+            find_smallest_block_containing_line,
+        )
+
         cache_key = _cache_key(abs_path)
-        if cache_key not in self._indexes:
-            self._indexes[cache_key] = _build_index(abs_path)
-        index = self._indexes[cache_key]
-        if index is None:
+        if cache_key not in self._documents:
+            try:
+                content = abs_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                self._documents[cache_key] = None
+            else:
+                self._documents[cache_key] = extract_structure(
+                    file_path=str(abs_path),
+                    content=content,
+                    source="disk",
+                )
+        document = self._documents.get(cache_key)
+        if document is None:
             return None, None
-        return index.lookup(line_number)
+        block = find_smallest_block_containing_line(document, line_number)
+        if block is None:
+            return None, None
+        return block.block_id, block.node_type
 
     def cleanup(self) -> None:
         self._indexes.clear()
+        self._documents.clear()
 
 
 class _LineBlockIndex:

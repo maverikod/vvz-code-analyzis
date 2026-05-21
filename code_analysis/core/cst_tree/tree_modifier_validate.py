@@ -14,6 +14,7 @@ import libcst as cst
 from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
 from .tree_metadata import _resolve_node_id as resolve_parent_id
 from .tree_modifier_ops import (
+    join_code_lines,
     parse_annotation_snippet,
     parse_code_snippet,
     parse_param_snippet,
@@ -48,7 +49,7 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
         meta = tree.metadata_map.get(operation.node_id)
         node = tree.node_map.get(operation.node_id)
         text = (
-            "\n".join(operation.code_lines)
+            join_code_lines(operation.code_lines)
             if operation.code_lines
             else (operation.code or "")
         )

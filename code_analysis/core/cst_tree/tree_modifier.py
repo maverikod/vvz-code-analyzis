@@ -44,6 +44,7 @@ from .tree_modifier_ops_parse import (
     class_or_function_snippet_needs_full_replace,
     def_snippet_container_kind,
     insert_target_container_kind,
+    join_code_lines,
     parse_code_snippet_for_move,
 )
 
@@ -424,7 +425,7 @@ def _apply_operation(
     elif operation.action == TreeOperationType.REPLACE:
         code = operation.code
         if operation.code_lines:
-            code = "\n".join(operation.code_lines)
+            code = join_code_lines(operation.code_lines)
         if not code:
             raise ValueError("code or code_lines required for replace operation")
         if not operation.replace_all_child_nodes:
@@ -442,7 +443,7 @@ def _apply_operation(
     elif operation.action == TreeOperationType.REPLACE_RANGE:
         code = operation.code
         if operation.code_lines:
-            code = "\n".join(operation.code_lines)
+            code = join_code_lines(operation.code_lines)
         if not code:
             raise ValueError("code or code_lines required for replace_range operation")
         if not operation.start_node_id or not operation.end_node_id:
@@ -456,7 +457,7 @@ def _apply_operation(
         # If target_node_id is provided, find parent automatically and insert relative to target
         code = operation.code
         if operation.code_lines:
-            code = "\n".join(operation.code_lines)
+            code = join_code_lines(operation.code_lines)
         if not code:
             raise ValueError("code or code_lines required for insert operation")
         if operation.target_node_id:

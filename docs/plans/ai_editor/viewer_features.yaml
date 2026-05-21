@@ -1,1 +1,341 @@
-{}
+meta:
+  title: universal_file_preview — Viewer Feature Catalog
+  source_project: code_analysis
+  status: complete
+  handlers_covered:
+  - python (.py .pyi .pyw) — python_handler.py + python_visualizer.py
+  - yaml (.yaml .yml) — yaml_handler.py
+  - json (.json) — json_handler.py
+  - jsonl (.jsonl .ndjson) — jsonl_handler.py
+  - markdown (.md) — markdown_handler.py
+  - text (.txt .rst .adoc) — text_handler.py
+universal:
+  node_kinds:
+    scalar: leaf value; no children; not sliceable
+    lines: ordered children = text lines; sliceable
+    mapping: ordered key-value pairs; sliceable
+    sequence: ordered indexed elements; sliceable
+    tree_node: ordered children + named attributes; sliceable
+  full_text_threshold:
+    param: full_text_max_lines
+    default: 200
+    disable: set full_text_max_lines=0
+    implemented_by:
+    - python
+    - yaml
+    - json
+    - markdown
+    not_implemented_by:
+    - text
+    - jsonl
+  node_ref_formats:
+    python: stable_id UUID (persisted in sidecar)
+    yaml: JSON Pointer ('/key/subkey') OR opaque uuid5(pointer)
+    json: JSON Pointer ('/key/0') OR opaque uuid5(pointer)
+    jsonl: zero-based line index string
+    markdown: uuid5 stable_id (full-text) OR dot-slug path (section mode)
+    text: zero-based line index string
+  annotated_full_text_return_kind:
+    python: NodeKind.TREE_NODE (type_label=Module)
+    yaml: NodeKind.SCALAR; full_text=True
+    json: NodeKind.SCALAR; full_text=True
+    markdown: NodeKind.TREE_NODE (type_label=markdown_document); full_text=True
+  edit_contract_for_md:
+    format_group_reported_by_open: text
+    edit_node_ref_conversion: start_line = int(node_ref) + 1
+    note: 'Mismatch: preview returns UUIDs for .md but edit uses text contract (line
+      numbers)'
+  session_handling:
+    uses_tree_session:
+    - python
+    - yaml
+    - json
+    no_session:
+    - markdown
+    - text
+  budget_params:
+    preview_lines: cap on top-level blocks returned when selector omitted
+    value_preview_len: cap on inline scalar length
+    full_text_max_lines: full-text fallback threshold (default 200)
+    max_chars: post-render cap (32000); applied outside handlers
+    preview_offset: pagination offset (default 0)
+python:
+  extensions:
+  - .py
+  - .pyi
+  - .pyw
+  format_group: sidecar
+  root_node_kind: TREE_NODE (type_label=Module)
+  full_text_mode:
+    annotation_format: '[{stable_id}] {source_line}'
+    annotation_width: 39
+    priority_rule: '0=stmt preferred; 1=FunctionDef/ClassDef; 2=function/method/class/import;
+      3=inner leaves; tiebreak: longer span wins'
+  module_view:
+    trigger: node_ref omitted
+    function_format: '[{sid}] {range}  {headline}'
+    class_format: '[{sid}] {range}  class {name}:'
+    methods: "direct children only; sorted by start_line; method_format: '    [{meth_sid}]
+      {range}  {headline}'"
+  node_view:
+    body_simple: '  [{sid}] {range}  {headline}'
+    body_compound: '  [{sid}] {range}  {headline}  ...'
+    compound_types:
+    - If
+    - For
+    - While
+    - Try
+    - With
+    - Match
+    - ClassDef
+    - FunctionDef
+    - AsyncFunctionDef
+  indented_block_descent:
+    rule: _direct_children() transparently descends into IndentedBlock
+    filter: kind == 'stmt'
+  range_format:
+    multi_line: L{start}-{end}
+    single_line: L{line}
+yaml:
+  extensions:
+  - .yaml
+  - .yml
+  format_group: tree-temp
+  parser: PyYAML safe_load (comments NOT preserved)
+  root_node_kinds:
+    dict: MAPPING
+    list: SEQUENCE
+    scalar: SCALAR
+    empty: MAPPING
+  node_ref_format:
+    primary: "JSON Pointer: '' (root) | '/key' | '/key/subkey' | '/0'"
+    secondary: opaque uuid5 node_id
+    rfc6901_escaping: ~1 for '/', ~0 for '~'
+  inline_value_surfacing: 'For scalar mapping children: attributes.value = str(v).
+    YAML-only.'
+  error_handling:
+    parse_error: invalid_source_node (is_invalid=True)
+    invalid_node_ref: INPUT_ERROR_UNKNOWN_NODE_REF
+json:
+  extensions:
+  - .json
+  format_group: tree-temp
+  parser: json.loads
+  root_node_kinds:
+    dict: MAPPING
+    list: SEQUENCE
+    scalar: SCALAR
+  node_ref_format:
+    primary: "JSON Pointer (RFC 6901): '' | '/key' | '/a/0/b'"
+    secondary: opaque uuid5(pointer)
+  difference_from_yaml: JSON mapping children do NOT expose scalar values 
+    inline; must drill down
+  error_handling:
+    parse_error: json.JSONDecodeError -> invalid_source_node
+    invalid_node_ref: UNKNOWN_NODE_REF
+jsonl:
+  extensions:
+  - .jsonl
+  - .ndjson
+  format_group: text (lines root)
+  parser: none at root; per-line json.loads on drill-down
+  root_node_kind: LINES
+  root_children:
+    kind: SCALAR
+    node_ref: str(zero_based_index)
+    attributes: '{value: raw_line_string}'
+  drill_down:
+    behavior: parses line as JSON; FILE_STRUCTURE_ERROR if invalid JSON
+    error_out_of_range: UNKNOWN_NODE_REF with details.total_lines
+  no_full_text_mode: true
+markdown:
+  extensions:
+  - .md
+  format_group: text (reported by universal_file_open)
+  parser: markdown-it-py
+  session: None always
+  draft_fallback: empty draft -> falls back to reading original file
+  full_text_mode:
+    trigger: line count < full_text_max_lines
+    annotation_format: '[{uuid5_stable_id}] {source_line}'
+    output: NodeKind.TREE_NODE; type_label=markdown_document; full_text=True
+  section_tree_mode:
+    trigger: line count >= full_text_max_lines
+    output: NodeKind.MAPPING; node_ref=''
+    node_ref_format: "dot-separated slug path: '' | 'heading-slug' | 'parent.child-slug'"
+    content_child: node_ref = '{section_ref}/__content'; kind=SCALAR; 
+      attributes.value = joined content_lines
+  list_rendering:
+    status: fixed
+    fix: _collect_list_text() expands bullet_list_open/ordered_list_open tokens 
+      into readable items
+  section_slugify:
+    rule: lowercase; non-word chars removed; spaces/underscores -> hyphens
+    duplicates: first keeps slug; subsequent get '-2', '-3', ...
+text:
+  extensions:
+  - .md
+  - .txt
+  - .rst
+  - .adoc
+  format_group: text
+  session: ignored
+  root_node_kind: LINES
+  root_children:
+    kind: SCALAR
+    node_ref: str(zero_based_index)
+    attributes: '{value: line_content}'
+  edit_contract:
+    node_ref_to_line: start_line = int(node_ref) + 1
+  no_full_text_mode: true
+dispatcher:
+  class: HandlerDispatcher
+  mapping:
+    .py: PythonFileHandler
+    .pyi: PythonFileHandler
+    .pyw: PythonFileHandler
+    .md: MarkdownFileHandler
+    .txt: TextFileHandler
+    .rst: TextFileHandler
+    .adoc: TextFileHandler
+    .json: JsonFileHandler
+    .yaml: YamlFileHandler
+    .yml: YamlFileHandler
+    .jsonl: JsonLinesFileHandler
+    .ndjson: JsonLinesFileHandler
+  unknown_extension: PreviewError INPUT_ERROR_UNKNOWN_EXTENSION
+edit_session_integration:
+  command: universal_file_edit
+  param: session_id
+  sidecar_format: injects tree_id -> preview uses in-memory CST tree
+  text_format: sets _preview_abs_path to draft_path; empty draft falls back to 
+    original
+  tree_temp_format: injects tree_id from edit session
+  errors:
+    unknown_session: INPUT_ERROR_CONFLICTING_PARAMETERS
+    path_mismatch: INPUT_ERROR_CONFLICTING_PARAMETERS
+    tree_id_conflict: INPUT_ERROR_CONFLICTING_PARAMETERS
+bugs:
+  markdown_list_rendering:
+    status: fixed
+    file: 
+      code_analysis/commands/universal_file_preview/handlers/markdown_handler.py
+    symptom: bullet_list_open/ordered_list_open rendered as placeholder instead 
+      of list item text
+    fix: _collect_list_text() added; expands list_item_open -> inline -> content
+    verified: true
+  preview_full_text_suppressed_in_drilldown:
+    note: 'full_text intentionally suppressed in drill-down mode. Not a bug. Real
+      gap: elif/else branch addressability — see feature_gaps.elif_else_drilldown.'
+    status: not_a_bug
+  sidecar_replace_elif_wrong_node:
+    fix: _logical_to_module_line_map + _iter_compound_statement_branches in 
+      tree_modifier_ops_find.py
+    resolution: RESOLVED (2026-05-21)
+    root_cause: embed_stable_ids_into_tree inserted @node-id markers without 
+      rebuilding index; position lookup used shifted line numbers; find_node 
+      promoted nested hits to module.body node
+    status: fixed
+    symptom: replace with elif-body stable_id landed on statement before the If 
+      block
+  sidecar_code_lines_double_newline:
+    fix: join_code_lines() in tree_modifier_ops_parse.py strips trailing \n 
+      before join
+    resolution: RESOLVED (2026-05-21)
+    root_cause: code_lines elements include trailing \n; '\n'.join() produced 
+      double newlines
+    status: fixed
+    symptom: insert with code_lines produced blank line after every statement
+  yaml_array_drilldown_prints_from_head:
+    status: open
+    needs: verification against current analysis-server build
+    symptom: "universal_file_preview full_text drill-down on an array element node_ref
+      (e.g. /concepts/30) prints array content from index 0, not the requested element;
+      element-wise reading of large YAML arrays via drill-down is unreliable.\n"
+    workaround: read by line ranges instead of element drill-down
+  open_command_initial_content_not_uniform:
+    status: fixed (2026-05-21) — Cursor applied uniform initial_content handling
+      for .json and else branches
+    symptom: .json and else branches ignore initial_content on create=True; 
+      always write default. .py and .yaml use it correctly.
+    fix_needed: ".json: write initial_content if initial_content else '{}\\n'; else:
+      write initial_content if initial_content else ''"
+  replace_else_branch_cst_error:
+    status: fixed (2026-05-21) — _iter_compound_statement_branches now handles 
+      cst.Else node via isinstance check
+    symptom: "replace of SimpleStatementLine inside else-body raises: 'Else' object
+      is not iterable"
+    root_cause_hypothesis: _iter_compound_statement_branches does not handle 
+      If.orelse when it contains a plain else (ElseClause/Else node, not another
+      If node)
+    task_id: fix-replace-else-branch-cst-error
+  content_node_listed_as_child_block:
+    status: open
+    severity: medium
+    file: 
+      code_analysis/commands/universal_file_preview/handlers/markdown_handler.py
+    related_files:
+    - code_analysis/commands/universal_file_preview/navigation.py
+    - code_analysis/commands/universal_file_preview/handlers/text_handler.py
+    - code_analysis/commands/universal_file_preview/handlers/json_handler.py
+    - code_analysis/commands/universal_file_preview/handlers/yaml_handler.py
+    symptom: When previewing a markdown section, its own body is returned as a 
+      separate child block whose node_ref ends in '/__content'. The body is not 
+      a sub-section; it is the focus node's own content, but it appears in the 
+      blocks[] list and is truncated to value_preview_len, forcing a second 
+      drill-down call to read the section text.
+    root_cause: _Section.to_node() appends the section body as a child Node 
+      (NodeKind.SCALAR, node_ref '<ref>/__content'). navigate() sets block_set =
+      focus_node.children, so the synthetic __content child is enumerated as a 
+      sibling block alongside real sub-sections.
+    expected: A node's own content must never appear as an entry in its own 
+      children/blocks list. When __content exists, its text must be surfaced 
+      inline on the focus node (focus.text), and the children/blocks list must 
+      contain only genuine descendant nodes. Rule applies uniformly across all 
+      formats.
+    verified: false
+yaml_write_quirks:
+  context: "universal_file_open create=True writes initial_content as-is before YAML
+    parsing. Bare scalars with ': ' or inline comments cause parse failure -> text-mode
+    fallback."
+  problem_unquoted_colon_in_value:
+    symptom: 'key: value containing: colon parses as nested mapping'
+    yaml_rule: "Plain scalar containing ': ' illegal in block mappings; PyYAML rejects
+      with scanner error"
+  problem_inline_comment_on_bare_value:
+    symptom: 'key: value  # comment misparses when value has special chars'
+  fix_location:
+    file: code_analysis/commands/universal_file_edit/open_command.py
+    method: execute
+    branch: "elif suffix in ('.yaml', '.yml'):"
+    current_code: abs_path.write_text(initial_content if initial_content else 
+      '{}\n', encoding='utf-8')
+    required_code: abs_path.write_text(_fix_yaml_string_values(initial_content 
+      if initial_content else '{}\n'), encoding='utf-8')
+    helper_function: _fix_yaml_string_values
+    status: applied (2026-05-21)
+  fix_blocked_by:
+    bug_id: fix-sidecar-cst-apply-replace-constraints
+    status: RESOLVED (2026-05-21)
+    resolution: P1/P2/P3 fixed; replace now works for SimpleStatementLine inside
+      nested IndentedBlock. Acceptance test on open_command.py L179 passed.
+    next_step: apply _fix_yaml_string_values patch to open_command.py
+  problem_unquoted_colon_in_list_item:
+    example: '- for modify_file and delete_file: full current content of the target
+      file'
+    observed_in: atomic_step_creation_standard.yaml lines 223-224 
+      (prompt_rules.must_include); file does not load under PyYAML safe_load
+    status: open
+    symptom: "An unquoted YAML list item containing ': ' is parsed as a nested mapping
+      or fails with 'could not find expected :'. Same root cause as problem_unquoted_colon_in_value
+      but in a sequence item, not a mapping value."
+    workaround: "quote the whole list item or rephrase to avoid ': '"
+feature_gaps:
+  elif_else_drilldown:
+    description: 'node_view for If shows only the if-branch body. elif/else/except/finally
+      clauses are not addressable as separate drill-down targets. Workaround: cst_find_node
+      by line range.'
+    feature_request: Expose elif/else/except/finally as named child nodes in 
+      node_view so caller can drill into them and get their body stable_ids.
+    status: open
+    task_id: fix-preview-drilldown-elif-else-branches

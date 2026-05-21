@@ -20,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.cst_tree.node_id_markers import build_exact_key_to_id_from_metadata
 from ..core.cst_tree.tree_builder import create_tree_from_code, remove_tree
+from ..core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from ..core.cst_module import ReplaceOp, Selector
 from ..core.exceptions import QueryParseError
 from ..cst_query import query_source
@@ -144,7 +145,7 @@ class QueryCSTCommand(BaseMCPCommand):
             if range_only and is_replace_mode:
                 assert start_line is not None and end_line is not None
                 single_new_code = (
-                    "\n".join(code_lines)
+                    join_code_lines(code_lines)
                     if code_lines is not None
                     else (replace_with or "")
                 )
@@ -181,7 +182,7 @@ class QueryCSTCommand(BaseMCPCommand):
                     )
                 else:
                     single_new_code = (
-                        "\n".join(code_lines)
+                        join_code_lines(code_lines)
                         if code_lines is not None
                         else (replace_with or "")
                     )

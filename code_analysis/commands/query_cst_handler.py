@@ -20,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.backup_manager import BackupManager
 from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops, unified_diff
+from ..core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from ..core.git_integration import commit_after_write
 from ..core.exceptions import CSTModulePatchError
 from ..core.file_lock import file_lock
@@ -299,7 +300,7 @@ def build_ops_from_replacements(
     for entry in replacements:
         idx = entry["match_index"]
         if "code_lines" in entry and entry["code_lines"] is not None:
-            new_code = "\n".join(entry["code_lines"])
+            new_code = join_code_lines(entry["code_lines"])
         else:
             new_code = entry.get("replace_with") or ""
         new_code_by_index[idx] = new_code

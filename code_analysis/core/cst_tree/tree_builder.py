@@ -20,7 +20,6 @@ import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
 from .models import CSTTree, TreeNodeMetadata
-from .tree_stable_data import embed_stable_ids_into_tree
 from .node_id_markers import (
     PersistedNodeIds,
     build_marker_path,
@@ -38,6 +37,7 @@ from .node_stable_id import (
     get_stable_id as _get_stable_id_from_node,
     strip_inline_node_id_lines_from_source,
 )
+from .tree_stable_data import embed_stable_ids_into_tree
 from .tree_sidecar import (
     aliases_from_payload,
     metadata_map_from_payload,

@@ -19,6 +19,7 @@ from code_analysis.core.cst_tree.models import (
     TreeNodeMetadata,
 )
 from code_analysis.core.cst_tree.tree_modifier_ops import (
+    join_code_lines,
     parse_code_snippet,
     parse_code_snippet_or_comment,
 )
@@ -61,7 +62,7 @@ def _propagate_source_to_ancestors(tree: MutableTree, node: MutableNode) -> None
 def _code_from_operation(op: TreeOperation) -> str:
     """Get code string from operation (code or code_lines)."""
     if op.code_lines:
-        return "\n".join(op.code_lines)
+        return join_code_lines(op.code_lines)
     if op.code:
         return op.code
     return ""
@@ -77,7 +78,7 @@ def _replace_node_source(
     node = tree.get_node(node_id)
     if not node:
         raise ValueError(f"Node not found: {node_id}")
-    raw = "\n".join(code_lines) if code_lines else (code or "")
+    raw = join_code_lines(code_lines) if code_lines else (code or "")
     if not raw.strip():
         raise ValueError("code or code_lines required for replace")
     statements = parse_code_snippet(code=code, code_lines=code_lines)
@@ -111,7 +112,7 @@ def _insert_at_parent(
             raise ValueError(f"Parent node not found: {parent_id}")
         parent = p
 
-    raw = "\n".join(code_lines) if code_lines else (code or "")
+    raw = join_code_lines(code_lines) if code_lines else (code or "")
     if not raw.strip():
         raise ValueError("code or code_lines required for insert")
 

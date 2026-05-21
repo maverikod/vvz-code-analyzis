@@ -22,19 +22,24 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 import code_analysis.hooks  # noqa: F401
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.command_metadata_helpers import REQUIRED_METADATA_KEYS
+from code_analysis.commands.fs_grep_budget import GREP_HARD_TIMEOUT
 from code_analysis.commands.project_cross_search_command import (
     ProjectCrossSearchCommand,
 )
+from code_analysis.core.exceptions import ValidationError
 from code_analysis.commands.project_cross_search_core import (
+    GREP_LINE_ONLY_IGNORED,
     PathFilterOptions,
     apply_mode,
     build_command_audit,
+    is_structural_grep_evidence,
     json_safe_scalar,
     merge_evidence,
     normalize_file_path,
     normalize_fulltext_hit,
     normalize_grep_hit,
     normalize_semantic_hit,
+    partition_grep_for_cross_search,
 )
 
 _XPATH_REGRESSION_GREP_PATTERNS: tuple[str, ...] = (
@@ -61,7 +66,44 @@ def test_project_cross_search_registered() -> None:
     cls = registry.get_command("project_cross_search")
     assert cls is ProjectCrossSearchCommand
     assert cls.category == "search"
-    assert cls.use_queue is True
+    assert cls.use_queue is False
+    props = cls.get_schema()["properties"]
+    assert props["auto_queue_on_inline_timeout"]["default"] is True
+
+
+def test_validate_params_preserves_zero_semantic_and_fulltext_limits() -> None:
+    cmd = ProjectCrossSearchCommand()
+    out = cmd.validate_params(
+        {
+            "project_id": "p",
+            "query": "needle",
+            "semantic_limit": 0,
+            "fulltext_limit": 0,
+            "grep_limit": 0,
+        }
+    )
+    assert out["semantic_limit"] == 0
+    assert out["fulltext_limit"] == 0
+    assert out["grep_limit"] == 0
+
+
+def test_validate_params_rejects_fast_text_only_with_structural_grep() -> None:
+    cmd = ProjectCrossSearchCommand()
+    with pytest.raises(ValidationError, match="fast_text_only"):
+        cmd.validate_params(
+            {
+                "project_id": "p",
+                "query": "needle",
+                "require_structural_grep": True,
+                "fast_text_only": True,
+            }
+        )
+
+
+def test_project_cross_search_schema_exposes_fast_text_only() -> None:
+    props = ProjectCrossSearchCommand.get_schema().get("properties") or {}
+    assert "fast_text_only" in props
+    assert "grep_hard_timeout_seconds" in props
 
 
 def test_project_cross_search_metadata_meets_standard() -> None:
@@ -89,11 +131,33 @@ def _item(source: str, file_path: str, **extra: object) -> dict:
     return base
 
 
+def _structural_grep_item(file_path: str, *, node_ref: str = "stable-id-1") -> dict:
+    return _item(
+        "grep_unindexed",
+        file_path,
+        text="session_create",
+        line_start=10,
+        line_end=12,
+        metadata={
+            "enrichment_status": "enriched",
+            "preview": {
+                "command": "universal_file_preview",
+                "file_path": file_path,
+                "node_ref": node_ref,
+            },
+            "node_ref": node_ref,
+            "selector": node_ref,
+            "start_line": 10,
+            "end_line": 12,
+        },
+    )
+
+
 def test_merge_three_sources_high_confidence() -> None:
     path = "code_analysis/commands/sessions/session_create_command.py"
     semantic = [_item("semantic", path, score=0.9, text="session create")]
     fulltext = [_item("fulltext", path, score=-1.2, text="class SessionCreateCommand")]
-    grep = [_item("grep", path, text="session_create", line_start=10)]
+    grep = [_structural_grep_item(path)]
     _, results, _ = merge_evidence(
         semantic,
         fulltext,
@@ -112,7 +176,7 @@ def test_merge_three_sources_high_confidence() -> None:
 def test_merge_two_sources_medium_confidence() -> None:
     path = "code_analysis/foo.py"
     fulltext = [_item("fulltext", path, score=-0.5)]
-    grep = [_item("grep", path, text="foo", line_start=1)]
+    grep = [_structural_grep_item(path)]
     _, results, _ = merge_evidence(
         [],
         fulltext,
@@ -227,6 +291,37 @@ def test_normalize_fulltext_hit_accepts_decimal_bm25() -> None:
     json.dumps(hit)
 
 
+def test_line_only_grep_ignored_in_merge() -> None:
+    path = "code_analysis/foo.py"
+    line_only = [_item("grep_unindexed", path, text="foo", line_start=1)]
+    structural = [_structural_grep_item(path)]
+    _, results, counts = merge_evidence(
+        [],
+        [],
+        line_only + structural,
+        path_filters=PathFilterOptions(),
+        mode="union",
+        limit=20,
+    )
+    assert counts["grep"] == 1
+    assert counts["grep_line_only_ignored"] == 1
+    assert results[0]["sources"]["grep"] is True
+    assert len(results[0]["evidence"]["grep"]) == 1
+    assert is_structural_grep_evidence(results[0]["evidence"]["grep"][0])
+
+
+def test_partition_grep_for_cross_search() -> None:
+    path = "a.py"
+    hits = [
+        _item("grep_unindexed", path, text="x"),
+        _structural_grep_item(path),
+    ]
+    structural, line_only, n = partition_grep_for_cross_search(hits)
+    assert n == 1
+    assert len(structural) == 1
+    assert len(line_only) == 1
+
+
 def test_normalize_grep_hit_tolerates_missing_fields() -> None:
     hit = normalize_grep_hit({}, "xpath", None)
     assert hit["file_path"] == ""
@@ -308,10 +403,11 @@ async def test_execute_partial_success_with_warnings(tmp_path: Path) -> None:
             project_id="test-proj",
             query="session_create",
             grep_patterns=["session_create"],
-            mode="intersection",
+            mode="union",
             semantic_limit=10,
             fulltext_limit=10,
             grep_limit=50,
+            require_structural_grep=True,
         )
 
     assert isinstance(result, SuccessResult)
@@ -319,9 +415,12 @@ async def test_execute_partial_success_with_warnings(tmp_path: Path) -> None:
     assert data["success"] is True
     assert data["summary"]["warnings"]
     assert data["summary"]["warnings"][0]["source"] == "semantic"
+    warn_codes = [w.get("code") for w in data["summary"]["warnings"]]
+    assert GREP_LINE_ONLY_IGNORED in warn_codes
     assert len(data["results"]) >= 1
     assert data["results"][0]["sources"]["fulltext"] is True
-    assert data["results"][0]["sources"]["grep"] is True
+    assert data["results"][0]["sources"]["grep"] is False
+    assert data["results"][0]["evidence_score"] == 1
 
 
 @pytest.mark.asyncio
@@ -408,15 +507,28 @@ async def test_execute_xpath_regression_grep_patterns_json_safe(
 
     async def _grep_side_effect(**kwargs: object) -> SuccessResult:
         pattern = str(kwargs.get("pattern") or "")
+        rel = "code_analysis/query_engine.py"
+        node_ref = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         return SuccessResult(
             data={
                 "matches": [
                     {
-                        "relative_path": "code_analysis/query_engine.py",
+                        "relative_path": rel,
                         "line_number": 2,
                         "line": f"match for {pattern}",
-                        "block_id": None,
-                        "block_type": None,
+                        "source": "grep_unindexed",
+                        "grep_source": "disk",
+                        "enrichment_status": "enriched",
+                        "block_id": node_ref,
+                        "node_ref": node_ref,
+                        "selector": node_ref,
+                        "start_line": 2,
+                        "end_line": 2,
+                        "preview": {
+                            "command": "universal_file_preview",
+                            "file_path": rel,
+                            "node_ref": node_ref,
+                        },
                     }
                 ]
             }
@@ -464,7 +576,6 @@ async def test_execute_xpath_regression_grep_patterns_json_safe(
     assert "grep_budget" in data
     assert "warnings" in data
     assert len(data["results"]) >= 1
-    assert data["summary"]["warnings"] == []
     grep_inst.execute.assert_awaited()
     # xpath/XPath dedupe case-insensitively in build_grep_pattern_list
     assert grep_inst.execute.await_count == 10
@@ -646,3 +757,300 @@ async def test_many_grep_patterns_marks_queued_recommended(tmp_path: Path) -> No
     assert isinstance(result, SuccessResult)
     assert result.data["execution_mode"] == "queued_recommended"
     assert result.data.get("use_queue_recommended") is True
+
+
+@pytest.mark.asyncio
+async def test_cross_search_ignores_line_only_grep(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    (project_root / "mod.py").write_text("CSTQuery\n", encoding="utf-8")
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            side_effect=RuntimeError("no db"),
+        ),
+        patch(
+            "code_analysis.commands.project_cross_search_command.SemanticSearchMCPCommand"
+        ) as sem_cls,
+        patch(
+            "code_analysis.commands.project_cross_search_command.FsGrepCommand"
+        ) as grep_cls,
+    ):
+        sem_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(data={"results": []})
+        )
+        grep_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(
+                data={
+                    "matches": [
+                        {
+                            "relative_path": "mod.py",
+                            "line_number": 1,
+                            "line": "CSTQuery",
+                            "source": "grep_unindexed",
+                            "grep_source": "disk",
+                            "enrichment_status": "skipped_fast_text_only",
+                        }
+                    ]
+                }
+            )
+        )
+        result = await ProjectCrossSearchCommand().execute(
+            project_id="test-proj",
+            query="CSTQuery",
+            grep_patterns=["CSTQuery"],
+            semantic_limit=0,
+            fulltext_limit=0,
+            grep_limit=10,
+            require_structural_grep=True,
+        )
+
+    assert isinstance(result, SuccessResult)
+    codes = [w.get("code") for w in result.data.get("warnings") or []]
+    assert GREP_LINE_ONLY_IGNORED in codes
+    assert result.data["summary"]["source_counts"]["grep"] == 0
+    assert not result.data["results"]
+
+
+@pytest.mark.asyncio
+async def test_cross_search_counts_structural_grep(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    rel = "code_analysis/mod.py"
+    (project_root / "code_analysis").mkdir(parents=True)
+    (project_root / rel).write_text("def f():\n    CSTQuery\n", encoding="utf-8")
+
+    node_ref = "11111111-2222-4333-8444-555555555555"
+    with (
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            side_effect=RuntimeError("no db"),
+        ),
+        patch(
+            "code_analysis.commands.project_cross_search_command.SemanticSearchMCPCommand"
+        ) as sem_cls,
+        patch(
+            "code_analysis.commands.project_cross_search_command.FsGrepCommand"
+        ) as grep_cls,
+    ):
+        sem_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(data={"results": []})
+        )
+        grep_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(
+                data={
+                    "matches": [
+                        {
+                            "relative_path": rel,
+                            "line_number": 2,
+                            "line": "    CSTQuery",
+                            "source": "grep_unindexed",
+                            "grep_source": "disk",
+                            "enrichment_status": "enriched",
+                            "block_id": node_ref,
+                            "node_ref": node_ref,
+                            "selector": node_ref,
+                            "start_line": 1,
+                            "end_line": 2,
+                            "preview": {
+                                "command": "universal_file_preview",
+                                "file_path": rel,
+                                "node_ref": node_ref,
+                            },
+                        }
+                    ]
+                }
+            )
+        )
+        result = await ProjectCrossSearchCommand().execute(
+            project_id="test-proj",
+            query="CSTQuery",
+            grep_patterns=["CSTQuery"],
+            mode="union",
+            semantic_limit=0,
+            fulltext_limit=0,
+            grep_limit=10,
+            require_structural_grep=True,
+        )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["summary"]["source_counts"]["grep"] == 1
+    assert len(result.data["results"]) >= 1
+    row = result.data["results"][0]
+    assert row["sources"]["grep"] is True
+    assert row["evidence_score"] == 1
+    grep_ev = row["evidence"]["grep"][0]
+    assert grep_ev["metadata"]["preview"]
+    assert grep_ev["metadata"]["node_ref"] == node_ref
+    assert grep_ev["metadata"]["enrichment_status"] == "enriched"
+
+
+@pytest.mark.asyncio
+async def test_execute_search_plan_preserves_zero_limits(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True)
+    (project_root / "a.py").write_text("needle\n", encoding="utf-8")
+
+    node_ref = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+    async def _semantic_must_not_run(**_kwargs: object) -> SuccessResult:
+        raise AssertionError("semantic phase must be skipped when semantic_limit=0")
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+        patch(
+            "code_analysis.commands.project_cross_search_command.SemanticSearchMCPCommand"
+        ) as sem_cls,
+        patch(
+            "code_analysis.commands.project_cross_search_command.SearchCommand"
+        ) as ft_cls,
+        patch(
+            "code_analysis.commands.project_cross_search_command.FsGrepCommand"
+        ) as grep_cls,
+    ):
+        sem_cls.return_value.execute = AsyncMock(side_effect=_semantic_must_not_run)
+        ft_cls.side_effect = AssertionError(
+            "fulltext phase must be skipped when fulltext_limit=0"
+        )
+        grep_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(
+                data={
+                    "matches": [
+                        {
+                            "relative_path": "a.py",
+                            "line_number": 1,
+                            "line": "needle",
+                            "source": "grep_unindexed",
+                            "enrichment_status": "enriched",
+                            "node_ref": node_ref,
+                            "selector": node_ref,
+                            "preview": {
+                                "command": "universal_file_preview",
+                                "file_path": "a.py",
+                                "node_ref": node_ref,
+                            },
+                        }
+                    ],
+                    "match_count": 1,
+                    "files_scanned": 1,
+                }
+            )
+        )
+        result = await ProjectCrossSearchCommand().execute(
+            project_id="test-proj",
+            query="needle",
+            grep_patterns=["needle"],
+            semantic_limit=0,
+            fulltext_limit=0,
+            mode="union",
+        )
+
+    assert isinstance(result, SuccessResult)
+    plan = result.data["search_plan"]
+    assert plan["semantic_limit"] == 0
+    assert plan["fulltext_limit"] == 0
+    assert result.data["summary"]["source_counts"]["semantic"] == 0
+    assert result.data["summary"]["source_counts"]["fulltext"] == 0
+    assert result.data["summary"]["source_counts"]["grep"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_cross_search_partial_success_when_grep_hard_timeout(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True)
+    (project_root / "a.py").write_text("needle\n", encoding="utf-8")
+
+    sem_hit = {
+        "file_path": "a.py",
+        "score": 0.9,
+        "text": "needle",
+        "line": 1,
+    }
+
+    async def _grep_hard_timeout(**_kwargs: object) -> ErrorResult:
+        return ErrorResult(
+            message="fs_grep exceeded hard timeout and was stopped.",
+            code=GREP_HARD_TIMEOUT,
+            details={"hard_timeout_seconds": 1},
+        )
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+        patch(
+            "code_analysis.commands.project_cross_search_command.SemanticSearchMCPCommand"
+        ) as sem_cls,
+        patch(
+            "code_analysis.commands.project_cross_search_command.FsGrepCommand"
+        ) as grep_cls,
+    ):
+        sem_cls.return_value.execute = AsyncMock(
+            return_value=SuccessResult(data={"results": [sem_hit]})
+        )
+        grep_cls.return_value.execute = AsyncMock(side_effect=_grep_hard_timeout)
+        result = await ProjectCrossSearchCommand().execute(
+            project_id="test-proj",
+            query="needle",
+            grep_patterns=["needle"],
+            semantic_limit=5,
+            fulltext_limit=0,
+            grep_hard_timeout_seconds=1,
+        )
+
+    assert isinstance(result, SuccessResult)
+    codes = {w.get("code") for w in result.data.get("warnings") or []}
+    assert GREP_HARD_TIMEOUT in codes
+    assert result.data["summary"]["source_counts"]["grep"] == 0
+    assert result.data["summary"]["source_counts"]["semantic"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_cross_search_error_when_only_grep_hard_timeout(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True)
+    (project_root / "a.py").write_text("needle\n", encoding="utf-8")
+
+    async def _grep_hard_timeout(**_kwargs: object) -> ErrorResult:
+        return ErrorResult(
+            message="fs_grep exceeded hard timeout and was stopped.",
+            code=GREP_HARD_TIMEOUT,
+        )
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+        patch(
+            "code_analysis.commands.project_cross_search_command.FsGrepCommand"
+        ) as grep_cls,
+    ):
+        grep_cls.return_value.execute = AsyncMock(side_effect=_grep_hard_timeout)
+        result = await ProjectCrossSearchCommand().execute(
+            project_id="test-proj",
+            query="needle",
+            grep_patterns=["needle"],
+            semantic_limit=0,
+            fulltext_limit=0,
+            grep_hard_timeout_seconds=1,
+        )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "CROSS_SEARCH_ERROR"
+    assert any(
+        w.get("code") == GREP_HARD_TIMEOUT
+        for w in (result.details or {}).get("warnings") or []
+    )

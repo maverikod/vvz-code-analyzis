@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 GREP_BUDGET_EXCEEDED = "GREP_BUDGET_EXCEEDED"
+GREP_HARD_TIMEOUT = "GREP_HARD_TIMEOUT"
 GREP_TIMEOUT = "GREP_TIMEOUT"
 GREP_TOO_MANY_FILES = "GREP_TOO_MANY_FILES"
 GREP_STRUCTURAL_ENRICHMENT_SKIPPED = "GREP_STRUCTURAL_ENRICHMENT_SKIPPED"
+
+DEFAULT_HARD_TIMEOUT_SECONDS = 120.0
+SYNC_DEFAULT_HARD_TIMEOUT_SECONDS = 30.0
+QUEUED_DEFAULT_HARD_TIMEOUT_SECONDS = 120.0
+HARD_TIMEOUT_MIN_SECONDS = 1.0
+HARD_TIMEOUT_MAX_SECONDS = 3600.0
 
 ExecutionMode = Literal["sync", "queued_recommended", "queued"]
 
@@ -78,6 +85,7 @@ class FsGrepBudgetState:
     usage: FsGrepBudgetUsage = field(default_factory=FsGrepBudgetUsage)
     warnings: List[Dict[str, Any]] = field(default_factory=list)
     _started_at: float = field(default_factory=time.monotonic)
+    should_cancel: Optional[Callable[[], bool]] = None
 
     def deadline(self) -> Optional[float]:
         return self._started_at + self.limits.max_wall_seconds
@@ -93,6 +101,9 @@ class FsGrepBudgetState:
         self.usage.exceed_reason = reason
 
     def should_stop_scan(self, *, matches_count: int, files_scanned: int) -> bool:
+        if self.should_cancel is not None and self.should_cancel():
+            self.mark_exceeded("inline_timeout_cancel")
+            return True
         if self.usage.budget_exceeded:
             return True
         if matches_count >= self.limits.max_matches:
@@ -168,6 +179,23 @@ def resolve_execution_mode(
     if budget.usage.budget_exceeded or candidate_files > SYNC_MAX_CANDIDATE_FILES:
         return "queued_recommended"
     return "sync"
+
+
+def clamp_hard_timeout_seconds(value: float) -> float:
+    return max(HARD_TIMEOUT_MIN_SECONDS, min(HARD_TIMEOUT_MAX_SECONDS, float(value)))
+
+
+def resolve_hard_timeout_seconds(
+    *,
+    explicit: Optional[float],
+    in_queue: bool,
+) -> float:
+    """Hard execution cap (asyncio boundary), independent of cooperative scan budget."""
+    if explicit is not None:
+        return clamp_hard_timeout_seconds(explicit)
+    if in_queue:
+        return QUEUED_DEFAULT_HARD_TIMEOUT_SECONDS
+    return SYNC_DEFAULT_HARD_TIMEOUT_SECONDS
 
 
 def cap_candidate_paths(

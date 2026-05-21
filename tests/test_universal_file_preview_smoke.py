@@ -46,6 +46,7 @@ from code_analysis.commands.universal_file_preview.handlers.yaml_handler import 
 )
 from code_analysis.commands.universal_file_preview.models import NodeKind
 from code_analysis.commands.universal_file_preview.python_visualizer import (
+    _annotated_full_text,
     render_module,
     render_node,
 )
@@ -425,6 +426,116 @@ def test_yaml_handler_resolve_node_ref_mapping_key(tmp_path) -> None:
     assert resolved.attributes.get("value") == "7"
 
 
+def test_yaml_handler_drill_down_small_mapping_annotated_full_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    pytest.importorskip("yaml")
+    big_block = "\n".join(f"  filler_{i}: {i}" for i in range(30))
+    path = tmp_path / "nested.yaml"
+    path.write_text(
+        f"big:\n{big_block}\nsmall:\n  a: 1\n  b: 2\n  c: 3\n  d: 4\n  e: 5\n",
+        encoding="utf-8",
+    )
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=10
+    )
+    h = YamlFileHandler()
+    root = h.open_root(str(path), None, budget=budget)
+    assert not isinstance(root, PreviewError)
+    assert root.node_kind == NodeKind.MAPPING
+    resolved = h.resolve_node_ref("/small", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.attributes.get("full_text") is True
+    text = resolved.attributes.get("text", "")
+    assert "[/small/a]" in text
+    assert "a: 1" in text
+    assert "filler_0" not in text
+
+
+def test_yaml_handler_drill_down_large_mapping_stays_structural(
+    tmp_path: pathlib.Path,
+) -> None:
+    pytest.importorskip("yaml")
+    big_block = "\n".join(f"  filler_{i}: {i}" for i in range(30))
+    path = tmp_path / "nested.yaml"
+    path.write_text(
+        f"big:\n{big_block}\nsmall:\n  a: 1\n  b: 2\n  c: 3\n  d: 4\n  e: 5\n",
+        encoding="utf-8",
+    )
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=3
+    )
+    h = YamlFileHandler()
+    assert not isinstance(h.open_root(str(path), None, budget=budget), PreviewError)
+    resolved = h.resolve_node_ref("/big", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.node_kind == NodeKind.MAPPING
+    assert resolved.attributes.get("full_text") is not True
+
+
+def test_json_handler_drill_down_small_mapping_annotated_full_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    big_lines = ",\n".join(f'    "filler_{i}": {i}' for i in range(30))
+    path = tmp_path / "nested.json"
+    path.write_text(
+        "{\n"
+        f'  "big": {{\n{big_lines}\n  }},\n'
+        '  "small": {\n'
+        '    "a": 1,\n'
+        '    "b": 2,\n'
+        '    "c": 3,\n'
+        '    "d": 4,\n'
+        '    "e": 5\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=10
+    )
+    h = JsonFileHandler()
+    root = h.open_root(str(path), None, budget=budget)
+    assert not isinstance(root, PreviewError)
+    assert root.node_kind == NodeKind.MAPPING
+    resolved = h.resolve_node_ref("/small", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.attributes.get("full_text") is True
+    text = resolved.attributes.get("text", "")
+    assert "[/small/a]" in text
+    assert '"a": 1' in text
+    assert "filler_0" not in text
+
+
+def test_json_handler_drill_down_large_mapping_stays_structural(
+    tmp_path: pathlib.Path,
+) -> None:
+    big_lines = ",\n".join(f'    "filler_{i}": {i}' for i in range(30))
+    path = tmp_path / "nested.json"
+    path.write_text(
+        "{\n"
+        f'  "big": {{\n{big_lines}\n  }},\n'
+        '  "small": {\n'
+        '    "a": 1,\n'
+        '    "b": 2,\n'
+        '    "c": 3,\n'
+        '    "d": 4,\n'
+        '    "e": 5\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=3
+    )
+    h = JsonFileHandler()
+    assert not isinstance(h.open_root(str(path), None, budget=budget), PreviewError)
+    resolved = h.resolve_node_ref("/big", None)
+    assert not isinstance(resolved, PreviewError)
+    assert resolved.node_kind == NodeKind.MAPPING
+    assert resolved.attributes.get("full_text") is not True
+
+
 def test_yaml_handler_resolve_unknown_path_unknown_node_ref(tmp_path) -> None:
     pytest.importorskip("yaml")
     path = tmp_path / "map.yaml"
@@ -567,6 +678,83 @@ def test_python_visualizer_module_level_function_focus_nonempty() -> None:
     )
     assert fn_stable is not None
     assert render_node(tree, fn_stable).strip()
+
+
+_IF_ELIF_SAMPLE = """def foo():
+    suffix = "x"
+    if suffix == ".py":
+        a = 1
+    elif suffix == ".json":
+        b = 2
+    elif suffix in (".yaml", ".yml"):
+        c = 3
+    else:
+        d = 4
+"""
+
+
+def test_python_visualizer_drill_down_if_annotated_full_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Drill-down on If/elif returns node-scoped full-text with leaf stable_ids."""
+    import re
+
+    py_path = tmp_path / "sample.py"
+    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
+    tree = load_file_to_tree(str(py_path))
+    budget = PreviewBudget(
+        preview_lines=200, value_preview_len=120, full_text_max_lines=200
+    )
+    outer_if = next(
+        m for m in tree.metadata_map.values() if m.type == "If" and m.start_line == 3
+    )
+    text = render_node(tree, outer_if.stable_id, budget)
+    lines = text.splitlines()
+    assert len(lines) == outer_if.end_line - outer_if.start_line + 1
+    ssl_c = next(
+        m
+        for m in tree.metadata_map.values()
+        if m.type == "SimpleStatementLine" and m.start_line == 8
+    )
+    c_line = next(line for line in lines if "c = 3" in line)
+    assert re.match(r"\[([0-9a-f-]{36})\]", c_line).group(1) == ssl_c.stable_id
+
+
+def test_python_visualizer_drill_down_large_span_stays_structural(
+    tmp_path: pathlib.Path,
+) -> None:
+    """FunctionDef body span > full_text_max_lines keeps collapsed structural view."""
+    py_path = tmp_path / "sample.py"
+    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
+    tree = load_file_to_tree(str(py_path))
+    fn = next(m for m in tree.metadata_map.values() if m.type == "FunctionDef")
+    budget = PreviewBudget(
+        preview_lines=200, value_preview_len=120, full_text_max_lines=3
+    )
+    text = render_node(tree, fn.stable_id, budget)
+    assert "def foo" in text
+    assert "..." in text
+    assert "c = 3" not in text
+
+
+def test_python_visualizer_module_level_full_text_priority_unchanged(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Module-level full_text still prefers outermost stmt per line."""
+    py_path = tmp_path / "sample.py"
+    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
+    tree = load_file_to_tree(str(py_path))
+    budget = PreviewBudget(
+        preview_lines=200, value_preview_len=120, full_text_max_lines=200
+    )
+    annotated = _annotated_full_text(tree, budget)
+    assert annotated is not None
+    assert annotated == render_module(tree, budget)
+    outer_if = next(
+        m for m in tree.metadata_map.values() if m.type == "If" and m.start_line == 3
+    )
+    if_header = next(line for line in annotated.splitlines() if "if suffix ==" in line)
+    assert if_header.startswith(f"[{outer_if.stable_id}]")
 
 
 def test_universal_file_preview_whitelisted_for_read_only_batch() -> None:

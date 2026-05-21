@@ -12,13 +12,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.progress_tracker import get_progress_tracker_from_context
+from ..core.search_inline_execution import (
+    is_queued_search_execution,
+    run_search_inline_or_queue,
+)
+from ..core.search_timeouts import (
+    SEARCH_INLINE_TIMEOUT_SECONDS,
+    resolve_inline_timeout_seconds,
+)
 from .base_mcp_command import BaseMCPCommand
+from .fs_grep_budget import (
+    GREP_HARD_TIMEOUT,
+    clamp_hard_timeout_seconds,
+    resolve_hard_timeout_seconds,
+)
 from .fs_grep_command import FsGrepCommand
 from .project_cross_search_grep_budget import (
     GREP_BUDGET_EXCEEDED,
@@ -30,6 +44,7 @@ from .project_cross_search_grep_budget import (
     trim_payload_to_budget,
 )
 from .project_cross_search_core import (
+    GREP_LINE_ONLY_IGNORED,
     MODES,
     PROFILES,
     PathFilterOptions,
@@ -41,11 +56,26 @@ from .project_cross_search_core import (
     normalize_fulltext_hit,
     normalize_grep_hit,
     normalize_semantic_hit,
+    partition_grep_for_cross_search,
 )
 from .search import SearchCommand
 from .semantic_search_mcp import SemanticSearchMCPCommand
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_int_param(
+    params: Dict[str, Any],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Preserve explicit zero; only substitute default when key is omitted or None."""
+    if key not in params or params[key] is None:
+        return default
+    return max(minimum, min(maximum, int(params[key])))
 
 
 def get_project_cross_search_schema() -> Dict[str, Any]:
@@ -173,6 +203,78 @@ def get_project_cross_search_schema() -> Dict[str, Any]:
                     "Ignored when the command runs via the job queue (use_queue=true)."
                 ),
             },
+            "grep_hard_timeout_seconds": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 3600,
+                "description": (
+                    "Hard timeout for all fs_grep calls in this cross-search. When omitted, "
+                    "defaults to 30s for sync and 120s for queued execution."
+                ),
+            },
+            "fast_text_only": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Forwarded to fs_grep. Not allowed when require_structural_grep=true."
+                ),
+            },
+            "grep_scope": {
+                "type": "string",
+                "enum": ["index_gap", "all", "changed", "draft_only"],
+                "default": "index_gap",
+                "description": (
+                    "index_gap: grep only unindexed/changed files (skip indexed unchanged). "
+                    "all: no index filter. changed: indexed but stale. draft_only: session only."
+                ),
+            },
+            "scan_all": {
+                "type": "boolean",
+                "default": False,
+                "description": "Forwarded to fs_grep: scan all text files vs known formats only.",
+            },
+            "source": {
+                "type": "string",
+                "enum": ["disk", "draft_session", "both"],
+                "default": "disk",
+                "description": "Forwarded to fs_grep for disk vs draft session search.",
+            },
+            "session_id": {
+                "type": "string",
+                "description": "universal_file session id when source includes draft_session.",
+            },
+            "require_structural_grep": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "When true (default), only grep matches with enrichment_status=enriched "
+                    "and preview-compatible node_ref/selector count as cross-search evidence."
+                ),
+            },
+            "debug": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "Include diagnostics.grep_line_only for grep hits ignored as non-structural."
+                ),
+            },
+            "auto_queue_on_inline_timeout": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "When true (default), sync calls exceeding inline_timeout_seconds "
+                    "enqueue the full project_cross_search command and return job_id."
+                ),
+            },
+            "inline_timeout_seconds": {
+                "type": "number",
+                "default": SEARCH_INLINE_TIMEOUT_SECONDS,
+                "minimum": 0.1,
+                "maximum": 30,
+                "description": (
+                    "Wall-time cap for the initial inline attempt before auto-queue."
+                ),
+            },
         },
     }
 
@@ -181,7 +283,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
     """Run semantic, full-text, and grep search; merge evidence by file path."""
 
     name = "project_cross_search"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Cross-search orchestrator combining semantic_search, fulltext_search, and fs_grep "
         "into ranked evidence grouped by file path with confidence labels."
@@ -189,7 +291,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
     category = "search"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = True
+    use_queue = False
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -221,14 +323,18 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
                 field="profile",
             )
 
-        params["limit"] = max(1, min(200, int(params.get("limit") or 20)))
-        params["semantic_limit"] = max(
-            0, min(200, int(params.get("semantic_limit") or 30))
+        params["limit"] = _bounded_int_param(
+            params, "limit", 20, minimum=1, maximum=200
         )
-        params["fulltext_limit"] = max(
-            0, min(200, int(params.get("fulltext_limit") or 30))
+        params["semantic_limit"] = _bounded_int_param(
+            params, "semantic_limit", 30, minimum=0, maximum=200
         )
-        params["grep_limit"] = max(0, min(2000, int(params.get("grep_limit") or 200)))
+        params["fulltext_limit"] = _bounded_int_param(
+            params, "fulltext_limit", 30, minimum=0, maximum=200
+        )
+        params["grep_limit"] = _bounded_int_param(
+            params, "grep_limit", 200, minimum=0, maximum=2000
+        )
         params["min_semantic_score"] = max(
             0.0, min(1.0, float(params.get("min_semantic_score") or 0.45))
         )
@@ -239,6 +345,40 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
             params["grep_sync_max_wall_seconds"] = max(
                 5.0,
                 min(600.0, float(params["grep_sync_max_wall_seconds"])),
+            )
+        if params.get("grep_hard_timeout_seconds") is not None:
+            params["grep_hard_timeout_seconds"] = clamp_hard_timeout_seconds(
+                params["grep_hard_timeout_seconds"]
+            )
+        grep_scope = str(params.get("grep_scope") or "index_gap")
+        if grep_scope not in ("index_gap", "all", "changed", "draft_only"):
+            from ..core.exceptions import ValidationError
+
+            raise ValidationError(
+                "grep_scope must be index_gap, all, changed, or draft_only",
+                field="grep_scope",
+            )
+        source = str(params.get("source") or "disk")
+        if (
+            source in ("draft_session", "both")
+            and not str(params.get("session_id") or "").strip()
+        ):
+            from ..core.exceptions import ValidationError
+
+            raise ValidationError(
+                "session_id is required when source includes draft_session",
+                field="session_id",
+            )
+        if params.get("require_structural_grep", True) and params.get("fast_text_only"):
+            from ..core.exceptions import ValidationError
+
+            raise ValidationError(
+                "fast_text_only is not allowed when require_structural_grep=true",
+                field="fast_text_only",
+            )
+        if params.get("inline_timeout_seconds") is not None:
+            params["inline_timeout_seconds"] = resolve_inline_timeout_seconds(
+                params["inline_timeout_seconds"]
             )
         return params
 
@@ -263,12 +403,133 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         include_hidden: bool = False,
         include_venv: bool = False,
         grep_sync_max_wall_seconds: Optional[float] = None,
+        grep_hard_timeout_seconds: Optional[float] = None,
+        grep_scope: str = "index_gap",
+        scan_all: bool = False,
+        source: str = "disk",
+        session_id: Optional[str] = None,
+        require_structural_grep: bool = True,
+        debug: bool = False,
+        fast_text_only: bool = False,
+        auto_queue_on_inline_timeout: bool = True,
+        inline_timeout_seconds: Optional[float] = None,
         **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        context = kwargs.get("context") or {}
+        if not isinstance(context, dict):
+            context = {}
+        enqueue_params = {
+            k: v
+            for k, v in {
+                "project_id": project_id,
+                "query": query,
+                "grep_patterns": grep_patterns,
+                "file_pattern": file_pattern,
+                "entity_type": entity_type,
+                "mode": mode,
+                "profile": profile,
+                "limit": limit,
+                "semantic_limit": semantic_limit,
+                "fulltext_limit": fulltext_limit,
+                "grep_limit": grep_limit,
+                "min_semantic_score": min_semantic_score,
+                "case_sensitive": case_sensitive,
+                "literal": literal,
+                "include_docs": include_docs,
+                "include_tests": include_tests,
+                "include_hidden": include_hidden,
+                "include_venv": include_venv,
+                "grep_sync_max_wall_seconds": grep_sync_max_wall_seconds,
+                "grep_hard_timeout_seconds": grep_hard_timeout_seconds,
+                "grep_scope": grep_scope,
+                "scan_all": scan_all,
+                "source": source,
+                "session_id": session_id,
+                "require_structural_grep": require_structural_grep,
+                "debug": debug,
+                "fast_text_only": fast_text_only,
+                "auto_queue_on_inline_timeout": auto_queue_on_inline_timeout,
+                "inline_timeout_seconds": inline_timeout_seconds,
+            }.items()
+            if v is not None
+        }
+
+        async def _run() -> SuccessResult | ErrorResult:
+            return await self._execute_project_cross_search(
+                project_id=project_id,
+                query=query,
+                grep_patterns=grep_patterns,
+                file_pattern=file_pattern,
+                entity_type=entity_type,
+                mode=mode,
+                profile=profile,
+                limit=limit,
+                semantic_limit=semantic_limit,
+                fulltext_limit=fulltext_limit,
+                grep_limit=grep_limit,
+                min_semantic_score=min_semantic_score,
+                case_sensitive=case_sensitive,
+                literal=literal,
+                include_docs=include_docs,
+                include_tests=include_tests,
+                include_hidden=include_hidden,
+                include_venv=include_venv,
+                grep_sync_max_wall_seconds=grep_sync_max_wall_seconds,
+                grep_hard_timeout_seconds=grep_hard_timeout_seconds,
+                grep_scope=grep_scope,
+                scan_all=scan_all,
+                source=source,
+                session_id=session_id,
+                require_structural_grep=require_structural_grep,
+                debug=debug,
+                fast_text_only=fast_text_only,
+                context=context,
+            )
+
+        return await run_search_inline_or_queue(
+            command_name=self.name,
+            params=enqueue_params,
+            context=context,
+            auto_queue_on_inline_timeout=auto_queue_on_inline_timeout,
+            inline_timeout_seconds=inline_timeout_seconds,
+            execute_fn=_run,
+        )
+
+    async def _execute_project_cross_search(
+        self,
+        *,
+        project_id: str,
+        query: str,
+        grep_patterns: Optional[List[str]],
+        file_pattern: str,
+        entity_type: Optional[str],
+        mode: str,
+        profile: str,
+        limit: int,
+        semantic_limit: int,
+        fulltext_limit: int,
+        grep_limit: int,
+        min_semantic_score: float,
+        case_sensitive: bool,
+        literal: bool,
+        include_docs: bool,
+        include_tests: bool,
+        include_hidden: bool,
+        include_venv: bool,
+        grep_sync_max_wall_seconds: Optional[float],
+        grep_hard_timeout_seconds: Optional[float],
+        grep_scope: str,
+        scan_all: bool,
+        source: str,
+        session_id: Optional[str],
+        require_structural_grep: bool,
+        debug: bool,
+        fast_text_only: bool,
+        context: Dict[str, Any],
     ) -> SuccessResult | ErrorResult:
         warnings: List[Dict[str, Any]] = []
         successes = 0
-        context = kwargs.get("context") or {}
-        in_queue = get_progress_tracker_from_context(context) is not None
+        in_queue = is_queued_search_execution(context=context)
 
         try:
             project_root = self._resolve_project_root(project_id).resolve()
@@ -394,21 +655,77 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
             grep_limits.max_wall_seconds = float(grep_sync_max_wall_seconds)
         grep_budget = GrepBudgetState(limits=grep_limits)
         grep_budget.usage.patterns_total = len(final_patterns)
+        grep_line_only_diag: List[Dict[str, Any]] = []
 
+        grep_hard_limit = resolve_hard_timeout_seconds(
+            explicit=grep_hard_timeout_seconds,
+            in_queue=in_queue,
+        )
         if grep_limit > 0 and final_patterns:
-            grep_ok, grep_norm, grep_warnings = await self._run_grep_phase(
-                project_id=project_id,
-                patterns=final_patterns,
-                project_root=project_root,
-                plan=plan,
-                grep_limit=grep_limit,
-                literal=literal,
-                case_sensitive=case_sensitive,
-                include_venv=include_venv,
-                include_hidden=include_hidden,
-                budget=grep_budget,
-            )
+            if grep_scope == "draft_only":
+                grep_source = "draft_session"
+            else:
+                grep_source = source
+            skip_indexed = grep_scope == "index_gap"
+            indexed_only = grep_scope == "changed"
+            try:
+                grep_ok, grep_norm, grep_warnings = await asyncio.wait_for(
+                    self._run_grep_phase(
+                        project_id=project_id,
+                        patterns=final_patterns,
+                        project_root=project_root,
+                        plan=plan,
+                        grep_limit=grep_limit,
+                        literal=literal,
+                        case_sensitive=case_sensitive,
+                        include_venv=include_venv,
+                        include_hidden=include_hidden,
+                        budget=grep_budget,
+                        grep_scope=grep_scope,
+                        scan_all=scan_all,
+                        source=grep_source,
+                        session_id=session_id,
+                        skip_indexed_unchanged=skip_indexed,
+                        indexed_only=indexed_only,
+                        fast_text_only=fast_text_only,
+                        grep_hard_timeout_seconds=grep_hard_limit,
+                        context=context,
+                    ),
+                    timeout=grep_hard_limit,
+                )
+            except asyncio.TimeoutError:
+                grep_ok = False
+                grep_norm = []
+                grep_warnings = [
+                    {
+                        "source": "grep",
+                        "code": GREP_HARD_TIMEOUT,
+                        "message": (
+                            "Grep exceeded hard timeout and was stopped. Results may be "
+                            "partial or absent."
+                        ),
+                        "hard_timeout_seconds": grep_hard_limit,
+                    }
+                ]
+                grep_budget.mark_exceeded("grep_hard_timeout")
             warnings.extend(grep_warnings)
+            if require_structural_grep:
+                grep_structural, grep_line_only_diag, ignored_n = (
+                    partition_grep_for_cross_search(grep_norm, require_structural=True)
+                )
+                if ignored_n > 0:
+                    warnings.append(
+                        {
+                            "source": "grep",
+                            "code": GREP_LINE_ONLY_IGNORED,
+                            "message": (
+                                "Grep returned line-only matches; ignored as cross-search "
+                                "evidence because structural grep evidence is required."
+                            ),
+                            "ignored_count": ignored_n,
+                        }
+                    )
+                grep_norm = grep_structural
             if grep_ok:
                 successes += 1
         grep_budget.finalize_wall_clock()
@@ -490,13 +807,17 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
                 "semantic_limit": semantic_limit,
                 "fulltext_limit": fulltext_limit,
                 "grep_limit": grep_limit,
+                "grep_hard_timeout_seconds": grep_hard_limit,
                 "grep_patterns": final_patterns,
                 "derived_grep_patterns": derived_patterns,
                 "file_pattern": plan.file_pattern,
             },
             "results": results,
             "summary": summary,
+            "require_structural_grep": require_structural_grep,
         }
+        if debug and grep_line_only_diag:
+            payload["diagnostics"] = {"grep_line_only": grep_line_only_diag}
         if execution_mode == "queued_recommended":
             payload["use_queue_recommended"] = True
         trim_payload_to_budget(payload, grep_budget.limits, grep_budget.usage, warnings)
@@ -518,6 +839,15 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         include_venv: bool,
         include_hidden: bool,
         budget: GrepBudgetState,
+        grep_scope: str = "index_gap",
+        scan_all: bool = False,
+        source: str = "disk",
+        session_id: Optional[str] = None,
+        skip_indexed_unchanged: bool = True,
+        indexed_only: bool = False,
+        fast_text_only: bool = False,
+        grep_hard_timeout_seconds: float = 120.0,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Run fs_grep for each pattern with shared budget; never block the event loop."""
         grep_cmd = FsGrepCommand()
@@ -526,45 +856,76 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         grep_warnings: List[Dict[str, Any]] = []
         grep_ok = False
         last_pattern: Optional[str] = None
+        grep_phase_started = time.monotonic()
 
         for pattern in patterns:
             last_pattern = pattern
             if budget.should_stop_grep_loop():
                 break
-            per_limits = budget.per_pattern_limits(per_pattern_limit)
-            wall_budget = per_limits.get("wall_time_budget_s")
-            try:
-                grep_result = await asyncio.wait_for(
-                    grep_cmd.execute(
-                        project_id=project_id,
-                        pattern=pattern,
-                        literal=literal,
-                        case_sensitive=case_sensitive,
-                        file_pattern=plan.file_pattern or None,
-                        max_matches=int(per_limits["max_matches"]),
-                        max_files_scanned=int(per_limits["max_files_scanned"]),
-                        wall_time_budget_s=(
-                            float(wall_budget) if wall_budget is not None else None
-                        ),
-                        fast_text_only=True,
-                        enrich_blocks=False,
-                        show_venv=include_venv,
-                        show_hidden=include_hidden,
-                    ),
-                    timeout=max(
-                        1.0, float(wall_budget or budget.limits.max_wall_seconds)
-                    )
-                    + 5.0,
-                )
-            except asyncio.TimeoutError:
-                budget.mark_exceeded("pattern_wall_timeout")
+            remaining_hard = grep_hard_timeout_seconds - (
+                time.monotonic() - grep_phase_started
+            )
+            if remaining_hard <= 0:
+                budget.mark_exceeded("grep_hard_timeout")
                 grep_warnings.append(
                     {
                         "source": "grep",
-                        "code": GREP_BUDGET_EXCEEDED,
-                        "message": f"Grep timed out for pattern {pattern!r}",
+                        "code": GREP_HARD_TIMEOUT,
+                        "message": (
+                            "Grep exceeded hard timeout and was stopped. Results may be "
+                            "partial or absent."
+                        ),
+                        "hard_timeout_seconds": grep_hard_timeout_seconds,
                         "pattern": pattern,
-                        "suggestion": "call_server(..., use_queue=true)",
+                    }
+                )
+                break
+            per_limits = budget.per_pattern_limits(per_pattern_limit)
+            wall_budget = per_limits.get("wall_time_budget_s")
+            per_hard = min(
+                remaining_hard,
+                float(wall_budget) if wall_budget is not None else remaining_hard,
+            )
+            try:
+                grep_result = await grep_cmd.execute(
+                    project_id=project_id,
+                    pattern=pattern,
+                    literal=literal,
+                    case_sensitive=case_sensitive,
+                    file_pattern=plan.file_pattern or None,
+                    max_matches=int(per_limits["max_matches"]),
+                    max_files_scanned=int(per_limits["max_files_scanned"]),
+                    wall_time_budget_s=(
+                        float(wall_budget) if wall_budget is not None else None
+                    ),
+                    hard_timeout_seconds=per_hard,
+                    fast_text_only=fast_text_only,
+                    enrich_blocks=not fast_text_only,
+                    enrich_max_results=min(50, int(per_limits["max_matches"])),
+                    ensure_persisted_tree=True,
+                    stable_ids_required=True,
+                    scan_all=scan_all,
+                    source=source,
+                    session_id=session_id,
+                    skip_indexed_unchanged=skip_indexed_unchanged,
+                    indexed_only=indexed_only,
+                    show_venv=include_venv,
+                    show_hidden=include_hidden,
+                    auto_queue_on_inline_timeout=False,
+                    context=context or {},
+                )
+            except asyncio.TimeoutError:
+                budget.mark_exceeded("grep_hard_timeout")
+                grep_warnings.append(
+                    {
+                        "source": "grep",
+                        "code": GREP_HARD_TIMEOUT,
+                        "message": (
+                            "Grep exceeded hard timeout and was stopped. Results may be "
+                            "partial or absent."
+                        ),
+                        "hard_timeout_seconds": grep_hard_timeout_seconds,
+                        "pattern": pattern,
                     }
                 )
                 break
@@ -580,14 +941,19 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
                 continue
 
             if isinstance(grep_result, ErrorResult):
+                err_code = getattr(grep_result, "code", None) or "GREP_ERROR"
                 grep_warnings.append(
                     {
                         "source": "grep",
-                        "code": getattr(grep_result, "code", None) or "GREP_ERROR",
+                        "code": err_code,
                         "message": str(getattr(grep_result, "message", grep_result)),
                         "pattern": pattern,
+                        "details": getattr(grep_result, "details", None),
                     }
                 )
+                if err_code == GREP_HARD_TIMEOUT:
+                    budget.mark_exceeded("grep_hard_timeout")
+                    break
                 continue
 
             grep_data = grep_result.data or {}
@@ -784,6 +1150,25 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
                     "solution": (
                         "Retry with call_server(..., use_queue=true) and poll "
                         "queue_get_job_status until result.command.result.success is true."
+                    ),
+                },
+                "GREP_HARD_TIMEOUT": {
+                    "description": (
+                        "Grep phase exceeded grep_hard_timeout_seconds and was stopped."
+                    ),
+                    "message": "Grep exceeded hard timeout and was stopped.",
+                    "solution": (
+                        "Increase grep_hard_timeout_seconds, narrow grep_patterns, or disable "
+                        "unused sources with semantic_limit=0 and fulltext_limit=0."
+                    ),
+                },
+                "FAST_TEXT_ONLY_CONFLICT": {
+                    "description": (
+                        "fast_text_only=true cannot be used with require_structural_grep=true."
+                    ),
+                    "message": "fast_text_only is not allowed when require_structural_grep=true",
+                    "solution": (
+                        "Set require_structural_grep=false or omit fast_text_only."
                     ),
                 },
             },

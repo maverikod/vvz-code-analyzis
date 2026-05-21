@@ -74,19 +74,91 @@ def _line_for_json_pointer(lines: list[str], pointer: str) -> int | None:
     return None
 
 
-def _build_line_to_node_ref(
+def _pointer_in_subtree(ptr: str, root: str) -> bool:
+    if root == "":
+        return True
+    if ptr == root:
+        return True
+    return ptr.startswith(root + "/")
+
+
+def _line_span_for_pointer(
     metadata_map: dict[str, Any],
     source_lines: list[str],
-) -> dict[int, str]:
-    by_line: defaultdict[int, list[str]] = defaultdict(list)
+    pointer: str,
+) -> tuple[int, int] | None:
+    lines: list[int] = []
     for meta in metadata_map.values():
+        ptr = meta.json_pointer
+        if not _pointer_in_subtree(ptr, pointer):
+            continue
         start = getattr(meta, "start_line", None)
         if start is None:
-            start = _line_for_json_pointer(source_lines, meta.json_pointer)
-        if start is None:
+            start = _line_for_json_pointer(source_lines, ptr)
+        if start is not None:
+            lines.append(start)
+    if not lines:
+        sole = _line_for_json_pointer(source_lines, pointer)
+        if sole is None:
+            return None
+        return (sole, sole)
+    return (min(lines), max(lines))
+
+
+def _annotated_lines_in_range(
+    source_lines: list[str],
+    metadata_map: dict[str, Any],
+    *,
+    start_line: int,
+    end_line: int,
+    root_pointer: str,
+) -> str:
+    by_line: defaultdict[int, list[str]] = defaultdict(list)
+    for meta in metadata_map.values():
+        ptr = meta.json_pointer
+        if not _pointer_in_subtree(ptr, root_pointer):
             continue
-        by_line[start].append(meta.json_pointer)
-    return {line: max(refs, key=len) for line, refs in by_line.items()}
+        line = getattr(meta, "start_line", None)
+        if line is None:
+            line = _line_for_json_pointer(source_lines, ptr)
+        if line is None or line < start_line or line > end_line:
+            continue
+        by_line[line].append(ptr)
+    line_to_ref = {line: max(refs, key=len) for line, refs in by_line.items()}
+    out_lines: list[str] = []
+    for i in range(start_line, end_line + 1):
+        if i < 1 or i > len(source_lines):
+            continue
+        ref = line_to_ref.get(i)
+        out_lines.append(
+            f"[{ref}] {source_lines[i - 1]}" if ref else source_lines[i - 1]
+        )
+    return "\n".join(out_lines)
+
+
+def _annotated_full_text_for_pointer(
+    raw: str,
+    metadata_map: dict[str, Any],
+    budget: PreviewBudget,
+    pointer: str,
+) -> str | None:
+    """Return node-scoped annotated source when span <= ``full_text_max_lines``."""
+    if budget.full_text_max_lines <= 0:
+        return None
+    source_lines = raw.splitlines()
+    span = _line_span_for_pointer(metadata_map, source_lines, pointer)
+    if span is None:
+        return None
+    start_line, end_line = span
+    if end_line - start_line + 1 > budget.full_text_max_lines:
+        return None
+    return _annotated_lines_in_range(
+        source_lines,
+        metadata_map,
+        start_line=start_line,
+        end_line=end_line,
+        root_pointer=pointer,
+    )
 
 
 def _annotated_full_text(
@@ -99,12 +171,7 @@ def _annotated_full_text(
         return None
     if _source_line_count(raw) >= budget.full_text_max_lines:
         return None
-    line_to_ref = _build_line_to_node_ref(metadata_map, raw.splitlines())
-    out_lines: list[str] = []
-    for i, line in enumerate(raw.splitlines(), start=1):
-        ref = line_to_ref.get(i)
-        out_lines.append(f"[{ref}] {line}" if ref else line)
-    return "\n".join(out_lines)
+    return _annotated_full_text_for_pointer(raw, metadata_map, budget, "")
 
 
 class JsonFileHandler(FileHandler):
@@ -206,15 +273,6 @@ class JsonFileHandler(FileHandler):
         _budget = getattr(self, "_last_budget", None)
         _raw = getattr(self, "_last_raw", None)
         _meta_map = getattr(self, "_metadata_map", None)
-        if _budget is not None and _raw is not None and _meta_map is not None:
-            annotated = _annotated_full_text(_raw, _meta_map, _budget)
-            if annotated is not None:
-                return Node(
-                    node_kind=NodeKind.SCALAR,
-                    node_ref=node_ref,
-                    attributes={"text": annotated, "full_text": True},
-                )
-        # Dispatch: JSON Pointer strings start with '/' or are the empty string.
         if node_ref == "" or node_ref.startswith("/"):
             result = _resolve_json_pointer(doc, node_ref)
             if result is None:
@@ -223,28 +281,37 @@ class JsonFileHandler(FileHandler):
                     f"JSON Pointer {node_ref!r} does not exist in document.",
                     details={"node_ref": node_ref},
                 )
-            value, pointer = result
-            return _json_value_to_node(value, pointer)
-        # Opaque node_id (matches list_json_blocks): resolve via open-time index.
-        ptr_map_raw = getattr(self, "_pointer_by_node_id", None)
-        pointer_map: dict[str, str] = dict(ptr_map_raw) if ptr_map_raw else {}
-        pointer_opt = pointer_map.get(node_ref)
-        if pointer_opt is None:
-            return input_error(
-                INPUT_ERROR_UNKNOWN_NODE_REF,
-                f"Unknown node_ref {node_ref!r}: not a JSON Pointer in this document "
-                "and not a listed node_id.",
-                details={"node_ref": node_ref},
+            value, canon_pointer = result
+        else:
+            ptr_map_raw = getattr(self, "_pointer_by_node_id", None)
+            pointer_map: dict[str, str] = dict(ptr_map_raw) if ptr_map_raw else {}
+            pointer_opt = pointer_map.get(node_ref)
+            if pointer_opt is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"Unknown node_ref {node_ref!r}: not a JSON Pointer in this document "
+                    "and not a listed node_id.",
+                    details={"node_ref": node_ref},
+                )
+            result = _resolve_json_pointer(doc, pointer_opt)
+            if result is None:
+                return input_error(
+                    INPUT_ERROR_UNKNOWN_NODE_REF,
+                    f"node_id {node_ref!r} mapped to stale pointer {pointer_opt!r}; "
+                    "re-open the preview.",
+                    details={"node_ref": node_ref},
+                )
+            value, canon_pointer = result
+        if _budget is not None and _raw is not None and _meta_map is not None:
+            annotated = _annotated_full_text_for_pointer(
+                _raw, _meta_map, _budget, canon_pointer
             )
-        result = _resolve_json_pointer(doc, pointer_opt)
-        if result is None:
-            return input_error(
-                INPUT_ERROR_UNKNOWN_NODE_REF,
-                f"node_id {node_ref!r} mapped to stale pointer {pointer_opt!r}; "
-                "re-open the preview.",
-                details={"node_ref": node_ref},
-            )
-        value, canon_pointer = result
+            if annotated is not None:
+                return Node(
+                    node_kind=NodeKind.SCALAR,
+                    node_ref=node_ref,
+                    attributes={"text": annotated, "full_text": True},
+                )
         return _json_value_to_node(value, canon_pointer)
 
 

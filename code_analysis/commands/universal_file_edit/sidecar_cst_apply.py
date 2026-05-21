@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import textwrap
 from typing import Any, Dict, List, Optional, cast
 
 import libcst as cst
@@ -14,6 +15,7 @@ import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.cst_modify_tree_ops_build import build_tree_operations
+from code_analysis.core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from code_analysis.commands.universal_file_edit.errors import (
     NESTED_BATCH_FORBIDDEN,
     PARSE_ERROR,
@@ -132,6 +134,9 @@ def _resolve_stable_to_span(op: Dict[str, Any], tree: CSTTree) -> Dict[str, Any]
     return m
 
 
+_COMPOUND_CLAUSE_HEADER_PREFIXES = ("elif ", "else:", "except ", "finally:")
+
+
 def _validate_replace_snippet_via_module(m: Dict[str, Any]) -> None:
     """Validate replace snippets as module statements (not bare expressions).
 
@@ -147,14 +152,27 @@ def _validate_replace_snippet_via_module(m: Dict[str, Any]) -> None:
     if raw_lines is not None:
         if raw_code is not None:
             raise ValueError("Cannot provide both code and code_lines")
-        text = "\n".join(str(line) for line in raw_lines)
+        text = join_code_lines([str(line) for line in raw_lines])
     elif isinstance(raw_code, str):
         text = raw_code
     else:
         return
     if not text.strip():
         return
-    source = text if text.endswith("\n") else text + "\n"
+    dedented = textwrap.dedent(text)
+    stripped_leading = dedented.lstrip()
+    if stripped_leading:
+        first_line = stripped_leading.splitlines()[0].strip()
+        for prefix in _COMPOUND_CLAUSE_HEADER_PREFIXES:
+            if first_line.startswith(prefix):
+                header_token = first_line.split()[0]
+                raise ValueError(
+                    "Replace code_lines must contain only the body statement(s) "
+                    "of the target branch, not a compound clause header "
+                    f"({header_token!r}). Target the SimpleStatementLine inside "
+                    "the branch and supply only the statement line(s) to insert."
+                )
+    source = dedented if dedented.endswith("\n") else dedented + "\n"
     try:
         mod = cst.parse_module(source)
     except cst.ParserSyntaxError as exc:

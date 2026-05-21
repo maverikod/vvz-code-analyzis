@@ -58,6 +58,7 @@ def replace_node(
                 metadata.start_col,
                 metadata.end_line,
                 metadata.end_col,
+                preferred_type=metadata.type,
             )
     if node is None:
         node = tree.node_map.get(node_id)

@@ -27,6 +27,7 @@ from .tree_modifier_ops_insert import (
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
     class_or_function_snippet_needs_full_replace,
+    join_code_lines,
     parse_annotation_snippet,
     parse_code_snippet,
     parse_code_snippet_or_comment,
@@ -42,6 +43,7 @@ from .tree_modifier_ops_replace import (
 __all__ = [
     "FINE_GRAINED_REPLACE_NODE_TYPES",
     "class_or_function_snippet_needs_full_replace",
+    "join_code_lines",
     "parse_annotation_snippet",
     "parse_code_snippet",
     "parse_code_snippet_or_comment",

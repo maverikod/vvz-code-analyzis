@@ -148,6 +148,8 @@ def run_text_draft_apply(
     - ``type``: replace (default) | insert | delete
     - ``node_ref``: optional; for ``.md`` slug paths from preview, or zero-based
       line index for other text files. Takes precedence over ``start_line``/``end_line``.
+      For ``.md`` insert with ``node_ref``: ``position`` ``before`` (insert at the
+      section heading line) or ``after`` (default; after the section's last line).
     - ``start_line``: 1-based start line (inclusive).
     - ``end_line``: 1-based end line (inclusive); defaults to start_line.
     - ``content``: text to write.

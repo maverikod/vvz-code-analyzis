@@ -169,9 +169,7 @@ def _value_to_single_node(handler_id: str, value: Any) -> TreeNode:
             type="array",
             key=None,
             value=None,
-            children=[
-                _value_to_single_node(handler_id, element) for element in value
-            ],
+            children=[_value_to_single_node(handler_id, element) for element in value],
         )
     if isinstance(value, dict):
         children: List[TreeNode] = []
@@ -369,6 +367,33 @@ def _find_child_index_by_stable(children: List[TreeNode], stable: str) -> Option
     return None
 
 
+def _coalesce_insert_pointer_sibling_ids(
+    roots: List[TreeNode],
+    mop: Dict[str, Any],
+) -> None:
+    """Resolve ``before_json_pointer`` / ``after_json_pointer`` to sibling stable UUIDs."""
+    before_ptr = mop.get("before_json_pointer")
+    after_ptr = mop.get("after_json_pointer")
+    if before_ptr is not None and after_ptr is not None:
+        raise ValueError(
+            "before_json_pointer and after_json_pointer are mutually exclusive"
+        )
+    if before_ptr is not None:
+        if mop.get("before_node_id"):
+            raise ValueError(
+                "before_json_pointer and before_node_id are mutually exclusive"
+            )
+        node = _resolve_pointer_node(roots, str(before_ptr))
+        mop["before_node_id"] = node.stable_id
+    if after_ptr is not None:
+        if mop.get("after_node_id"):
+            raise ValueError(
+                "after_json_pointer and after_node_id are mutually exclusive"
+            )
+        node = _resolve_pointer_node(roots, str(after_ptr))
+        mop["after_node_id"] = node.stable_id
+
+
 def _apply_insert(
     roots: List[TreeNode],
     handler_id: str,
@@ -379,6 +404,9 @@ def _apply_insert(
 
     Supported positioning for arrays:
     - ``before_node_id`` / ``after_node_id``: sibling-relative by stable UUID.
+    - ``before_json_pointer`` / ``after_json_pointer``: resolve pointer to a
+      sibling node, then use the same logic as ``before_node_id`` /
+      ``after_node_id``.
     - ``index``: explicit integer index (0-based).
     - ``position: 'last'`` or no positioning fields: append to end.
 
@@ -434,6 +462,7 @@ def _apply_insert(
         if parent.children is None:
             parent.children = []
         ch = parent.children
+        _coalesce_insert_pointer_sibling_ids(roots, mop)
         before_nid = mop.get("before_node_id")
         after_nid = mop.get("after_node_id")
         idx_raw = mop.get("index")

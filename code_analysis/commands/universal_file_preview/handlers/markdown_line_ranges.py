@@ -170,4 +170,6 @@ def resolve_markdown_line_range(
             f"Markdown node_ref {node_ref!r} not found in document.",
             details={"node_ref": node_ref},
         )
+    # Section range includes the heading line (``start_line``) through ``end_line``.
+    # Body-only edits use the ``/__content`` suffix (see branch above).
     return match["start_line"], match["end_line"]

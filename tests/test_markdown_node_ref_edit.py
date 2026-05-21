@@ -163,6 +163,49 @@ async def test_edit_md_replace_by_node_ref(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_md_insert_by_node_ref_before_section(tmp_path: Path) -> None:
+    rel = "notes/before.md"
+    sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)
+
+    edit = UniversalFileEditCommand()
+    write = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        res = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "node_ref": "only-section",
+                            "position": "before",
+                            "content": "## Preamble\n\nInserted before heading.\n",
+                        }
+                    ],
+                }
+            )
+        )
+        assert isinstance(res, SuccessResult)
+        await write.execute(
+            **write.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "write_mode": "commit",
+                }
+            )
+        )
+    text = target.read_text(encoding="utf-8")
+    assert text.index("## Preamble") < text.index("# Only Section")
+    assert "Inserted before heading." in text
+
+
+@pytest.mark.asyncio
 async def test_edit_md_insert_by_node_ref_after_section(tmp_path: Path) -> None:
     rel = "notes/doc.md"
     sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)

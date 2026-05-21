@@ -19,6 +19,7 @@ from .json_pointer import (
     insert_into_object_relative,
     set_value_at,
 )
+from .json_query import resolve_node_id_from_pointer
 from .models import ROOT_POINTER, JSONTree
 from .tree_builder import _build_index, get_tree
 
@@ -119,6 +120,34 @@ def _array_insert_index_from_sibling(
     return idx if before_node_id is not None else idx + 1
 
 
+def _coalesce_insert_pointer_sibling_ids(tree: JSONTree, op: Dict[str, Any]) -> None:
+    """Map ``before_json_pointer`` / ``after_json_pointer`` to sibling node ids."""
+    before_ptr = op.get("before_json_pointer")
+    after_ptr = op.get("after_json_pointer")
+    if before_ptr is not None and after_ptr is not None:
+        raise ValueError(
+            "before_json_pointer and after_json_pointer are mutually exclusive"
+        )
+    if before_ptr is not None:
+        if op.get("before_node_id"):
+            raise ValueError(
+                "before_json_pointer and before_node_id are mutually exclusive"
+            )
+        nid = resolve_node_id_from_pointer(tree, str(before_ptr))
+        if nid is None:
+            raise ValueError(f"json_pointer not found: {before_ptr!r}")
+        op["before_node_id"] = nid
+    if after_ptr is not None:
+        if op.get("after_node_id"):
+            raise ValueError(
+                "after_json_pointer and after_node_id are mutually exclusive"
+            )
+        nid = resolve_node_id_from_pointer(tree, str(after_ptr))
+        if nid is None:
+            raise ValueError(f"json_pointer not found: {after_ptr!r}")
+        op["after_node_id"] = nid
+
+
 def _validate_insert_sibling_options(op: Dict[str, Any], parent_kind: str) -> None:
     before_nid = op.get("before_node_id")
     after_nid = op.get("after_node_id")
@@ -172,6 +201,7 @@ def _op_insert(tree: JSONTree, op: Dict[str, Any]) -> None:
         return
 
     if isinstance(parent_val, list):
+        _coalesce_insert_pointer_sibling_ids(tree, op)
         _validate_insert_sibling_options(op, "array")
         before_nid = op.get("before_node_id")
         after_nid = op.get("after_node_id")

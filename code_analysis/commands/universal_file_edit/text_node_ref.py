@@ -71,7 +71,17 @@ def resolve_text_operation_line_range(
 
     op_type = op.get("type", "replace")
     if op_type == "insert":
-        op["start_line"] = end_line + 1
+        position = op.get("position", "after")
+        if position not in (None, "after", "before", "last"):
+            return error_result_for_edit(
+                f"insert position must be 'before' or 'after', got {position!r}",
+                LINE_OUT_OF_RANGE,
+                {"position": position, "node_ref": node_ref},
+            )
+        if position == "before":
+            op["start_line"] = start_line
+        else:
+            op["start_line"] = end_line + 1
         op.pop("end_line", None)
     else:
         op["start_line"] = start_line

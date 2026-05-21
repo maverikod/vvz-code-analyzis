@@ -1,0 +1,24 @@
+step_id: G-005
+name: Tree representation and preview references
+description: >
+  Define tree representations and preview references used by dynamic file sets
+  so structured project content can be exposed as navigable preview material.
+concepts:
+  - C-013
+  - C-015
+  - C-017
+relations:
+  - from_concept: C-013
+    to_concept: C-015
+    type: uses
+source_ranges:
+  - start: 35
+    end: 43
+  - start: 55
+    end: 55
+  - start: 57
+    end: 63
+depends_on:
+  - G-004
+tactical_steps: []
+status: draft

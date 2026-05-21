@@ -133,4 +133,13 @@ class TextFileHandler(FileHandler):
                 f"Line index {idx} out of range [0, {len(lines)}).",
                 details={"node_ref": node_ref, "total_lines": len(lines)},
             )
-        return lines[idx]
+        line_no = idx + 1
+        line_node = lines[idx]
+        attrs = dict(line_node.attributes or {})
+        attrs["start_line"] = str(line_no)
+        attrs["end_line"] = str(line_no)
+        return Node(
+            node_kind=line_node.node_kind,
+            node_ref=line_node.node_ref,
+            attributes=attrs,
+        )

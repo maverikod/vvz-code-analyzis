@@ -32,6 +32,7 @@ from ..errors import (
     input_error,
 )
 from ..models import Node, NodeKind
+from .markdown_line_ranges import resolve_markdown_line_range
 
 logger = logging.getLogger(__name__)
 
@@ -211,15 +212,21 @@ class _Section:
         self.content_lines: list[str] = []
         self.children: list[_Section] = []
 
-    def to_node(self) -> Node:
+    def to_node(self, source: str | None = None) -> Node:
         """Mapping Node for this section and descendants."""
-        child_nodes = [child.to_node() for child in self.children]
+        child_nodes = [child.to_node(source) for child in self.children]
         title_attr = self.title if self.title else "(document root)"
         attributes: dict[str, str] = {
             "title": title_attr,
             "level": str(self.level),
             "slug": self.slug,
         }
+        if source is not None and self.node_ref is not None:
+            bounds = resolve_markdown_line_range(source, self.node_ref)
+            if not isinstance(bounds, PreviewError):
+                start_ln, end_ln = bounds
+                attributes["start_line"] = str(start_ln)
+                attributes["end_line"] = str(end_ln)
         content_text = _section_content_text(self)
         if content_text is not None:
             attributes["text"] = content_text
@@ -346,7 +353,7 @@ class MarkdownFileHandler(FileHandler):
         tree = _build_section_tree(source)
         self._last_tree = tree
         self._last_block_tokens = {}
-        return tree.to_node()
+        return tree.to_node(source)
 
     def resolve_node_ref(
         self,
@@ -385,10 +392,17 @@ class MarkdownFileHandler(FileHandler):
                     f"Markdown node_ref {node_ref!r} not found: section has no content block.",
                     details={"node_ref": node_ref},
                 )
+            attrs: dict[str, str] = {"value": content_text}
+            fp = self._last_file_path or ""
+            src = _read_markdown_source(fp) if fp else ""
+            bounds = resolve_markdown_line_range(src, node_ref)
+            if not isinstance(bounds, PreviewError):
+                attrs["start_line"] = str(bounds[0])
+                attrs["end_line"] = str(bounds[1])
             return Node(
                 node_kind=NodeKind.SCALAR,
                 node_ref=node_ref,
-                attributes={"value": content_text},
+                attributes=attrs,
             )
 
         # Regular section slug path.
@@ -399,4 +413,6 @@ class MarkdownFileHandler(FileHandler):
                 f"Markdown node_ref {node_ref!r} not found in document.",
                 details={"node_ref": node_ref},
             )
-        return section.to_node()
+        fp = self._last_file_path or ""
+        src = _read_markdown_source(fp) if fp else ""
+        return section.to_node(src)

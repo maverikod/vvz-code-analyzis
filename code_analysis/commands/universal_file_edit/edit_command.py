@@ -93,7 +93,8 @@ class UniversalFileEditCommand(BaseMCPCommand):
                         "Batch of edit operations. Structure varies by format_group: "
                         "sidecar={type,node_id,code_lines}, "
                         "tree-temp={type,json_pointer,value}, "
-                        "text={type,start_line,end_line,content}."
+                        "text={type,start_line,end_line,content} or "
+                        "text={type,node_ref,content} (.md slug paths from preview)."
                     ),
                     "items": {"type": "object"},
                 },

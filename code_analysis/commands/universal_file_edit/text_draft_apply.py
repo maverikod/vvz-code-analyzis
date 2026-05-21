@@ -26,6 +26,9 @@ from code_analysis.commands.universal_file_replace_command import (
     _sort_text_replacements_bottom_up,
 )
 from code_analysis.commands.universal_file_edit.session import EditSession
+from code_analysis.commands.universal_file_edit.text_node_ref import (
+    resolve_text_operation_line_range,
+)
 from code_analysis.core.backup_manager import BackupManager
 
 
@@ -143,6 +146,8 @@ def run_text_draft_apply(
 
     Each operation supports:
     - ``type``: replace (default) | insert | delete
+    - ``node_ref``: optional; for ``.md`` slug paths from preview, or zero-based
+      line index for other text files. Takes precedence over ``start_line``/``end_line``.
     - ``start_line``: 1-based start line (inclusive).
     - ``end_line``: 1-based end line (inclusive); defaults to start_line.
     - ``content``: text to write.
@@ -170,6 +175,11 @@ def run_text_draft_apply(
         )
 
     buffer = session.draft_path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+    for op in operations:
+        ref_err = resolve_text_operation_line_range(session.draft_path, op)
+        if ref_err is not None:
+            return ref_err
 
     for op in operations:
         if not session.is_invalid:

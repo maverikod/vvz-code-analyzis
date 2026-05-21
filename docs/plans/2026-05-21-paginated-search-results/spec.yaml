@@ -1,0 +1,565 @@
+meta:
+  title: Paginated Search and Universal Tree Query Machine Specification
+  spec_id: paginated-search-results
+  version: '0.1'
+  status: draft
+  source_spec: docs/plans/2026-05-21-paginated-search-results/source_spec.md
+concepts:
+- concept_id: C-001
+  name: SearchSession
+  definition: Logical execution context for one search request that owns result 
+    pages, status, metrics, lifetime metadata, and cleanup state.
+  properties:
+  - Created immediately when a model or client starts a search request.
+  - Has a unique search_id used for HTTP access to pages and status.
+  - Owns a dedicated session directory for page files and service metadata.
+  - Tracks running, completed, failed, cancelled, timed_out, dead, expired, and 
+    closed states.
+  source_ranges:
+  - start: 21
+    end: 27
+  - start: 31
+    end: 33
+  - start: 73
+    end: 75
+  - start: 80
+    end: 90
+- concept_id: C-002
+  name: SearchSessionDirectory
+  definition: Filesystem directory created for a SearchSession to store result 
+    page files, manifest data, and service metadata.
+  properties:
+  - Created before search execution begins.
+  - Contains page files written by the search worker.
+  - Contains metadata that records last access time and session progress.
+  - Is removed by background cleanup when the session expires or is dead.
+  source_ranges:
+  - start: 80
+    end: 80
+- concept_id: C-003
+  name: SearchSessionManifest
+  definition: Machine-readable state file inside a SearchSessionDirectory 
+    describing request context, process identity, heartbeat, metrics, page 
+    readiness, warnings, and errors.
+  properties:
+  - Stores created_at, last_access_at, heartbeat_at, status, and phase.
+  - Stores request parameters and metrics inferred from the search context.
+  - Stores page readiness information for HTTP readers.
+  - Stores ServerProcessIdentity for dead-session detection.
+  - Must be updated safely while the search worker, HTTP readers, and cleaner 
+    may operate concurrently.
+  source_ranges:
+  - start: 80
+    end: 90
+- concept_id: C-004
+  name: SearchPageFile
+  definition: Immutable result page or block file written inside a 
+    SearchSessionDirectory and retrieved through ordinary HTTP access.
+  properties:
+  - Contains a bounded list of normalized search result records.
+  - Becomes visible to readers only after it is completely written.
+  - Must not be rewritten after publication.
+  - May be incomplete only for the final page after search completion, timeout, 
+    failure, or cancellation.
+  source_ranges:
+  - start: 21
+    end: 27
+  - start: 80
+    end: 82
+- concept_id: C-005
+  name: HTTPResultAccess
+  definition: Simple HTTP retrieval mechanism for reading SearchSession pages, 
+    status, and manifest-backed metadata.
+  properties:
+  - Allows clients and models to request ready result pages without streaming 
+    transport.
+  - Updates last_access_at on every successful page, status, or manifest access.
+  - Returns a page-not-ready response when the session is running but the 
+    requested page has not been published yet.
+  source_ranges:
+  - start: 82
+    end: 84
+- concept_id: C-006
+  name: LastAccessTimestamp
+  definition: Timestamp recorded for a SearchSession and refreshed whenever a 
+    client reads any page, status, or manifest for that session.
+  properties:
+  - Drives TTL-based cleanup of session directories.
+  - Must be refreshed by HTTPResultAccess.
+  - Must not be confused with heartbeat_at, which indicates writer liveness.
+  source_ranges:
+  - start: 31
+    end: 33
+  - start: 84
+    end: 84
+- concept_id: C-007
+  name: SessionTTLPolicy
+  definition: Configuration policy controlling how long inactive 
+    SearchSessionDirectory data remains after last access.
+  properties:
+  - Has a default code constant.
+  - Is emitted by the configuration generator.
+  - Is validated by the configuration validator.
+  - Rejects missing, invalid, non-integer, zero, negative, or out-of-range 
+    values according to policy.
+  source_ranges:
+  - start: 33
+    end: 33
+  - start: 84
+    end: 90
+- concept_id: C-008
+  name: ServerProcessIdentity
+  definition: Identity of the main server process that created or owns a 
+    SearchSession, used to detect sessions whose owning process is gone or whose
+    PID was reused.
+  properties:
+  - Includes main_pid.
+  - Includes process_start_time to detect PID reuse.
+  - May include host and instance_id when available.
+  - A missing process or mismatched process_start_time makes the session dead or
+    orphaned.
+  source_ranges:
+  - start: 86
+    end: 86
+- concept_id: C-009
+  name: SessionHeartbeat
+  definition: Periodic liveness timestamp written by the search execution path 
+    while a SearchSession is running.
+  properties:
+  - Stored as heartbeat_at in SearchSessionManifest.
+  - Distinguishes a live search with no ready pages from a stuck or dead worker.
+  - Older-than-hard-timeout heartbeat marks a running session as timed_out or 
+    orphaned.
+  source_ranges:
+  - start: 88
+    end: 88
+- concept_id: C-010
+  name: DeadSessionDetection
+  definition: Rule set for deciding that a SearchSession is dead or orphaned 
+    based on server process identity and heartbeat state.
+  properties:
+  - Treats missing main_pid as dead.
+  - Treats process_start_time mismatch as dead because PID reuse is possible.
+  - Treats stale heartbeat beyond hard timeout as timed_out or orphaned.
+  - May be applied by status reads and by the background cleaner.
+  source_ranges:
+  - start: 86
+    end: 88
+  - start: 90
+    end: 90
+- concept_id: C-011
+  name: BackgroundSessionCleaner
+  definition: Background maintenance process that removes expired, closed, or 
+    dead SearchSessionDirectory trees according to TTL, status, process 
+    identity, and heartbeat rules.
+  properties:
+  - Runs independently of client result access.
+  - Deletes completed, failed, cancelled, timed_out, closed, expired, and dead 
+    sessions after policy allows cleanup.
+  - Must not delete live running sessions whose process identity and heartbeat 
+    are valid.
+  - Detects orphan running sessions through DeadSessionDetection.
+  source_ranges:
+  - start: 90
+    end: 90
+- concept_id: C-012
+  name: IndexedFileSet
+  definition: Set of files that can be searched through the database or index 
+    because their indexed state is fresh for current disk content.
+  properties:
+  - Built from intersection of database-known files and disk files.
+  - Requires checksum or modification metadata validation.
+  - Excludes stale, changed, missing, draft-only, or unavailable-index files.
+  - Must not be rescanned directly by dynamic grep when current.
+  source_ranges:
+  - start: 11
+    end: 17
+- concept_id: C-013
+  name: DynamicFileSet
+  definition: Set of files that must be processed directly from disk or draft 
+    session because they are missing, stale, changed, unindexed, draft-only, or 
+    unavailable in the index.
+  properties:
+  - Derived from disk files minus the fresh IndexedFileSet.
+  - Processed dynamically through the same tree construction path as the indexer
+    when structural processing is required.
+  - Scans only supported formats by default.
+  source_ranges:
+  - start: 11
+    end: 17
+  - start: 55
+    end: 55
+  - start: 67
+    end: 69
+- concept_id: C-014
+  name: FreshnessValidation
+  definition: Validation step that decides whether an indexed file 
+    representation still matches current file content.
+  properties:
+  - Uses checksums and/or modification metadata.
+  - Moves stale indexed files into DynamicFileSet.
+  - Follows the same principle as tree sidecar validation.
+  source_ranges:
+  - start: 15
+    end: 17
+  - start: 41
+    end: 41
+- concept_id: C-015
+  name: TreeRepresentation
+  definition: Stable structural representation for supported files, including 
+    JSON, YAML, Python CST, Markdown, and text represented as paragraphs and 
+    lines.
+  properties:
+  - Available for every supported file.
+  - Maintains stable node identifiers comparable to Python CST sidecar 
+    identifiers.
+  - Is validated using checksum or equivalent freshness metadata before 
+    structural processing.
+  - Is recreated when missing or invalid.
+  source_ranges:
+  - start: 37
+    end: 43
+- concept_id: C-016
+  name: XPathLikeFilter
+  definition: Universal structural filter that evaluates XPath-like queries over
+    validated TreeRepresentation data from multiple sources.
+  properties:
+  - Operates on validated tree representations, not ad-hoc text.
+  - Works with database-backed structural data, indexer in-memory structures, 
+    dynamic trees, and draft-session content.
+  - Returns only matching tree nodes.
+  - Shares structure model, node identifiers, and selector semantics with the 
+    indexer.
+  source_ranges:
+  - start: 47
+    end: 55
+- concept_id: C-017
+  name: PreviewReference
+  definition: Reference embedded in a search result that is sufficient to 
+    inspect the result through universal_file_preview.
+  properties:
+  - Includes file path and node identifier or selector.
+  - Includes draft session identifier for draft-session results.
+  - Must not expose unstable node identifiers.
+  - Is the canonical result presentation mechanism for structural results.
+  source_ranges:
+  - start: 43
+    end: 43
+  - start: 59
+    end: 63
+- concept_id: C-018
+  name: StructuralEvidence
+  definition: Search evidence that is valid only when backed by a validated 
+    TreeRepresentation and a preview-compatible result node or block.
+  properties:
+  - Required when grep participates in project cross-search as structural 
+    evidence.
+  - Line-only grep is not structural evidence unless converted into validated 
+    preview-compatible nodes.
+  - Timed-out dynamic or structural phases must not contribute invalid partial 
+    structural evidence.
+  source_ranges:
+  - start: 63
+    end: 63
+  - start: 69
+    end: 75
+- concept_id: C-019
+  name: GrepSearchMode
+  definition: Explicit operating mode of fs_grep, either classic line grep or 
+    preview-compatible structural grep.
+  properties:
+  - Classic line grep returns line-oriented text matches and is opt-in.
+  - Structural mode validates or creates a file tree, maps matches to nodes or 
+    blocks, and returns PreviewReference data.
+  - Structural mode is the default.
+  - Classic line grep must not count as project cross-search structural evidence
+    unless converted.
+  source_ranges:
+  - start: 69
+    end: 69
+- concept_id: C-020
+  name: SearchStatus
+  definition: SearchSession state and phase model exposed to clients while 
+    search generation proceeds or terminates.
+  properties:
+  - Exposes running, completed, failed, cancelled, timed_out, and dead states.
+  - Exposes current phase such as indexed search, dynamic file discovery, tree 
+    validation, tree reconstruction, XPath filtering, page writing, or 
+    completion.
+  - Distinguishes page-not-ready from whole-search failure.
+  source_ranges:
+  - start: 25
+    end: 27
+  - start: 73
+    end: 75
+- concept_id: C-021
+  definition: A currently working search, preview, queue, or status command 
+    whose existing public behavior must remain valid during the migration.
+  name: ExistingSearchCommand
+  properties:
+  - Represents already implemented behavior, not new behavior.
+  - Keeps current non-paginated behavior as the default for existing callers.
+  - Must not be replaced by an incompatible greenfield subsystem.
+  - May be extended through optional parameters or compatible bridge commands.
+  source_ranges:
+  - end: 102
+    start: 92
+- concept_id: C-022
+  definition: Compatibility layer that adds paginated and session-backed 
+    behavior around existing command implementations without breaking current 
+    callers.
+  name: IncrementalCompatibilityLayer
+  properties:
+  - Adds pagination as an opt-in behavior.
+  - May route paginated execution through SearchSession.
+  - Preserves existing validation, schemas, queue behavior, timeout behavior, 
+    direct payloads, structural results, and preview references.
+  - Must avoid duplicating working search logic.
+  source_ranges:
+  - end: 102
+    start: 92
+- concept_id: C-023
+  definition: Public command contract that keeps current behavior stable while 
+    allowing optional paginated extensions.
+  name: BackwardCompatibleCommandContract
+  properties:
+  - Current behavior remains default.
+  - New pagination fields are optional.
+  - Existing callers do not need to change.
+  - Bridge commands must be documented when used.
+  source_ranges:
+  - end: 102
+    start: 92
+- concept_id: C-024
+  definition: Optional request or response fields that enable 
+    paginated/session-backed behavior without changing default command behavior.
+  name: OptionalPaginationParameters
+  properties:
+  - May include paginated, page_size, cursor, search_id, include_search_id, or 
+    HTTP page references.
+  - Must not be required for existing non-paginated callers.
+  - Must be documented in command schemas and metadata when exposed.
+  source_ranges:
+  - end: 102
+    start: 92
+- concept_id: C-025
+  definition: Inventory that separates behavior already present in the codebase 
+    from behavior introduced by this plan.
+  name: ExistingBehaviorInventory
+  properties:
+  - Identifies which search behaviors already exist.
+  - Identifies which paging/session behaviors are new.
+  - Prevents the implementation plan from duplicating existing search logic.
+  - Helps global steps target migration work instead of greenfield replacement.
+  source_ranges:
+  - end: 102
+    start: 92
+relations:
+- from_concept: C-001
+  to_concept: C-002
+  type: owns
+  description: SearchSession owns the session directory that stores its files 
+    and metadata.
+  source_ranges:
+  - start: 21
+    end: 21
+- from_concept: C-002
+  to_concept: C-003
+  type: owns
+  description: SearchSessionDirectory owns the manifest that records state and 
+    metrics.
+  source_ranges:
+  - start: 31
+    end: 33
+- from_concept: C-002
+  to_concept: C-004
+  type: owns
+  description: SearchSessionDirectory owns immutable page files.
+  source_ranges:
+  - start: 21
+    end: 21
+- from_concept: C-005
+  to_concept: C-004
+  type: consumes
+  description: HTTPResultAccess reads published page files.
+  source_ranges:
+  - start: 25
+    end: 31
+- from_concept: C-005
+  to_concept: C-006
+  type: produces
+  description: HTTPResultAccess refreshes last access timestamp on page, status,
+    or manifest reads.
+  source_ranges:
+  - start: 31
+    end: 31
+- from_concept: C-007
+  to_concept: C-006
+  type: uses
+  description: SessionTTLPolicy uses last access timestamp to determine 
+    expiration.
+  source_ranges:
+  - start: 31
+    end: 33
+- from_concept: C-003
+  to_concept: C-008
+  type: owns
+  description: SearchSessionManifest stores main server process identity.
+  source_ranges:
+  - start: 86
+    end: 86
+- from_concept: C-003
+  to_concept: C-009
+  type: owns
+  description: SearchSessionManifest stores heartbeat information for running 
+    searches.
+  source_ranges:
+  - start: 88
+    end: 88
+- from_concept: C-010
+  to_concept: C-008
+  type: uses
+  description: DeadSessionDetection uses main PID and process start time to 
+    detect missing or reused server processes.
+  source_ranges:
+  - start: 86
+    end: 86
+- from_concept: C-010
+  to_concept: C-009
+  type: uses
+  description: DeadSessionDetection uses stale heartbeat to detect stuck or 
+    orphan sessions.
+  source_ranges:
+  - start: 88
+    end: 88
+- from_concept: C-011
+  to_concept: C-010
+  type: uses
+  description: BackgroundSessionCleaner uses dead-session detection before 
+    deleting orphaned running sessions.
+  source_ranges:
+  - start: 90
+    end: 90
+- from_concept: C-011
+  to_concept: C-002
+  type: consumes
+  description: BackgroundSessionCleaner removes session directories when cleanup
+    policy allows it.
+  source_ranges:
+  - start: 90
+    end: 90
+- from_concept: C-014
+  to_concept: C-012
+  type: produces
+  description: FreshnessValidation determines which indexed files remain fresh.
+  source_ranges:
+  - start: 13
+    end: 17
+- from_concept: C-014
+  to_concept: C-013
+  type: produces
+  description: FreshnessValidation moves stale or changed files into the dynamic
+    file set.
+  source_ranges:
+  - start: 13
+    end: 17
+- from_concept: C-013
+  to_concept: C-015
+  type: uses
+  description: Dynamic file processing uses the same tree construction path as 
+    the indexer.
+  source_ranges:
+  - start: 55
+    end: 55
+- from_concept: C-016
+  to_concept: C-015
+  type: uses
+  description: XPathLikeFilter operates on validated tree representations.
+  source_ranges:
+  - start: 47
+    end: 49
+- from_concept: C-016
+  to_concept: C-017
+  type: produces
+  description: XPath-like filtering produces preview-compatible node references 
+    for matching nodes.
+  source_ranges:
+  - start: 59
+    end: 61
+- from_concept: C-018
+  to_concept: C-015
+  type: depends_on
+  description: StructuralEvidence depends on validated tree representation.
+  source_ranges:
+  - start: 63
+    end: 75
+- from_concept: C-018
+  to_concept: C-017
+  type: depends_on
+  description: StructuralEvidence depends on preview-compatible result 
+    references.
+  source_ranges:
+  - start: 59
+    end: 63
+- from_concept: C-019
+  to_concept: C-018
+  type: produces
+  description: Structural grep mode produces structural evidence, while classic 
+    line grep does not unless converted.
+  source_ranges:
+  - start: 69
+    end: 69
+- from_concept: C-001
+  to_concept: C-020
+  type: owns
+  description: SearchSession owns and exposes its current status and phase.
+  source_ranges:
+  - start: 73
+    end: 75
+- description: IncrementalCompatibilityLayer builds on existing working 
+    commands.
+  from_concept: C-022
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-021
+  type: uses
+- description: ExistingSearchCommand owns a backward-compatible public contract.
+  from_concept: C-021
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-023
+  type: owns
+- description: OptionalPaginationParameters extend the command contract without 
+    changing default behavior.
+  from_concept: C-024
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-023
+  type: extends
+- description: ExistingBehaviorInventory depends on inspecting existing working 
+    commands.
+  from_concept: C-025
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-021
+  type: depends_on
+- description: SearchSession-backed behavior extends existing command behavior 
+    when pagination is requested; it does not replace the command by default.
+  from_concept: C-001
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-021
+  type: extends
+- description: IncrementalCompatibilityLayer may route paginated execution 
+    through SearchSession.
+  from_concept: C-022
+  source_ranges:
+  - end: 102
+    start: 92
+  to_concept: C-001
+  type: uses

@@ -38,7 +38,7 @@ def process_rpc_request(handlers: RPCHandlers, request: RPCRequest) -> RPCRespon
     method = request.method
     params = request.params if isinstance(request.params, dict) else {}
     tid = params.get("transaction_id")
-    logger.info(
+    logger.debug(
         "[CHAIN] rpc_dispatch process_rpc_request method=%s tid=%s",
         method,
         (str(tid)[:8] + "…") if tid and len(str(tid)) > 8 else tid,

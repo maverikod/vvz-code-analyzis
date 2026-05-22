@@ -1,0 +1,50 @@
+step_id: T-006
+parent_global_step: G-003
+name: Foreground paging handoff contract
+description: "Define the foreground search response paging handoff used when a search
+  starts: the caller receives the first ready SearchPageFile (C-004) content directly
+  in the immediate response, a continuation reference via HTTPResultAccess (C-005)
+  for retrieving later published pages, and an explicit indication that generation
+  continues in the background while later pages may still be pending. Later-page deferral
+  when a requested page is not yet published follows the page-not-ready contract defined
+  by HTTPResultAccess page retrieval, without restating that contract's rules here.\n"
+concepts:
+- C-002
+- C-004
+- C-005
+inputs:
+- name: search_session_identifier
+  type: search identifier
+  description: "Identifier assigned to the search session directory that owns page
+    files.\n"
+- name: first_published_page
+  type: SearchPageFile
+  description: "First immutable published page available at foreground response time.\n"
+- name: subsequent_page_availability
+  type: availability state
+  description: "Whether a second or later page already exists or is expected while
+    background generation continues.\n"
+- name: background_generation_state
+  type: running indicator
+  description: "Whether result generation continues after the foreground response
+    is sent.\n"
+- name: page_not_ready_response
+  type: deferred response contract
+  description: "Page-retrieval facet contract from HTTPResultAccess used when a later-page
+    request is not yet published.\n"
+outputs:
+- name: inline_first_page_payload
+  type: published page content
+  description: "First page result records delivered directly in the immediate search
+    response.\n"
+- name: continuation_page_reference
+  type: session page reference
+  description: "Reference tied to the search session identifier for retrieving later
+    ready pages through HTTPResultAccess (C-005).\n"
+- name: background_running_indication
+  type: status indication
+  description: "Explicit signal that generation is still running and later pages may
+    become available asynchronously.\n"
+atomic_steps:
+- A-001
+status: draft

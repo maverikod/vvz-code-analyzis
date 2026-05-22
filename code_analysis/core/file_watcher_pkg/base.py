@@ -137,7 +137,7 @@ class FileWatcherWorker:
                 from datetime import datetime
 
                 cycle_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(
+                logger.debug(
                     f"[CYCLE #{total_stats['cycles']}] {cycle_time} | "
                     f"scanned_dirs: {cycle_stats.get('scanned_dirs', 0)} | "
                     f"new_files: {cycle_stats.get('new_files', 0)} | "

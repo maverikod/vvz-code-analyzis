@@ -107,11 +107,15 @@ register_auto_import_module("code_analysis.commands.universal_file_preview_comma
 register_auto_import_module("code_analysis.commands.sessions.session_create_command")
 register_auto_import_module("code_analysis.commands.sessions.session_delete_command")
 register_auto_import_module("code_analysis.commands.sessions.session_list_command")
+register_auto_import_module("code_analysis.commands.sessions.session_view_command")
 register_auto_import_module("code_analysis.commands.sessions.session_open_file_command")
 register_auto_import_module(
     "code_analysis.commands.sessions.session_close_file_command"
 )
 register_auto_import_module(
     "code_analysis.commands.sessions.session_list_file_locks_command"
+)
+register_auto_import_module(
+    "code_analysis.commands.sessions.subordinate_session_commands"
 )
 register_auto_import_module("code_analysis.commands.project_cross_search_command")

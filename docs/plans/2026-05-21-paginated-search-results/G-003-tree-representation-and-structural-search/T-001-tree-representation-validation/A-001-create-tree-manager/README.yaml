@@ -1,0 +1,54 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Create tree representation validation and recreation module
+target_file: code_analysis/search_session/tree_manager.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-015
+prompt: "Create the file `code_analysis/search_session/tree_manager.py`.\n\n## MRS
+  excerpt\n\nC-015 TreeRepresentation: Stable structural representation for supported\n\
+  files, including JSON, YAML, Python CST, Markdown, and text as paragraphs\nand lines.\n\
+  Properties:\n  - Available for every supported file.\n  - Maintains stable node
+  identifiers comparable to Python CST sidecar\n    identifiers.\n  - Is validated
+  using checksum or equivalent freshness metadata before\n    structural processing.\n\
+  \  - Is recreated when missing or invalid.\n\n## Implementation requirements\n\n\
+  Imports: `enum`, `hashlib`, `json`, `pathlib`, `typing`.\n\n1. Define `class TreeFormat(str,
+  enum.Enum)` with members:\n   `JSON = \"json\"`, `YAML = \"yaml\"`, `PYTHON_CST
+  = \"python_cst\"`,\n   `MARKDOWN = \"markdown\"`, `TEXT = \"text\"`.\n\n2. Define
+  `SUPPORTED_EXTENSIONS: typing.Dict[str, TreeFormat]`:\n   `{\".json\": TreeFormat.JSON,
+  \".yaml\": TreeFormat.YAML,\n    \".yml\": TreeFormat.YAML, \".py\": TreeFormat.PYTHON_CST,\n\
+  \    \".md\": TreeFormat.MARKDOWN, \".txt\": TreeFormat.TEXT}`.\n\n3. Define `def
+  get_tree_format(file_path: pathlib.Path)\n       -> typing.Optional[TreeFormat]`:\n\
+  \   Returns `SUPPORTED_EXTENSIONS.get(file_path.suffix.lower())`.\n\n4. Define `def
+  compute_tree_checksum(file_path: pathlib.Path) -> str`:\n   - Reads file in binary
+  mode in 65536-byte chunks.\n   - Returns SHA-256 hex digest.\n\n5. Define `def sidecar_path(file_path:
+  pathlib.Path) -> pathlib.Path`:\n   - Returns `file_path.parent / \".cst\" / (file_path.name
+  + \".tree\")`.\n\n6. Define `def is_tree_valid(\n       file_path: pathlib.Path,\n\
+  \       current_checksum: str,\n   ) -> bool`:\n   - Reads sidecar at `sidecar_path(file_path)`
+  as JSON.\n   - Checks that the sidecar contains key `\"file_checksum\"` equal to\n\
+  \     `current_checksum`.\n   - Returns False if the sidecar does not exist or the
+  checksum mismatches.\n\n7. Define `def ensure_tree(\n       file_path: pathlib.Path,\n\
+  \   ) -> typing.Dict`:\n   - Computes `current_checksum = compute_tree_checksum(file_path)`.\n\
+  \   - If `is_tree_valid(file_path, current_checksum)` is True:\n     reads and returns
+  the sidecar JSON as a dict.\n   - Otherwise calls `rebuild_tree(file_path, current_checksum)`
+  and returns\n     the result.\n\n8. Define `def rebuild_tree(\n       file_path:
+  pathlib.Path,\n       checksum: str,\n   ) -> typing.Dict`:\n   - Creates sidecar
+  directory `sidecar_path(file_path).parent` if absent.\n   - Constructs a minimal
+  tree dict:\n     `{\"file_path\": str(file_path), \"file_checksum\": checksum,\n\
+  \      \"format\": get_tree_format(file_path).value\n      if get_tree_format(file_path)
+  else \"unknown\", \"nodes\": []}`.\n   - Writes the dict as JSON to `sidecar_path(file_path)`
+  (atomic: temp + rename).\n   - Returns the dict.\n   - Note: actual CST parsing
+  is delegated to the existing CST subsystem;\n     this function writes the sidecar
+  scaffold so the checksum-validation\n     contract is satisfied even when nodes
+  are populated later.\n\n## Constraints\n- No third-party imports.\n- All public
+  names must have docstrings.\n- Tree sidecar write must use temp file + os.replace
+  (atomic).\n"
+verification:
+  type: import
+  target: code_analysis/search_session/tree_manager.py
+  expected: Module imports without error. `TreeFormat.JSON` exists. 
+    `ensure_tree`, `sidecar_path`, `is_tree_valid`, `rebuild_tree` are all 
+    callable.
+status: draft

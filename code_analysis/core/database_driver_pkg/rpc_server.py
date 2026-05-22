@@ -258,7 +258,7 @@ class RPCServer:
                     rpc_request,
                     priority=priority,
                 )
-                logger.info(
+                logger.debug(
                     "[CHAIN] rpc_server request_enqueued method=%s request_id=%s "
                     "queue_depth=%s",
                     rpc_request.method,
@@ -295,7 +295,7 @@ class RPCServer:
                     if pending_entry:
                         response = pending_entry[2]
                     if response is None:
-                        logger.info(
+                        logger.debug(
                             "[CHAIN] rpc_server client_wait_timeout method=%s "
                             "request_id=%s queue_depth=%s",
                             rpc_request.method,
@@ -345,7 +345,7 @@ class RPCServer:
                     continue
 
                 wait_ms = (time.time() - queued_request.created_at) * 1000.0
-                logger.info(
+                logger.debug(
                     "[SAVE_PATH] rpc_server dequeue request_id=%s wait_ms=%.1f method=%s",
                     _short_request_id(queued_request.request_id),
                     wait_ms,

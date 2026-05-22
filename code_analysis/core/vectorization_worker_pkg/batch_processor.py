@@ -453,7 +453,7 @@ async def process_embedding_ready_chunks(
     )
     chunks = chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
     step_duration = time.time() - step_start
-    logger.info(f"[TIMING] Retrieved {len(chunks)} chunks in {step_duration:.3f}s")
+    logger.debug(f"[TIMING] Retrieved {len(chunks)} chunks in {step_duration:.3f}s")
     log_operation_timing(
         getattr(self, "log_timing", False),
         logger,

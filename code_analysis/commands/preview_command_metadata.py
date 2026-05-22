@@ -70,7 +70,9 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "node_ref": {
                 "description": (
                     "Stable node identifier in the file handler's native format. "
-                    "Omit for the file root. Use a node_ref value from a previous response to drill down."
+                    "Omit for the file root (empty or whitespace-only string is treated "
+                    "the same as omitted). Use a node_ref value from a previous response "
+                    "to drill down."
                 ),
                 "type": "string",
                 "required": False,

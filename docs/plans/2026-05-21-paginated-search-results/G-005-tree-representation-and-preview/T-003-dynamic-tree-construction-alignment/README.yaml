@@ -1,0 +1,46 @@
+step_id: T-003
+parent_global_step: G-005
+name: Dynamic tree construction alignment
+description: "Define how DynamicFileSet (C-013) consumes TreeRepresentation (C-015)
+  during\ndirect dynamic processing. Require dynamic file processing to build or refresh\n\
+  trees through the same tree construction path used by the indexer so structure\n\
+  model, node identifiers, and selector semantics remain consistent regardless of\n\
+  whether the tree source is indexer memory, persisted index data, or a dynamically\n\
+  created artifact. Explicitly exclude vectorization from tree creation\nprerequisites:
+  vectorization remains a separate downstream phase and must not be\nrequired to produce
+  TreeRepresentation, apply structural filtering, run direct\ndynamic search, or generate
+  preview material. Bind the parent relation that\nDynamicFileSet uses TreeRepresentation
+  by making shared construction the only\nsupported dynamic tree acquisition path
+  for files in the dynamic set.\n"
+concepts:
+- C-013
+- C-015
+inputs:
+- name: dynamic_file_membership
+  type: file set designation
+  description: Files already classified as DynamicFileSet (C-013) by upstream 
+    freshness selection; this step consumes membership without re-deriving 
+    selection rules.
+- name: indexer_tree_construction_path
+  type: construction pathway contract
+  description: The canonical tree construction pathway used by the indexer that 
+    dynamic processing must reuse per parent source line 55.
+- name: validated_or_recreatable_tree_state
+  type: TreeRepresentation readiness contract
+  description: TreeRepresentation (C-015) readiness requirements—checksum-based 
+    validity evaluation before any structural processing begins, and mandatory 
+    recreation when the tree artifact is missing or fails validity checks—so 
+    dynamic processing receives ready trees rather than ad-hoc text structures.
+outputs:
+- name: aligned_dynamic_tree_construction_contract
+  type: processing contract
+  description: Requirement that DynamicFileSet processing acquires 
+    TreeRepresentation exclusively through the indexer-equivalent construction 
+    path with vectorization omitted from tree-creation prerequisites.
+- name: dynamic_tree_representation_instances
+  type: TreeRepresentation collection
+  description: TreeRepresentation artifacts or in-memory equivalents produced 
+    for dynamic-set files through the aligned construction path.
+atomic_steps:
+- A-001
+status: draft

@@ -1,0 +1,29 @@
+step_id: T-007
+parent_global_step: G-001
+name: Search Status State and Phase Model
+description: "Creates the SearchStatus (C-020) entity as the state and phase model
+  for a SearchSession. Defines the terminal and non-terminal states: running, completed,
+  failed, cancelled, timed_out, dead, expired, closed. Defines the phase enumeration:
+  indexed_search, dynamic_file_discovery, tree_validation, tree_reconstruction, xpath_filtering,
+  page_writing, completion. Defines the rule that a page-not-ready response is not
+  a whole-search failure. The SearchStatus is owned by SearchSession (C-001) and is
+  exposed to clients through HTTPResultAccess status reads.\n"
+concepts:
+- C-020
+inputs:
+- name: session_state
+  type: one of [running, completed, failed, cancelled, timed_out, dead, expired,
+    closed]
+  description: Current terminal or non-terminal state of the SearchSession.
+- name: current_phase
+  type: one of [indexed_search, dynamic_file_discovery, tree_validation, 
+    tree_reconstruction, xpath_filtering, page_writing, completion]
+  description: Current execution phase within the running session.
+outputs:
+- name: search_status
+  type: SearchStatus (C-020)
+  description: Status object combining state and phase, ready to be written into
+    the SearchSessionManifest and returned by status reads.
+atomic_steps:
+- A-001
+status: draft

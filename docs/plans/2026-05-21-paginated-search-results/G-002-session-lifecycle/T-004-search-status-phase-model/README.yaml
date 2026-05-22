@@ -1,0 +1,27 @@
+step_id: T-004
+parent_global_step: G-002
+name: Search status and phase model
+description: "Define the SearchStatus state and phase vocabulary owned by SearchSession
+  and exposed while result generation proceeds or terminates. Specify lifecycle states
+  running, completed, failed, cancelled, timed_out, dead, expired, and closed. Specify
+  operational phases including indexed search, dynamic file discovery, tree validation,
+  tree reconstruction, XPath filtering, page writing, and completion. Require that
+  a running session whose requested result page is not yet available is semantically
+  distinct from whole-search failure. Bind status and phase values to the manifest
+  fields that HTTP readers and clients consume for progress inspection.\n"
+concepts:
+- C-001
+- C-020
+inputs:
+- name: search_session
+  type: SearchSession
+  description: Session whose lifecycle states and operational phases are modeled
+    by SearchStatus.
+outputs:
+- name: search_status_model
+  type: SearchStatus
+  description: Canonical state and phase model linked to SearchSession and 
+    reflected in manifest status and phase fields.
+atomic_steps:
+- A-001
+status: draft

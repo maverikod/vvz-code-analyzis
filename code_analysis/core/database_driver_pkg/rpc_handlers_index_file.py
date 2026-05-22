@@ -72,7 +72,7 @@ class _RPCHandlersIndexFileMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="index_file requires file_path and project_id",
             )
-        logger.info(
+        logger.debug(
             "[index_file] Starting: file_path=%s project_id=%s",
             file_path,
             project_id,
@@ -208,7 +208,7 @@ class _RPCHandlersIndexFileMixin:
                 # Best-effort cleanup; ignore FK/IO errors on delete from indexing_errors
                 pass
 
-            logger.info(
+            logger.debug(
                 "[index_file] Completed: file_path=%s success=True",
                 update_result.get("file_path", file_path),
             )

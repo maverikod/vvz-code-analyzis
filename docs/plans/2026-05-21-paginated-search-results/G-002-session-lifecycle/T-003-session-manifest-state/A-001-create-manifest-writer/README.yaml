@@ -1,0 +1,46 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Create ManifestWriter for session manifest state persistence
+target_file: code_analysis/search_session/manifest_writer.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-003
+- C-008
+- C-009
+prompt: "Create `code_analysis/search_session/manifest_writer.py`.\n\n## MRS excerpt\n\
+  \nC-003 SearchSessionManifest: machine-readable state file inside a\nSearchSessionDirectory.
+  Stores request context, process identity (C-008:\nmain_pid, process_start_time,
+  optionally host and instance_id), heartbeat\n(C-009: heartbeat_at timestamp), metrics
+  (produced_result_count,\nwritten_page_count, scanned_file_count, warning_count,
+  error_count), status,\ncurrent phase, page readiness map, and last_access_at. Supports
+  concurrent\naccess by search worker, HTTP readers, and background cleaner through
+  atomic\nwrite (write to temp file then rename).\n\n## Implementation requirements\n\
+  \n1. Import `dataclasses`, `datetime`, `json`, `pathlib`, `tempfile`, `os`.\n\n\
+  2. Define `@dataclasses.dataclass` class `ManifestData`:\n   - Fields: `search_id:
+  str`, `status: str`, `phase: str`,\n     `main_pid: int`, `process_start_time: float`,\n\
+  \     `heartbeat_at: str`, `last_access_at: str`,\n     `produced_result_count:
+  int = 0`,\n     `written_page_count: int = 0`,\n     `scanned_file_count: int =
+  0`,\n     `warning_count: int = 0`,\n     `error_count: int = 0`,\n     `page_readiness:
+  dict = dataclasses.field(default_factory=dict)`.\n   - Method `to_dict(self) ->
+  dict`: returns `dataclasses.asdict(self)`.\n\n3. Define class `ManifestWriter`:\n\
+  \   - Constructor: `__init__(self, session_dir: pathlib.Path)`.\n   - Method `write(self,
+  data: ManifestData) -> None`:\n     - Serialises `data.to_dict()` to JSON.\n   \
+  \  - Writes to a temp file in `session_dir`, then atomically renames\n       to
+  `session_dir / 'manifest.json'`.\n   - Method `read(self, session_dir: pathlib.Path)
+  -> ManifestData`:\n     - Reads and parses `session_dir / 'manifest.json'`.\n  \
+  \   - Returns `ManifestData(**parsed_dict)`.\n   - Method `update_heartbeat(self)
+  -> None`:\n     - Reads current manifest, sets `heartbeat_at` to current UTC ISO\n\
+  \       string, writes back atomically.\n   - Method `update_last_access(self) ->
+  None`:\n     - Reads current manifest, sets `last_access_at` to current UTC ISO\n\
+  \       string, writes back atomically.\n\n## Constraints\n- Standard library only.\n\
+  - All public names have one-line docstrings.\n- File under 120 lines.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/manifest_writer.py
+  expected: Module imports without error. ManifestWriter.write creates 
+    manifest.json in the session directory. ManifestWriter.read parses it back 
+    to ManifestData. update_heartbeat and update_last_access update their 
+    respective fields atomically.
+status: draft

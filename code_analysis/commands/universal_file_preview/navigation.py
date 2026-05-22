@@ -28,6 +28,7 @@ from .handlers.yaml_handler import YamlFileHandler
 from .models import Block, NavigationResult, Node, NodeKind
 from .selector import apply_selector
 from .session import resolve_session
+from .node_ref_params import normalize_optional_node_ref
 from .tree_temp_preview_focus import (
     TreeTempPreviewResolveError,
     looks_like_sidecar_stable_id,
@@ -79,7 +80,7 @@ def navigate(
     if isinstance(open_result, PreviewError):
         return open_result
     focus_node: Node = open_result
-    node_ref_raw = params.get("node_ref")
+    node_ref_raw = normalize_optional_node_ref(params.get("node_ref"))
     roots_for_tree_preview = params.get("tree_temp_roots")
     uuid_sidecar = looks_like_sidecar_stable_id(node_ref_raw)
     tree_temp_sidecar_preview = (

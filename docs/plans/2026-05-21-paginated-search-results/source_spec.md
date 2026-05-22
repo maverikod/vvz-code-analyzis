@@ -16,15 +16,15 @@ Freshness validation must use checksums and/or modification metadata. If a file 
 
 Files processed through the database must not be rescanned directly when their indexed state is current. Direct scanning exists to cover missing, stale, unindexed, draft, or unavailable-index cases. This prevents grep/direct search from duplicating full-text database search for unchanged indexed files.
 
-## 3. Search Session Paging Model
+## 3. Search Job Paging Model
 
-Search result generation must not return one large unbounded response. Results must be written into page/block files in a temporary response directory associated with a search identifier. The model receives the first page directly and receives a reference to the second page when it exists.
+Search result generation must not return one large unbounded response. Results must be written into page files in a job result directory associated with a search job identifier (job_id). The `search_start` command blocks until the first two page files are written to disk, then returns the job_id and a URL reference to page 1.
 
-After the second result page is written, the remaining result generation process must continue in the background. The foreground response must indicate that generation is still running and must expose status information that allows the client to know whether later pages are already available.
+Each page file is a JSON object containing a bounded list of result records, a `next` field, and a `done` field. The `next` field holds the URL of the next page when that page has been written to disk, or null when the next page is not yet available. The `done` field is false for all intermediate pages and must be true only on the last page of a completed or terminated job. When a new page N is written to disk, page N-1 must be updated to set its `next` field to the URL of page N. Both the initial page write and the subsequent `next` field update must be performed atomically using a temporary file and rename.
 
-If the model requests a page whose previous page exists but whose requested page has not yet been generated, the response must clearly state that the search is still running and that the requested page is not ready yet. This must not be reported as a failure of the whole search.
+After `search_start` returns, remaining result generation continues in the background. The client follows the `next` chain to retrieve subsequent pages. When the client reaches a page where `next` is null and `done` is false, the job is still running and that page is the last written page so far; the client must poll by re-requesting the same page URL until `next` becomes non-null or `done` becomes true.
 
-Tree-query results must participate in the same paginated search-session mechanism as other search sources. XPath-like search over a large set of files may produce early pages while the remaining tree validation and node filtering continue in the background.
+Tree-query results must participate in the same paging mechanism as other search sources. XPath-like search over a large set of files may produce early pages while the remaining tree validation and node filtering continue in the background.
 
 ## 4. Search Response Lifetime and Configuration
 
@@ -77,30 +77,30 @@ Hard timeout and cancellation rules must apply to dynamic scanning, tree reconst
 
 ## 10. Session Manifest, Process Identity, and Cleanup
 
-When a model or client starts a search, the server must immediately create a dedicated search session directory before search execution begins. The directory stores the session manifest, page files, temporary page writes, and service metadata for that search.
+## 10. Job Directory, Process Identity, and Cleanup
 
-
+When a model or client starts a search, the server must immediately create a dedicated job result directory before search execution begins. The directory stores the job manifest, page files, and service metadata for that search job.
 Search session manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
 
-Search result records must be appended progressively by the running search process and published as separate immutable page files. Clients retrieve ready pages through ordinary HTTP requests; the implementation must not require streaming transport for normal result inspection.
+Job manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
 
-Every successful HTTP access to a session page, status, or manifest must refresh the session last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
+Search result records are written progressively into page files by the running search process. Clients retrieve ready pages through ordinary HTTP requests to the job result endpoint; the implementation must not require streaming transport for normal result inspection.
 
-Temporary page writes must be finalized through atomic page publication. Clients and HTTP readers must consume only finalized immutable page files and must never observe partially written page content.
+Every successful HTTP access to a job page, status, or manifest must refresh the job last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
 
 The session manifest must include the identity of the main server process that owns the session. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the session is dead or orphaned.
 
-A running search must update a heartbeat timestamp in the session manifest. A running session whose heartbeat is older than the hard timeout must be treated as timed out or orphaned even if its last-access timestamp was recently refreshed.
+The job manifest must include the identity of the main server process that owns the job. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the job is dead or orphaned.
 
-A background session cleaner must periodically inspect search session directories and remove sessions that are expired, closed, completed beyond TTL, failed beyond TTL, cancelled beyond TTL, timed out beyond policy, or dead/orphaned by process identity and heartbeat checks. The cleaner must not delete a live running session whose process identity and heartbeat are valid.
+A running search must update a heartbeat timestamp in the job manifest. A running job whose heartbeat is older than the hard timeout must be treated as timed out or orphaned even if its last-access timestamp was recently refreshed.
 
-## 11. Existing Command Compatibility and Incremental Migration
+A background job cleaner must periodically inspect job result directories and remove jobs that are expired, closed, completed beyond TTL, failed beyond TTL, cancelled beyond TTL, timed out beyond policy, or dead/orphaned by process identity and heartbeat checks. The cleaner must not delete a live running job whose process identity and heartbeat are valid.
 
 The plan must extend existing working search behavior instead of replacing it.
 
 Current behavior remains the default for existing callers.
 
-Paginated session-backed behavior is opt-in or exposed through compatible bridge commands.
+Paginated job-backed behavior is opt-in or exposed through compatible bridge commands.
 
 Migration must preserve current validation, schemas, queue behavior, timeouts, direct payloads, structural results, and preview references.
 

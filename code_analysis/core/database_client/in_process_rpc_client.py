@@ -86,7 +86,7 @@ class InProcessRpcClient:
             request_id=request_id,
         )
         tid = (params or {}).get("transaction_id") if isinstance(params, dict) else None
-        logger.info(
+        logger.debug(
             "[CHAIN] in_process_rpc call method=%s tid=%s request_id=%s",
             method,
             (tid[:8] + "…") if tid and len(str(tid)) > 8 else tid,
@@ -108,14 +108,14 @@ class InProcessRpcClient:
             raise RPCClientError(f"RPC call failed: {e}") from e
 
         elapsed_ms = (time.perf_counter() - t_rpc) * 1000.0
-        logger.info(
+        logger.debug(
             "[SAVE_PATH] in_process_rpc method=%s request_id=%s elapsed_ms=%.1f",
             method,
             _short_request_id(request_id),
             elapsed_ms,
         )
         if response.is_error() and response.error:
-            logger.info(
+            logger.debug(
                 "[CHAIN] in_process_rpc _dispatch failure method=%s request_id=%s error_kind=rpc_response_error exc=%s",
                 method,
                 _short_request_id(request_id),
@@ -126,5 +126,5 @@ class InProcessRpcClient:
                 error_code=response.error.code.value,
                 error_data=response.error.data,
             )
-        logger.info("[CHAIN] in_process_rpc call method=%s success", method)
+        logger.debug("[CHAIN] in_process_rpc call method=%s success", method)
         return response

@@ -192,7 +192,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     STATUS_OPERATION_POLLING,
                     current_file=None,
                 )
-                logger.info("[CYCLE #%s] Starting indexing cycle", cycle_count)
+                logger.debug("[CYCLE #%s] Starting indexing cycle", cycle_count)
             except Exception as e:
                 try:
                     logger.warning("Indexing cycle setup failed (will retry): %s", e)
@@ -236,7 +236,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                 ):
                     row = files_total_result["data"][0]
                     files_total_at_start = row.get("count", 0) or 0
-                logger.info(
+                logger.debug(
                     "[CYCLE #%s] files_total_at_start (needs_chunking=1)=%s",
                     cycle_count,
                     files_total_at_start,
@@ -285,7 +285,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         files_total=files_total_at_start,
                         project_count=len(project_ids),
                     )
-                    logger.info(
+                    logger.debug(
                         "[CYCLE #%s] project_ids count=%s (batch_size=%s)",
                         cycle_count,
                         len(project_ids),
@@ -293,7 +293,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     )
 
                     if not project_ids:
-                        logger.info(
+                        logger.debug(
                             "[CYCLE #%s] No projects with files needing indexing",
                             cycle_count,
                         )
@@ -330,7 +330,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 _INDEXER_LEASE_TTL_S,
                                 rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             ):
-                                logger.info(
+                                logger.debug(
                                     "[WORKER_COORD] indexer skip project_id=%s "
                                     "(lease busy; next cycle)",
                                     project_id,
@@ -354,7 +354,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     if isinstance(files_result, dict)
                                     else []
                                 )
-                                logger.info(
+                                logger.debug(
                                     "[CYCLE #%s] project_id=%s files_batch=%s",
                                     cycle_count,
                                     project_id[:8] if project_id else None,
@@ -706,7 +706,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
 
                 if not self._stop_event.is_set():
                     sleep_seconds = 2 if cycle_had_activity else poll_interval
-                    logger.info(
+                    logger.debug(
                         "[CYCLE #%s] cycle_had_activity=%s sleep_seconds=%s",
                         cycle_count,
                         cycle_had_activity,

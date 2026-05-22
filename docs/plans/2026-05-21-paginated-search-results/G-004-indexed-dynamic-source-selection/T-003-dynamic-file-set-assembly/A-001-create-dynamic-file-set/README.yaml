@@ -1,0 +1,39 @@
+concepts:
+- C-013
+- C-012
+depends_on: []
+name: Create DynamicFileSet assembler as complement of IndexedFileSet
+operation: create_file
+parent_tactical_step: T-003
+priority: 1
+prompt: "Create `code_analysis/source_selection/dynamic_file_set.py`.\n\n## MRS excerpt\n\
+  \nC-013 DynamicFileSet: set of files that must be processed directly from disk\n\
+  or draft session because they are missing, stale, changed, unindexed, or\nunavailable
+  in the index.\nProperties:\n- Complement of IndexedFileSet within disk-present files
+  after format filter.\n- Includes files missing from index, stale or changed relative
+  to indexed\n  state, draft-only, unindexed, and files with unavailable index data.\n\
+  - Default dynamic scan covers only known supported formats; broad scanning\n  of
+  arbitrary files (logs, venvs, build dirs, binary-like) is opt-in.\n\nC-012 IndexedFileSet:
+  fresh indexed files that are excluded from DynamicFileSet.\n\n## Implementation
+  requirements\n\n1. Import `dataclasses`, `frozenset`.\n\n2. Define `SUPPORTED_EXTENSIONS:
+  frozenset[str]` containing:\n   `\".py\"`, `\".json\"`, `\".yaml\"`, `\".yml\"`,
+  `\".md\"`, `\".txt\"`.\n\n3. Define `@dataclasses.dataclass(frozen=True)` class
+  `DynamicFileSet`:\n   - Field `file_paths: frozenset[str]`.\n   - Method `contains(self,
+  file_path: str) -> bool`.\n   - Method `size(self) -> int`.\n\n4. Define function:\n\
+  \   ```python\n   def build_dynamic_file_set(\n       disk_present: list[str],\n\
+  \       indexed_file_set_paths: frozenset[str],\n       broad_scan: bool = False,\n\
+  \   ) -> DynamicFileSet:\n   ```\n   - Computes `candidates = set(disk_present)
+  - indexed_file_set_paths`.\n   - If `broad_scan` is False: filters `candidates`
+  to paths whose suffix\n     is in `SUPPORTED_EXTENSIONS`.\n   - Returns `DynamicFileSet(file_paths=frozenset(candidates))`.\n\
+  \n## Constraints\n- Standard library only.\n- All public names have one-line docstrings.\n\
+  - File under 60 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/source_selection/dynamic_file_set.py
+verification:
+  expected: Module imports without error. build_dynamic_file_set returns files 
+    in disk_present not in indexed_file_set_paths. With broad_scan=False, only 
+    SUPPORTED_EXTENSIONS files are included. With broad_scan=True, all 
+    non-indexed files are included.
+  target: code_analysis/source_selection/dynamic_file_set.py
+  type: import

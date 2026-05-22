@@ -217,10 +217,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             **kwargs: Unused; accepted for adapter compatibility.
 
         Returns:
-            SuccessResult with session_id, format_group, and available_operations,
-            or ErrorResult on failure. When a parse error triggers text-mode
-            fallback, the response also includes fallback_reason and
-            original_format_group.
+            SuccessResult with session_id and available_operations, or ErrorResult
+            on failure. When a parse error triggers line-based fallback, the
+            response also includes is_invalid, fallback_reason, and warning.
         """
         abs_path = self._resolve_abs_path(project_id, file_path)
         if abs_path is None:
@@ -308,17 +307,14 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             "success": True,
             "session_id": session.session_id,
             "available_operations": descriptor.available_operations,
-            "format_group": descriptor.format_group,
         }
         if created:
             data["created"] = True
         if fallback_info is not None:
-            orig_fg = fallback_info["original_format_group"]
             reason = fallback_info["fallback_reason"]
             data["is_invalid"] = True
             data["fallback_reason"] = reason
-            data["original_format_group"] = orig_fg
-            data["warning"] = open_fallback_warning(orig_fg, reason)
+            data["warning"] = open_fallback_warning(reason)
         return SuccessResult(data=data)
 
     def _resolve_abs_path(self, project_id: str, file_path: str) -> Optional[Path]:
@@ -369,7 +365,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         For tree-temp formats (JSON/YAML), if the file cannot be parsed,
         falls back to text-mode transparently. The returned descriptor has
         ``_fallback_info`` so ``execute`` can record ``fallback_reason`` and
-        ``original_format_group`` in the session and response.
+        ``original_format_group`` in the session (not exposed in the API response).
 
         Args:
             abs_path: Absolute path to the original file.

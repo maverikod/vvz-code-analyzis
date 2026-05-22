@@ -192,7 +192,7 @@ class RPCClient:
             method=method, params=params, priority=priority, request_id=request_id
         )
         tid = (params or {}).get("transaction_id") if isinstance(params, dict) else None
-        logger.info(
+        logger.debug(
             "[CHAIN] rpc_client call method=%s tid=%s request_id=%s",
             method,
             (tid[:8] + "…") if tid and len(str(tid)) > 8 else tid,
@@ -225,13 +225,13 @@ class RPCClient:
                     pool_wait_timeout=pool_wait,
                 )
                 elapsed_ms = (time.perf_counter() - t_rpc) * 1000.0
-                logger.info(
+                logger.debug(
                     "[SAVE_PATH] rpc_client method=%s request_id=%s elapsed_ms=%.1f",
                     method,
                     _short_request_id(request_id),
                     elapsed_ms,
                 )
-                logger.info("[CHAIN] rpc_client call method=%s success", method)
+                logger.debug("[CHAIN] rpc_client call method=%s success", method)
                 return out
             except (ConnectionError, TimeoutError) as e:
                 last_error = e
@@ -241,7 +241,7 @@ class RPCClient:
                         f"Retrying RPC call (attempt {attempt + 1}/{effective_retries}): {e}"
                     )
                 else:
-                    logger.info(
+                    logger.debug(
                         "[CHAIN] rpc_client call exhausted_retries method=%s "
                         "request_id=%s attempts=%s last_error=%s",
                         method,
@@ -312,7 +312,7 @@ class RPCClient:
             response_data = self._receive_data(sock)
             if not response_data:
                 elapsed_ms = (time.perf_counter() - t0) * 1000.0
-                logger.info(
+                logger.debug(
                     "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                     "error_kind=empty_response socket_source=%s elapsed_ms=%.1f",
                     method,
@@ -335,7 +335,7 @@ class RPCClient:
             if response.is_error() and response.error:
                 elapsed_ms = (time.perf_counter() - t0) * 1000.0
                 err_msg = response.error.message
-                logger.info(
+                logger.debug(
                     "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                     "error_kind=rpc_response_error socket_source=%s exc=%s elapsed_ms=%.1f",
                     method,
@@ -357,7 +357,7 @@ class RPCClient:
                 request_timeout if request_timeout is not None else self.timeout
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.info(
+            logger.debug(
                 "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                 "error_kind=socket_io_timeout socket_source=%s elapsed_ms=%.1f",
                 method,
@@ -372,7 +372,7 @@ class RPCClient:
             if str(e) == "Failed to receive response":
                 raise
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.info(
+            logger.debug(
                 "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                 "error_kind=connection_error socket_source=%s exc=%s elapsed_ms=%.1f",
                 method,
@@ -384,7 +384,7 @@ class RPCClient:
             raise
         except OSError as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.info(
+            logger.debug(
                 "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                 "error_kind=socket_error socket_source=%s exc=%s elapsed_ms=%.1f",
                 method,
@@ -396,7 +396,7 @@ class RPCClient:
             raise ConnectionError(f"Socket error: {e}") from e
         except json.JSONDecodeError as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.info(
+            logger.debug(
                 "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
                 "error_kind=json_decode socket_source=%s exc=%s elapsed_ms=%.1f",
                 method,

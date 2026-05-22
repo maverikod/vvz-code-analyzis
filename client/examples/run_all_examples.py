@@ -96,7 +96,12 @@ Sections executed (in order)
     4. **Async context manager** — ``async with CodeAnalysisAsyncClient.from_server_config_path(...)``
        proves ``__aenter__`` / ``__aexit__`` call :meth:`~code_analysis_client.client.CodeAnalysisAsyncClient.close`.
 
-    5. **Explicit close** — the long-lived instance is closed in ``finally`` to
+    5. **Sibling example scripts** — subprocess invocations of every other live-server
+       driver under ``client/examples/`` (``ex_minimal_validated.py``,
+       ``ex_session_view_subordinates.py``, ``ex_file_sessions.py``). Offline
+       ``ex_config_only.py`` is covered by section 1.
+
+    6. **Explicit close** — the long-lived instance is closed in ``finally`` to
        mirror scripts that do **not** use ``async with``.
 
 **Not** covered here (by design)
@@ -152,6 +157,9 @@ SEE ALSO
 ================================================================================
     * ``client/examples/ex_config_only.py`` — offline configuration chapter.
     * ``client/examples/ex_minimal_validated.py`` — minimal validated RPC.
+    * ``client/examples/ex_session_view_subordinates.py`` — ``session_view`` and
+      ``subordinate_session_*`` via ``FileSessionClient``.
+    * ``client/examples/ex_file_sessions.py`` — full session/transfer integration.
     * ``client/examples/_common.py`` — bootstrap semantics (cwd, ``sys.path``).
     * ``client/examples/README.md`` — short index (this file’s docstring is the
       **long-form** manual).
@@ -173,10 +181,11 @@ AUTHOR
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 # -----------------------------------------------------------------------------
 # Path bootstrap (examples/ is not an installed package)
@@ -194,6 +203,8 @@ from _common import (  # noqa: E402
 
 ensure_client_package_on_path()
 
+from _client_api_inventory import verify_examples_cover_client_api  # noqa: E402
+
 from code_analysis_client import (  # noqa: E402
     ClientValidationError,
     CodeAnalysisAsyncClient,
@@ -204,6 +215,40 @@ from code_analysis_client import (  # noqa: E402
     parse_schema_from_help_payload,
     prepare_params_for_schema,
     validate_params_against_schema,
+)
+from code_analysis_client.server_api import assert_file_session_facade_complete  # noqa: E402
+
+CLIENT_API_COVERAGE = frozenset(
+    {
+        "config.load_server_config",
+        "config.adapter_settings_from_server_config",
+        "config.adapter_settings_to_jsonrpc_kwargs",
+        "validation.prepare_params_for_schema",
+        "validation.validate_params_against_schema",
+        "server_schema.parse_schema_from_help_payload",
+        "server_schema.fetch_command_schema_from_server",
+        "server_api.assert_file_session_facade_complete",
+        "CodeAnalysisAsyncClient.__init__",
+        "CodeAnalysisAsyncClient.from_jsonrpc_kwargs",
+        "CodeAnalysisAsyncClient.from_adapter_settings",
+        "CodeAnalysisAsyncClient.from_server_config",
+        "CodeAnalysisAsyncClient.from_server_config_path",
+        "CodeAnalysisAsyncClient.rpc",
+        "CodeAnalysisAsyncClient.commands",
+        "CodeAnalysisAsyncClient.clear_command_schema_cache",
+        "CodeAnalysisAsyncClient.get_command_schema",
+        "CodeAnalysisAsyncClient.call_validated",
+        "CodeAnalysisAsyncClient.call_unified_validated",
+        "CodeAnalysisAsyncClient.call",
+        "CodeAnalysisAsyncClient.call_unified",
+        "CodeAnalysisAsyncClient.close",
+        "CodeAnalysisAsyncClient.__aenter__",
+        "CodeAnalysisAsyncClient.__aexit__",
+        "ValidatedCommandsProxy.clear_schema_cache",
+        "ValidatedCommandsProxy.fetch_schema",
+        "ValidatedCommandsProxy.invoke",
+        "ValidatedCommandsProxy.__getattr__",
+    }
 )
 
 
@@ -235,6 +280,7 @@ async def ex_load_server_config_and_adapter_helpers(cfg_path: Path) -> None:
     kwargs = adapter_settings_to_jsonrpc_kwargs(settings, timeout=30.0)
     _ok(kwargs["port"] == settings["port"], "port mismatch in jsonrpc kwargs")
     _ok("protocol" in kwargs, "jsonrpc kwargs missing protocol")
+    assert_file_session_facade_complete()
 
 
 async def ex_constructors(cfg_path: Path) -> None:
@@ -495,6 +541,40 @@ async def ex_close_explicit(client: CodeAnalysisAsyncClient) -> None:
     await client.close()
 
 
+_LIVE_SIBLING_SCRIPTS: Tuple[Tuple[str, List[str]], ...] = (
+    ("ex_minimal_validated.py", []),
+    ("ex_universal_files.py", []),
+    ("ex_session_view_subordinates.py", []),
+    ("ex_file_sessions.py", []),
+)
+
+
+def ex_run_sibling_scripts(examples_dir: Path) -> None:
+    r"""Section 5 — run every other live-server example script as a subprocess.
+
+    Each script must exit **0** on success. Failures propagate as
+    ``AssertionError`` with captured stdout/stderr.
+    """
+    for script_name, extra_args in _LIVE_SIBLING_SCRIPTS:
+        script = examples_dir / script_name
+        if not script.is_file():
+            raise AssertionError(f"missing example script: {script}")
+        print(f"== 5) sibling script: {script_name} ==")
+        proc = subprocess.run(
+            [sys.executable, str(script), *extra_args],
+            cwd=str(examples_dir.parent.parent),
+            capture_output=True,
+            text=True,
+        )
+        if proc.stdout:
+            print(proc.stdout.rstrip())
+        if proc.returncode != 0:
+            err = (
+                proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+            )
+            raise AssertionError(f"{script_name} failed: {err}")
+
+
 async def _run() -> None:
     """Execute all example sections in order (see module **DESCRIPTION**)."""
     chdir_repo_root()
@@ -521,6 +601,13 @@ async def _run() -> None:
 
     print("== 4) async context manager ==")
     await ex_async_context_manager(cfg_path)
+
+    print("== 5) sibling live-server example scripts ==")
+    ex_run_sibling_scripts(_EXAMPLES)
+
+    print("== 6) client API coverage registry ==")
+    verify_examples_cover_client_api(_EXAMPLES)
+    print("  all public client methods covered by examples")
 
     print("All example sections passed.")
 

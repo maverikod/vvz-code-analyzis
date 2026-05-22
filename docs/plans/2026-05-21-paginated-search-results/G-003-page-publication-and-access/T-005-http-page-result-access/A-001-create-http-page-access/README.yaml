@@ -1,0 +1,35 @@
+concepts:
+- C-005
+- C-004
+- C-006
+depends_on: []
+name: Create HTTPPageReader reading published page files and refreshing 
+  last_access_at
+operation: create_file
+parent_tactical_step: T-005
+priority: 1
+prompt: "Create `code_analysis/search_session/http_page_reader.py`.\n\n## MRS excerpt\n\
+  \nC-005 HTTPResultAccess: simple HTTP retrieval for reading SearchSession pages.\n\
+  C-004 SearchPageFile: immutable page file consumed by HTTP readers.\nC-006 LastAccessTimestamp:
+  refreshed on every successful page read.\n\n## Implementation requirements\n\n1.
+  Import `dataclasses`, `json`, `pathlib`, `typing`.\n\n2. Define `@dataclasses.dataclass(frozen=True)`
+  class `PageReadResult`:\n   - Fields: `found: bool`, `page_index: int`,\n     `data:
+  typing.Optional[dict] = None`.\n\n3. Define class `HTTPPageReader`:\n   - Constructor:
+  `__init__(self, session_dir: pathlib.Path,\n     manifest_writer: typing.Any)`.\n\
+  \   - Method `read_page(self, page_index: int) -> PageReadResult`:\n     - Computes
+  `path = session_dir / f\"page_{page_index:04d}.json\"`.\n     - If `path.exists()`:\n\
+  \       - Reads and parses JSON from `path`.\n       - Calls `manifest_writer.update_last_access()`
+  to refresh C-006.\n       - Returns `PageReadResult(found=True, page_index=page_index,\n\
+  \         data=parsed_data)`.\n     - Otherwise: returns `PageReadResult(found=False,\n\
+  \       page_index=page_index)`.\n\n## Constraints\n- Standard library only (manifest_writer
+  injected).\n- All public names have one-line docstrings.\n- File under 50 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/http_page_reader.py
+verification:
+  expected: Module imports without error. HTTPPageReader.read_page returns 
+    PageReadResult with found=True and data set when page file exists, 
+    found=False when missing. manifest_writer.update_last_access is called on 
+    successful read.
+  target: code_analysis/search_session/http_page_reader.py
+  type: import

@@ -1,0 +1,35 @@
+forbidden:
+  run_scripts_without_approval: PROHIBITED. Running any script or non-trivial 
+    command via terminal requires explicit user approval in chat before 
+    terminal_run is called.
+  workspace_write_sibling_projects: PROHIBITED. workspace_write=true must never 
+    be requested for sibling projects (mcp_proxy_adapter, vast_srv). They are 
+    read-only via terminal.
+lifecycle:
+  1_create: terminal_session_create(project_id, session_id, 
+    workspace_write=true, bootstrap_python_env=false)
+  2_run: terminal_run(project_id, session_id, execution_kind=shell, command=...,
+    keep_container=true) — returns job_id + seq immediately, always async
+  3_poll: terminal_get_status(project_id, session_id, seq=N) — poll until status
+    is terminal. Queue completed does not imply shell success.
+  4_read: terminal_tail(project_id, session_id, seq=N, n=50) or 
+    terminal_read(...)
+  5_delete: terminal_delete(project_id, session_id) — always call when done
+meta:
+  author: Vasiliy Zdanovskiy
+  description: Mandatory terminal lifecycle for mcp-terminal. Read before any 
+    terminal operation.
+  email: vasilyvz@gmail.com
+  locale: en
+  title: Terminal Workflow
+  version: '1.0'
+server_id: mcp-terminal
+session_identity:
+  project_id: 8772a086-688d-4198-a0c4-f03817cc0e6c
+  project_id_rule: Always use the code_analysis project UUID. Never use a 
+    sibling project UUID for write sessions.
+  session_id_rule: Generate a UUID4 once per task. Reuse it for all terminal_run
+    calls within that task.
+  workspace_write_rule: At most one session per project may have 
+    workspace_write=true. All others are read-only on /workspace.
+trigger: Before any terminal_session_create or terminal_run call.

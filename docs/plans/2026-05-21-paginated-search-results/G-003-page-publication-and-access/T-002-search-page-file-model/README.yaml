@@ -1,0 +1,36 @@
+step_id: T-002
+parent_global_step: G-003
+name: Search page file artifact model
+description: "Define SearchPageFile (C-004) as an immutable published result page
+  owned by SearchSessionDirectory (C-002). Each page contains a bounded list of normalized
+  search result records. A page becomes visible to readers only after publication
+  completes. Published pages must not be rewritten. The final page of a search may
+  contain fewer records than the page bound when the search completes, times out,
+  fails, or is cancelled.\n"
+concepts:
+- C-002
+- C-004
+inputs:
+- name: normalized_result_record_schema
+  type: result record schema
+  description: "Canonical shape of one search result record appended into a page file.\n"
+- name: page_size_bound
+  type: positive integer policy
+  description: "Maximum number of normalized result records per published page before
+    rollover to the next page.\n"
+- name: terminal_search_outcomes
+  type: outcome enumeration
+  description: "Completed, failed, cancelled, and timed_out outcomes that permit a
+    short final page with fewer records than the page bound.\n"
+outputs:
+- name: search_page_file_model
+  type: SearchPageFile
+  description: "Immutable page artifact specification with bounded record list, immutability
+    after publication, and final-page partial-fill rule.\n"
+- name: page_immutability_invariants
+  type: invariant set
+  description: "Rules prohibiting rewrite of published pages and requiring complete
+    content before reader visibility.\n"
+atomic_steps:
+- A-001
+status: draft

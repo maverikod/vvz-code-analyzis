@@ -1,0 +1,36 @@
+step_id: T-003
+parent_global_step: G-004
+name: Dynamic file set assembly
+description: "Creates the DynamicFileSet as disk-present files minus the fresh IndexedFileSet,
+  after applying the supported-format filter. The dynamic set includes files missing
+  from the index, stale or changed relative to indexed state, unindexed, draft-only,
+  and files with unavailable index data. Ensures direct disk or draft-session processing
+  covers only cases the indexed path cannot serve without duplicating database-backed
+  search for unchanged indexed content.\n"
+concepts:
+- C-013
+- C-012
+inputs:
+- name: search_scope
+  type: bounded project file scope
+  description: Project and path constraints that bound which files participate 
+    in source selection.
+- name: disk_present_file_inventory
+  type: file path list
+  description: Normalized disk-present inventory from indexed set assembly used 
+    as the starting universe for dynamic selection.
+- name: indexed_file_set
+  type: IndexedFileSet
+  description: Fresh indexed files subtracted from the disk-present universe.
+- name: supported_format_policy
+  type: format allowlist policy
+  description: Default supported-format constraint applied to dynamic file 
+    candidates.
+outputs:
+- name: dynamic_file_set
+  type: DynamicFileSet
+  description: Complementary file set processed directly from disk or draft 
+    session because indexed search cannot serve it.
+atomic_steps:
+- A-001
+status: draft

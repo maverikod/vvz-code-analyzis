@@ -154,9 +154,7 @@ def database_error_details(
             return {
                 "sqlstate": info.sqlstate,
                 "error_kind": info.error_kind,
-                "retryable": bool(
-                    info.retryable and not info.commit_outcome_unknown
-                ),
+                "retryable": bool(info.retryable and not info.commit_outcome_unknown),
                 "message": info.message,
                 "commit_outcome_unknown": info.commit_outcome_unknown,
                 "operation_name": operation_name,

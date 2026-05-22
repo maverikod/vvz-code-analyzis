@@ -1,0 +1,28 @@
+step_id: T-001
+parent_global_step: G-004
+name: Existing Behavior Inventory
+description: "Creates the ExistingBehaviorInventory (C-025) as a structured record
+  that separates behavior already present in the codebase from behavior introduced
+  by this plan. Identifies each ExistingSearchCommand (C-021) — fulltext_search, semantic_search,
+  fs_grep, project_cross_search — and documents its current public contract, non-paginated
+  default behavior, queue handling, timeout behavior, validation logic, direct payload
+  format, structural results, and preview references. The inventory is used to prevent
+  the implementation plan from duplicating existing logic and to ensure that migration
+  work targets only the gap between existing and desired behavior.\n"
+concepts:
+- C-021
+- C-025
+inputs:
+- name: existing_command_list
+  type: list of command names
+  description: The set of currently implemented search and status commands whose
+    behavior must be preserved.
+outputs:
+- name: behavior_inventory
+  type: ExistingBehaviorInventory (C-025)
+  description: Structured record mapping each ExistingSearchCommand to its 
+    current contract fields, with explicit markers for behaviors that are 
+    existing versus behaviors that are new in this plan.
+atomic_steps:
+- A-001
+status: draft

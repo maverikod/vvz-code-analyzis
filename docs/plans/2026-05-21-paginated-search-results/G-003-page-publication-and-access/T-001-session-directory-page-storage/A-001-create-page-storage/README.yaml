@@ -1,0 +1,34 @@
+concepts:
+- C-002
+- C-004
+depends_on: []
+name: 'Create PageStorage: naming convention and path resolution for page files in
+  session directory'
+operation: create_file
+parent_tactical_step: T-001
+priority: 1
+prompt: "Create `code_analysis/search_session/page_storage.py`.\n\n## MRS excerpt\n\
+  \nC-002 SearchSessionDirectory: filesystem directory that owns page files,\nmanifest
+  data, and service metadata associated with a search session.\nC-004 SearchPageFile:
+  immutable result page record written inside\nSearchSessionDirectory.\n\n## Implementation
+  requirements\n\n1. Import `pathlib`.\n\n2. Define constant:\n   `PAGE_FILENAME_TEMPLATE:
+  str = \"page_{index:04d}.json\"`\n\n3. Define function:\n   ```python\n   def page_path(session_dir:
+  pathlib.Path, page_index: int) -> pathlib.Path:\n   ```\n   Returns `session_dir
+  / f\"page_{page_index:04d}.json\"`.\n\n4. Define function:\n   ```python\n   def
+  temp_page_path(session_dir: pathlib.Path, page_index: int) -> pathlib.Path:\n  \
+  \ ```\n   Returns `session_dir / f\".tmp_page_{page_index:04d}.json\"`.\n\n5. Define
+  function:\n   ```python\n   def list_published_pages(session_dir: pathlib.Path)
+  -> list[int]:\n   ```\n   - Finds all files matching `page_*.json` in `session_dir`.\n\
+  \   - Parses the index from the filename.\n   - Returns sorted list of page indices.\n\
+  \   - Skips temp files (filenames starting with `.tmp_`).\n\n## Constraints\n- Standard
+  library only.\n- All public names have one-line docstrings.\n- File under 45 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/page_storage.py
+verification:
+  expected: Module imports without error. page_path returns correct 
+    pathlib.Path. temp_page_path returns path starting with .tmp_. 
+    list_published_pages returns sorted list of page indices for existing page 
+    files, excluding temp files.
+  target: code_analysis/search_session/page_storage.py
+  type: import

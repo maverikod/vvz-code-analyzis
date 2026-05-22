@@ -530,6 +530,27 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
             "unique": False,
             "where_clause": None,
         },
+        {
+            "name": "idx_subordinate_sessions_parent",
+            "table": "subordinate_sessions",
+            "columns": ["parent_session_id"],
+            "unique": False,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_subordinate_sessions_subordinate",
+            "table": "subordinate_sessions",
+            "columns": ["subordinate_session_id"],
+            "unique": False,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_subordinate_sessions_server",
+            "table": "subordinate_sessions",
+            "columns": ["server_uuid"],
+            "unique": False,
+            "where_clause": None,
+        },
     ]
 
 

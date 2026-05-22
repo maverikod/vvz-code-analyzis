@@ -1,0 +1,29 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: Create search_session package __init__.py
+target_file: code_analysis/search_session/__init__.py
+operation: create_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-001
+- C-002
+prompt: "Create the file code_analysis/search_session/__init__.py.\nThis file initialises
+  the code_analysis.search_session package so that all sibling modules (models, manifest,
+  page_writer, http_access, ttl_policy, cleaner, status, freshness, file_sets, tree_manager,
+  xpath_filter, preview_ref, structural, behavior_inventory, compat_schema, compat_layer)
+  are importable via the package.\nThe file must contain a module-level docstring:
+  \"Search session subsystem for paginated and resumable search results.\"\nThe file
+  must re-export the primary public API: from code_analysis.search_session.models
+  import (\n    SearchSession,\n    SearchSessionDirectory,\n    SearchSessionStatus,\n\
+  \    create_search_session,\n)\nNo other code is required. Keep the file minimal.\n\
+  Constraints: no third-party imports; file must be valid Python so that importing
+  code_analysis.search_session succeeds without error.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/__init__.py
+  expected: Importing code_analysis.search_session succeeds without error. 
+    code_analysis.search_session.SearchSession is accessible. 
+    code_analysis.search_session.create_search_session is callable.
+status: draft

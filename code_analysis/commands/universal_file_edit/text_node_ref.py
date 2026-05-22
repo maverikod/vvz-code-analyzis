@@ -65,7 +65,11 @@ def resolve_text_operation_line_range(
     source = _read_source(draft_path)
     suffix = draft_path.suffix.lower()
     if suffix == ".md" or draft_path.name.endswith(".md.draft"):
-        bounds = resolve_markdown_line_range(source, str(node_ref))
+        bounds = resolve_markdown_line_range(
+            source,
+            str(node_ref),
+            file_path=str(draft_path.resolve()),
+        )
         if isinstance(bounds, PreviewError):
             return error_result_for_edit(
                 bounds.message,

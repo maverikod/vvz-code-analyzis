@@ -47,6 +47,7 @@ _CONNECTION_TIME_TABLES = frozenset(
         "roles",
         "role_permissions",
         "session_roles",
+        "subordinate_sessions",
     }
 )
 

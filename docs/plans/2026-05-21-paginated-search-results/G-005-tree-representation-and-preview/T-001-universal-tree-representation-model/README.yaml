@@ -1,0 +1,39 @@
+step_id: T-001
+parent_global_step: G-005
+name: Universal tree representation model
+description: "Create the TreeRepresentation (C-015) domain entity as the universal
+  structural\nmodel for supported project files. Classify supported formats into native
+  tree\nformats (JSON, YAML, Python CST, Markdown structure, and other tree-oriented\n\
+  formats) and text formats that are represented uniformly as trees whose root\ncontains
+  paragraphs and each paragraph contains lines. Require a persisted tree\nsidecar
+  or equivalent tree artifact for every supported file so structural\nprocessing always
+  has a dedicated tree source separate from raw file bytes.\nAssign stable node identifiers
+  to every tree node using the same stability\nprinciples as Python CST sidecar identifiers:
+  identifiers are assigned once,\npersist in the tree artifact, and remain comparable
+  across repeated processing\nof unchanged content. Require TreeRepresentation availability
+  for JSON, YAML,\nPython CST, Markdown, and text files before any downstream structural
+  operation\nin indexer, database-backed search, dynamic search, or preview contexts
+  may\nproceed. Establish the cross-context invariant that stable node identity recorded\n\
+  in TreeRepresentation is the authoritative identity shared by indexer output,\n\
+  database-backed structural data, dynamically built trees, and preview navigation.\n"
+concepts:
+- C-015
+inputs:
+- name: supported_format_taxonomy
+  type: format classification policy
+  description: Binding distinction between native tree formats and text files 
+    represented as paragraph-and-line trees from parent source lines 37–39.
+- name: tree_sidecar_stability_precedent
+  type: identifier stability reference model
+  description: Stability expectations for node identifiers comparable to Python 
+    CST sidecar identifiers as required by C-015.
+outputs:
+- name: tree_representation_entity
+  type: domain entity contract
+  description: Complete TreeRepresentation (C-015) contract covering supported 
+    format coverage, paragraph-line text modeling, sidecar ownership, and stable
+    node identifier rules shared across indexer, database-backed, dynamic, and 
+    preview consumers.
+atomic_steps:
+- A-001
+status: draft

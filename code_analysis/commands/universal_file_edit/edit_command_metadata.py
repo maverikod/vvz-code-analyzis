@@ -28,13 +28,14 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "email": cls.email,
         "detailed_description": (
             "Apply a batch of mutation operations to an open edit session draft.\n\n"
-            "universal_file_edit is step 2 in the universal file edit workflow:\n"
-            "  1. universal_file_open  — open a file (or create it), get session_id and format_group\n"
-            "  2. universal_file_edit  — apply one or more operations to the in-memory draft\n"
-            "  3. universal_file_write — first call: preview diff; second call: commit to disk\n"
-            "  4. universal_file_close — release the session\n\n"
-            "The operation structure depends on the format_group returned by universal_file_open:\n\n"
-            "sidecar (.py):\n"
+            "universal_file_edit is step 3 in the universal file edit workflow:\n"
+            "  1. universal_file_open  — open a file (or create it), get session_id\n"
+            "  2. universal_file_preview — obtain node_ref values from the current draft\n"
+            "  3. universal_file_edit  — apply one or more operations to the in-memory draft\n"
+            "  4. universal_file_write — first call: preview diff; second call: commit to disk\n"
+            "  5. universal_file_close — release the session\n\n"
+            "Operation shape follows universal_file_preview node_ref (by file type):\n\n"
+            "Python (.py, .pyi, .pyw):\n"
             "  Operations target CST nodes by stable UUID (node_ref from universal_file_preview).\n"
             "  Fields: type, node_id, code_lines (recommended) or code.\n"
             "  type is mapped to action automatically: replace | insert | delete.\n"
@@ -43,7 +44,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "(parent_node_id omitted or __root__).\n"
             '  Shorthand: parent_node_id + position {"after": N} (0-based sibling index).\n'
             "  Ancestor-descendant pairs in one batch are rejected (NESTED_BATCH_FORBIDDEN).\n\n"
-            "tree-temp (.json, .yaml, .yml):\n"
+            "JSON/YAML (.json, .yaml, .yml):\n"
             "  Operations target document nodes via RFC 6901 JSON Pointer or opaque UUID.\n"
             "  universal_file_preview returns node_ref as JSON Pointer string (e.g. '/timeout').\n"
             "  Pass it in json_pointer field, NOT in node_id.\n"
@@ -100,10 +101,10 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "operations": {
                 "description": (
-                    "Batch of edit operations. Structure varies by format_group:\n"
-                    "  sidecar  : {type, node_id, code_lines}\n"
-                    "  tree-temp: {type, json_pointer, value} or {type, node_id, value}\n"
-                    "  text     : {type, start_line, end_line, content}\n"
+                    "Batch of edit operations. Shape must match universal_file_preview:\n"
+                    "  Python : {type, node_id, code_lines}\n"
+                    "  JSON/YAML: {type, json_pointer, value} or {type, node_id, value}\n"
+                    "  text   : {type, node_ref, content} or {type, start_line, end_line, content}\n"
                     "Supported type values: replace, insert, delete."
                 ),
                 "type": "array",

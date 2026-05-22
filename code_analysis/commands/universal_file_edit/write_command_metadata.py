@@ -28,17 +28,18 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "email": cls.email,
         "detailed_description": (
             "Persist draft changes from an edit session to disk.\n\n"
-            "universal_file_write is step 3 in the universal file edit workflow:\n"
-            "  1. universal_file_open  — open a file, get session_id and format_group\n"
-            "  2. universal_file_edit  — apply operations to the in-memory draft\n"
-            "  3. universal_file_write — preview diff, then commit to disk  (THIS COMMAND)\n"
-            "  4. universal_file_close — release the session\n\n"
-            "Two protocols depending on format_group:\n\n"
-            "tree-temp (.json, .yaml, .yml) and text (.md, .txt, …) — explicit write_mode:\n"
+            "universal_file_write is step 4 in the universal file edit workflow:\n"
+            "  1. universal_file_open  — open a file, get session_id\n"
+            "  2. universal_file_preview — obtain node_ref values\n"
+            "  3. universal_file_edit  — apply operations to the in-memory draft\n"
+            "  4. universal_file_write — preview diff, then commit to disk  (THIS COMMAND)\n"
+            "  5. universal_file_close — release the session\n\n"
+            "Write protocol by file type:\n\n"
+            "JSON/YAML and plain text/markdown — explicit write_mode:\n"
             "  write_mode=preview (default): unified diff vs canonical file; no disk write.\n"
             "  write_mode=commit: backup original, atomic write from draft, delete lockfile.\n"
             "  Always call preview first, inspect the diff, then call commit.\n\n"
-            "sidecar (.py) — legacy two-phase when write_mode is omitted:\n"
+            "Python (.py) — legacy two-phase when write_mode is omitted:\n"
             "  First call: diff + lockfile, phase=preview.\n"
             "  Second call (lockfile matches PID+session): commit, phase=committed.\n"
             "  Explicit write_mode=preview or commit overrides the lockfile phase.\n\n"
@@ -77,8 +78,10 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "data": {
                     "phase": "preview or committed.",
                     "diff": "Unified diff string showing changes (present on both phases).",
-                    "write_mode": "Echoed write_mode (tree-temp only).",
-                    "source_sha256_at_open": "SHA-256 of the file at open time (tree-temp commit).",
+                    "write_mode": "Echoed write_mode when sent explicitly.",
+                    "source_sha256_at_open": "SHA-256 of the file at open time (JSON/YAML commit).",
+                    "structural_editing_restored": "True when a successful commit recovered node-based editing after line-based fallback (optional).",
+                    "is_invalid": "False after structural editing is restored (optional).",
                 },
                 "example": {
                     "phase": "preview",
@@ -143,8 +146,8 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "For tree-temp and text: always call write_mode=preview first, then write_mode=commit.",
-            "For sidecar without write_mode: first call is preview, second is commit.",
+            "For JSON/YAML and text: always call write_mode=preview first, then write_mode=commit.",
+            "For Python without write_mode: first call is preview, second is commit.",
             "Repeated write_mode=preview must never commit; phase must match the action.",
             "After a successful commit, call format_code and lint_code on the file path.",
             "If the server restarts between preview and commit, the lockfile is stale; re-open the session.",

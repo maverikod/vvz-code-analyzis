@@ -231,6 +231,71 @@ def runtime_session_exists(database: Any, session_id: str) -> bool:
     return bool(row)
 
 
+def ensure_client_lock_session(database: Any, client_session_id: str) -> str:
+    """Register a ``client_sessions`` row for advisory lease FK (``runtime_lock_sessions``).
+
+    Client sessions from ``session_create`` are independent of the daemon PID. This
+    helper bridges them into ``runtime_lock_sessions`` so ``acquire_file_advisory_lease``
+    and cooperative flocks can use the same ``session_id`` the client already holds.
+
+    Args:
+        database: Database client.
+        client_session_id: UUID from ``session_create`` / ``client_sessions``.
+
+    Returns:
+        The normalized client session id.
+
+    Raises:
+        ValueError: when the session is missing from ``client_sessions`` or registration fails.
+    """
+    from code_analysis.core.client_sessions import is_session_valid
+
+    sid = str(client_session_id).strip()
+    if not sid:
+        raise ValueError("client session_id is required")
+    if not is_session_valid(database, sid):
+        raise ValueError(f"client session not found: {sid}")
+    if runtime_session_exists(database, sid):
+        return sid
+
+    ensure_runtime_lock_tables(database)
+    _now = sql_julian_timestamp_now_expr(database)
+    base_pid = -(uuid.UUID(sid).int % (2**31 - 1000)) - 1000
+    host = socket.gethostname()
+    for attempt in range(16):
+        pid = base_pid - attempt
+        occupied = _select_one(
+            database,
+            "SELECT session_id FROM runtime_lock_sessions WHERE pid = ? LIMIT 1",
+            (pid,),
+        )
+        if occupied:
+            continue
+        try:
+            _execute(
+                database,
+                f"""
+                INSERT INTO runtime_lock_sessions (
+                    session_id, pid, listener_url, role, hostname, started_at, updated_at
+                )
+                VALUES (?, ?, NULL, 'client', ?, {_now}, {_now})
+                """,
+                (sid, pid, host),
+            )
+            _commit_best_effort(database)
+            logger.info(
+                "Registered client lock session session_id=%s synthetic_pid=%s",
+                sid,
+                pid,
+            )
+            return sid
+        except Exception:
+            if runtime_session_exists(database, sid):
+                return sid
+            continue
+    raise ValueError(f"could not register client lock session: {sid}")
+
+
 def acquire_file_advisory_lease(
     database: Any,
     *,

@@ -121,20 +121,20 @@ class CSTSaveTreeCommand(BaseMCPCommand):
     ) -> SuccessResult | ErrorResult:
         """Execute cst_save_tree: save tree to file with lock check and retry logic.
 
-    Args:
-        tree_id: CST tree identifier from cst_load_file.
-        project_id: Project UUID.
-        file_path: Target file path relative to project root.
-        validate: Validate syntax before and after save.
-        backup: Create backup before overwriting.
-        commit_message: Optional git commit message.
-        auto_reload: Reload tree from file after save.
-        **kwargs: Ignored extra keyword args.
+        Args:
+            tree_id: CST tree identifier from cst_load_file.
+            project_id: Project UUID.
+            file_path: Target file path relative to project root.
+            validate: Validate syntax before and after save.
+            backup: Create backup before overwriting.
+            commit_message: Optional git commit message.
+            auto_reload: Reload tree from file after save.
+            **kwargs: Ignored extra keyword args.
 
-    Returns:
-        SuccessResult with save metadata, or ErrorResult with code.
-    """
-        logger.info(
+        Returns:
+            SuccessResult with save metadata, or ErrorResult with code.
+        """
+        logger.debug(
             "[SAVE_PATH] cst_save_tree enter tree_id=%s project_id=%s file_path=%s",
             tree_id,
             project_id,

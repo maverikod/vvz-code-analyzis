@@ -177,9 +177,10 @@ def restore_session_format_after_recovery(
         session.sidecar_write_intent = None
         session.source_sha256_at_open = None
 
+    session.original_format_group = None
     available_ops = list(_FORMAT_AVAILABLE_OPERATIONS.get(orig, []))
     return {
-        "recovered_format_group": orig,
+        "structural_editing_restored": True,
         "available_operations": available_ops,
     }
 
@@ -204,22 +205,21 @@ def try_clear_invalid_after_write(session: "EditSession") -> None:
 
 
 def invalid_session_warning(session: "EditSession") -> str:
-    """Human-readable warning for sessions opened in text-mode fallback."""
-    orig = session.original_format_group or "unknown"
+    """Human-readable warning for sessions opened in line-based fallback."""
     reason = session.fallback_reason or "parse error"
     return (
-        "File opened in text-mode fallback due to parse errors. "
-        f"Original format: {orig}. "
+        "File opened in line-based fallback due to parse errors. "
         f"Reason: {reason}. "
-        "Structural edits unavailable until parse errors are fixed and file is written."
+        "Fix syntax errors and commit with write_mode=commit to restore structural "
+        "(node-based) editing. Re-run universal_file_preview before the next edit."
     )
 
 
-def open_fallback_warning(original_format_group: str, fallback_reason: str) -> str:
+def open_fallback_warning(fallback_reason: str) -> str:
     """Human-readable warning for universal_file_open fallback responses."""
     return (
-        "File has parse errors. Opened in text-mode fallback. "
-        f"Original format: {original_format_group}. "
+        "File has parse errors. Opened in line-based fallback. "
         f"Parse error: {fallback_reason}. "
-        f"Fix the file content and write to restore {original_format_group} editing."
+        "Fix the file content and commit with write_mode=commit to restore "
+        "structural (node-based) editing."
     )

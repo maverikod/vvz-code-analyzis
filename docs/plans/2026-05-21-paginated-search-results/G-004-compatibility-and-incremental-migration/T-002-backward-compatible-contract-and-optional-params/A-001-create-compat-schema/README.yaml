@@ -1,0 +1,43 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create backward compatible contract and optional pagination parameters 
+  module
+target_file: code_analysis/search_session/compat_schema.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-023
+- C-024
+prompt: "Create the file code_analysis/search_session/compat_schema.py.\n\nMRS excerpt:\n\
+  C-023 BackwardCompatibleCommandContract: Public command contract that keeps current
+  behavior stable while allowing optional paginated extensions. Properties: current
+  behavior remains default; new pagination fields are optional; existing callers do
+  not need to change; bridge commands must be documented when used.\nC-024 OptionalPaginationParameters:
+  Optional request or response fields that enable paginated/session-backed behavior
+  without changing default command behavior. Properties: may include paginated, page_size,
+  cursor, search_id, include_search_id, or HTTP page references; must not be required
+  for existing non-paginated callers; must be documented in command schemas and metadata
+  when exposed.\n\nImplementation requirements.\nImports: dataclasses, typing.\n\n\
+  1. Define dataclass OptionalPaginationParameters with fields: paginated (bool, default
+  False), page_size (int, default 20), cursor (Optional[str], default None), include_search_id
+  (bool, default True). Docstring must state that none of these fields are required
+  for non-paginated callers.\n\n2. Define function extract_pagination_params(raw_params:
+  dict) returning OptionalPaginationParameters. Reads keys paginated, page_size, cursor,
+  include_search_id from raw_params using dict.get with the field defaults as fallback.
+  Returns OptionalPaginationParameters with those values. Does not raise for missing
+  keys.\n\n3. Define function is_paginated_request(params: OptionalPaginationParameters)
+  returning bool. Returns params.paginated.\n\n4. Define module-level constant DOCUMENTED_OPTIONAL_FIELDS
+  of type List[str] with value list containing the strings paginated, page_size, cursor,
+  include_search_id, and search_id. Docstring must state these are the fields that
+  must be documented in command schemas when exposed.\n\nConstraints: no third-party
+  imports; all public names must have docstrings; extract_pagination_params must never
+  raise for well-formed or missing keys.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/compat_schema.py
+  expected: Module imports without error. OptionalPaginationParameters, 
+    extract_pagination_params, is_paginated_request, and 
+    DOCUMENTED_OPTIONAL_FIELDS are all present. extract_pagination_params on 
+    empty dict returns default values with paginated=False.
+status: draft

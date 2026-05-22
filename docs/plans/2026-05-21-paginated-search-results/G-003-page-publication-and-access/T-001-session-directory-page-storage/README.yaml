@@ -1,0 +1,33 @@
+step_id: T-001
+parent_global_step: G-003
+name: Session directory page storage layout
+description: "Extend SearchSessionDirectory (C-002) so it owns dedicated storage for
+  published SearchPageFile (C-004) artifacts and for unpublished in-progress page
+  writes awaiting AtomicPagePublication (C-026). Define the directory-level contract
+  that separates finalized immutable page files from staging writes, ensuring page
+  files remain owned by the session directory for the lifetime of the search session.\n"
+concepts:
+- C-002
+- C-004
+- C-026
+inputs:
+- name: search_session_directory
+  type: SearchSessionDirectory
+  description: "Existing session directory created before search execution; supplies
+    the root location that will host page storage areas.\n"
+- name: page_storage_policy
+  type: domain policy
+  description: "Rules for naming, locating, and segregating published page files versus
+    unpublished staging writes within the session directory.\n"
+outputs:
+- name: page_storage_layout
+  type: directory layout contract
+  description: "Defined storage areas within SearchSessionDirectory for published
+    SearchPageFile artifacts and for unpublished staging writes.\n"
+- name: page_ownership_binding
+  type: ownership relation
+  description: "Established SearchSessionDirectory ownership of SearchPageFile storage
+    locations, satisfying the C-002 owns C-004 relation.\n"
+atomic_steps:
+- A-001
+status: draft

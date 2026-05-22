@@ -1,0 +1,50 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Create incremental compatibility layer module
+target_file: code_analysis/search_session/compat_layer.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-022
+prompt: "Create the file code_analysis/search_session/compat_layer.py.\n\nMRS excerpt:
+  C-022 IncrementalCompatibilityLayer is a compatibility layer that\nadds paginated
+  and session-backed behavior around existing command implementations\nwithout breaking
+  current callers. Properties: adds pagination as an opt-in\nbehavior; may route paginated
+  execution through SearchSession; preserves existing\nvalidation, schemas, queue
+  behavior, timeout behavior, direct payloads, structural\nresults, and preview references;
+  must avoid duplicating working search logic.\n\nImports (each on its own line):\n\
+  \  import dataclasses\n  import pathlib\n  import typing\n  from code_analysis.search_session.compat_schema
+  import (\n      OptionalPaginationParameters,\n      extract_pagination_params,\n\
+  \      is_paginated_request,\n  )\n  from code_analysis.search_session.models import
+  create_search_session\n\nSignatures of imported symbols (for reference only; do
+  not redefine):\n  extract_pagination_params(raw_params: dict) -> OptionalPaginationParameters\n\
+  \  is_paginated_request(params: OptionalPaginationParameters) -> bool\n  create_search_session(session_base_dir:
+  pathlib.Path) -> SearchSession\n    (returns object with attribute search_id: str)\n\
+  \n1. Define dataclass CompatRouteResult with fields:\n   is_paginated: bool\n  \
+  \ search_id: typing.Optional[str]  (None when not paginated)\n   first_page_index:
+  int  (always 0)\n   direct_response: typing.Optional[dict]  (existing command response
+  when not paginated)\n   session_base_dir: typing.Optional[pathlib.Path]  (session
+  base dir when paginated)\n\n2. Define function route_request(\n     raw_params:
+  dict,\n     session_base_dir: pathlib.Path,\n   ) -> CompatRouteResult:\n   a. Calls
+  extract_pagination_params(raw_params) to get pagination_params.\n   b. If is_paginated_request(pagination_params)
+  is False:\n      returns CompatRouteResult(is_paginated=False, search_id=None,\n\
+  \      first_page_index=0, direct_response=None, session_base_dir=None).\n   c.
+  If is_paginated_request(pagination_params) is True:\n      calls create_search_session(session_base_dir)
+  to get session,\n      then returns CompatRouteResult(is_paginated=True,\n     \
+  \ search_id=session.search_id, first_page_index=0,\n      direct_response=None,
+  session_base_dir=session_base_dir).\n\n3. Define function make_pass_through_result(\n\
+  \     existing_response: dict,\n   ) -> CompatRouteResult:\n   Returns CompatRouteResult(is_paginated=False,
+  search_id=None,\n   first_page_index=0, direct_response=existing_response,\n   session_base_dir=None).
+  Docstring must state: returned when the opt-in\n   pagination signal is absent and
+  the existing command handler processes\n   the request unchanged.\n\nConstraints:\n\
+  - No third-party imports.\n- All public names must have docstrings.\n- When is_paginated
+  is False the layer must not call create_search_session.\n- Existing command behavior
+  is passed through unchanged for non-paginated requests.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/compat_layer.py
+  expected: Module imports without error. CompatRouteResult, route_request, and 
+    make_pass_through_result are all present. route_request with empty dict 
+    returns CompatRouteResult with is_paginated=False without raising.
+status: draft

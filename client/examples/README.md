@@ -48,12 +48,15 @@ export CODE_ANALYSIS_CONFIG=/abs/path/to/config.json
 | File | Role |
 |------|------|
 | `_common.py` | **CONVENTIONS** — `sys.path`, `chdir`, `CODE_ANALYSIS_CONFIG`. |
-| `run_all_examples.py` | **FULL MANUAL** — every exported API + representative `JsonRpcClient` usage. |
+| `run_all_examples.py` | **FULL MANUAL** — every exported API + runs all live sibling scripts. |
+| `ex_file_sessions.py` | **SESSIONS** — `FileSessionClient` + locks, transfer, delete guards. |
+| `ex_session_view_subordinates.py` | **SESSION VIEW** — `view_session`, subordinate CRUD, `force` delete. |
 | `ex_config_only.py` | **CONFIG(5)**-style — parse `config.json` without TCP. |
 | `ex_minimal_validated.py` | **MINIMAL ASYNC(7)** — smallest validated call. |
+| `ex_universal_files.py` | **UNIVERSAL FILES** — all ``UniversalFileClient`` methods. |
 
-`run_all_examples.py` exits **0** only if every assertion against the live
-server succeeds.
+`run_all_examples.py` exits **0** only if its own sections, every sibling script,
+and :func:`verify_examples_cover_client_api` succeed (all public client methods).
 
 ## Relationship to the installable package
 

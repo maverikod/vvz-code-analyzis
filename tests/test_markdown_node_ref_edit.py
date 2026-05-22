@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from markdown_it import MarkdownIt
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
@@ -21,6 +22,9 @@ from code_analysis.commands.universal_file_edit.write_command import (
 from code_analysis.commands.universal_file_preview.budget import PreviewBudget
 from code_analysis.commands.universal_file_preview.handlers.markdown_handler import (
     MarkdownFileHandler,
+)
+from code_analysis.commands.universal_file_preview.handlers.markdown_line_ranges import (
+    md_block_node_ref,
 )
 from code_analysis.commands.universal_file_preview.navigation import navigate
 from code_analysis.commands.universal_file_preview.response import build_envelope
@@ -108,7 +112,6 @@ async def _open_md(tmp: Path, rel: str, content: str) -> tuple[str, Path]:
             **cmd.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
         )
     assert isinstance(res, SuccessResult)
-    assert res.data.get("format_group") == "text"
     return str(res.data["session_id"]), target
 
 
@@ -117,6 +120,59 @@ def test_preview_md_section_includes_line_range_attributes(tmp_path: Path) -> No
     attrs = envelope["focus"]["attributes"]
     assert attrs["start_line"] == "1"
     assert int(attrs["end_line"]) >= 3
+
+
+@pytest.mark.asyncio
+async def test_edit_md_replace_by_uuid_node_ref_from_annotated_preview(
+    tmp_path: Path,
+) -> None:
+    """uuid5 block node_ref from annotated full-text preview must work in edit."""
+    rel = "notes/uuid_doc.md"
+    content = "# Title\n\nParagraph to replace.\n"
+    sid, target = await _open_md(tmp_path, rel, content)
+    path = str(target.resolve())
+    token = next(
+        t
+        for t in MarkdownIt().parse(content)
+        if t.type == "paragraph_open" and t.map is not None
+    )
+    block_ref = md_block_node_ref(path, token)
+
+    edit = UniversalFileEditCommand()
+    write = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        res = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "replace",
+                            "node_ref": block_ref,
+                            "content": "Replaced paragraph.\n",
+                        }
+                    ],
+                }
+            )
+        )
+        assert isinstance(res, SuccessResult)
+        await write.execute(
+            **write.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "write_mode": "commit",
+                }
+            )
+        )
+    text = target.read_text(encoding="utf-8")
+    assert "Replaced paragraph." in text
+    assert "Paragraph to replace." not in text
 
 
 @pytest.mark.asyncio

@@ -22,15 +22,12 @@ def get_project_file_transfer_download_begin_metadata(
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Maps a project file to the mcp-proxy-adapter **download transfer** flow. "
-            "Provide **either** ``file_id`` (``files`` primary key) **or** the pair "
-            "``project_id`` + ``file_path`` (literal path relative to project root, same as "
-            "``list_project_files`` / ``universal_file_read``). When ``file_id`` is set, "
-            "``project_id`` and ``file_path`` are optional (optional ``project_id`` filters the "
-            "row to that project). When ``file_id`` is omitted, both ``project_id`` and "
-            "``file_path`` are required. The server ensures the path stays inside the project "
-            "root, checks the file exists on disk, then calls the same session creation logic "
-            "as ``transfer_download_begin`` with an absolute ``source_path``.\n\n"
+            "Maps an indexed project file to the mcp-proxy-adapter **download transfer** flow.\n\n"
+            "Pass ``file_id`` (``files`` primary key). Project and path are resolved from the "
+            "row. Optional ``project_id`` must match that row when provided. ``file_path`` is "
+            "not accepted.\n\n"
+            "**Client façade** (``code-analysis-client``): ``FileSessionClient.download``. "
+            "Boolean ``lock`` maps to ``lock_mode``: ``true`` → ``full``, ``false`` → ``none``.\n\n"
             "After this command succeeds, clients read bytes using the returned "
             "``transport.chunk_path_template`` (GET with ``offset`` and ``limit``) and the same "
             "authentication as JSON-RPC, exactly as for the built-in transfer download command.\n\n"
@@ -46,34 +43,24 @@ def get_project_file_transfer_download_begin_metadata(
             "COMPLETED (also best-effort on ack, expiry, and terminal transfer errors)."
         ),
         "parameters": {
+            "file_id": {
+                "description": (
+                    "UUID primary key of the ``files`` row. **Required.** Project and path are "
+                    "resolved from this row."
+                ),
+                "type": "string",
+                "required": True,
+                "examples": ["f1e2d3c4-b5a6-4789-8012-3456789abcde"],
+            },
             "project_id": {
                 "description": (
-                    "Project UUID. **Required** with ``file_path`` when ``file_id`` is omitted. "
-                    "**Optional** when ``file_id`` is set; if provided, the ``files`` row must "
-                    "belong to this project."
+                    "Optional project UUID. When provided, the ``files`` row must belong to "
+                    "this project."
                 ),
                 "type": "string",
                 "required": False,
                 "examples": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"],
                 "notes": "Discover via list_projects.",
-            },
-            "file_id": {
-                "description": (
-                    "UUID primary key of the ``files`` row. Mutually exclusive with ``file_path``."
-                ),
-                "type": "string",
-                "required": False,
-                "examples": ["f1e2d3c4-b5a6-4789-8012-3456789abcde"],
-            },
-            "file_path": {
-                "description": (
-                    "Project-relative literal path (POSIX). **Required** when ``file_id`` is "
-                    "omitted (with ``project_id``). Mutually exclusive with ``file_id``. "
-                    "File must exist on disk. Response ``file_id`` is set when the path is indexed."
-                ),
-                "type": "string",
-                "required": False,
-                "examples": ["src/app.py", "docs/README.md"],
             },
             "compression": {
                 "description": "Wire encoding for chunk responses.",
@@ -97,13 +84,24 @@ def get_project_file_transfer_download_begin_metadata(
             },
             "lock_mode": {
                 "description": (
-                    "Optional transfer advisory lock: none, block_write (shared flock), or "
-                    "full (exclusive flock)."
+                    "Advisory transfer lock. ``none`` — no lock (client ``lock=false``). "
+                    "``full`` — exclusive flock until download completes (client ``lock=true``). "
+                    "``block_write`` — shared flock (advanced). Requires ``session_id`` when not "
+                    "``none``."
                 ),
                 "type": "string",
                 "required": False,
                 "default": "none",
                 "enum": ["none", "block_write", "full"],
+                "notes": "Client ``FileSessionClient.download`` exposes this as boolean ``lock``.",
+            },
+            "session_id": {
+                "description": (
+                    "Client session from ``session_create``. Required when ``lock_mode`` is not "
+                    "``none``."
+                ),
+                "type": "string",
+                "required": False,
             },
             "job_id": {
                 "description": "Optional queue job id for adapter/WebSocket correlation.",
@@ -125,8 +123,7 @@ def get_project_file_transfer_download_begin_metadata(
                     "``checksum_value``, ``compression``, ``chunk_size``, ``offset``, "
                     "``status``, ``plaintext_size_bytes``, ``expires_at``) plus "
                     "``transport``, ``file_id``, ``project_id``, ``file_path``, and optionally "
-                    "``backup_history``. ``file_id`` may be null when the call used ``file_path`` "
-                    "only and the path is not in the index."
+                    "``backup_history``."
                 ),
                 "data": {
                     "success": "Omitted in data dict; outer SuccessResult indicates success.",
@@ -140,9 +137,9 @@ def get_project_file_transfer_download_begin_metadata(
                     "transport": (
                         "Object with chunk_method (GET), chunk_path_template, protocol_hint."
                     ),
-                    "file_id": "``files.id`` when known (indexed); null for path-only unindexed.",
-                    "project_id": "Effective project UUID (from the request or from the ``files`` row).",
-                    "file_path": "Project-relative POSIX path used for disk read.",
+                    "file_id": "``files.id`` for the downloaded row.",
+                    "project_id": "Effective project UUID (from the ``files`` row).",
+                    "file_path": "Project-relative POSIX path resolved from the ``files`` row.",
                     "lock_mode": "Requested lock mode.",
                     "lock_session_id": "Runtime lock session that owns a non-none transfer lock.",
                     "backup_history": (
@@ -189,9 +186,8 @@ def get_project_file_transfer_download_begin_metadata(
                 "description": "Command or transfer layer rejected the request.",
                 "code": (
                     "String codes: PROJECT_NOT_FOUND, FILE_NOT_FOUND, FILE_DELETED, "
-                    "FILE_PATH_MISSING, PATH_ERROR, VALIDATION_ERROR (e.g. both file_id and "
-                    "file_path, neither, or missing project_id/file_path in path mode); or "
-                    "JSON-RPC-style integer codes from adapter "
+                    "FILE_PATH_MISSING, PATH_ERROR, VALIDATION_ERROR (missing file_id or "
+                    "unsupported file_path); or JSON-RPC-style integer codes from adapter "
                     "transfer validation (-32602) / transfer domain (-32000)."
                 ),
                 "message": "Human-readable explanation.",
@@ -200,49 +196,35 @@ def get_project_file_transfer_download_begin_metadata(
         },
         "usage_examples": [
             {
-                "description": "Start gzip download for one indexed file",
+                "description": "Download existing file with advisory lock (client lock=true)",
                 "command": {
-                    "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                     "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
-                    "compression": "gzip",
-                    "include_backup_history": True,
+                    "compression": "identity",
+                    "lock_mode": "full",
                 },
                 "explanation": (
-                    "Creates a session; client streams chunks, then verifies checksum_value "
-                    "against the decompressed content. backup_history links to prior old_code "
-                    "snapshots."
+                    "Id-only mode. Equivalent to ``FileSessionClient.download(..., lock=True)``. "
+                    "Lock is released when the adapter finishes streaming chunks."
                 ),
             },
             {
-                "description": "Download without embedding backup list",
+                "description": "Download without locking (client lock=false)",
                 "command": {
-                    "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                     "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
                     "compression": "identity",
-                    "include_backup_history": False,
+                    "lock_mode": "none",
                 },
-                "explanation": "Smaller response when version metadata is not needed.",
+                "explanation": "Read-only transfer; no advisory flock.",
             },
             {
-                "description": "Download by project-relative path (no file_id)",
-                "command": {
-                    "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                    "file_path": "src/app.py",
-                    "compression": "identity",
-                },
-                "explanation": (
-                    "Same chunked download; ``file_id`` in the response is set when the path is indexed."
-                ),
-            },
-            {
-                "description": "Download by ``file_id`` only (project from DB row)",
+                "description": "Download by file_id only (project from DB row)",
                 "command": {
                     "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
                     "compression": "identity",
                 },
                 "explanation": (
-                    "``project_id`` and ``file_path`` may be omitted; the server resolves the path "
-                    "and effective ``project_id`` from the ``files`` row."
+                    "``project_id`` must be omitted. Equivalent to ``FileSessionClient.download``."
                 ),
             },
         ],
@@ -287,24 +269,21 @@ def get_project_file_transfer_download_begin_metadata(
             },
             "VALIDATION_ERROR": {
                 "description": (
-                    "Invalid selector combination: both ``file_id`` and ``file_path``; neither; "
-                    "or ``file_id`` omitted but ``project_id`` or ``file_path`` missing."
+                    "Missing ``file_id``, unsupported ``file_path``, or optional ``project_id`` "
+                    "does not match the file row."
                 ),
-                "message": "ValidationError text (mutual exclusivity or missing project_id/file_path).",
-                "solution": (
-                    "With ``file_id``: omit ``file_path``; ``project_id`` optional. "
-                    "Without ``file_id``: send both ``project_id`` and ``file_path``."
-                ),
+                "message": "ValidationError text (file_id required or file_path not supported).",
+                "solution": "Pass ``file_id`` from ``list_project_files``; do not send ``file_path``.",
             },
         },
         "best_practices": [
             "Always verify checksum_value after the full download.",
-            "Use ``file_path`` when you already have ``relative_path`` from ``list_project_files``; "
-            "use ``file_id`` when you have the UUID from the index.",
+            "Obtain ``file_id`` from ``list_project_files`` before calling download.",
+            "Use ``lock_mode=full`` + ``session_id`` for edit workflows; ``none`` for read-only.",
+            "Client ``lock`` boolean maps to ``full`` / ``none``.",
             "Use include_backup_history when auditing which old_code backup matches a baseline.",
-            "Prefer gzip on large text files to save bandwidth; identity for already-compressed blobs.",
+            "Prefer gzip on large text files; identity for already-compressed blobs.",
             "Do not cache transfer_id long; sessions expire per adapter configuration.",
-            "Use lock_mode=block_write when clients need a stable read while cooperative writers use file_lock.",
         ],
     }
 
@@ -321,12 +300,16 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
         "detailed_description": (
             "End-to-end **write** path for large bodies without putting them in JSON-RPC: "
             "first complete the adapter **upload** transfer (begin → PUT chunks → complete), "
-            "then call this command with ``transfer_id`` and **either** ``file_id`` **or** "
-            "the pair ``project_id`` + project-relative ``file_path``. When ``file_id`` is set, "
-            "``project_id`` and ``file_path`` are optional. When ``file_id`` is omitted, both "
-            "``project_id`` and ``file_path`` are required. The implementation reads the committed "
-            "buffer (gzip or identity), then delegates to ``UniversalFileSaveCommand`` with the "
-            "resolved project-relative path.\n\n"
+            "then call this command with ``transfer_id``.\n\n"
+            "**Selector modes (exactly one):**\n"
+            "- **Update existing** — ``file_id`` only. Project and path come from the ``files`` "
+            "row. Optional ``project_id`` must match that row when provided.\n"
+            "- **Create new** — ``project_id`` + ``file_path``. Path must **not** already be "
+            "indexed (``FILE_ALREADY_INDEXED`` otherwise).\n\n"
+            "**Client façade:** ``FileSessionClient.upload`` (update) and ``.upload_new`` "
+            "(create). Boolean ``unlock`` maps to ``unlock_after_write`` (default ``true``).\n\n"
+            "The implementation reads the committed buffer (gzip or identity), then delegates "
+            "to ``UniversalFileSaveCommand`` with the resolved project-relative path.\n\n"
             "**Safety / parity with local editing:** "
             "With default ``backup=true`` and ``dry_run=false``, behavior matches "
             "``universal_file_save`` for the same extension: ``old_code`` backups where "
@@ -335,20 +318,17 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             "**Undo:** Restoring prior content is done the same way as after any "
             "``universal_file_save`` (e.g. restore_backup_file / old_code), not by reversing "
             "the transfer buffer.\n\n"
-            "**Scope:** The target path is always under the resolved project root (from "
-            "``project_id`` in path mode, or from the ``files`` row when only ``file_id`` is sent). "
-            "``file_id`` mode uses the path from the index row. ``file_path`` mode uses the "
-            "literal relative path (new files follow ``universal_file_save`` rules).\n\n"
-            "**Transfer locks:** ``unlock_after_write`` defaults to true. After a successful "
-            "non-dry-run save the command releases any runtime lock bound to ``transfer_id``. "
-            "``lock_mode`` can also acquire a save-scoped lock when no earlier transfer lock "
-            "exists; that lock is released after the successful save or on save failure."
+            "**Transfer locks:** ``unlock_after_write`` defaults to true (client ``unlock=true``). "
+            "After a successful non-dry-run save the command releases runtime locks bound to "
+            "``transfer_id`` and ``session_file_locks`` when ``session_id`` is set. Set "
+            "``unlock_after_write=false`` when the caller releases locks manually."
         ),
         "parameters": {
             "project_id": {
                 "description": (
-                    "**Required** with ``file_path`` when ``file_id`` is omitted. **Optional** when "
-                    "``file_id`` is set; if provided, the ``files`` row must belong to this project."
+                    "**New-file mode:** required with ``file_path`` when ``file_id`` is omitted. "
+                    "**Update mode:** omit when ``file_id`` is set; if provided, the ``files`` "
+                    "row must belong to this project."
                 ),
                 "type": "string",
                 "required": False,
@@ -357,8 +337,8 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             },
             "file_id": {
                 "description": (
-                    "Target ``files.id`` (UUID). Mutually exclusive with ``file_path``. When set, "
-                    "``project_id`` and ``file_path`` are optional."
+                    "**Update mode:** target ``files.id`` — pass alone to overwrite an existing "
+                    "indexed file. Mutually exclusive with ``file_path``."
                 ),
                 "type": "string",
                 "required": False,
@@ -366,13 +346,13 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             },
             "file_path": {
                 "description": (
-                    "Target path relative to project root (literal). **Required** when ``file_id`` "
-                    "is omitted (with ``project_id``). Mutually exclusive with ``file_id``. After a "
-                    "successful non-dry-run save, ``file_id`` is filled from the index when available."
+                    "**New-file mode:** target path relative to project root. Required with "
+                    "``project_id`` when ``file_id`` is omitted. Path must not already be in "
+                    "``files`` — use ``file_id`` to update. After save, ``file_id`` is returned."
                 ),
                 "type": "string",
                 "required": False,
-                "examples": ["src/app.py"],
+                "examples": ["notes/draft.md"],
             },
             "transfer_id": {
                 "description": "Completed upload session id from transfer_upload_complete.",
@@ -423,11 +403,14 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             },
             "unlock_after_write": {
                 "description": (
-                    "Release the transfer/file runtime lock after successful non-dry-run save."
+                    "Release runtime transfer and session file locks after successful non-dry-run "
+                    "save. Client ``unlock=true`` (default). Set ``false`` to keep locks for manual "
+                    "release via ``session_close_file``."
                 ),
                 "type": "boolean",
                 "required": False,
                 "default": True,
+                "notes": "Client ``FileSessionClient.upload`` / ``upload_new`` expose this as boolean ``unlock``.",
             },
             "lock_mode": {
                 "description": (
@@ -444,7 +427,8 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
             "success": {
                 "description": (
                     "Same semantics as ``universal_file_save`` success payload inside ``data``, "
-                    "plus ``file_id`` and ``resolved_file_path`` when the inner result is a dict."
+                    "plus ``file_id`` (always present after a successful non-dry-run save) and "
+                    "``resolved_file_path`` when the inner result is a dict."
                 ),
                 "data": {
                     "success": "Typically True inside data.",
@@ -452,7 +436,11 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                     "operation": "save",
                     "file_path": "Project-relative path passed to the handler.",
                     "resolved_file_path": "Resolved project-relative path for the target.",
-                    "file_id": "``files.id`` when known.",
+                    "file_id": (
+                        "``files.id`` UUID string. After a successful non-dry-run save this field "
+                        "is always set: from the existing row or from auto-registration when the "
+                        "path was not yet indexed."
+                    ),
                     "project_id": "Effective project UUID for the save.",
                     "changed": "Whether content differed from previous file.",
                     "dry_run": "Whether this was a preview run.",
@@ -487,18 +475,27 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
         },
         "usage_examples": [
             {
-                "description": "Save uploaded buffer to an existing indexed file",
+                "description": "Update existing indexed file (client upload)",
                 "command": {
-                    "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                     "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
                     "transfer_id": "tr_01234567-89ab-cdef-0123-456789abcdef",
                     "backup": True,
-                    "dry_run": False,
+                    "unlock_after_write": True,
                 },
                 "explanation": (
-                    "Run after transfer_upload_complete. Creates backups and updates the file "
-                    "like universal_file_save."
+                    "Id-only update mode. Equivalent to ``FileSessionClient.upload(..., unlock=True)``."
                 ),
+            },
+            {
+                "description": "Update without releasing locks (client unlock=false)",
+                "command": {
+                    "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
+                    "transfer_id": "tr_01234567-89ab-cdef-0123-456789abcdef",
+                    "unlock_after_write": False,
+                },
+                "explanation": "Caller must release locks manually after save.",
             },
             {
                 "description": "Preview only",
@@ -512,15 +509,14 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                 "explanation": "Validates handler without writing; may include diff when supported.",
             },
             {
-                "description": "Save upload buffer to a path (no file_id)",
+                "description": "Create new file at path (client upload_new)",
                 "command": {
                     "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                     "file_path": "notes/draft.md",
                     "transfer_id": "tr_01234567-89ab-cdef-0123-456789abcdef",
                 },
                 "explanation": (
-                    "Same as universal_file_save for that relative path; use when you know the path "
-                    "from list_project_files."
+                    "New-file mode. Path must not already be in ``files``. Returns new ``file_id``."
                 ),
             },
             {
@@ -530,8 +526,7 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                     "transfer_id": "tr_01234567-89ab-cdef-0123-456789abcdef",
                 },
                 "explanation": (
-                    "``project_id`` and ``file_path`` may be omitted; the server resolves both from "
-                    "the ``files`` row."
+                    "Update mode. ``project_id`` and ``file_path`` must be omitted."
                 ),
             },
         ],
@@ -591,21 +586,29 @@ def get_project_file_transfer_upload_save_metadata(cls: Type[Any]) -> Dict[str, 
                 ),
                 "message": "ValidationError text from the command.",
                 "solution": (
-                    "With ``file_id``: omit ``file_path``; ``project_id`` optional. "
-                    "Without ``file_id``: send ``project_id`` and ``file_path``."
+                    "Update: ``file_id`` only. New file: ``project_id`` + ``file_path``; path "
+                    "must not be indexed yet."
+                ),
+            },
+            "FILE_ALREADY_INDEXED": {
+                "description": (
+                    "New-file mode: ``project_id`` + ``file_path`` was sent but the path already "
+                    "has a row in ``files``."
+                ),
+                "message": "Path … is already indexed; use file_id to update",
+                "solution": (
+                    "Use ``file_id`` (update mode / client ``upload``) instead of ``file_path``."
                 ),
             },
         },
         "best_practices": [
             "Complete transfer_upload_complete before calling this command.",
-            "Without ``file_id``, always send both ``project_id`` and ``file_path``; with ``file_id``, "
-            "those two are optional.",
-            "Use ``file_path`` for the same ``relative_path`` string as ``list_project_files``; "
-            "use ``file_id`` when you already have the UUID.",
+            "Update existing files with ``file_id`` only (client ``upload``).",
+            "Create new files with ``project_id`` + ``file_path`` only (client ``upload_new``).",
+            "Do not use path mode for paths already in ``list_project_files`` — use ``file_id``.",
             "Use dry_run=true and diff=true on risky Python/JSON/YAML changes first.",
             "Keep backup=true so old_code history stays consistent with local saves.",
-            "Verify with universal_file_read or project_file_transfer_download_begin after write.",
+            "Keep unlock_after_write=true (client unlock=true) unless managing locks manually.",
             "Omit commit_message unless git integration is desired for this change.",
-            "Keep unlock_after_write=true unless a caller deliberately manages the runtime lease.",
         ],
     }

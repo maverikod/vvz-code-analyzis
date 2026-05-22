@@ -1,0 +1,32 @@
+step_id: T-004
+parent_global_step: G-001
+name: HTTP Result Access and Last Access Timestamp
+description: "Creates the HTTPResultAccess (C-005) mechanism as the interface through
+  which clients read published SearchPageFiles, session status, and manifest-backed
+  metadata without requiring streaming transport. Every successful access to a page,
+  status endpoint, or manifest via HTTPResultAccess produces a LastAccessTimestamp
+  (C-006) refresh: the last_access_at field in the SearchSessionManifest is updated
+  atomically. HTTPResultAccess returns a page-not-ready response when the session
+  is running but the requested page index has not yet been published.\n"
+concepts:
+- C-005
+- C-006
+inputs:
+- name: session_directory
+  type: SearchSessionDirectory (C-002)
+  description: Directory from which pages and manifest are read.
+- name: page_index
+  type: integer
+  description: Index of the page the client is requesting.
+outputs:
+- name: page_response
+  type: SearchPageFile (C-004) contents or page-not-ready indicator
+  description: Contents of the requested finalized page file, or a 
+    page-not-ready response if the page has not yet been published.
+- name: updated_last_access_at
+  type: LastAccessTimestamp (C-006)
+  description: Refreshed last_access_at written atomically into the manifest 
+    after every successful access.
+atomic_steps:
+- A-001
+status: draft

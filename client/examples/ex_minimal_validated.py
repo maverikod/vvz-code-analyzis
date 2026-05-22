@@ -123,6 +123,17 @@ ensure_client_package_on_path()
 
 from code_analysis_client import CodeAnalysisAsyncClient  # noqa: E402
 
+CLIENT_API_COVERAGE = frozenset(
+    {
+        "CodeAnalysisAsyncClient.from_server_config_path",
+        "CodeAnalysisAsyncClient.call_validated",
+        "CodeAnalysisAsyncClient.commands",
+        "CodeAnalysisAsyncClient.__aenter__",
+        "CodeAnalysisAsyncClient.__aexit__",
+        "ValidatedCommandsProxy.__getattr__",
+    }
+)
+
 
 async def main() -> None:
     """Run the minimal validated scenario (see **DESCRIPTION** in the module docstring)."""

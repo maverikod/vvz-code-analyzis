@@ -103,6 +103,7 @@ _CLIENT_SESSION_TABLES = (
     "roles",
     "role_permissions",
     "session_roles",
+    "subordinate_sessions",
 )
 
 

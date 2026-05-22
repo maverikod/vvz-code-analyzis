@@ -1,0 +1,70 @@
+step_id: T-003
+parent_global_step: G-006
+name: Structural evidence validity policy
+description: "Create and modify the StructuralEvidence entity and its validity policy
+  in full.\nStructural evidence is required when grep participates in project cross-search
+  as structural proof. A match counts as structural evidence only when backed by a
+  validated TreeRepresentation (per G-005 / C-015) and a preview-compatible result
+  node or block with PreviewReference data (per G-005 / C-017).\nRejection rules:
+  - Line-only grep output is not structural evidence unless converted into\n  validated
+  preview-compatible nodes on a validated tree.\n- Unstable node identifiers must
+  not be exposed as preview-compatible. - Matches lacking validated tree backing or
+  complete preview reference material\n  are rejected from structural evidence sets.\n\
+  \nTimeout and cancellation interaction (source lines 69–75): when dynamic scanning,
+  tree reconstruction, XPath filtering, structural enrichment, or related structural
+  phases time out or are cancelled, partial outputs from those phases must not be
+  admitted as structural evidence. Invalidate or discard partial structural bundles
+  rather than publishing invalid evidence.\nRelationship to GrepSearchMode (C-019):
+  structural grep mode may supply candidate bundles; this step applies validity classification,
+  rejection, and partial-invalidation rules only. GrepSearchMode does not define these
+  rules.\nRelationship to XPathLikeFilter (C-016): XPath-like results already emit
+  preview-backed nodes when filtering succeeds; this step still governs whether aggregated
+  cross-search evidence sets meet structural evidence invariants (including mixed-source
+  pages and timeout boundaries).\nDoes not redefine TreeRepresentation or PreviewReference;
+  depends on G-005 definitions for backing and reference shape.\n"
+concepts:
+- C-018
+inputs:
+- name: candidate_matches
+  type: search_match_bundle
+  description: "Candidate results from structural grep, XPath-like filtering, or merged
+    cross-search paths before evidence classification.\n"
+- name: tree_validity_context
+  type: G-005_TreeRepresentation_contract
+  description: "Validation state required for evidence backing (C-015 consumed per
+    G-005).\n"
+- name: preview_reference_context
+  type: G-005_PreviewReference_contract
+  description: "Reference completeness and stability requirements (C-017 consumed
+    per G-005).\n"
+- name: phase_outcome
+  type: phase_status
+  description: "Whether contributing phases completed, timed out, or were cancelled;
+    drives partial invalidation rules.\n"
+outputs:
+- name: structural_evidence_set
+  type: StructuralEvidence_bundle
+  description: "Matches accepted as valid structural evidence for project cross-search.\n"
+- name: rejected_matches
+  type: rejection_record_list
+  description: "Rejected candidates with reason (line-only, invalid tree backing,
+    unstable identifier, incomplete preview reference, timed-out partial phase, etc.).\n"
+- name: invalidated_partial_evidence
+  type: invalidation_record_list
+  description: "Partial structural outputs suppressed because a contributing phase
+    timed out or was cancelled.\n"
+atomic_steps:
+- A-001
+status: draft
+self_check_report:
+  t5_concept_references_valid: pass
+  t6_scope_within_parent_gs: pass
+  t7_executor_completeness: pass
+  t8_no_silent_dependency_on_siblings: pass
+  t9_no_redundancy: pass
+  t10_no_open_decisions: pass
+  t11_inputs_outputs_structured: pass
+  t12_gs_coverage_contribution: pass
+  t13_ts_independence: pass
+  notes: "Sole owner of StructuralEvidence (C-018). Does not own GrepSearchMode or
+    XPathLikeFilter. Consumes G-005 tree and preview contracts via inputs only.\n"

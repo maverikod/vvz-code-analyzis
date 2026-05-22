@@ -90,11 +90,11 @@ class UniversalFileEditCommand(BaseMCPCommand):
                 "operations": {
                     "type": "array",
                     "description": (
-                        "Batch of edit operations. Structure varies by format_group: "
-                        "sidecar={type,node_id,code_lines}, "
-                        "tree-temp={type,json_pointer,value}, "
-                        "text={type,start_line,end_line,content} or "
-                        "text={type,node_ref,content} (.md slug paths from preview)."
+                        "Batch of edit operations. Shape must match universal_file_preview "
+                        "node_ref: Python .py uses {type,node_id,code_lines}; "
+                        "JSON/YAML uses {type,json_pointer,value}; "
+                        "text/markdown uses {type,node_ref,content} or line ranges only "
+                        "when preview or is_invalid fallback requires it."
                     ),
                     "items": {"type": "object"},
                 },

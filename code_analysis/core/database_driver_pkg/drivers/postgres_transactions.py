@@ -68,7 +68,7 @@ class PostgreSQLTransactionManager:
             ) from e
 
         transaction_id = str(uuid.uuid4())
-        logger.info(
+        logger.debug(
             "[CHAIN] postgres_transactions begin_transaction tid=%s",
             transaction_id[:8] + "…",
         )
@@ -97,7 +97,7 @@ class PostgreSQLTransactionManager:
             raise TransactionError(f"Failed to begin transaction: {e}") from e
 
     def commit_transaction(self, transaction_id: str) -> bool:
-        logger.info(
+        logger.debug(
             "[CHAIN] postgres_transactions commit_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
             len(self._transactions),
@@ -118,7 +118,7 @@ class PostgreSQLTransactionManager:
             raise TransactionError(f"Failed to commit transaction: {e}") from e
 
     def rollback_transaction(self, transaction_id: str) -> bool:
-        logger.info(
+        logger.debug(
             "[CHAIN] postgres_transactions rollback_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
             len(self._transactions),

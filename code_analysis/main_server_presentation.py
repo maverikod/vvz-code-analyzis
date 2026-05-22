@@ -38,9 +38,9 @@ def _package_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("code-analysis-server")
+        return version("code-analysis")
     except Exception:
-        return "1.0.0"
+        return "1.0.4"
 
 
 def resolve_server_presentation(app_config: Dict[str, Any]) -> Tuple[str, str, str]:

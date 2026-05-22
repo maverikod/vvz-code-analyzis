@@ -17,6 +17,17 @@ from code_analysis_client.config import (
     load_server_config,
 )
 from code_analysis_client.exceptions import ClientValidationError
+from code_analysis_client.file_session import FileSessionClient, SessionNotFoundError
+from code_analysis_client.server_api import (
+    CLIENT_FACADE_COMMANDS,
+    CST_REMOVED_COMMANDS,
+    FILE_SESSION_COMMANDS,
+    FILE_SESSION_FACADE_METHODS,
+    LEGACY_REMOVED_COMMANDS,
+    REMOVED_COMMANDS,
+    UNIVERSAL_FILE_COMMANDS,
+)
+from code_analysis_client.universal_file import UniversalFileClient
 from code_analysis_client.server_schema import (
     fetch_command_schema_from_server,
     parse_schema_from_help_payload,
@@ -27,8 +38,18 @@ from code_analysis_client.validation import (
 )
 
 __all__ = [
+    "CLIENT_FACADE_COMMANDS",
+    "CST_REMOVED_COMMANDS",
     "ClientValidationError",
     "CodeAnalysisAsyncClient",
+    "FILE_SESSION_COMMANDS",
+    "FILE_SESSION_FACADE_METHODS",
+    "FileSessionClient",
+    "LEGACY_REMOVED_COMMANDS",
+    "REMOVED_COMMANDS",
+    "SessionNotFoundError",
+    "UNIVERSAL_FILE_COMMANDS",
+    "UniversalFileClient",
     "ValidatedCommandsProxy",
     "adapter_settings_from_server_config",
     "adapter_settings_to_jsonrpc_kwargs",

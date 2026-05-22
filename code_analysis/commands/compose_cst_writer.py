@@ -269,7 +269,7 @@ def apply_changes(
     """
     t_apply = time.perf_counter()
     t_prev = t_apply
-    logger.info(
+    logger.debug(
         "[CHAIN] run_ops_mode _apply_changes entry transaction_id=%s",
         (
             (transaction_id[:8] + "...")
@@ -346,7 +346,7 @@ def apply_changes(
                 )
                 raise
 
-        logger.info("[CHAIN] run_ops_mode calling database.commit_transaction")
+        logger.debug("[CHAIN] run_ops_mode calling database.commit_transaction")
         database.commit_transaction(transaction_id)
         _t = time.perf_counter()
         logger.info(

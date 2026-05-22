@@ -117,9 +117,9 @@ class _RPCHandlersSchemaMixin:
             SuccessResult with transaction_id or ErrorResult
         """
         try:
-            logger.info("[CHAIN] handler handle_begin_transaction calling driver")
+            logger.debug("[CHAIN] handler handle_begin_transaction calling driver")
             transaction_id = self.driver.begin_transaction()
-            logger.info(
+            logger.debug(
                 "[CHAIN] handler handle_begin_transaction returned tid=%s",
                 (
                     (transaction_id[:8] + "…")
@@ -153,7 +153,7 @@ class _RPCHandlersSchemaMixin:
                     error_code=ErrorCode.VALIDATION_ERROR,
                     description="transaction_id parameter is required",
                 )
-            logger.info(
+            logger.debug(
                 "[CHAIN] handler handle_commit_transaction tid=%s",
                 (
                     (transaction_id[:8] + "…")
@@ -188,7 +188,7 @@ class _RPCHandlersSchemaMixin:
                     error_code=ErrorCode.VALIDATION_ERROR,
                     description="transaction_id parameter is required",
                 )
-            logger.info(
+            logger.debug(
                 "[CHAIN] handler handle_rollback_transaction tid=%s",
                 (
                     (transaction_id[:8] + "…")
@@ -304,7 +304,7 @@ class _RPCHandlersSchemaMixin:
                     if transaction_id and len(transaction_id) > 8
                     else transaction_id
                 )
-                logger.info(
+                logger.debug(
                     "[CHAIN] handler handle_execute_logical_write_operation tid=%s",
                     tid_short,
                 )

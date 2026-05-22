@@ -124,9 +124,13 @@ async def test_open_does_not_preempt_write_preview_phase(tmp_path: Path) -> None
         )
         wr = UniversalFileWriteCommand()
         preview = await wr.execute(
-            project_id=_PROJECT_UUID,
-            session_id=sid,
-            write_mode="preview",
+            **wr.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "write_mode": "preview",
+                }
+            )
         )
     assert isinstance(preview, SuccessResult)
     assert preview.data.get("phase") == "preview"
@@ -164,10 +168,16 @@ async def test_create_invalid_json_preview_returns_raw_text(
         )
         assert isinstance(opened, SuccessResult)
         assert opened.data.get("is_invalid") is True
+        sid = str(opened.data["session_id"])
         prev = UniversalFilePreviewCommand()
         result = await prev.execute(
             **prev.validate_params(
-                {"project_id": _PROJECT_UUID, "file_path": rel, "node_ref": ""}
+                {
+                    "project_id": _PROJECT_UUID,
+                    "file_path": rel,
+                    "session_id": sid,
+                    "node_ref": "",
+                }
             )
         )
     assert isinstance(result, SuccessResult)
@@ -203,7 +213,6 @@ async def test_create_invalid_json_writes_raw_and_sets_is_invalid(
     assert isinstance(opened, SuccessResult)
     assert opened.data.get("created") is True
     assert opened.data.get("is_invalid") is True
-    assert opened.data.get("format_group") == "text"
     assert (tmp_path / rel).read_text(encoding="utf-8") == broken
 
 
@@ -224,7 +233,6 @@ async def test_open_invalid_json_sets_is_invalid_and_allows_raw_edit(
         )
     assert isinstance(opened, SuccessResult)
     assert opened.data.get("is_invalid") is True
-    assert opened.data.get("format_group") == "text"
     sid = str(opened.data["session_id"])
     fixed = '{"ok": true}\n'
     ed = UniversalFileEditCommand()
@@ -314,11 +322,9 @@ async def test_open_invalid_yaml_sets_is_invalid_and_warning(tmp_path: Path) -> 
             **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
         )
     assert isinstance(opened, SuccessResult)
-    assert opened.data.get("format_group") == "text"
     assert opened.data.get("is_invalid") is True
-    assert opened.data.get("original_format_group") == "tree-temp"
     assert opened.data.get("warning")
-    assert "text-mode fallback" in str(opened.data.get("warning"))
+    assert "line-based fallback" in str(opened.data.get("warning"))
 
 
 @pytest.mark.asyncio
@@ -334,9 +340,7 @@ async def test_open_invalid_py_falls_back_to_text(tmp_path: Path) -> None:
             **op.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
         )
     assert isinstance(opened, SuccessResult)
-    assert opened.data.get("format_group") == "text"
     assert opened.data.get("is_invalid") is True
-    assert opened.data.get("original_format_group") == "sidecar"
     assert opened.data.get("warning")
 
 
@@ -365,7 +369,7 @@ async def test_edit_invalid_session_returns_warning(tmp_path: Path) -> None:
         )
     assert isinstance(result, SuccessResult)
     assert result.data.get("warning")
-    assert "text-mode fallback" in str(result.data.get("warning"))
+    assert "line-based fallback" in str(result.data.get("warning"))
 
 
 @pytest.mark.asyncio
@@ -401,12 +405,11 @@ async def test_write_commit_invalid_session_still_broken_returns_error(
     assert isinstance(commit, ErrorResult)
     assert commit.code == FORMAT_INVALID_ON_OPEN
     assert commit.details is not None
-    assert commit.details.get("format") == "tree-temp"
     assert commit.details.get("parse_errors")
 
 
 @pytest.mark.asyncio
-async def test_write_commit_invalid_session_fixed_restores_format_group(
+async def test_write_commit_invalid_session_fixed_restores_structural_editing(
     tmp_path: Path,
 ) -> None:
     _ensure_project_root(tmp_path)
@@ -438,7 +441,7 @@ async def test_write_commit_invalid_session_fixed_restores_format_group(
             write_mode="commit",
         )
     assert isinstance(commit, SuccessResult)
-    assert commit.data.get("recovered_format_group") == "tree-temp"
+    assert commit.data.get("structural_editing_restored") is True
     assert commit.data.get("is_invalid") is False
     sess = get_session(sid)
     assert sess.format_group == "tree-temp"

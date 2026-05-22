@@ -86,6 +86,19 @@ class SessionHasLocksError(ValueError):
         self.lock_count = lock_count
 
 
+class SessionHasSubordinatesError(ValueError):
+    """Raised when a session has subordinate links and force=False."""
+
+    def __init__(self, session_id: str, subordinate_count: int) -> None:
+        msg = (
+            f"Session {session_id} has {subordinate_count} subordinate session link(s). "
+            "Use force=True to delete them."
+        )
+        super().__init__(msg)
+        self.session_id = session_id
+        self.subordinate_count = subordinate_count
+
+
 def ensure_client_session_tables(conn: Any) -> None:
     """
     Create all client-session-related tables and indexes idempotently.
@@ -294,25 +307,35 @@ def delete_client_session(
     force: bool = False,
 ) -> dict[str, object]:
     """
-    Delete a client session, optionally force-releasing all file locks.
+    Delete a client session, optionally force-releasing locks and subordinates.
 
-    If force is False and open file locks exist, raises SessionHasLocksError.
-    If force is True, deletes all session_file_locks rows for this session
-    before deleting the session.
+    If force is False, raises SessionHasLocksError when file locks exist and
+    SessionHasSubordinatesError when subordinate session links exist (this session
+    is the parent).
+
+    If force is True, recursively deletes all linked subordinate client sessions
+    first (each with force=True), then releases file locks on this session, then
+    deletes the session row.
 
     Args:
         database: DatabaseClient instance.
         session_id: UUID4 string.
-        force: If True, release all file locks before deleting.
+        force: If True, delete subordinates and release locks before deleting.
 
     Returns:
         dict with keys: session_id (str), deleted (bool, always True),
-        released_lock_count (int).
+        released_lock_count (int), released_subordinate_count (int).
 
     Raises:
         SessionNotFoundError: if session_id is not found.
         SessionHasLocksError: if force is False and open locks exist.
+        SessionHasSubordinatesError: if force is False and subordinate links exist.
     """
+    from code_analysis.core.subordinate_sessions import (
+        count_subordinate_links_for_parent,
+        list_subordinate_session_ids_for_parent,
+    )
+
     if get_client_session(database, session_id) is None:
         raise SessionNotFoundError(session_id)
     res = database.execute(
@@ -321,8 +344,22 @@ def delete_client_session(
     )
     data = res.get("data") or []
     lock_count: int = data[0]["cnt"] if data else 0
-    if lock_count > 0 and not force:
-        raise SessionHasLocksError(session_id, lock_count)
+    subordinate_count = count_subordinate_links_for_parent(database, session_id)
+    if not force:
+        if lock_count > 0:
+            raise SessionHasLocksError(session_id, lock_count)
+        if subordinate_count > 0:
+            raise SessionHasSubordinatesError(session_id, subordinate_count)
+
+    released_subordinates = 0
+    if force and subordinate_count > 0:
+        for sub_id in list_subordinate_session_ids_for_parent(database, session_id):
+            sub_result = delete_client_session(database, sub_id, force=True)
+            released_subordinates += 1
+            released_subordinates += int(
+                sub_result.get("released_subordinate_count") or 0
+            )
+
     released = 0
     if force and lock_count > 0:
         res2 = database.execute(
@@ -334,7 +371,12 @@ def delete_client_session(
         "DELETE FROM client_sessions WHERE session_id = ?",
         (session_id,),
     )
-    return {"session_id": session_id, "deleted": True, "released_lock_count": released}
+    return {
+        "session_id": session_id,
+        "deleted": True,
+        "released_lock_count": released,
+        "released_subordinate_count": released_subordinates,
+    }
 
 
 def open_session_file(
@@ -346,8 +388,7 @@ def open_session_file(
     """
     Acquire a file lock for a session (idempotent).
 
-    Inserts a row into session_file_locks using INSERT OR IGNORE so that
-    calling this function when the lock already exists is not an error.
+    Inserts a row into session_file_locks when absent (idempotent).
 
     Args:
         database: DatabaseClient instance.
@@ -359,8 +400,20 @@ def open_session_file(
         dict with keys: acquired (bool, True if new row inserted, False if
         lock already existed), session_id (str), project_id (str), file_id (str).
     """
+    existing = database.execute(
+        "SELECT 1 AS present FROM session_file_locks "
+        "WHERE session_id = ? AND project_id = ? AND file_id = ? LIMIT 1",
+        (session_id, project_id, file_id),
+    )
+    if existing.get("data"):
+        return {
+            "acquired": False,
+            "session_id": session_id,
+            "project_id": project_id,
+            "file_id": file_id,
+        }
     res = database.execute(
-        "INSERT OR IGNORE INTO session_file_locks (session_id, project_id, file_id) VALUES (?, ?, ?)",
+        "INSERT INTO session_file_locks (session_id, project_id, file_id) VALUES (?, ?, ?)",
         (session_id, project_id, file_id),
     )
     return {

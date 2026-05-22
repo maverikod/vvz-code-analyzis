@@ -1,0 +1,35 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Create preview reference schema module
+target_file: code_analysis/search_session/preview_ref.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-017
+prompt: "Create the file code_analysis/search_session/preview_ref.py.\n\nMRS excerpt:
+  C-017 PreviewReference is a reference embedded in a search result that is sufficient
+  to inspect the result through universal_file_preview. Properties: includes file
+  path and node identifier or selector; includes draft session identifier for draft-session
+  results; must not expose unstable node identifiers; is the canonical result presentation
+  mechanism for structural results.\n\nImplementation requirements.\nImports: dataclasses,
+  pathlib, typing.\n\n1. Define dataclass PreviewReference with fields: file_path
+  (str, project-relative path), node_ref (str, stable node identifier or selector
+  from the TreeRepresentation for the matched node), session_id (Optional[str], draft
+  session identifier when result comes from a draft session, None for disk-based results).\n\
+  \n2. Define function make_preview_reference(file_path: pathlib.Path, node_ref: str,
+  session_id: Optional[str] = None) returning PreviewReference. Creates and returns
+  a PreviewReference with file_path=str(file_path), node_ref=node_ref, session_id=session_id.
+  Raises ValueError if node_ref is empty string.\n\n3. Define function is_stable_ref(node_ref:
+  str) returning bool. Returns True if node_ref is a non-empty string that does not
+  contain any whitespace. Returns False otherwise. Docstring must state that unstable
+  or empty node refs must not be embedded in PreviewReference.\n\nConstraints: no
+  third-party imports; all public names must have docstrings; make_preview_reference
+  must reject empty node_ref with ValueError.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/preview_ref.py
+  expected: Module imports without error. PreviewReference, 
+    make_preview_reference, and is_stable_ref are all present. 
+    make_preview_reference raises ValueError for empty node_ref string.
+status: draft

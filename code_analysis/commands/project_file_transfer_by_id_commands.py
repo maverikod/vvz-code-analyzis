@@ -41,11 +41,19 @@ from .project_file_transfer_by_id_commands_schema import (
     get_project_file_transfer_upload_save_schema,
 )
 from .universal_file_save_command import UniversalFileSaveCommand
+from ..core.file_disk_registration import ensure_file_row_for_disk_path
 from ..core.backup_manager import BackupManager
+from ..core.client_sessions import (
+    SessionNotFoundError,
+    close_session_file,
+    open_session_file,
+    touch_or_error,
+)
 from ..core.database_client.client import DatabaseClient
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
 from ..core.runtime_lock_sessions import (
+    ensure_client_lock_session,
     get_session_id_for_current_pid,
     normalize_lock_mode,
     register_runtime_session,
@@ -60,6 +68,98 @@ from ..core.transfer_lock_registry import (
 
 logger = logging.getLogger(__name__)
 install_transfer_lock_hooks()
+
+
+def _validate_client_session_id(
+    database: DatabaseClient,
+    session_id: Optional[str],
+    *,
+    lock_mode: str,
+) -> Optional[ErrorResult]:
+    """Touch client session when ``session_id`` is set; require it for non-none locks."""
+    sid = str(session_id or "").strip()
+    mode = normalize_lock_mode(lock_mode)
+    if not sid:
+        if mode == "none":
+            return None
+        return ErrorResult(
+            message="session_id is required when lock_mode is not none",
+            code="SESSION_ID_REQUIRED",
+            details={"lock_mode": lock_mode},
+        )
+    try:
+        touch_or_error(database, sid)
+    except SessionNotFoundError:
+        return ErrorResult(
+            code="SESSION_NOT_FOUND",
+            message=f"Session {sid!r} not found.",
+        )
+    try:
+        ensure_client_lock_session(database, sid)
+    except ValueError as exc:
+        return ErrorResult(
+            message=str(exc),
+            code="SESSION_NOT_FOUND",
+            details={"session_id": sid},
+        )
+    return None
+
+
+def _resolve_advisory_lock_session_id(
+    database: DatabaseClient,
+    *,
+    client_session_id: Optional[str],
+    lock_mode: str,
+) -> str:
+    """Pick lock owner: client session when provided, else daemon runtime session."""
+    sid = str(client_session_id or "").strip()
+    mode = normalize_lock_mode(lock_mode)
+    if mode == "none":
+        return sid
+    if sid:
+        return sid
+    lock_session_id = get_session_id_for_current_pid(database, role="daemon")
+    if not runtime_session_exists(database, lock_session_id):
+        register_runtime_session(database, role="daemon", session_id=lock_session_id)
+    return lock_session_id
+
+
+def _record_client_file_lock(
+    database: DatabaseClient,
+    *,
+    client_session_id: Optional[str],
+    project_id: str,
+    row: Optional[Dict[str, Any]],
+) -> None:
+    """Mirror indexed file lock in session_file_locks when client session is known."""
+    sid = str(client_session_id or "").strip()
+    if not sid or not row or row.get("id") is None:
+        return
+    open_session_file(
+        database,
+        session_id=sid,
+        project_id=project_id,
+        file_id=str(row["id"]),
+    )
+
+
+def _release_client_file_lock(
+    database: DatabaseClient,
+    *,
+    client_session_id: Optional[str],
+    project_id: str,
+    file_id: Optional[str],
+) -> None:
+    sid = str(client_session_id or "").strip()
+    fid = str(file_id or "").strip()
+    if not sid or not fid:
+        return
+    close_session_file(
+        database,
+        session_id=sid,
+        project_id=project_id,
+        file_id=fid,
+    )
 
 
 def _read_completed_upload_text(
@@ -163,8 +263,36 @@ def _resolve_file_by_id(
     return row, rel_posix, effective_pid
 
 
-def _validate_file_selector_params(params: Dict[str, Any]) -> None:
-    """file_id xor file_path; if file_id omitted, project_id and file_path are required."""
+def _validate_download_params(params: Dict[str, Any]) -> None:
+    """Download accepts ``file_id`` only; optional ``project_id`` must match the row."""
+    fid = str(params.get("file_id") or "").strip()
+    fp = str(params.get("file_path") or "").strip()
+    pid = str(params.get("project_id") or "").strip()
+
+    if fp:
+        raise ValidationError(
+            "file_path is not supported for download; use file_id",
+            field="file_path",
+            details={},
+        )
+    if not fid:
+        raise ValidationError(
+            "file_id is required",
+            field="file_id",
+            details={},
+        )
+    if pid:
+        BaseMCPCommand._validate_project_id_exists(pid)
+
+
+def _validate_upload_selector_params(params: Dict[str, Any]) -> None:
+    """file_id xor file_path; project_id required only in path mode.
+
+    When ``file_id`` is set, ``project_id`` is optional (the row determines the
+    project). If ``project_id`` is also provided, it must refer to a registered
+    project and match the file row (enforced during resolve). When ``file_id`` is
+    omitted, ``project_id`` and ``file_path`` are both required.
+    """
     fid = str(params.get("file_id") or "").strip()
     fp = str(params.get("file_path") or "").strip()
     pid = str(params.get("project_id") or "").strip()
@@ -248,6 +376,72 @@ def _resolve_by_file_path(
     return row, rel_posix, pid
 
 
+def _require_on_disk_project_file(
+    database: DatabaseClient,
+    project_id: str,
+    rel_posix: str,
+) -> Union[Path, ErrorResult]:
+    """Resolve ``rel_posix`` under the project root and require a regular file on disk."""
+    pid = str(project_id).strip()
+    project = database.get_project(pid)
+    if not project:
+        return ErrorResult(
+            message=f"Project {pid} not found",
+            code="PROJECT_NOT_FOUND",
+            details={"project_id": pid},
+        )
+    root = Path(project.root_path).resolve()
+    try:
+        abs_path = resolve_under_project_root(
+            root,
+            rel_posix,
+            require_exists=True,
+            must_be_file=True,
+        )
+    except ValidationError as e:
+        msg = str(e).lower()
+        if "does not exist" in msg or "not a file" in msg or "not found" in msg:
+            code = "FILE_NOT_FOUND"
+        else:
+            code = "PATH_ERROR"
+        return ErrorResult(
+            message=str(e),
+            code=code,
+            details=getattr(e, "details", None) or {},
+        )
+    if not abs_path.is_file():
+        return ErrorResult(
+            message=f"File not found on disk: {rel_posix}",
+            code="FILE_NOT_FOUND",
+            details={"project_id": pid, "file_path": rel_posix},
+        )
+    return abs_path
+
+
+def _ensure_db_row_for_on_disk_file(
+    database: DatabaseClient,
+    project_id: str,
+    abs_path: Path,
+    rel_posix: str,
+    row: Optional[Dict[str, Any]],
+) -> Union[Tuple[Dict[str, Any], Path], ErrorResult]:
+    """Require on-disk file and a ``files`` row (register when missing)."""
+    if row is not None and row.get("id") is not None:
+        return row, abs_path
+    registered = ensure_file_row_for_disk_path(
+        database,
+        project_id,
+        abs_path,
+    )
+    if registered is None or registered.get("id") is None:
+        return ErrorResult(
+            message=f"File not found on disk: {rel_posix}",
+            code="FILE_NOT_FOUND",
+            details={"project_id": project_id, "file_path": rel_posix},
+        )
+    return registered, abs_path
+
+
 def _resolve_file_target(
     database: DatabaseClient,
     project_id: Optional[str],
@@ -300,10 +494,11 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
     name = "project_file_transfer_download_begin"
     version = "1.2.0"
     descr = (
-        "Begin chunked download for a project file: pass ``files.id`` **or** "
-        "``project_id`` + project-relative ``file_path``. With ``file_id`` only, "
-        "``project_id`` / ``file_path`` are optional. Same transfer session as "
-        "``transfer_download_begin`` (GET chunks). Optional ``old_code`` backup history."
+        "Begin chunked download for an indexed project file. Pass ``file_id`` "
+        "(``files.id`` UUID). ``project_id`` is optional; if set, the row must "
+        "belong to that project. Same transfer session as ``transfer_download_begin`` "
+        "(GET chunks). Client façade: ``FileSessionClient.download`` with ``lock`` "
+        "→ ``lock_mode`` (``true`` → ``full``, ``false`` → ``none``)."
     )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -316,7 +511,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super().validate_params(params)
-        _validate_file_selector_params(params)
+        _validate_download_params(params)
         if str(params.get("compression", "")) not in ("identity", "gzip"):
             raise ValidationError(
                 "compression must be identity or gzip",
@@ -331,6 +526,14 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
                 field="lock_mode",
                 details={"lock_mode": params.get("lock_mode")},
             ) from exc
+        mode = normalize_lock_mode(params.get("lock_mode") or "none")
+        sid = str(params.get("session_id") or "").strip()
+        if mode != "none" and not sid:
+            raise ValidationError(
+                "session_id is required when lock_mode is not none",
+                field="session_id",
+                details={"lock_mode": params.get("lock_mode")},
+            )
         cs = params.get("chunk_size")
         if cs is not None:
             if not isinstance(cs, int) or cs <= 0:
@@ -360,9 +563,15 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         lock_mode: str = "none",
         job_id: Optional[str] = None,
         correlation_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         database = self._open_database_from_config(auto_analyze=False)
+        session_err = _validate_client_session_id(
+            database, session_id, lock_mode=lock_mode
+        )
+        if session_err is not None:
+            return session_err
         resolved = _resolve_file_target(
             database,
             project_id,
@@ -374,27 +583,23 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
             return resolved
         row, rel_posix, effective_project_id = resolved
 
-        project = database.get_project(effective_project_id)
-        if not project:
-            return ErrorResult(
-                message=f"Project {effective_project_id} not found",
-                code="PROJECT_NOT_FOUND",
-                details={"project_id": effective_project_id},
-            )
-        root = Path(project.root_path).resolve()
-        try:
-            abs_path = resolve_under_project_root(
-                root,
-                rel_posix,
-                require_exists=True,
-                must_be_file=True,
-            )
-        except ValidationError as e:
-            return ErrorResult(
-                message=str(e),
-                code="PATH_ERROR",
-                details=getattr(e, "details", None) or {},
-            )
+        disk_out = _require_on_disk_project_file(
+            database, effective_project_id, rel_posix
+        )
+        if isinstance(disk_out, ErrorResult):
+            return disk_out
+        abs_path = disk_out
+
+        ensured = _ensure_db_row_for_on_disk_file(
+            database,
+            effective_project_id,
+            abs_path,
+            rel_posix,
+            row,
+        )
+        if isinstance(ensured, ErrorResult):
+            return ensured
+        row, abs_path = ensured
 
         payload: Dict[str, Any] = {
             "source_path": str(abs_path),
@@ -413,11 +618,12 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         lock_session_id: Optional[str] = None
         lock_handle = None
         if mode != "none":
-            lock_session_id = get_session_id_for_current_pid(database, role="daemon")
-            if not runtime_session_exists(database, lock_session_id):
-                register_runtime_session(
-                    database, role="daemon", session_id=lock_session_id
-                )
+            resolved_sid = _resolve_advisory_lock_session_id(
+                database,
+                client_session_id=session_id,
+                lock_mode=lock_mode,
+            )
+            lock_session_id = resolved_sid
             try:
                 lock_handle = acquire_persistent_file_lock(
                     abs_path,
@@ -426,7 +632,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
                     project_id=effective_project_id,
                     file_path=rel_posix,
                     session_id=lock_session_id,
-                    register_role="daemon",
+                    register_role="client" if session_id else "daemon",
                 )
             except Exception as exc:
                 return ErrorResult(
@@ -436,8 +642,15 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
                         "project_id": effective_project_id,
                         "file_path": rel_posix,
                         "lock_mode": mode,
+                        "session_id": lock_session_id,
                     },
                 )
+            _record_client_file_lock(
+                database,
+                client_session_id=session_id,
+                project_id=effective_project_id,
+                row=row,
+            )
         try:
             data = await run_create_download_session(payload)
         except TransferPayloadValidationError as exc:
@@ -477,9 +690,14 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
             "lock_mode": lock_mode,
             "lock_session_id": lock_session_id,
         }
+        if session_id:
+            merged["session_id"] = str(session_id).strip()
         if include_backup_history:
-            bm = BackupManager(root)
-            merged["backup_history"] = bm.list_versions(rel_posix)
+            project = database.get_project(effective_project_id)
+            if project:
+                root = Path(project.root_path).resolve()
+                bm = BackupManager(root)
+                merged["backup_history"] = bm.list_versions(rel_posix)
 
         logger.info(
             "[%s] project_id=%s file_id=%s file_path=%s path=%s transfer_id=%s",
@@ -499,10 +717,12 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
     name = "project_file_transfer_upload_save"
     version = "1.2.0"
     descr = (
-        "After transfer upload completes, saves buffer to a project file identified by "
-        "``files.id`` **or** ``project_id`` + project-relative ``file_path``. With "
-        "``file_id`` only, ``project_id`` / ``file_path`` are optional. Same pipeline as "
-        "``universal_file_save`` (backups, handlers, DB metadata, optional git)."
+        "After transfer upload completes, saves buffer to a project file. **Update "
+        "existing:** pass ``file_id`` only (``project_id`` / ``file_path`` optional; "
+        "if ``project_id`` is set it must match the row). **Create new:** pass "
+        "``project_id`` + project-relative ``file_path`` (path must not already be "
+        "in the ``files`` index). Same pipeline as ``universal_file_save``. Client "
+        "façade: ``upload`` / ``upload_new`` with ``unlock`` → ``unlock_after_write``."
     )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -515,8 +735,8 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super().validate_params(params)
-        _validate_file_selector_params(params)
-        tid = str(params.get("transfer_id", "")).strip()
+        _validate_upload_selector_params(params)
+        tid = str(params.get("transfer_id") or "").strip()
         if not tid:
             raise ValidationError(
                 "transfer_id must be non-empty",
@@ -539,6 +759,14 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                 field="lock_mode",
                 details={"lock_mode": params.get("lock_mode")},
             ) from exc
+        mode = normalize_lock_mode(params.get("lock_mode") or "none")
+        sid = str(params.get("session_id") or "").strip()
+        if mode != "none" and not sid:
+            raise ValidationError(
+                "session_id is required when lock_mode is not none",
+                field="session_id",
+                details={"lock_mode": params.get("lock_mode")},
+            )
         return params
 
     @classmethod
@@ -560,9 +788,19 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         tree_id: Optional[str] = None,
         unlock_after_write: bool = True,
         lock_mode: str = "none",
+        session_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         database = self._open_database_from_config(auto_analyze=False)
+        session_err = _validate_client_session_id(
+            database, session_id, lock_mode=lock_mode
+        )
+        if session_err is not None:
+            return session_err
+        if session_id and not str(session_id).strip():
+            session_id = None
+        elif session_id:
+            session_id = str(session_id).strip()
         resolved = _resolve_file_target(
             database,
             project_id,
@@ -573,6 +811,20 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         if isinstance(resolved, ErrorResult):
             return resolved
         _row, rel_posix, effective_project_id = resolved
+        if not str(file_id or "").strip() and str(file_path or "").strip() and _row:
+            existing_id = str(_row.get("id") or "").strip()
+            return ErrorResult(
+                message=(
+                    f"Path {rel_posix!r} is already indexed in the database; "
+                    "use file_id to update an existing file"
+                ),
+                code="FILE_ALREADY_INDEXED",
+                details={
+                    "project_id": effective_project_id,
+                    "file_path": rel_posix,
+                    "file_id": existing_id or None,
+                },
+            )
 
         read_out = _read_completed_upload_text(transfer_id)
         if isinstance(read_out, ErrorResult):
@@ -604,11 +856,11 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                     code="PATH_ERROR",
                     details=getattr(e, "details", None) or {},
                 )
-            lock_session_id = get_session_id_for_current_pid(database, role="daemon")
-            if not runtime_session_exists(database, lock_session_id):
-                register_runtime_session(
-                    database, role="daemon", session_id=lock_session_id
-                )
+            lock_session_id = _resolve_advisory_lock_session_id(
+                database,
+                client_session_id=session_id,
+                lock_mode=lock_mode,
+            )
             try:
                 lock_handle = acquire_persistent_file_lock(
                     abs_path,
@@ -617,7 +869,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                     project_id=effective_project_id,
                     file_path=rel_posix,
                     session_id=lock_session_id,
-                    register_role="daemon",
+                    register_role="client" if session_id else "daemon",
                 )
             except Exception as exc:
                 return ErrorResult(
@@ -627,6 +879,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                         "project_id": effective_project_id,
                         "file_path": rel_posix,
                         "lock_mode": mode,
+                        "session_id": lock_session_id,
                     },
                 )
 
@@ -650,28 +903,23 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             result.data.setdefault("resolved_file_path", rel_posix)
             result.data.setdefault("lock_mode", lock_mode)
             result.data.setdefault("lock_session_id", lock_session_id)
-            fid_out: Optional[str] = None
-            if file_id and str(file_id).strip():
-                fid_out = str(file_id).strip()
-            elif _row and _row.get("id") is not None:
-                fid_out = str(_row["id"]).strip() or None
-            if fid_out:
-                result.data.setdefault("file_id", fid_out)
-            elif not dry_run:
-                project = database.get_project(effective_project_id)
-                if project:
-                    root = Path(project.root_path).resolve()
-                    try:
-                        abs_p = resolve_under_project_root(
-                            root, rel_posix, require_exists=True, must_be_file=True
-                        )
-                        row2 = database.get_file_by_path(
-                            str(abs_p), effective_project_id, include_deleted=False
-                        )
-                        if row2 and row2.get("id") is not None:
-                            result.data["file_id"] = str(row2["id"])
-                    except (ValidationError, OSError, ValueError):
-                        pass
+            if not dry_run:
+                disk_out = _require_on_disk_project_file(
+                    database, effective_project_id, rel_posix
+                )
+                if isinstance(disk_out, ErrorResult):
+                    return disk_out
+                ensured = _ensure_db_row_for_on_disk_file(
+                    database,
+                    effective_project_id,
+                    disk_out,
+                    rel_posix,
+                    _row,
+                )
+                if isinstance(ensured, ErrorResult):
+                    return ensured
+                reg_row, _abs_path = ensured
+                result.data["file_id"] = str(reg_row["id"])
             if bool(unlock_after_write) and not bool(dry_run):
                 released_by_transfer = release_transfer_lock(
                     str(transfer_id),
@@ -685,6 +933,19 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                         database=database,
                         force=True,
                     )
+                fid_for_unlock: Optional[str] = None
+                if file_id and str(file_id).strip():
+                    fid_for_unlock = str(file_id).strip()
+                elif _row and _row.get("id") is not None:
+                    fid_for_unlock = str(_row["id"]).strip() or None
+                elif isinstance(result.data, dict) and result.data.get("file_id"):
+                    fid_for_unlock = str(result.data["file_id"])
+                _release_client_file_lock(
+                    database,
+                    client_session_id=session_id,
+                    project_id=effective_project_id,
+                    file_id=fid_for_unlock,
+                )
                 result.data["lock_released"] = True
             elif bool(dry_run) and lock_handle is not None:
                 lock_handle.release(force_lease=True)

@@ -59,7 +59,6 @@ async def _open_text(tmp: Path, rel: str = "notes/sample.txt") -> tuple[str, Pat
             **cmd.validate_params({"project_id": _PROJECT_UUID, "file_path": rel})
         )
     assert isinstance(res, SuccessResult)
-    assert res.data.get("format_group") == "text"
     return str(res.data["session_id"]), target
 
 

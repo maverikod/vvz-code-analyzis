@@ -33,6 +33,10 @@ from .processor_delta import FileDelta
 
 from code_analysis.core.database.file_edit_lock import file_row_has_live_edit_lock
 from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+from code_analysis.core.file_disk_registration import (
+    collect_file_disk_metadata,
+    ensure_file_row_for_disk_path,
+)
 from code_analysis.core.file_identity import (
     FILE_ROW_PATH_MATCH_SQL,
     file_row_path_match_values,
@@ -220,7 +224,7 @@ class ProcessorQueueOps:
     ) -> None:
         row = get_project_activity(database, project_id) or {}
         owner_t = row.get("owner_type", "unknown")
-        logger.info(
+        logger.debug(
             "[WORKER_COORD] watcher skip project_id=%s reason=%s owner_type=%s",
             project_id,
             reason_activity,
@@ -342,18 +346,7 @@ class ProcessorQueueOps:
                     abs_path = normalized.absolute_path
                     rel_posix = relative_path_for_project(abs_path, pr)
                     path_obj = Path(abs_path)
-                    lines = 0
-                    has_docstring = False
-                    if path_obj.exists() and path_obj.is_file():
-                        try:
-                            text = path_obj.read_text(encoding="utf-8", errors="ignore")
-                            lines = text.count("\n") + (1 if text else 0)
-                            stripped = text.lstrip()
-                            has_docstring = stripped.startswith(
-                                '"""'
-                            ) or stripped.startswith("'''")
-                        except Exception:
-                            pass
+                    lines, has_docstring = collect_file_disk_metadata(path_obj)
                     out.append((rel_posix, abs_path, lines, mtime, has_docstring))
                     return True
                 except Exception as e:
@@ -606,7 +599,6 @@ class ProcessorQueueOps:
         from ..exceptions import ProjectIdMismatchError
 
         try:
-            _now = sql_julian_timestamp_now_expr(self.database)
             watch_dirs: List[str | Path] = list(self.watch_dirs_resolved)
             path_for_norm = file_path
             if project_root is not None:
@@ -660,11 +652,6 @@ class ProcessorQueueOps:
                         )
                 return True
 
-            try:
-                root_res = project_root.resolve()
-            except OSError:
-                root_res = project_root
-
             logger.debug(
                 "[QUEUE] File normalized: file=%s, project_root=%s, project_id=%s",
                 abs_file_path,
@@ -672,85 +659,31 @@ class ProcessorQueueOps:
                 project_id,
             )
 
-            path_obj = Path(abs_file_path)
-            lines = 0
-            has_docstring = False
             try:
-                if path_obj.exists() and path_obj.is_file():
-                    text = path_obj.read_text(encoding="utf-8", errors="ignore")
-                    lines = text.count("\n") + (1 if text else 0)
-                    stripped = text.lstrip()
-                    has_docstring = stripped.startswith('"""') or stripped.startswith(
-                        "'''"
+                file_record = ensure_file_row_for_disk_path(
+                    self.database,
+                    project_id,
+                    abs_file_path,
+                    last_modified=mtime,
+                    mark_needs_chunking=True,
+                )
+                if not file_record or file_record.get("id") is None:
+                    logger.error(
+                        "[QUEUE] File not registered after add: %s",
+                        abs_file_path,
                     )
-            except Exception:
-                logger.debug("Failed to read file for metadata: %s", abs_file_path)
-
-            rel_key = relative_path_for_project(abs_file_path, root_res)
-            wdid = _watch_dir_id_for_project(self.database, project_id)
-
-            try:
-                self._db_execute(
-                    f"""
-                    INSERT INTO files (id, project_id, watch_dir_id, path, relative_path,
-                        lines, last_modified, has_docstring, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now}, {_now})
-                    ON CONFLICT (project_id, path) DO UPDATE SET
-                    lines = excluded.lines,
-                    last_modified = excluded.last_modified,
-                    has_docstring = excluded.has_docstring,
-                    deleted = FALSE,
-                    updated_at = {_now}
-                    """,
-                    (
-                        str(uuid.uuid4()),
-                        project_id,
-                        wdid,
-                        rel_key,
-                        rel_key,
-                        lines,
-                        mtime,
-                        has_docstring,
-                    ),
-                )
-                r1, r2, r3 = file_row_path_match_values(
-                    project_root=root_res, absolute_path=abs_file_path
-                )
-                res = self._db_execute(
-                    f"SELECT id FROM files WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL} LIMIT 1",
-                    (project_id, r1, r2, r3),
-                )
-                data = res.get("data", []) if isinstance(res, dict) else []
-                file_row = data[0] if data else None
-                file_id = file_row.get("id", 0) if file_row else 0
+                    return False
+                file_id = file_record.get("id")
                 logger.debug(
                     "[QUEUE] File added/updated: %s | file_id=%s | project_id=%s",
                     abs_file_path,
                     file_id,
                     project_id,
                 )
-
-                file_record = self.database.get_file_by_id(file_id) if file_id else None
-                if not file_record:
-                    logger.error(
-                        "[QUEUE] File file_id=%s not found after add: %s",
-                        file_id,
-                        abs_file_path,
-                    )
-                    return False
                 logger.debug(
                     "[QUEUE] File verified: file_id=%s, path=%s",
                     file_id,
                     file_record.get("path"),
-                )
-                logger.debug(
-                    "[QUEUE] Marking for processing: file_id=%s, path=%s",
-                    file_id,
-                    abs_file_path,
-                )
-                self._db_execute(
-                    f"UPDATE files SET needs_chunking = 1 WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}",
-                    (project_id, r1, r2, r3),
                 )
                 logger.debug("[QUEUE] File marked for vectorization: %s", abs_file_path)
             except Exception as e:

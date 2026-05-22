@@ -69,24 +69,21 @@ The following files in the repo define the canonical standards. Claude reads the
 | **CL-09** | FAISS index managed via `rebuild_faiss` / `revectorize` only. |
 | **CL-10** | Do not modify `.cursorrules`, `docs/PROJECT_RULES.md`, or any file under `docs/agents/` except `docs/agents/claude/`. |
 
-## File read/write — universal edit workflow
+## File view and edit workflow
 
-All file reads and writes use the **universal file edit workflow**.
-Commands `universal_file_save`, `create_text_file`, `replace_file_lines`, `write_project_text_lines` are **obsolete** — do not use them.
+**Trigger:** Before opening, reading, or editing any file — read the full rules:
+- View rules: `docs/standards/FILE_VIEW_WORKFLOW.yaml`
+- Edit rules: `docs/standards/FILE_EDIT_WORKFLOW.yaml`
 
-**Step 1 — Read:** `universal_file_preview(project_id, file_path)` — read content, get node_ref values.
+Obsolete commands — do not use: `universal_file_save`, `create_text_file`, `replace_file_lines`, `write_project_text_lines`.
+## Search and analysis workflow
 
-**Step 2 — Open:** `universal_file_open(project_id, file_path, create=false)` — returns `session_id` and `format_group` (text | tree-temp | sidecar). Use `create=true` to create new files.
+**Trigger:** Before any search, code lookup, or entity locate operation — read the full rules:
+- `docs/standards/SEARCH_WORKFLOW.yaml`
+## Terminal workflow
 
-**Step 3 — Edit:** `universal_file_edit(project_id, session_id, operations=[...])` — applies to in-memory draft only, never touches disk. Operation shape by format_group:
-- text (`.md .txt .rst .adoc`): `{type, start_line, end_line, content}` or `{type: insert, position: last, content}`
-- tree-temp (`.json .yaml .yml`): `{type, json_pointer, value}`
-- sidecar (`.py .pyi .pyw`): `{type, node_id, code_lines}`
-
-**Step 4 — Write:** `universal_file_write(project_id, session_id, write_mode=preview|commit)` — always preview first, inspect diff, then commit.
-
-**Step 5 — Close:** `universal_file_close(project_id, session_id)` — always call after write or on abort.
-
+**Trigger:** Before any terminal_session_create or terminal_run call — read the full rules:
+- `docs/standards/TERMINAL_WORKFLOW.yaml`
 ## Pre-task checklist
 
 - [ ] Verify UUID via `list_projects`: `8772a086-688d-4198-a0c4-f03817cc0e6c`

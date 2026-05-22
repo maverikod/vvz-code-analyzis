@@ -1,0 +1,54 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: Create HTTP result access and last-access timestamp module
+target_file: code_analysis/search_session/http_access.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-005
+- C-006
+prompt: "Create the file code_analysis/search_session/http_access.py.\n\nMRS excerpt:\n\
+  C-005 HTTPResultAccess: Simple HTTP retrieval mechanism for reading\nSearchSession
+  pages, status, and manifest-backed metadata. Properties:\nallows clients to request
+  ready result pages without streaming transport;\nupdates last_access_at on every
+  successful page, status, or manifest access;\nreturns a page-not-ready response
+  when the session is running but the\nrequested page has not been published yet.\n\
+  \nC-006 LastAccessTimestamp: Timestamp refreshed whenever a client reads any\npage,
+  status, or manifest for that session. Properties: drives TTL-based\ncleanup of session
+  directories; must be refreshed by HTTPResultAccess;\nmust not be confused with heartbeat_at.\n\
+  \nImports (each on its own line):\n  import dataclasses\n  import enum\n  import
+  json\n  import pathlib\n  import typing\n  from code_analysis.search_session.manifest
+  import read_manifest, touch_last_access\n  from code_analysis.search_session.page_writer
+  import page_path, page_exists\n\nSignatures and return types of imported symbols
+  (for reference; do not redefine):\n  read_manifest(directory: pathlib.Path) -> SessionManifest\n\
+  \    SessionManifest has attribute status: str (e.g. \"running\", \"completed\"\
+  , etc.)\n    and all other manifest fields. Raises FileNotFoundError when missing.\n\
+  \  touch_last_access(directory: pathlib.Path) -> None\n    Reads the manifest and
+  atomically rewrites it with an updated last_access_at.\n  page_path(directory: pathlib.Path,
+  page_index: int) -> pathlib.Path\n    Returns the Path of the page file without
+  touching disk.\n  page_exists(directory: pathlib.Path, page_index: int) -> bool\n\
+  \    Returns True when the finalized page file is present on disk.\n\n1. Define
+  class PageAccessStatus(str, enum.Enum) with members:\n   READY = \"ready\"\n   NOT_READY
+  = \"not_ready\"\n   SESSION_DONE = \"session_done\"\n\n2. Define dataclass PageAccessResult
+  with fields:\n   status: PageAccessStatus\n   page_index: int\n   records: typing.Optional[list]
+  = None  (None when not ready)\n   session_status: typing.Optional[str] = None\n\n\
+  3. Define function read_page(\n     session_dir: pathlib.Path,\n     page_index:
+  int,\n   ) -> PageAccessResult:\n   Reads manifest via read_manifest(session_dir).\n\
+  \   Calls touch_last_access(session_dir) on every call (ready or not-ready).\n \
+  \  If page_exists(session_dir, page_index) is True:\n     opens page_path(session_dir,
+  page_index), parses JSON,\n     returns PageAccessResult(status=PageAccessStatus.READY,\n\
+  \     page_index=page_index, records=data[\"records\"],\n     session_status=manifest.status).\n\
+  \   Otherwise returns PageAccessResult(status=PageAccessStatus.NOT_READY,\n    \
+  \ page_index=page_index, session_status=manifest.status).\n\n4. Define function
+  read_status(\n     session_dir: pathlib.Path,\n   ) -> dict:\n   Reads manifest
+  via read_manifest(session_dir).\n   Calls touch_last_access(session_dir).\n   Returns
+  dataclasses.asdict(manifest) as a plain dict.\n\nConstraints:\n- All public names
+  must have docstrings.\n- No third-party imports.\n- touch_last_access must be called
+  on every read_page and read_status invocation.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/http_access.py
+  expected: Module imports without error. `read_page` and `read_status` are 
+    callable. `PageAccessStatus`, `PageAccessResult` are present.
+status: draft

@@ -18,7 +18,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    sql_julian_timestamp_now_expr,
+)
 
 from .client_base import _DatabaseClientBase
 from .objects.file import File

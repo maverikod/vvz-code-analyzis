@@ -25,7 +25,13 @@ from .project_file_advisory_lock_batch_schema import (
 )
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
+from ..core.client_sessions import (
+    is_session_valid,
+    touch_or_error,
+    SessionNotFoundError,
+)
 from ..core.runtime_lock_sessions import (
+    ensure_client_lock_session,
     get_session_id_for_current_pid,
     normalize_lock_mode,
     register_runtime_session,
@@ -173,13 +179,30 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
         file_path = base["file_path"]
         action = base["action"]
 
-        if not runtime_session_exists(database, session_id):
+        client_owned = is_session_valid(database, session_id)
+        if client_owned:
+            try:
+                touch_or_error(database, session_id)
+                ensure_client_lock_session(database, session_id)
+            except SessionNotFoundError:
+                return self._item_error(
+                    base,
+                    "SESSION_NOT_FOUND",
+                    f"Client session not found: {session_id}",
+                )
+            except ValueError as exc:
+                return self._item_error(
+                    base,
+                    "SESSION_NOT_FOUND",
+                    str(exc),
+                )
+        elif not runtime_session_exists(database, session_id):
             return self._item_error(
                 base,
                 "SESSION_NOT_FOUND",
                 f"Runtime lock session not found: {session_id}",
             )
-        if not allow_foreign_session and session_id != current_session_id:
+        elif not allow_foreign_session and session_id != current_session_id:
             return self._item_error(
                 base,
                 "FOREIGN_SESSION_FORBIDDEN",
@@ -239,7 +262,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
             file_path=file_path,
             session_id=session_id,
             timeout=timeout_seconds,
-            register_role="daemon",
+            register_role="client" if client_owned else "daemon",
         )
         ok = dict(base)
         ok.update(

@@ -1,0 +1,37 @@
+concepts:
+- C-012
+- C-014
+depends_on: []
+name: Create IndexedFileSet assembler from freshness verdicts
+operation: create_file
+parent_tactical_step: T-002
+priority: 1
+prompt: "Create `code_analysis/source_selection/indexed_file_set.py`.\n\n## MRS excerpt\n\
+  \nC-012 IndexedFileSet: set of files that can be searched through the database\n\
+  or index because their indexed state is fresh for current disk content.\nProperties:\n\
+  - Built by intersecting database-known files with disk-present files and\n  retaining
+  only files classified FRESH by FreshnessValidation.\n- Files in the set must not
+  be rescanned directly when their indexed\n  state is current.\n\nC-014 FreshnessValidation:
+  classifies each indexed file as FRESH, STALE,\nor ABSENT relative to current disk
+  content.\n\n## Implementation requirements\n\n1. Import `dataclasses`, `frozenset`.\n\
+  \n2. Define `@dataclasses.dataclass(frozen=True)` class `IndexedFileSet`:\n   -
+  Field `file_paths: frozenset[str]` — set of fresh indexed file paths.\n   - Method
+  `contains(self, file_path: str) -> bool` — `file_path in self.file_paths`.\n   -
+  Method `size(self) -> int` — `len(self.file_paths)`.\n\n3. Define function:\n  \
+  \ ```python\n   def build_indexed_file_set(\n       database_known: list[str],\n\
+  \       disk_present: list[str],\n       freshness_verdicts: dict[str, str],\n \
+  \  ) -> IndexedFileSet:\n   ```\n   - Computes intersection of `database_known`
+  and `disk_present` as a set.\n   - From that intersection, keeps only paths where\n\
+  \     `freshness_verdicts.get(path) == \"fresh\"`.\n   - Returns `IndexedFileSet(file_paths=frozenset(fresh_paths))`.\n\
+  \n## Constraints\n- Standard library only.\n- All public names have one-line docstrings.\n\
+  - File under 55 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/source_selection/indexed_file_set.py
+verification:
+  expected: Module imports without error. build_indexed_file_set returns an 
+    IndexedFileSet containing only paths present in both database_known and 
+    disk_present with FRESH verdict. Files with STALE or ABSENT verdicts are 
+    excluded.
+  target: code_analysis/source_selection/indexed_file_set.py
+  type: import

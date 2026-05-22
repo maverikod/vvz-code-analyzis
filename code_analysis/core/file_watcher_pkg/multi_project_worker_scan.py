@@ -81,11 +81,7 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
         logger.warning("[ABSPATH_DEDUP] list absolute rows failed: %s", exc)
         return 0
 
-    abs_rows = (
-        list(list_res.get("data", []))
-        if isinstance(list_res, dict)
-        else []
-    )
+    abs_rows = list(list_res.get("data", [])) if isinstance(list_res, dict) else []
     pairs_merged = 0
     lone_fixed = 0
     skipped = 0
@@ -140,9 +136,7 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                 continue
 
             dup_rows = (
-                list(dup_res.get("data", []))
-                if isinstance(dup_res, dict)
-                else []
+                list(dup_res.get("data", [])) if isinstance(dup_res, dict) else []
             )
 
             if dup_rows:
@@ -374,7 +368,7 @@ def scan_watch_dir(
                 watcher_lease_ttl,
             ):
                 row = get_project_activity(database, pid_p) or {}
-                logger.info(
+                logger.debug(
                     "[WORKER_COORD] watcher skip project_id=%s reason=watcher_staging owner_type=%s",
                     pid_p,
                     row.get("owner_type", "unknown"),
@@ -551,7 +545,7 @@ def scan_watch_dir(
 
                         # Auto-indexing runs via the normal indexer; queue maps files
                         # with needs_chunking=1. No daemon update_indexes from watcher.
-                        logger.info(
+                        logger.debug(
                             "[WORKER_COORD] new project %s: use normal indexer path after queue "
                             "(no watcher auto_indexing thread).",
                             project_root_obj.project_id,

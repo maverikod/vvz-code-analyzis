@@ -1,0 +1,33 @@
+step_id: T-003
+parent_global_step: G-003
+name: Preview Reference
+description: "Creates the PreviewReference (C-017) schema as the canonical result
+  reference embedded in each structural search result. A PreviewReference contains
+  the file path, the stable node identifier or selector for the matched node, and
+  the draft session identifier when the result originates from a draft session. A
+  PreviewReference must never expose an unstable node identifier. The PreviewReference
+  is sufficient to call universal_file_preview and inspect the matched node without
+  any additional context. It is the canonical presentation mechanism for all structural
+  search results; no alternative display model for nodes is defined.\n"
+concepts:
+- C-017
+inputs:
+- name: file_path
+  type: project-relative path
+  description: Path of the file containing the matched node.
+- name: node_identifier
+  type: string
+  description: Stable node identifier or selector from the TreeRepresentation 
+    (C-015) for the matched node.
+- name: session_id
+  type: string or null
+  description: Draft session identifier when the result comes from a draft 
+    session; null for disk-based results.
+outputs:
+- name: preview_reference
+  type: PreviewReference (C-017)
+  description: Reference record with file_path, node identifier or selector, and
+    optional session_id, sufficient to call universal_file_preview.
+atomic_steps:
+- A-001
+status: draft

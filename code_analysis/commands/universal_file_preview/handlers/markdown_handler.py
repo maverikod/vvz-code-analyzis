@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -32,14 +31,17 @@ from ..errors import (
     input_error,
 )
 from ..models import Node, NodeKind
-from .markdown_line_ranges import resolve_markdown_line_range
+from .markdown_line_ranges import (
+    iter_md_block_tokens as _iter_md_block_tokens,
+    md_block_node_ref as _md_block_node_ref,
+    resolve_markdown_line_range,
+)
 
 logger = logging.getLogger(__name__)
 
 _md = MarkdownIt()
 
 _UUID_PREFIX_WIDTH = 39  # "[" + 36-char UUID + "] "
-_MD_SKIP_TOKEN_TYPES = frozenset({"inline"})
 
 
 def _source_line_count(raw: str) -> int:
@@ -61,20 +63,6 @@ def _read_markdown_source(file_path: str) -> str:
         return Path(original_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return source
-
-
-def _iter_md_block_tokens(tokens: list[Any]) -> Any:
-    for token in tokens:
-        if token.map is None or token.type in _MD_SKIP_TOKEN_TYPES:
-            continue
-        if token.type.endswith("_close"):
-            continue
-        yield token
-
-
-def _md_block_node_ref(file_path: str, token: Any) -> str:
-    start = token.map[0]
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}:{token.type}:{start}"))
 
 
 def _build_line_to_node_ref(tokens: list[Any], file_path: str) -> dict[int, str]:

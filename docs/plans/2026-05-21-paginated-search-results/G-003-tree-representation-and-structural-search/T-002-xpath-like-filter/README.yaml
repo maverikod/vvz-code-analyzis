@@ -1,0 +1,29 @@
+step_id: T-002
+parent_global_step: G-003
+name: XPath-like Filter
+description: "Creates the XPathLikeFilter (C-016) as the universal structural filter
+  that evaluates XPath-like queries over validated TreeRepresentation (C-015) data.
+  The filter accepts a tree from any source: database-backed structural data, indexer
+  in-memory structures, dynamically created trees for files not in the index, and
+  draft-session content. The same filter code, structure model, node identifiers,
+  and selector semantics apply regardless of the source. The filter returns only the
+  tree nodes matching the query, each with enough information to produce a PreviewReference
+  (C-017).\n"
+concepts:
+- C-016
+inputs:
+- name: tree_representation
+  type: TreeRepresentation (C-015)
+  description: Validated tree for the file being filtered, from any supported 
+    source.
+- name: xpath_query
+  type: string
+  description: XPath-like selector expression to evaluate against the tree.
+outputs:
+- name: matching_nodes
+  type: list of tree node descriptors
+  description: Nodes from the tree that match the query, each carrying a stable 
+    node identifier or selector sufficient for PreviewReference construction.
+atomic_steps:
+- A-001
+status: draft

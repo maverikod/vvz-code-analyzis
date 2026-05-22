@@ -13,10 +13,12 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.sessions.session_delete_command_metadata import (
+    _FORCE_SCHEMA_DESCRIPTION,
     get_session_delete_metadata,
 )
 from code_analysis.core.client_sessions import (
     SessionHasLocksError,
+    SessionHasSubordinatesError,
     SessionNotFoundError,
     delete_client_session,
 )
@@ -31,7 +33,10 @@ class SessionDeleteCommand(BaseMCPCommand):
 
     name = "session_delete"
     version = "1.0.0"
-    descr = "Delete a client session, optionally force-releasing all file locks."
+    descr = (
+        "Delete a client session; force=false (default) requires no locks or "
+        "subordinates; force=true removes them recursively."
+    )
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -55,7 +60,7 @@ class SessionDeleteCommand(BaseMCPCommand):
                 "force": {
                     "type": "boolean",
                     "default": False,
-                    "description": "If true, release all file locks before deleting.",
+                    "description": _FORCE_SCHEMA_DESCRIPTION,
                 },
             },
             "required": ["session_id"],
@@ -75,13 +80,16 @@ class SessionDeleteCommand(BaseMCPCommand):
 
         Args:
             session_id: UUID4 of the session to delete.
-            force: If True, release all file locks before deleting.
+            force: Default false when omitted. See get_schema() force description.
             **kwargs: Adapter context (ignored).
 
         Returns:
-            SuccessResult with session_id, deleted, released_lock_count.
+            SuccessResult with session_id, deleted, released_lock_count,
+            released_subordinate_count.
             ErrorResult SESSION_NOT_FOUND if session absent.
             ErrorResult SESSION_HAS_LOCKS if open locks exist and force=False.
+            ErrorResult SESSION_HAS_SUBORDINATES if subordinate links exist and
+            force=False.
             ErrorResult COMMAND_FORBIDDEN if SecurityPolicy denies the command.
         """
         _ = kwargs
@@ -118,6 +126,8 @@ class SessionDeleteCommand(BaseMCPCommand):
             )
         except SessionHasLocksError as e:
             return ErrorResult(code="SESSION_HAS_LOCKS", message=str(e))
+        except SessionHasSubordinatesError as e:
+            return ErrorResult(code="SESSION_HAS_SUBORDINATES", message=str(e))
         return SuccessResult(data=result)
 
     @classmethod

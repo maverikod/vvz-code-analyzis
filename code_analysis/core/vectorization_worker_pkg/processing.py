@@ -119,7 +119,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 continue
 
             cycle_count += 1
-            logger.info(
+            logger.debug(
                 "[CYCLE #%s] Loop iteration start (database available)",
                 cycle_count,
             )
@@ -128,7 +128,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 STATUS_OPERATION_POLLING,
                 current_file=None,
             )
-            logger.info(
+            logger.debug(
                 "[CYCLE #%s] Starting vectorization cycle",
                 cycle_count,
             )
@@ -206,7 +206,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 extra={"cycle": cycle_count},
             )
             if cycle_activity:
-                logger.info(
+                logger.debug(
                     "[CYCLE #%s] Complete in %.3fs: "
                     "(total: %s processed, %s errors)",
                     cycle_count,
@@ -214,7 +214,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     total_processed,
                     total_errors,
                 )
-                logger.info(
+                logger.debug(
                     "[CYCLE #%s] [TIMING] step0_reembed_s=%.2f step1_query_s=%.2f "
                     "step1_chunking_s=%.2f step2_assign_vector_id_s=%.2f "
                     "step3_rebuild_faiss_s=%.2f total_cycle_s=%.2f "
@@ -230,7 +230,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     cycle_chunked_files,
                 )
             else:
-                logger.info(
+                logger.debug(
                     "[CYCLE #%s] No activity in %.3fs",
                     cycle_count,
                     cycle_duration,
@@ -267,7 +267,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 },
             )
             if not self._stop_event.is_set():
-                logger.info(
+                logger.debug(
                     "[CYCLE #%s] Sleeping %ss before next cycle",
                     cycle_count,
                     actual_poll_interval,

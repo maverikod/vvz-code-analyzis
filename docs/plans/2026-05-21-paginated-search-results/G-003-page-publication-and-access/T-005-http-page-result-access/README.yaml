@@ -1,0 +1,47 @@
+step_id: T-005
+parent_global_step: G-003
+name: HTTP page result access
+description: "Realize the page-retrieval facet of HTTPResultAccess (C-005) for SearchPageFile
+  (C-004) artifacts. Clients retrieve ready published pages through ordinary HTTP
+  requests without streaming transport. When the search session is still running and
+  the requested page number is not yet published, return an explicit page-not-ready
+  response that is distinct from whole-search failure. On every successful page read,
+  refresh the session last-access timestamp used for inactivity-based cleanup. HTTP
+  page reads must consume only finalized immutable pages produced through AtomicPagePublication
+  (C-026).\n"
+concepts:
+- C-004
+- C-005
+- C-026
+inputs:
+- name: search_session_identifier
+  type: search identifier
+  description: "Unique search identifier selecting the session whose pages are requested.\n"
+- name: requested_page_number
+  type: positive integer
+  description: "One-based page index the client asks to retrieve.\n"
+- name: page_readiness_state
+  type: readiness enumeration
+  description: "Published versus pending state for each page number in the session.\n"
+- name: published_search_page_files
+  type: list of SearchPageFile
+  description: "Finalized immutable page artifacts eligible for HTTP serving.\n"
+- name: session_running_indicator
+  type: boolean
+  description: "Whether search generation is still running when the page request arrives.\n"
+outputs:
+- name: http_page_payload
+  type: published page response
+  description: "Successful HTTP response body containing the bounded normalized result
+    records of the requested published SearchPageFile.\n"
+- name: page_not_ready_response
+  type: deferred response contract
+  description: "Explicit response stating the search is still running and the requested
+    page is not yet published; not classified as whole-search failure.\n"
+- name: refreshed_last_access_timestamp
+  type: timestamp
+  description: "Updated session last-access time recorded after a successful page,
+    satisfying the HTTPResultAccess refresh obligation on page reads.\n"
+atomic_steps:
+- A-001
+status: draft

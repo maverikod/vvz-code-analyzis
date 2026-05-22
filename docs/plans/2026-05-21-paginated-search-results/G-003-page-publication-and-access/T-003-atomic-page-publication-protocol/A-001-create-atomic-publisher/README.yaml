@@ -1,0 +1,34 @@
+concepts:
+- C-004
+- C-026
+depends_on: []
+name: 'Create AtomicPagePublisher: write-to-temp then rename protocol'
+operation: create_file
+parent_tactical_step: T-003
+priority: 1
+prompt: "Create `code_analysis/search_session/atomic_publisher.py`.\n\n## MRS excerpt\n\
+  \nC-004 SearchPageFile: immutable result page record; never rewritten after\npublication.\n\
+  C-026 AtomicPagePublication: protocol where the search worker writes page\ncontent
+  to a temporary file, then renames it atomically to the final page\nfilename. Clients
+  never observe partially written content.\n\n## Implementation requirements\n\n1.
+  Import `json`, `os`, `pathlib`, `typing`.\n\n2. Define function:\n   ```python\n\
+  \   def publish_page(\n       session_dir: pathlib.Path,\n       page_index: int,\n\
+  \       records: list[dict],\n       session_id: str,\n   ) -> pathlib.Path:\n \
+  \  ```\n   - Derives `final_path = session_dir / f\"page_{page_index:04d}.json\"\
+  `.\n   - Derives `temp_path = session_dir / f\".tmp_page_{page_index:04d}.json\"\
+  `.\n   - Serialises a dict `{\"page_index\": page_index, \"session_id\": session_id,\n\
+  \     \"records\": records}` to JSON and writes to `temp_path`.\n   - Calls `os.replace(temp_path,
+  final_path)` for atomic rename.\n   - Returns `final_path`.\n\n3. Define function:\n\
+  \   ```python\n   def is_published(session_dir: pathlib.Path, page_index: int) ->
+  bool:\n   ```\n   - Returns `(session_dir / f\"page_{page_index:04d}.json\").exists()`.\n\
+  \n## Constraints\n- Standard library only.\n- All public names have one-line docstrings.\n\
+  - File under 45 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/atomic_publisher.py
+verification:
+  expected: Module imports without error. publish_page creates the final page 
+    file atomically. is_published returns True after publish_page is called, 
+    False before.
+  target: code_analysis/search_session/atomic_publisher.py
+  type: import

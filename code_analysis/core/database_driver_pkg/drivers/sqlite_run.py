@@ -89,10 +89,7 @@ def classify_sqlite_error(
                 message=message,
                 commit_outcome_unknown=False,
             )
-        if (
-            code == sqlite3.SQLITE_LOCKED
-            or "database is locked" in message_lower
-        ):
+        if code == sqlite3.SQLITE_LOCKED or "database is locked" in message_lower:
             return DatabaseErrorInfo(
                 sqlstate=None,
                 error_kind="sqlite_locked",
@@ -417,7 +414,7 @@ def run_execute(
         return {"affected_rows": 0, "lastrowid": None, "data": None}
 
     sql_preview = (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
-    logger.info(
+    logger.debug(
         "[CHAIN] sqlite driver execute sql_preview=%s tid=%s n_stmts=%s",
         sql_preview,
         (transaction_id[:8] + "…") if transaction_id else None,

@@ -1,0 +1,39 @@
+concepts:
+- C-001
+- C-005
+depends_on: []
+name: Create ForegroundPagingHandoff returning search_id and first-page 
+  reference to caller
+operation: create_file
+parent_tactical_step: T-006
+priority: 1
+prompt: "Create `code_analysis/search_session/foreground_handoff.py`.\n\n## MRS excerpt\n\
+  \nC-001 SearchSession: owns a search_id used for HTTP access to pages and\nstatus.
+  Created immediately when a client starts a search request.\nC-005 HTTPResultAccess:
+  mechanism through which clients read published pages\nand session status.\n\nForeground
+  paging handoff: when a caller activates paginated mode, the\nforeground response
+  carries the search_id and optionally a reference to the\nfirst page (if already
+  published) so the caller can poll subsequent pages\nvia HTTPResultAccess without
+  streaming transport.\n\n## Implementation requirements\n\n1. Import `dataclasses`,
+  `typing`.\n\n2. Define `@dataclasses.dataclass(frozen=True)` class `ForegroundHandoffResponse`:\n\
+  \   - Fields: `search_id: str`,\n     `first_page_index: typing.Optional[int] =
+  None`,\n     `status: str = \"running\"`.\n   - Method `has_first_page(self) ->
+  bool`:\n     returns `self.first_page_index is not None`.\n\n3. Define function:\n\
+  \   ```python\n   def build_handoff_response(\n       search_id: str,\n       first_page_published:
+  bool,\n   ) -> ForegroundHandoffResponse:\n   ```\n   - If `first_page_published`:\n\
+  \     returns `ForegroundHandoffResponse(\n       search_id=search_id,\n       first_page_index=0,\n\
+  \       status=\"running\",\n     )`.\n   - Else:\n     returns `ForegroundHandoffResponse(\n\
+  \       search_id=search_id,\n       first_page_index=None,\n       status=\"running\"\
+  ,\n     )`.\n\n## Constraints\n- Standard library only.\n- All public names have
+  one-line docstrings.\n- File under 45 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/foreground_handoff.py
+verification:
+  expected: Module imports without error. build_handoff_response with 
+    first_page_published=True returns ForegroundHandoffResponse with 
+    first_page_index=0. With first_page_published=False returns 
+    first_page_index=None. has_first_page returns True only when 
+    first_page_index is set.
+  target: code_analysis/search_session/foreground_handoff.py
+  type: import

@@ -48,6 +48,7 @@ from .universal_file_preview.handlers.yaml_handler import YamlFileHandler
 
 
 from .universal_file_preview.navigation import navigate
+from .universal_file_preview.node_ref_params import normalize_optional_node_ref
 
 
 from .universal_file_preview.response import build_envelope
@@ -216,7 +217,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
         if any(c in file_path for c in _GLOB_CHARS):
             raise ValueError(INPUT_ERROR_GLOB_IN_FILE_PATH)
 
-        node_ref = params.get("node_ref")
+        node_ref = normalize_optional_node_ref(params.get("node_ref"))
 
         selector = params.get("selector")
         if isinstance(selector, str):

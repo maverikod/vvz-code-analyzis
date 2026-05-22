@@ -1,0 +1,45 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create SessionDirectoryProvisioner
+target_file: code_analysis/search_session/directory_provisioner.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-002
+prompt: |
+  Create `code_analysis/search_session/directory_provisioner.py`.
+
+  ## MRS excerpt
+
+  C-001 SearchSession: owns a dedicated SearchSessionDirectory.
+  C-002 SearchSessionDirectory: filesystem directory created for a SearchSession
+  before search execution begins; owns page files, manifest data, and service
+  metadata keyed by search_id.
+
+  ## Implementation requirements
+
+  1. Import `pathlib`, `dataclasses`.
+
+  2. Define `@dataclasses.dataclass` class `SessionDirectoryProvisioner`:
+     - Constructor field `session_base_dir: pathlib.Path`.
+     - Method `provision(self, search_id: str) -> pathlib.Path`:
+       - Derives path as `self.session_base_dir / search_id`.
+       - Creates the directory with `path.mkdir(parents=True, exist_ok=True)`.
+       - Returns the created directory path.
+     - Method `exists(self, search_id: str) -> bool`:
+       - Returns `(self.session_base_dir / search_id).is_dir()`.
+
+  ## Constraints
+  - Standard library only.
+  - All public names have one-line docstrings.
+  - File under 50 lines.
+verification:
+  type: import
+  target: code_analysis/search_session/directory_provisioner.py
+  expected: >
+    Module imports without error. SessionDirectoryProvisioner.provision creates
+    the directory and returns a pathlib.Path. SessionDirectoryProvisioner.exists
+    returns True for a created directory.
+status: draft

@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 from code_analysis.core.client_sessions import ensure_client_session_tables
+from code_analysis.core.subordinate_sessions import ensure_subordinate_session_tables
 
 logger = logging.getLogger(__name__)
 
@@ -390,3 +391,4 @@ def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     ensure_project_activity_locks_table(conn)
     ensure_runtime_file_lock_tables(conn)
     ensure_client_session_tables(conn)
+    ensure_subordinate_session_tables(conn)

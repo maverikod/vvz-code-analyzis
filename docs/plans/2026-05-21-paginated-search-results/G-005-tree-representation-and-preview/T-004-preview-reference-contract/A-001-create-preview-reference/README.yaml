@@ -1,0 +1,43 @@
+concepts:
+- C-017
+- C-015
+depends_on: []
+name: Create PreviewReference payload schema with stable-identifier rejection 
+  policy
+operation: create_file
+parent_tactical_step: T-004
+priority: 1
+prompt: "Create `code_analysis/tree_representation/preview_reference.py`.\n\n## MRS
+  excerpt\n\nC-017 PreviewReference: reference embedded in a search result that is\n\
+  sufficient to inspect the result through universal_file_preview.\nProperties:\n\
+  - Carries the project-relative file path.\n- Carries a stable node identifier or
+  selector sufficient for canonical\n  preview inspection.\n- Carries an optional
+  draft session identifier when result is from a\n  draft session.\n- Must never expose
+  unstable node identifiers.\n- When stable node identity cannot be guaranteed, the
+  result must be\n  withheld rather than published with an unstable identifier.\n\
+  - Search results return PreviewReference instead of inventing a separate\n  node
+  display model.\n\n## Implementation requirements\n\n1. Import `dataclasses`, `typing`.\n\
+  \n2. Define `@dataclasses.dataclass(frozen=True)` class `PreviewReference`:\n  \
+  \ - Field `file_path: str` — project-relative path.\n   - Field `node_id: str` —
+  stable node identifier or selector.\n   - Field `draft_session_id: typing.Optional[str]
+  = None`.\n   - Method `is_draft(self) -> bool` — `self.draft_session_id is not None`.\n\
+  \n3. Define exception:\n   ```python\n   class UnstableNodeIdentifierError(ValueError):\n\
+  \       \"\"\"Raised when a node identifier cannot be guaranteed stable.\"\"\"\n\
+  \   ```\n\n4. Define function:\n   ```python\n   def make_preview_reference(\n \
+  \      file_path: str,\n       node_id: str,\n       draft_session_id: typing.Optional[str]
+  = None,\n       *,\n       stable: bool,\n   ) -> PreviewReference:\n   ```\n  \
+  \ - If `stable` is False: raises `UnstableNodeIdentifierError` with\n     message
+  `f\"Cannot create PreviewReference: node_id={node_id!r} \"\n     \"is not guaranteed
+  stable\"`.\n   - Otherwise returns `PreviewReference(file_path=file_path,\n    \
+  \ node_id=node_id, draft_session_id=draft_session_id)`.\n\n## Constraints\n- Standard
+  library only.\n- All public names have one-line docstrings.\n- File under 60 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/tree_representation/preview_reference.py
+verification:
+  expected: Module imports without error. make_preview_reference returns a 
+    PreviewReference when stable=True. Raises UnstableNodeIdentifierError when 
+    stable=False. PreviewReference.is_draft returns True only when 
+    draft_session_id is set.
+  target: code_analysis/tree_representation/preview_reference.py
+  type: import

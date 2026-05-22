@@ -99,6 +99,14 @@ from code_analysis_client import (  # noqa: E402
     load_server_config,
 )
 
+CLIENT_API_COVERAGE = frozenset(
+    {
+        "config.load_server_config",
+        "config.adapter_settings_from_server_config",
+        "config.adapter_settings_to_jsonrpc_kwargs",
+    }
+)
+
 
 def main() -> None:
     """Print redacted JSON-RPC kwargs (see **OUTPUT** in the module docstring)."""

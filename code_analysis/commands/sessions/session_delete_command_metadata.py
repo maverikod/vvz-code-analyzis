@@ -17,6 +17,19 @@ from code_analysis.commands.sessions.session_commands_metadata_common import (
     standard_success_return,
 )
 
+_FORCE_SCHEMA_DESCRIPTION = (
+    "Destructive override for session teardown. "
+    "Default is false: omit this parameter or pass false for the safe path. "
+    "When false, deletion succeeds only if the session has zero rows in "
+    "session_file_locks and zero rows in subordinate_sessions where this "
+    "session is parent_session_id; otherwise SESSION_HAS_LOCKS or "
+    "SESSION_HAS_SUBORDINATES is returned and no data is changed. "
+    "When true, deletes every linked subordinate client session recursively "
+    "(each subordinate is removed from client_sessions together with its own "
+    "locks and nested subordinates), then deletes all session_file_locks for "
+    "this session, then deletes the client_sessions row for session_id."
+)
+
 
 def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
     """Extended documentation for session_delete."""
@@ -28,75 +41,132 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Deletes a client session from client_sessions. Session touch is NOT "
-            "applied (the session is terminating).\n\n"
+            "Terminates one client session row in client_sessions. Session touch "
+            "is NOT applied (the session is ending).\n\n"
+            "**Parameter force defaults to false.** If the client omits force, "
+            "behavior is identical to force=false.\n\n"
             "Execution order:\n"
-            "1. SESSION_NOT_FOUND if session_id missing.\n"
-            "2. SecurityPolicy check (when session exists).\n"
-            "3. If open file locks exist and force=false → SESSION_HAS_LOCKS.\n"
-            "4. If force=true → delete all session_file_locks for this session, "
-            "then delete the session row.\n"
-            "5. If no locks → delete session row.\n\n"
-            "Destructive: removes the session record. Use force=true to release "
-            "locks without calling session_close_file for each file."
+            "1. SESSION_NOT_FOUND if session_id is absent from client_sessions.\n"
+            "2. SecurityPolicy check for command session_delete on this server "
+            "instance (skipped when policy is disabled).\n"
+            "3. When force=false (default):\n"
+            "   a. If session_file_locks has any row for session_id → "
+            "SESSION_HAS_LOCKS (no mutation).\n"
+            "   b. Else if subordinate_sessions has any row with "
+            "parent_session_id=session_id → SESSION_HAS_SUBORDINATES (no mutation).\n"
+            "   c. Else DELETE the client_sessions row.\n"
+            "4. When force=true:\n"
+            "   a. For each distinct subordinate_session_id linked to session_id "
+            "as parent, call delete_client_session(sub_id, force=true) recursively "
+            "(removes subordinate client sessions, their locks, and their nested "
+            "subordinates).\n"
+            "   b. DELETE all session_file_locks rows for session_id.\n"
+            "   c. DELETE the client_sessions row for session_id.\n\n"
+            "Link rows in subordinate_sessions are removed by CASCADE when either "
+            "endpoint session row is deleted. session_roles rows CASCADE on session "
+            "delete.\n\n"
+            "Does not delete runtime_lock_sessions or file_advisory_lock_leases; "
+            "use advisory-lock commands separately if needed."
         ),
         "parameters": {
             "session_id": session_id_parameter(),
             "force": {
-                "description": (
-                    "When false (default), deletion fails if the session holds any "
-                    "file locks. When true, all locks are released first, then the "
-                    "session is deleted."
-                ),
+                "description": _FORCE_SCHEMA_DESCRIPTION,
                 "type": "boolean",
                 "required": False,
                 "default": False,
+                "notes": (
+                    "JSON schema default is false. Runtime default in execute() is "
+                    "also false when the parameter is omitted."
+                ),
             },
         },
         "return_value": standard_success_return(
-            description="Session deleted.",
+            description="Session row removed from client_sessions.",
             data_fields={
-                "session_id": "UUID4 that was deleted.",
+                "session_id": "UUID4 of the deleted session (echo of request).",
                 "deleted": "Always true on success.",
                 "released_lock_count": (
-                    "Number of session_file_locks rows removed when force=true; "
-                    "0 when there were no locks or force was not needed."
+                    "Count of session_file_locks rows deleted for session_id during "
+                    "this call. Always present; 0 when force=false (locks must already "
+                    "be absent) or when force=true but there were no locks."
+                ),
+                "released_subordinate_count": (
+                    "Count of subordinate client_sessions rows deleted recursively "
+                    "because session_id was their ancestor in subordinate_sessions. "
+                    "Always present; 0 when force=false (no subordinates allowed) or "
+                    "when force=true but there were no linked subordinates."
                 ),
             },
             example={
                 "session_id": EXAMPLE_SESSION_ID,
                 "deleted": True,
-                "released_lock_count": 2,
+                "released_lock_count": 0,
+                "released_subordinate_count": 0,
             },
         ),
         "usage_examples": [
             {
-                "description": "Delete session after all files closed",
+                "description": "Safe delete with default force=false (parameter omitted)",
                 "command": {"session_id": EXAMPLE_SESSION_ID},
-                "explanation": "Succeeds when open_lock_count is zero.",
+                "explanation": (
+                    "Equivalent to force=false. Succeeds only when session_view would "
+                    "show locked_file_count=0 and subordinate_session_count=0."
+                ),
             },
             {
-                "description": "Force-delete session with open locks",
+                "description": "Safe delete with explicit force=false",
+                "command": {"session_id": EXAMPLE_SESSION_ID, "force": False},
+                "explanation": "Same as omitting force; fails if locks or subordinates exist.",
+            },
+            {
+                "description": "Force delete with open locks and subordinate sessions",
                 "command": {"session_id": EXAMPLE_SESSION_ID, "force": True},
-                "explanation": "Releases all file locks then removes the session.",
+                "explanation": (
+                    "Recursively deletes linked subordinate client sessions, releases "
+                    "file locks on session_id, then deletes the parent session."
+                ),
             },
         ],
         "error_cases": {
             "SESSION_NOT_FOUND": session_not_found_error(),
             "SESSION_HAS_LOCKS": {
-                "description": "Session has open file locks and force=false.",
-                "message": "Session ... has N open file lock(s). Use force=True to release.",
+                "description": (
+                    "force is false (explicit or default) and session_file_locks "
+                    "contains at least one row for session_id."
+                ),
+                "message": (
+                    "Session '<uuid>' has N open file lock(s). Use force=True to release."
+                ),
                 "solution": (
-                    "Call session_close_file for each lock, session_list_file_locks "
-                    "to inspect, or retry with force=true."
+                    "Call session_close_file per lock, session_view or "
+                    "session_list_file_locks to inspect, or retry with force=true."
+                ),
+            },
+            "SESSION_HAS_SUBORDINATES": {
+                "description": (
+                    "force is false (explicit or default) and subordinate_sessions "
+                    "contains at least one row with parent_session_id=session_id."
+                ),
+                "message": (
+                    "Session '<uuid>' has N subordinate session link(s). "
+                    "Use force=True to delete them."
+                ),
+                "solution": (
+                    "Remove links with subordinate_session_delete, unlink subordinates "
+                    "via session_view, or retry with force=true to delete subordinate "
+                    "client sessions recursively."
                 ),
             },
             "COMMAND_FORBIDDEN": command_forbidden_error(),
         },
         "best_practices": [
-            "Release locks with session_close_file before delete when possible.",
-            "Use force=true only when abandoning a stuck session operator-side.",
-            "Verify with session_list that the session is gone (when IDs are visible).",
-            "Do not reuse a deleted session_id — create a new session_create.",
+            "Prefer omitting force (default false) after session_close_file and "
+            "subordinate_session_delete cleanup.",
+            "Call session_view before delete to inspect locked_files_by_project and "
+            "subordinate_sessions.",
+            "Use force=true only when operator-side teardown must ignore locks and "
+            "subordinate client sessions.",
+            "Do not reuse a deleted session_id — call session_create for a new session.",
         ],
     }

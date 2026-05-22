@@ -1,0 +1,45 @@
+concepts:
+- C-001
+- C-003
+- C-005
+- C-006
+- C-020
+depends_on: []
+name: Create HTTPResultAccess lifecycle facet with last-access refresh
+operation: create_file
+parent_tactical_step: T-005
+priority: 1
+prompt: "Create `code_analysis/search_session/http_result_access.py`.\n\n## MRS excerpt\n\
+  \nC-005 HTTPResultAccess: simple HTTP retrieval mechanism for reading SearchSession\n\
+  pages, status, and manifest-backed metadata. Refreshes LastAccessTimestamp\n(C-006:
+  last_access_at) on every successful page, status, or manifest read.\nReturns page-not-ready
+  when the session is running but the requested page has\nnot yet been published.
+  Does not use streaming transport.\n\nC-006 LastAccessTimestamp: timestamp refreshed
+  whenever a client reads any\npage, status, or manifest. Controls inactivity-based
+  TTL cleanup.\n\nC-020 SearchStatus: state and phase model exposed to clients.\n\n\
+  ## Implementation requirements\n\n1. Import `dataclasses`, `datetime`, `pathlib`,
+  `typing`.\n\n2. Define `@dataclasses.dataclass` class `PageNotReadyResponse`:\n\
+  \   - Field `page_index: int` — the index requested.\n   - Field `session_running:
+  bool` — True when session is still running.\n   This response is not an error; it
+  signals the page is pending.\n\n3. Define class `HTTPResultAccess`:\n   - Constructor:
+  `__init__(self, manifest_writer, session_dir: pathlib.Path)`.\n     `manifest_writer`
+  is a `ManifestWriter`-compatible object.\n   - Method `read_status(self) -> dict`:\n\
+  \     - Reads the manifest via `manifest_writer.read(session_dir)`.\n     - Calls
+  `manifest_writer.update_last_access()` to refresh last_access_at.\n     - Returns
+  a dict with keys: `search_id`, `status`, `phase`, and metrics\n       fields from
+  `ManifestData`.\n   - Method `read_page(self, page_index: int) -> typing.Union[pathlib.Path,
+  PageNotReadyResponse]`:\n     - Computes expected page file path:\n       `session_dir
+  / f'page_{page_index:04d}.json'`.\n     - If the file exists: calls `manifest_writer.update_last_access()`,\n\
+  \       returns the `pathlib.Path`.\n     - Else: reads manifest, checks if `status
+  == 'running'`, returns\n       `PageNotReadyResponse(page_index=page_index, session_running=...)`.\n\
+  \n## Constraints\n- Standard library only (manifest_writer injected, no direct import).\n\
+  - All public names have one-line docstrings.\n- File under 80 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/http_result_access.py
+verification:
+  expected: Module imports without error. HTTPResultAccess is instantiable. 
+    PageNotReadyResponse is a dataclass with page_index and session_running 
+    fields. read_page returns PageNotReadyResponse for a missing page file.
+  target: code_analysis/search_session/http_result_access.py
+  type: import

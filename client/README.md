@@ -63,13 +63,50 @@ async with CodeAnalysisAsyncClient(host="127.0.0.1", port=15001) as client:
 
 Use `call_unified_validated` when you need queue polling. Pass `refresh_schema=True` on a single call to bypass the in-memory schema cache.
 
+## High-level facades (aligned with live server registry)
+
+The client does **not** wrap CST commands (`cst_load_file`, …) or legacy file I/O
+(`universal_file_read`, `read_project_text_file`, …). Those commands are removed
+from the server registry. Use the facades below or generic `call` / `commands.*`.
+
+| Facade | Property | Server commands |
+|--------|----------|-----------------|
+| Client DB sessions + transfer | `client.file_sessions` | `session_*`, `subordinate_session_*`, `project_file_transfer_*`, `project_file_advisory_lock_batch` |
+| Universal edit sessions | `client.universal_files` | `universal_file_open`, `edit`, `write`, `close`, `preview` |
+| Any registered command | `client.call` / `client.commands.<name>` | schema from live `help()` |
+
+Canonical command lists: `code_analysis_client.server_api` — exported as
+`FILE_SESSION_COMMANDS`, `FILE_SESSION_FACADE_METHODS`, `CLIENT_FACADE_COMMANDS`,
+`REMOVED_COMMANDS`.
+
+Sync checks (in-process registry):
+
+```bash
+pytest tests/test_client_server_api_sync.py tests/test_code_analysis_client.py -k session
+```
+
+Package version is in ``client/code_analysis_client/version.txt`` (synced with the
+root ``code-analysis`` project via ``scripts/sync_code_analysis_client_version.py``).
+
 ## Examples (this repository)
 
 Runnable scripts live under `client/examples/`. **Long-form “man page” style
 documentation** is embedded in the **module docstrings** of those Python files
-(see `client/examples/README.md` for how to read them). Full API walkthrough:
-`python client/examples/run_all_examples.py` with the daemon up and
-`CODE_ANALYSIS_CONFIG` or default `config.json` at the repo root.
+(see `client/examples/README.md` for how to read them).
+
+| Script | Purpose |
+|--------|---------|
+| `run_all_examples.py` | Full API tour + runs all live sibling scripts |
+| `ex_minimal_validated.py` | Smallest validated RPC example |
+| `ex_universal_files.py` | All `UniversalFileClient` methods (open/edit/write/close/preview) |
+| `ex_session_view_subordinates.py` | `session_view` and subordinate CRUD |
+| `ex_file_sessions.py` | Sessions, locks, transfer roundtrip |
+| `ex_config_only.py` | Parse `config.json` without TCP |
+
+```bash
+casmgr --config config.json start
+python client/examples/run_all_examples.py
+```
 
 ## Development
 

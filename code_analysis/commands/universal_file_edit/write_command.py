@@ -350,10 +350,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 make_error(
                     FORMAT_INVALID_ON_OPEN,
                     "File still has parse errors; write blocked. Fix errors and retry.",
-                    details={
-                        "parse_errors": parse_errors,
-                        "format": session.original_format_group,
-                    },
+                    details={"parse_errors": parse_errors},
                 )
             )
         result = self._second_call(session, project_id)

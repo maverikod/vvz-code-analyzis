@@ -1,0 +1,49 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create XPath-like filter module
+target_file: code_analysis/search_session/xpath_filter.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-016
+prompt: "Create the file code_analysis/search_session/xpath_filter.py.\n\nMRS excerpt:
+  C-016 XPathLikeFilter is a universal structural filter that\nevaluates XPath-like
+  queries over validated TreeRepresentation data.\nProperties: operates on validated
+  tree representations not ad-hoc text;\nworks with database-backed structural data,
+  indexer in-memory structures,\ndynamic trees, and draft-session content; returns
+  only matching tree nodes;\nshares structure model, node identifiers, and selector
+  semantics with the\nindexer.\n\nImports (each on its own line):\n  import dataclasses\n\
+  \  import pathlib\n  import re\n  import typing\n  from code_analysis.search_session.tree_manager
+  import ensure_tree\n\nSignature of imported symbol (for reference; do not redefine):\n\
+  \  ensure_tree(file_path: pathlib.Path) -> typing.Dict\n    Returns a dict with
+  keys:\n      file_path: str\n      file_checksum: str\n      format: str\n     \
+  \ nodes: typing.List[typing.Dict]  (each node dict has at least\n        node_ref:
+  str, node_type: str, and optionally text: str)\n\n1. Define dataclass NodeMatch
+  with fields:\n   node_ref: str      (stable node identifier or selector)\n   file_path:
+  str     (project-relative path as string)\n   node_type: str     (from tree node
+  metadata)\n   text: typing.Optional[str] = None\n\n2. Define function apply_filter(\n\
+  \     tree: typing.Dict,\n     xpath_query: str,\n   ) -> typing.List[NodeMatch]:\n\
+  \   tree has keys file_path (str), file_checksum (str), format (str),\n   nodes
+  (List[Dict]). Each node dict has at least node_ref (str),\n   node_type (str), and
+  optionally text (str).\n   Selector rules:\n   - If xpath_query == \"*\": return
+  NodeMatch for every node.\n   - If re.search(r\"\\[\\@type='([^']+)'\\]\", xpath_query)
+  matches:\n     extract captured group as type_value; return NodeMatch for nodes\n\
+  \     where node[\"node_type\"] == type_value.\n   - Otherwise: return NodeMatch
+  for nodes where xpath_query is a\n     substring of node.get(\"text\", \"\") or
+  empty string.\n   Build each NodeMatch as:\n     NodeMatch(\n         node_ref=node[\"\
+  node_ref\"],\n         file_path=tree[\"file_path\"],\n         node_type=node[\"\
+  node_type\"],\n         text=node.get(\"text\"),\n     )\n\n3. Define function filter_file(\n\
+  \     file_path: pathlib.Path,\n     xpath_query: str,\n   ) -> typing.List[NodeMatch]:\n\
+  \   Calls ensure_tree(file_path) to obtain the tree dict.\n   Calls apply_filter(tree,
+  xpath_query).\n   Returns the result.\n\nConstraints:\n- No third-party imports.\n\
+  - All public names must have docstrings.\n- The same apply_filter code path handles
+  trees from any source because\n  trees are normalised dicts before reaching this
+  function.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/xpath_filter.py
+  expected: Module imports without error. NodeMatch, apply_filter, and 
+    filter_file are all present. apply_filter called with a tree dict whose 
+    nodes list is empty returns an empty list without raising.
+status: draft

@@ -203,7 +203,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         if transaction_id is not None:
             rpc_params["transaction_id"] = transaction_id
         sql_preview = (sql.strip()[:80] + "…") if len(sql.strip()) > 80 else sql.strip()
-        logger.info(
+        logger.debug(
             "[CHAIN] client execute method=execute sql_preview=%s tid=%s",
             sql_preview,
             (transaction_id[:8] + "…") if transaction_id else None,
@@ -255,7 +255,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         rpc_params: Dict[str, Any] = {"operations": rpc_ops}
         if transaction_id is not None:
             rpc_params["transaction_id"] = transaction_id
-        logger.info(
+        logger.debug(
             "[CHAIN] client execute_batch n_ops=%s tid=%s",
             len(operations),
             (transaction_id[:8] + "…") if transaction_id else None,
@@ -311,7 +311,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
                     "lock_scope must be one of: none, project_write, project_read",
                 )
             rpc_params["lock_scope"] = lscope
-        logger.info(
+        logger.debug(
             "[CHAIN] client execute_logical_write_operation n_batches=%s operation_name=%s project_id=%s",
             len(rpc_batches),
             program.get("operation_name"),

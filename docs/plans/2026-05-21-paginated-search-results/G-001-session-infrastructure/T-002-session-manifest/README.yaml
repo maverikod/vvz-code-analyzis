@@ -1,0 +1,36 @@
+step_id: T-002
+parent_global_step: G-001
+name: Session Manifest
+description: "Creates the SearchSessionManifest (C-003) as a machine-readable state
+  file inside the SearchSessionDirectory. The manifest stores: request parameters,
+  created_at timestamp, status, current phase, page readiness map, produced result
+  count, written page count, scanned file count, warning count, error count, ServerProcessIdentity
+  (C-008) fields (main_pid, process_start_time, and optionally host and instance_id),
+  and SessionHeartbeat (C-009) as the heartbeat_at timestamp updated periodically
+  by the running search. The manifest must support concurrent access by the search
+  worker, HTTP readers, and the background cleaner through an atomic write protocol
+  (write to temp, rename).\n"
+concepts:
+- C-003
+- C-008
+- C-009
+inputs:
+- name: session_directory
+  type: SearchSessionDirectory (C-002)
+  description: Directory in which the manifest file is created.
+- name: search_request_params
+  type: dict
+  description: Parameters of the originating search request stored verbatim in 
+    the manifest.
+- name: process_identity
+  type: ServerProcessIdentity (C-008)
+  description: main_pid and process_start_time of the owning server process, 
+    optionally extended with host and instance_id.
+outputs:
+- name: manifest
+  type: SearchSessionManifest (C-003)
+  description: Manifest file written inside the session directory, populated 
+    with all required fields and ready for concurrent reads and atomic updates.
+atomic_steps:
+- A-001
+status: draft

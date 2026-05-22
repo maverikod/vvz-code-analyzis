@@ -120,3 +120,64 @@ async def test_session_list_session_id_required_when_show_ids_true() -> None:
     assert isinstance(result, ErrorResult)
     assert result.code == "SESSION_ID_REQUIRED"
     mock_db.execute.assert_not_called()
+
+
+def test_session_delete_schema_and_metadata_force_default_aligned() -> None:
+    """get_schema() and metadata() must agree on force default and description."""
+    schema = SessionDeleteCommand.get_schema()
+    force_schema = schema["properties"]["force"]
+    assert force_schema["default"] is False
+    assert "session_id" in schema["required"]
+    assert "force" not in schema["required"]
+
+    meta = SessionDeleteCommand.metadata()
+    force_meta = meta["parameters"]["force"]
+    assert force_meta["default"] is False
+    assert force_meta["required"] is False
+    assert force_schema["description"] == force_meta["description"]
+
+    assert set(meta["parameters"]) == set(schema["properties"])
+
+
+@pytest.mark.asyncio
+async def test_session_delete_execute_defaults_force_false() -> None:
+    mock_db = MagicMock()
+    config = {
+        "registration": {"instance_uuid": "880e8400-e29b-41d4-a716-446655440003"},
+        "security": {"policy": "disabled"},
+    }
+    delete_result = {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "deleted": True,
+        "released_lock_count": 0,
+        "released_subordinate_count": 0,
+    }
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(BaseMCPCommand, "_get_raw_config", return_value=config),
+        patch(
+            "code_analysis.core.client_sessions.get_client_session",
+            return_value={"session_id": delete_result["session_id"]},
+        ),
+        patch(
+            "code_analysis.commands.sessions.session_delete_command.enforce_security_policy",
+            return_value=None,
+        ),
+        patch(
+            "code_analysis.commands.sessions.session_delete_command.delete_client_session",
+            return_value=delete_result,
+        ) as delete_fn,
+    ):
+        cmd = SessionDeleteCommand()
+        result = await cmd.execute(session_id=delete_result["session_id"])
+
+    assert isinstance(result, SuccessResult)
+    delete_fn.assert_called_once_with(
+        mock_db,
+        session_id=delete_result["session_id"],
+        force=False,
+    )

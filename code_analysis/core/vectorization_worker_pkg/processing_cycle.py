@@ -195,7 +195,7 @@ async def run_one_cycle(
     cycle_id = str(uuid.uuid4())
     cycle_start_time = time.time()
     _now_sql = sql_julian_timestamp_now_expr(database)
-    logger.info(
+    logger.debug(
         "[CYCLE #%s] Updating vectorization_stats (mark old cycles ended)...",
         cycle_count,
     )
@@ -300,14 +300,14 @@ async def run_one_cycle(
     projects: List[Any] = (
         projects_result.get("data", []) if isinstance(projects_result, dict) else []
     )
-    logger.info(
+    logger.debug(
         "[CYCLE #%s] Projects query returned: %d project(s)",
         cycle_count,
         len(projects),
     )
 
     if not projects:
-        logger.info(
+        logger.debug(
             "[CYCLE #%s] No projects with pending items - no work this cycle",
             cycle_count,
         )
@@ -332,7 +332,7 @@ async def run_one_cycle(
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
     else:
-        logger.info(
+        logger.debug(
             "[CYCLE #%s] Found %d projects with pending items: %s",
             cycle_count,
             len(projects),
@@ -360,7 +360,7 @@ async def run_one_cycle(
 
         t0_step3 = time.time()
         if use_pgvector_ann:
-            logger.info(
+            logger.debug(
                 "[CYCLE #%s] Skipping per-project FAISS rebuild (pgvector ANN backend)",
                 cycle_count,
             )
@@ -377,7 +377,7 @@ async def run_one_cycle(
                 current_file=None,
                 extra={"cycle": cycle_count},
             )
-            logger.info(
+            logger.debug(
                 "[CYCLE #%s] Rebuilding FAISS indexes for all projects...",
                 cycle_count,
             )

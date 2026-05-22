@@ -1,0 +1,48 @@
+step_id: T-004
+parent_global_step: G-003
+name: Progressive search page writer
+description: "Define the running-search page writer that progressively appends normalized
+  search result records into the current page buffer and publishes separate immutable
+  SearchPageFile (C-004) artifacts through AtomicPagePublication (C-026) into SearchSessionDirectory
+  (C-002). When a page reaches its record bound, finalize and publish that page, then
+  begin the next page buffer. On search termination, publish the final page even when
+  it is short. Emit page readiness signals so readers can distinguish published pages
+  from pages still being generated.\n"
+concepts:
+- C-002
+- C-004
+- C-026
+inputs:
+- name: normalized_result_record_stream
+  type: stream of result records
+  description: "Progressive search output records produced by the running search execution
+    path.\n"
+- name: page_storage_layout
+  type: directory layout contract
+  description: "Session directory areas for staging writes and published page files.\n"
+- name: search_page_file_model
+  type: SearchPageFile
+  description: "Immutable page artifact rules including page bound and final-page
+    partial-fill behavior.\n"
+- name: atomic_page_publication_protocol
+  type: AtomicPagePublication
+  description: "Publication protocol used to finalize each page before reader access.\n"
+- name: search_termination_signal
+  type: termination signal
+  description: "Signal that no further records will arrive, requiring publication
+    of the final short page when applicable.\n"
+outputs:
+- name: published_search_page_files
+  type: list of SearchPageFile
+  description: "Sequence of immutable published page artifacts stored in the session
+    directory as records arrive and pages fill or the search ends.\n"
+- name: page_readiness_state
+  type: readiness enumeration
+  description: "Per-page readiness indicating which page numbers are published and
+    available versus still being generated.\n"
+- name: written_page_count_metric
+  type: non-negative integer
+  description: "Count of published pages, usable by session progress reporting.\n"
+atomic_steps:
+- A-001
+status: draft

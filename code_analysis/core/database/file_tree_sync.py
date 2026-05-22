@@ -132,7 +132,7 @@ def sync_file_to_db_atomic(
     }
 
     t0 = time.perf_counter()
-    logger.info(
+    logger.debug(
         "[SAVE_PATH] sync_file_to_db_atomic enter project_id=%s file_id=%s path=%s",
         project_id,
         file_id,
@@ -303,7 +303,7 @@ def sync_file_to_db_atomic(
         return _sync()
     finally:
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        logger.info(
+        logger.debug(
             "[SAVE_PATH] sync_file_to_db_atomic exit project_id=%s file_id=%s elapsed_ms=%.1f success=%s",
             project_id,
             result.get("file_id"),

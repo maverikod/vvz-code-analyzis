@@ -1,0 +1,43 @@
+concepts:
+- C-015
+depends_on: []
+name: 'Create TreeValidityGate: checksum-based validity check and recreation trigger'
+operation: create_file
+parent_tactical_step: T-002
+priority: 1
+prompt: "Create `code_analysis/tree_representation/tree_validity_gate.py`.\n\n## MRS
+  excerpt\n\nC-015 TreeRepresentation validity lifecycle:\n- Before any structural
+  analysis, check whether the tree artifact exists\n  and is valid for current file
+  content using checksums (same principle\n  as CST sidecar validation).\n- If the
+  tree is absent or fails validity: recreate it before structural\n  processing continues.\n\
+  - Recreation is a mandatory gate: no structural consumer may proceed with\n  an
+  invalid or missing tree.\n- Validity outcome is recorded as part of TreeRepresentation
+  readiness state.\n\n## Implementation requirements\n\n1. Import `dataclasses`, `enum`,
+  `typing`, `hashlib`, `pathlib`.\n\n2. Define `TreeReadinessOutcome(str, enum.Enum)`
+  with members:\n   VALID = \"valid\",\n   RECREATED = \"recreated\",\n   ABSENT_RECREATED
+  = \"absent_recreated\".\n\n3. Define `@dataclasses.dataclass(frozen=True)` class
+  `TreeReadinessResult`:\n   - Field `outcome: TreeReadinessOutcome`.\n   - Field
+  `tree_representation`: typing.Any — the ready TreeRepresentation.\n   - Field `was_recreated:
+  bool` — True when tree was absent or stale.\n\n4. Define function:\n   ```python\n\
+  \   def compute_file_checksum(file_path: pathlib.Path) -> str:\n   ```\n   - Returns
+  lowercase hex SHA-256 of `file_path.read_bytes()`.\n\n5. Define function:\n   ```python\n\
+  \   def ensure_tree_ready(\n       file_path: pathlib.Path,\n       existing_tree:
+  typing.Optional[typing.Any],\n       builder: typing.Callable[[pathlib.Path], typing.Any],\n\
+  \   ) -> TreeReadinessResult:\n   ```\n   - Computes `current_checksum = compute_file_checksum(file_path)`.\n\
+  \   - If `existing_tree` is None or not valid for `current_checksum`\n     (calls
+  `existing_tree.is_valid_for(current_checksum)`):\n     - Calls `new_tree = builder(file_path)`.\n\
+  \     - Determines outcome: ABSENT_RECREATED if existing_tree was None,\n      \
+  \ else RECREATED.\n     - Returns `TreeReadinessResult(outcome=outcome, tree_representation=new_tree,
+  was_recreated=True)`.\n   - Else:\n     - Returns `TreeReadinessResult(outcome=VALID,
+  tree_representation=existing_tree, was_recreated=False)`.\n\n## Constraints\n- Standard
+  library only.\n- All public names have one-line docstrings.\n- File under 70 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/tree_representation/tree_validity_gate.py
+verification:
+  expected: Module imports without error. ensure_tree_ready returns VALID 
+    outcome when tree checksum matches, RECREATED when stale, ABSENT_RECREATED 
+    when existing_tree is None. compute_file_checksum returns a 64-char hex 
+    string.
+  target: code_analysis/tree_representation/tree_validity_gate.py
+  type: import

@@ -245,10 +245,29 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.sessions.session_create_command import SessionCreateCommand
         from .commands.sessions.session_delete_command import SessionDeleteCommand
         from .commands.sessions.session_list_command import SessionListCommand
+        from .commands.sessions.session_view_command import SessionViewCommand
 
         reg.register(SessionCreateCommand, "session_management")
         reg.register(SessionDeleteCommand, "session_management")
         reg.register(SessionListCommand, "session_management")
+        reg.register(SessionViewCommand, "session_management")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.sessions.subordinate_session_commands import (
+            SubordinateSessionCreateCommand,
+            SubordinateSessionDeleteCommand,
+            SubordinateSessionGetCommand,
+            SubordinateSessionListCommand,
+            SubordinateSessionUpdateCommand,
+        )
+
+        reg.register(SubordinateSessionCreateCommand, "session_management")
+        reg.register(SubordinateSessionGetCommand, "session_management")
+        reg.register(SubordinateSessionUpdateCommand, "session_management")
+        reg.register(SubordinateSessionDeleteCommand, "session_management")
+        reg.register(SubordinateSessionListCommand, "session_management")
     except ImportError:
         pass
 

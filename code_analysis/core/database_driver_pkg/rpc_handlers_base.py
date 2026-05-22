@@ -183,7 +183,7 @@ class _RPCHandlersBaseMixin:
             sql_preview = (
                 (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
             )
-            logger.info(
+            logger.debug(
                 "[CHAIN] handler handle_execute sql_preview=%s tid=%s",
                 sql_preview,
                 (transaction_id[:8] + "…") if transaction_id else None,
@@ -193,7 +193,7 @@ class _RPCHandlersBaseMixin:
             if isinstance(result, dict) and "data" in result:
                 data_val = result["data"]
                 if isinstance(data_val, list):
-                    logger.info(
+                    logger.debug(
                         "[CHAIN] handle_execute SELECT n_rows=%s",
                         len(data_val),
                     )
@@ -264,7 +264,7 @@ class _RPCHandlersBaseMixin:
                     )
                 operations.append((sql, bind_params))
             transaction_id = params.get("transaction_id")
-            logger.info(
+            logger.debug(
                 "[CHAIN] handler handle_execute_batch n_ops=%s tid=%s",
                 len(operations),
                 (transaction_id[:8] + "…") if transaction_id else None,

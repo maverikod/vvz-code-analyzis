@@ -15,40 +15,27 @@ def get_project_file_transfer_download_begin_schema() -> Dict[str, Any]:
     return {
         "type": "object",
         "description": (
-            "Begin a resumable download of the current on-disk project file. "
-            "Provide **exactly one** of ``file_id`` (``files`` primary key) or ``file_path`` "
-            "(literal path relative to project root). When ``file_id`` is omitted, "
-            "``project_id`` and ``file_path`` are both required. When ``file_id`` is set, "
-            "``project_id`` and ``file_path`` are optional (optional ``project_id`` scopes the "
-            "lookup to that project). Verifies the file exists under the project root, then "
-            "creates the same download session as ``transfer_download_begin`` (chunked GET). "
-            "Does not modify disk or DB."
+            "Begin a resumable download of an indexed project file (read-only). "
+            "Pass ``file_id`` (``files`` primary key UUID). The server resolves project "
+            "and path from the row. Optional ``project_id`` scopes the lookup to that "
+            "project. ``file_path`` is not accepted — use ``file_id`` from "
+            "``list_project_files``. Client façade: ``FileSessionClient.download``; "
+            "boolean ``lock`` maps to ``lock_mode`` (``true`` → ``full``, ``false`` → "
+            "``none``)."
         ),
         "properties": {
-            "project_id": {
-                "type": "string",
-                "description": (
-                    "Project UUID from list_projects. **Required** when ``file_id`` is omitted "
-                    "(path mode with ``file_path``). **Optional** when ``file_id`` is set; if "
-                    "provided, the file row must belong to this project."
-                ),
-            },
             "file_id": {
                 "type": "string",
                 "description": (
-                    "Primary key of the row in table ``files`` (UUID string). Mutually exclusive "
-                    "with ``file_path``. When set, ``project_id`` and ``file_path`` are optional."
+                    "Primary key of the row in table ``files`` (UUID string). Required. "
+                    "Project and path are resolved from this row."
                 ),
             },
-            "file_path": {
+            "project_id": {
                 "type": "string",
                 "description": (
-                    "Literal project-relative file path (POSIX ``/``). No wildcards. "
-                    "**Required** when ``file_id`` is omitted (together with ``project_id``). "
-                    "The file must exist on disk under the project root. Mutually exclusive "
-                    "with ``file_id``. When the path is indexed, the response includes the same "
-                    "``file_id`` as ``list_project_files``; otherwise ``file_id`` in the response "
-                    "is null."
+                    "Optional project UUID from ``list_projects``. When provided, the "
+                    "``files`` row must belong to this project."
                 ),
             },
             "compression": {
@@ -77,16 +64,24 @@ def get_project_file_transfer_download_begin_schema() -> Dict[str, Any]:
                     "(same as BackupManager.list_versions). When false, omit that list."
                 ),
             },
+            "session_id": {
+                "type": "string",
+                "description": (
+                    "Client session UUID from ``session_create``. When set, the session must "
+                    "exist in ``client_sessions`` (``SESSION_NOT_FOUND`` otherwise). Required "
+                    "when ``lock_mode`` is not ``none``. Also records ``session_file_locks`` "
+                    "when the target file is indexed."
+                ),
+            },
             "lock_mode": {
                 "type": "string",
                 "enum": ["none", "block_write", "full"],
                 "default": "none",
                 "description": (
-                    "Optional advisory transfer lock. ``none`` preserves legacy behavior. "
-                    "``block_write`` takes a shared sidecar flock so cooperative writers block. "
-                    "``full`` takes an exclusive sidecar flock. Non-none locks are held until "
-                    "the adapter reports the download completed (or transfer ack/expiry/error "
-                    "cleanup releases them)."
+                    "Advisory transfer lock for cooperative editing. ``none`` — read without "
+                    "locking (client ``lock=false``). ``full`` — exclusive sidecar flock until "
+                    "download completes (client ``lock=true``). ``block_write`` — shared flock "
+                    "(advanced). Non-none locks require ``session_id``."
                 ),
             },
             "job_id": {
@@ -101,7 +96,7 @@ def get_project_file_transfer_download_begin_schema() -> Dict[str, Any]:
                 "description": "Optional opaque client correlation id stored on the session.",
             },
         },
-        "required": ["compression"],
+        "required": ["file_id", "compression"],
         "additionalProperties": False,
     }
 
@@ -111,36 +106,41 @@ def get_project_file_transfer_upload_save_schema() -> Dict[str, Any]:
     return {
         "type": "object",
         "description": (
-            "Apply the body of a completed adapter upload (``transfer_upload_complete``) to "
-            "a project file. Provide **exactly one** of ``file_id`` or ``file_path``. "
-            "When ``file_id`` is omitted, ``project_id`` and ``file_path`` are both required. "
-            "When ``file_id`` is set, ``project_id`` and ``file_path`` are optional. Uses the "
-            "same registry-first save pipeline as ``universal_file_save``. Safe preview via "
-            "``dry_run=true``."
+            "Apply the body of a completed adapter upload to a project file. Two selector "
+            "modes — **exactly one**:\n\n"
+            "1. **Update existing** — ``file_id`` only. ``project_id`` and ``file_path`` "
+            "are omitted; the ``files`` row determines project and path. Optional "
+            "``project_id`` must match the row if provided.\n\n"
+            "2. **Create new** — ``project_id`` + ``file_path`` (literal path relative to "
+            "project root). The path must **not** already be indexed in ``files`` "
+            "(``FILE_ALREADY_INDEXED`` otherwise).\n\n"
+            "Client façade: ``FileSessionClient.upload`` (mode 1) and ``.upload_new`` "
+            "(mode 2). Boolean ``unlock`` maps to ``unlock_after_write`` (default ``true``)."
         ),
         "properties": {
             "project_id": {
                 "type": "string",
                 "description": (
-                    "Project UUID from list_projects. **Required** when ``file_id`` is omitted. "
-                    "**Optional** when ``file_id`` is set; if provided, the file row must belong "
-                    "to this project."
+                    "Project UUID from ``list_projects``. **Required** in new-file mode "
+                    "(with ``file_path``, ``file_id`` omitted). **Omit** in id-only update "
+                    "mode when ``file_id`` is set; if provided anyway, the ``files`` row must "
+                    "belong to this project."
                 ),
             },
             "file_id": {
                 "type": "string",
                 "description": (
-                    "Target ``files`` row UUID; path comes from that row. Mutually exclusive "
-                    "with ``file_path``. When set, ``project_id`` and ``file_path`` are optional."
+                    "Target ``files`` row UUID. **Update mode:** pass this alone to overwrite "
+                    "an existing indexed file. Mutually exclusive with ``file_path``."
                 ),
             },
             "file_path": {
                 "type": "string",
                 "description": (
-                    "Target path relative to project root (literal; no globs). **Required** when "
-                    "``file_id`` is omitted (with ``project_id``). Mutually exclusive with "
-                    "``file_id``. The file may exist already or be created by the handler per "
-                    "``universal_file_save`` rules."
+                    "Target path relative to project root (literal; no globs). **New-file mode:** "
+                    "required together with ``project_id`` when ``file_id`` is omitted. The path "
+                    "must not already have a row in ``files`` — use ``file_id`` to update an "
+                    "existing indexed file. Mutually exclusive with ``file_id``."
                 ),
             },
             "transfer_id": {
@@ -203,12 +203,21 @@ def get_project_file_transfer_upload_save_schema() -> Dict[str, Any]:
                     "in-memory tree (same semantics as ``universal_file_save``)."
                 ),
             },
+            "session_id": {
+                "type": "string",
+                "description": (
+                    "Client session UUID from ``session_create``. When set, must exist in "
+                    "``client_sessions``. Used for lock attribution and ``unlock_after_write`` "
+                    "(client ``unlock``) cleanup. Required when ``lock_mode`` is not ``none``."
+                ),
+            },
             "unlock_after_write": {
                 "type": "boolean",
                 "default": True,
                 "description": (
-                    "When true (default), release any runtime transfer lock for this "
-                    "transfer/file after a successful non-dry-run save."
+                    "Release runtime transfer and ``session_file_locks`` after a successful "
+                    "non-dry-run save. Client façade ``unlock=true`` (default). Set ``false`` "
+                    "when the caller will release locks manually."
                 ),
             },
             "lock_mode": {
@@ -217,7 +226,8 @@ def get_project_file_transfer_upload_save_schema() -> Dict[str, Any]:
                 "default": "none",
                 "description": (
                     "Optional advisory lock acquired around the save when no prior transfer "
-                    "lock was taken. ``block_write`` is shared; ``full`` is exclusive."
+                    "lock was taken. ``block_write`` is shared; ``full`` is exclusive. With "
+                    "``session_id``, the lock is attributed to that client session."
                 ),
             },
         },

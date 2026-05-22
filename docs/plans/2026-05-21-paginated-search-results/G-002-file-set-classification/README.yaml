@@ -1,0 +1,31 @@
+step_id: G-002
+name: File Set Classification and Freshness Validation
+description: "Defines the partitioning of project files into two disjoint sets before
+  any search execution begins. IndexedFileSet contains files whose indexed state is
+  confirmed fresh for current disk content via FreshnessValidation. DynamicFileSet
+  contains files that are missing from the index, stale, changed since indexing, draft-only,
+  or otherwise unavailable in the index and must be processed directly from disk.
+  FreshnessValidation uses checksums and modification metadata to move stale indexed
+  files into the dynamic set. Files in the IndexedFileSet must not be rescanned directly
+  by dynamic grep when current.\n"
+concepts:
+- C-012
+- C-013
+- C-014
+relations:
+- from_concept: C-014
+  to_concept: C-012
+  type: produces
+- from_concept: C-014
+  to_concept: C-013
+  type: produces
+source_ranges:
+- start: 11
+  end: 17
+- start: 67
+  end: 69
+depends_on: []
+tactical_steps:
+- T-001
+- T-002
+status: draft

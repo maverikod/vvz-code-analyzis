@@ -138,7 +138,7 @@ async def test_call_validated_raises_when_required_missing() -> None:
         from code_analysis_client import ClientValidationError
 
         with pytest.raises(ClientValidationError, match="required parameter"):
-            await client.call_validated("cst_load_file", {})
+            await client.call_validated("universal_file_open", {})
     mock_rpc.execute_command.assert_not_called()
 
 
@@ -174,3 +174,113 @@ def test_validate_rejects_unknown_key_when_additional_properties_false() -> None
     }
     with pytest.raises(ClientValidationError, match="unknown parameter"):
         validate_params_against_schema({"a": 1, "b": 2}, schema, "cmd")
+
+
+def test_file_session_facade_maps_all_session_commands() -> None:
+    from code_analysis_client.server_api import assert_file_session_facade_complete
+
+    assert_file_session_facade_complete()
+
+
+@pytest.mark.asyncio
+async def test_file_session_delete_omits_force_when_false() -> None:
+    mock_rpc = MagicMock()
+    mock_rpc.help = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "force": {"type": "boolean", "default": False},
+                    },
+                    "required": ["session_id"],
+                    "additionalProperties": False,
+                },
+                "metadata": {},
+            },
+        }
+    )
+    mock_rpc.execute_command = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {
+                "session_id": "11111111-1111-4111-8111-111111111111",
+                "deleted": True,
+                "released_lock_count": 0,
+                "released_subordinate_count": 0,
+            },
+        }
+    )
+    with patch(
+        "code_analysis_client.client.JsonRpcClient",
+        return_value=mock_rpc,
+    ):
+        client = CodeAnalysisAsyncClient(host="h", port=1)
+        out = await client.file_sessions.delete_session(
+            "11111111-1111-4111-8111-111111111111"
+        )
+    assert out["deleted"] is True
+    mock_rpc.execute_command.assert_awaited_once_with(
+        "session_delete",
+        {"session_id": "11111111-1111-4111-8111-111111111111"},
+        use_cmd_endpoint=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_session_view_calls_session_view() -> None:
+    mock_rpc = MagicMock()
+    mock_rpc.help = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {
+                "schema": {
+                    "type": "object",
+                    "properties": {"session_id": {"type": "string"}},
+                    "required": ["session_id"],
+                    "additionalProperties": False,
+                },
+                "metadata": {},
+            },
+        }
+    )
+    sid = "11111111-1111-4111-8111-111111111111"
+    mock_rpc.execute_command = AsyncMock(
+        return_value={
+            "success": True,
+            "data": {"session_id": sid, "locked_file_count": 0},
+        }
+    )
+    with patch(
+        "code_analysis_client.client.JsonRpcClient",
+        return_value=mock_rpc,
+    ):
+        client = CodeAnalysisAsyncClient(host="h", port=1)
+        out = await client.file_sessions.view_session(sid)
+    assert out["session_id"] == sid
+    mock_rpc.execute_command.assert_awaited_once_with(
+        "session_view",
+        {"session_id": sid},
+        use_cmd_endpoint=False,
+    )
+
+
+def test_examples_cover_all_public_client_api() -> None:
+    from pathlib import Path
+
+    examples_dir = Path(__file__).resolve().parents[1] / "client" / "examples"
+    # Import via path manipulation matching example scripts
+    import sys
+
+    client_dir = str(examples_dir.parent)
+    if client_dir not in sys.path:
+        sys.path.insert(0, client_dir)
+    examples_path = str(examples_dir)
+    if examples_path not in sys.path:
+        sys.path.insert(0, examples_path)
+
+    from _client_api_inventory import verify_examples_cover_client_api
+
+    verify_examples_cover_client_api(examples_dir)

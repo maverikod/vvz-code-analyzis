@@ -1,0 +1,54 @@
+forbidden:
+  direct_filesystem: PROHIBITED. Never use bash_tool, write, or str_replace on 
+    project files. All edits via universal_file_* commands.
+  line_based_editing: PROHIBITED without explicit user approval. Line numbers as
+    edit targets (start_line, end_line) require explicit permission from the 
+    user in chat. Use node_ref navigation instead.
+  reuse_stale_node_ref: PROHIBITED. After any universal_file_edit call, all 
+    previously obtained node_ref values are stale. Re-run universal_file_preview
+    with session_id before the next edit.
+  skip_preview_write: PROHIBITED. universal_file_write with write_mode=commit 
+    without a preceding write_mode=preview call is forbidden.
+lifecycle:
+  1_open: universal_file_open(project_id, file_path) — returns session_id
+  2_preview: universal_file_preview(project_id, file_path, 
+    session_id=session_id) — get node_ref values from current draft
+  3_edit: universal_file_edit(project_id, session_id, operations=[...]) — 
+    modifies in-memory draft only, disk is never touched
+  4_write_preview: universal_file_write(project_id, session_id, 
+    write_mode=preview) — inspect unified diff
+  5_write_commit: universal_file_write(project_id, session_id, 
+    write_mode=commit) — backup + atomic write to disk
+  6_close: universal_file_close(project_id, session_id) — always call, even on 
+    abort
+meta:
+  author: Vasiliy Zdanovskiy
+  description: Mandatory file edit lifecycle. Read before modifying any project 
+    file.
+  email: vasilyvz@gmail.com
+  locale: en
+  title: File Edit Workflow
+  version: '1.0'
+operation_shapes:
+  sidecar_py:
+    fields: type, node_id (UUID from preview), code_lines (list of strings)
+    note: Use code_lines, not code, for multi-line content
+  text_md_txt:
+    fields: type, node_ref (slug-path from preview), content
+    note: node_ref is preferred over start_line/end_line. Line-based ops require
+      user approval.
+    prohibited: Do not reuse node_ref or line numbers after a prior edit in the 
+      same session. Re-run preview.
+  tree_temp_yaml_json:
+    fields: type, json_pointer (from preview), value
+    note: Pass node_ref from preview into json_pointer field, not node_id. value
+      accepts any JSON type.
+    sentinel: 'Array append: parent_json_pointer ending in /- e.g. /items/-'
+post_edit_sequence:
+  applies_to: Python files only
+  steps:
+  - lint_code
+  - format_code
+  - type_check_code
+  - update_indexes
+trigger: Before modifying any project file.

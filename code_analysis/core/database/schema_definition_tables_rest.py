@@ -592,4 +592,41 @@ def get_tables_rest() -> Dict[str, Any]:
             "unique_constraints": [{"columns": ["session_id", "role_id"]}],
             "check_constraints": [],
         },
+        "subordinate_sessions": {
+            "columns": [
+                {"name": "parent_session_id", "type": "TEXT", "not_null": True},
+                {"name": "subordinate_session_id", "type": "TEXT", "not_null": True},
+                {"name": "server_uuid", "type": "TEXT", "not_null": True},
+                {
+                    "name": "comment",
+                    "type": "TEXT",
+                    "not_null": True,
+                    "default": "''",
+                },
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["parent_session_id"],
+                    "references_table": "client_sessions",
+                    "references_columns": ["session_id"],
+                    "on_delete": "CASCADE",
+                },
+                {
+                    "columns": ["subordinate_session_id"],
+                    "references_table": "client_sessions",
+                    "references_columns": ["session_id"],
+                    "on_delete": "CASCADE",
+                },
+            ],
+            "unique_constraints": [
+                {
+                    "columns": [
+                        "parent_session_id",
+                        "subordinate_session_id",
+                        "server_uuid",
+                    ]
+                }
+            ],
+            "check_constraints": [],
+        },
     }

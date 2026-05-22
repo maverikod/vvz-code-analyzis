@@ -18,9 +18,13 @@ from code_analysis.commands.project_file_advisory_lock_batch_command import (
 )
 from code_analysis.commands.project_file_transfer_by_id_commands import (
     ProjectFileTransferDownloadBeginCommand,
+    ProjectFileTransferUploadSaveCommand,
+    _validate_download_params,
+    _validate_upload_selector_params,
 )
 from code_analysis.core.runtime_lock_sessions import get_session_id_for_current_pid
 from code_analysis.core.transfer_lock_registry import release_transfer_lock
+from code_analysis.core.exceptions import ValidationError
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 
@@ -28,7 +32,9 @@ class _FakeDatabase:
     def __init__(self, root: Path, indexed: Optional[set[str]] = None) -> None:
         self.root = root
         self.indexed = indexed or set()
+        self._rows: Dict[str, Dict[str, Any]] = {}
         self.sessions: set[str] = set()
+        self.client_sessions: set[str] = set()
         self.leases: List[Dict[str, Any]] = []
 
     def execute(self, sql: str, params: Any = None, **kwargs: Any) -> Dict[str, Any]:
@@ -83,6 +89,26 @@ class _FakeDatabase:
                     )
                 ]
             return {"affected_rows": before - len(self.leases)}
+        if "update client_sessions" in text and params:
+            sid = str(params[0])
+            if sid in self.client_sessions:
+                return {"affected_rows": 1}
+            return {"affected_rows": 0}
+        if "from client_sessions" in text or "into client_sessions" in text:
+            if "select" in text and params:
+                sid = str(params[0])
+                if sid in self.client_sessions:
+                    return {
+                        "data": [
+                            {
+                                "session_id": sid,
+                                "comment": "test",
+                                "created_at": 0.0,
+                                "last_active_at": 0.0,
+                            }
+                        ]
+                    }
+                return {"data": []}
         return {"affected_rows": 0}
 
     def select(
@@ -118,7 +144,74 @@ class _FakeDatabase:
         rel = str(Path(abs_path).resolve().relative_to(self.root))
         if project_id == "project-1" and rel in self.indexed:
             return {"id": f"id:{rel}", "project_id": project_id, "relative_path": rel}
-        return None
+        row = self._rows.get(rel)
+        if row and row.get("deleted") and not include_deleted:
+            return None
+        return row
+
+    def add_file(
+        self,
+        path: str,
+        lines: int,
+        last_modified: float,
+        has_docstring: bool,
+        project_id: str,
+    ) -> str:
+        rel = str(Path(path).resolve().relative_to(self.root))
+        file_id = f"id:{rel}"
+        self._rows[rel] = {
+            "id": file_id,
+            "project_id": project_id,
+            "relative_path": rel,
+            "deleted": False,
+        }
+        self.indexed.add(rel)
+        return file_id
+
+
+def test_validate_upload_selector_allows_file_id_without_project_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
+    def _validate(pid: str) -> None:
+        called.append(pid)
+
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands.BaseMCPCommand._validate_project_id_exists",
+        _validate,
+    )
+    _validate_upload_selector_params({"file_id": "file-1", "compression": "identity"})
+    assert called == []
+
+
+def test_validate_upload_selector_requires_project_id_for_file_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands.BaseMCPCommand._validate_project_id_exists",
+        lambda pid: None,
+    )
+    with pytest.raises(ValidationError, match="project_id is required when file_id is omitted"):
+        _validate_upload_selector_params(
+            {"file_path": "src/app.py", "compression": "identity"}
+        )
+
+
+def test_validate_download_params_requires_file_id() -> None:
+    with pytest.raises(ValidationError, match="file_id is required"):
+        _validate_download_params({"compression": "identity"})
+
+
+def test_validate_download_params_rejects_file_path() -> None:
+    with pytest.raises(ValidationError, match="file_path is not supported"):
+        _validate_download_params(
+            {
+                "file_id": "file-1",
+                "file_path": "src/app.py",
+                "compression": "identity",
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -184,6 +277,8 @@ async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     target.parent.mkdir()
     target.write_text("print('ok')\n", encoding="utf-8")
     database = _FakeDatabase(tmp_path, indexed={"src/app.py"})
+    client_session = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    database.client_sessions.add(client_session)
 
     async def _fake_create_download_session(payload: Dict[str, Any]) -> Dict[str, Any]:
         assert payload["source_path"] == str(target)
@@ -209,8 +304,8 @@ async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     )
 
     result = await cmd.execute(
-        project_id="project-1",
-        file_path="src/app.py",
+        session_id=client_session,
+        file_id="file-1",
         compression="identity",
         include_backup_history=False,
         lock_mode="block_write",
@@ -222,3 +317,100 @@ async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     assert result.data["lock_session_id"]
     assert database.leases[0]["lock_mode"] == "shared"
     release_transfer_lock("transfer-1")
+
+
+@pytest.mark.asyncio
+async def test_transfer_download_begin_fails_when_db_row_but_missing_on_disk(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = _FakeDatabase(tmp_path)
+
+    def _select(
+        table_name: str,
+        where: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        if table_name == "files" and str((where or {}).get("id") or "") == "file-1":
+            return [
+                {
+                    "id": "file-1",
+                    "project_id": "project-1",
+                    "relative_path": "src/missing.py",
+                    "deleted": False,
+                }
+            ]
+        return []
+
+    database.select = _select  # type: ignore[method-assign]
+
+    cmd = ProjectFileTransferDownloadBeginCommand()
+    monkeypatch.setattr(
+        cmd, "_open_database_from_config", lambda auto_analyze=False: database
+    )
+
+    result = await cmd.execute(
+        project_id="project-1",
+        file_id="file-1",
+        compression="identity",
+        include_backup_history=False,
+        lock_mode="none",
+    )
+
+    from mcp_proxy_adapter.commands.result import ErrorResult
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "FILE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_transfer_upload_save_registers_and_returns_file_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = _FakeDatabase(tmp_path)
+    target = tmp_path / "incoming.py"
+
+    async def _fake_save(_self: Any, **kwargs: Any) -> SuccessResult:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(str(kwargs.get("content") or ""), encoding="utf-8")
+        return SuccessResult(
+            data={
+                "success": True,
+                "handler_id": "text",
+                "operation": "save",
+                "file_path": kwargs.get("file_path"),
+                "project_id": kwargs.get("project_id"),
+                "changed": True,
+                "dry_run": False,
+            }
+        )
+
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands."
+        "UniversalFileSaveCommand.execute",
+        _fake_save,
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands."
+        "_read_completed_upload_text",
+        lambda _tid: ("print('uploaded')\n", "identity"),
+    )
+
+    cmd = ProjectFileTransferUploadSaveCommand()
+    monkeypatch.setattr(
+        cmd, "_open_database_from_config", lambda auto_analyze=False: database
+    )
+
+    result = await cmd.execute(
+        transfer_id="upload-1",
+        project_id="project-1",
+        file_path="incoming.py",
+        lock_mode="none",
+        unlock_after_write=False,
+    )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["file_id"] == "id:incoming.py"
+    assert target.is_file()
+    assert database.get_file_by_path(str(target), "project-1") is not None

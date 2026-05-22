@@ -1,0 +1,40 @@
+concepts:
+- C-020
+depends_on: []
+name: Create SearchStatus state and phase model
+operation: create_file
+parent_tactical_step: T-004
+priority: 1
+prompt: "Create `code_analysis/search_session/search_status.py`.\n\n## MRS excerpt\n\
+  \nC-020 SearchStatus: SearchSession state and phase model exposed to clients\nwhile
+  search generation proceeds or terminates.\nProperties:\n- States: running (non-terminal),
+  completed, failed, cancelled, timed_out,\n  dead, expired, closed (terminal).\n\
+  - Phases: indexed_search, dynamic_file_discovery, tree_validation,\n  tree_reconstruction,
+  xpath_filtering, page_writing, completion.\n- A page-not-ready response when a requested
+  page is not yet published is not\n  a whole-search failure; it must be reported
+  as a distinct condition.\n\n## Implementation requirements\n\n1. Import `dataclasses`,
+  `enum`.\n\n2. Define `SearchState(str, enum.Enum)` with members:\n   RUNNING = \"\
+  running\", COMPLETED = \"completed\", FAILED = \"failed\",\n   CANCELLED = \"cancelled\"\
+  , TIMED_OUT = \"timed_out\", DEAD = \"dead\",\n   EXPIRED = \"expired\", CLOSED
+  = \"closed\".\n\n3. Define `SearchPhase(str, enum.Enum)` with members:\n   INDEXED_SEARCH
+  = \"indexed_search\",\n   DYNAMIC_FILE_DISCOVERY = \"dynamic_file_discovery\",\n\
+  \   TREE_VALIDATION = \"tree_validation\",\n   TREE_RECONSTRUCTION = \"tree_reconstruction\"\
+  ,\n   XPATH_FILTERING = \"xpath_filtering\",\n   PAGE_WRITING = \"page_writing\"\
+  ,\n   COMPLETION = \"completion\".\n\n4. Define module-level constant:\n   `TERMINAL_STATES:
+  frozenset[SearchState]` containing COMPLETED, FAILED,\n   CANCELLED, TIMED_OUT,
+  DEAD, EXPIRED, CLOSED.\n\n5. Define `@dataclasses.dataclass` class `SearchStatus`:\n\
+  \   - Field `state: SearchState`.\n   - Field `phase: SearchPhase`.\n   - Property
+  `is_terminal(self) -> bool` — `self.state in TERMINAL_STATES`.\n   - Property `is_running(self)
+  -> bool` — `self.state == SearchState.RUNNING`.\n\n6. Define factory:\n   `def initial_search_status()
+  -> SearchStatus` — returns\n   `SearchStatus(state=SearchState.RUNNING, phase=SearchPhase.INDEXED_SEARCH)`.\n\
+  \n## Constraints\n- Standard library only.\n- All public names have one-line docstrings.\n\
+  - File under 80 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/search_session/search_status.py
+verification:
+  expected: Module imports without error. SearchState and SearchPhase have all 
+    required members. initial_search_status() returns a non-terminal running 
+    status. TERMINAL_STATES contains all terminal state values.
+  target: code_analysis/search_session/search_status.py
+  type: import

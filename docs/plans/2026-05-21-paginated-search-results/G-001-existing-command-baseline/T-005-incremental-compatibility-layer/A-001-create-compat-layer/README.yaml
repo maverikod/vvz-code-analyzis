@@ -1,0 +1,41 @@
+concepts:
+- C-022
+- C-001
+- C-021
+depends_on: []
+name: Create IncrementalCompatibilityLayer routing opt-in paginated execution 
+  through SearchSession
+operation: create_file
+parent_tactical_step: T-005
+priority: 1
+prompt: "Create `code_analysis/compat/incremental_compat_layer.py`.\n\n## MRS excerpt\n\
+  \nC-022 IncrementalCompatibilityLayer: adds paginated session-backed behavior\n\
+  around ExistingSearchCommand without duplicating working search logic.\nActivation:
+  only when callers supply optional pagination parameters or\ninvoke documented bridge
+  commands does execution route through SearchSession;\notherwise the layer delegates
+  to the existing direct execution path.\nAnti-duplication: reuse existing validation,
+  queue, timeout, structural-result,\nand preview-reference paths inside the layer.\n\
+  \nC-001 SearchSession: the target of opt-in routing.\nC-021 ExistingSearchCommand:
+  the command the layer wraps.\n\n## Implementation requirements\n\n1. Import `dataclasses`,
+  `typing`.\n\n2. Define `@dataclasses.dataclass(frozen=True)` class `RoutingDecision`:\n\
+  \   - Fields: `use_session: bool`, `reason: str`.\n\n3. Define function:\n   ```python\n\
+  \   def decide_routing(\n       paginated: bool,\n       search_id: typing.Optional[str],\n\
+  \   ) -> RoutingDecision:\n   ```\n   - If `paginated` is True or `search_id` is
+  not None:\n     return `RoutingDecision(use_session=True,\n     reason=\"pagination
+  opt-in activated\")`.\n   - Else:\n     return `RoutingDecision(use_session=False,\n\
+  \     reason=\"default direct execution path\")`.\n\n4. Define `@dataclasses.dataclass`
+  class `IncrementalCompatibilityLayer`:\n   - Field `command_name: str`.\n   - Method
+  `route(\n         self,\n         paginated: bool = False,\n         search_id:
+  typing.Optional[str] = None,\n     ) -> RoutingDecision`:\n     delegates to `decide_routing(paginated,
+  search_id)`.\n\n## Constraints\n- Standard library only.\n- All public names have
+  one-line docstrings.\n- File under 55 lines.\n"
+status: draft
+step_id: A-001
+target_file: code_analysis/compat/incremental_compat_layer.py
+verification:
+  expected: Module imports without error. decide_routing(paginated=True, 
+    search_id=None) returns RoutingDecision with use_session=True. 
+    decide_routing(paginated=False, search_id=None) returns use_session=False. 
+    IncrementalCompatibilityLayer.route delegates correctly.
+  target: code_analysis/compat/incremental_compat_layer.py
+  type: import

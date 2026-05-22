@@ -1,0 +1,36 @@
+step_id: T-001
+parent_global_step: G-004
+name: Freshness validation for indexed candidates
+description: "Establishes the FreshnessValidation operation that decides whether each
+  database-known indexed file representation still matches current on-disk content.
+  Compares indexed checksum and modification metadata against current file metadata
+  using the same validation principle as tree sidecar freshness checks. Emits a per-file
+  freshness verdict that marks stale or changed indexed files for exclusion from the
+  indexed search path and routing toward dynamic processing.\n"
+concepts:
+- C-014
+inputs:
+- name: search_scope
+  type: bounded project file scope
+  description: Project and path constraints that bound which files participate 
+    in source selection.
+- name: database_known_file_records
+  type: indexed file inventory with metadata
+  description: Database-known files with indexed checksum and modification 
+    metadata for validation.
+- name: disk_file_metadata
+  type: on-disk file metadata map
+  description: Current checksum and modification metadata for disk-present files
+    within search scope.
+outputs:
+- name: per_file_freshness_verdict
+  type: freshness classification map
+  description: Per database-known file verdict of fresh or stale relative to 
+    current disk content.
+- name: stale_indexed_file_list
+  type: file path list
+  description: Database-known files classified stale that must not use the 
+    indexed search path.
+atomic_steps:
+- A-001
+status: draft

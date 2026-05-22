@@ -79,9 +79,9 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 "include_deleted": {
                     "type": "boolean",
                     "description": (
-                "If true, return all rows from ``projects`` (active and soft-deleted), "
-                "including projects that only have trashed file rows. "
-                "Default false — only operational projects (active files or empty)."
+                        "If true, return all rows from ``projects`` (active and soft-deleted), "
+                        "including projects that only have trashed file rows. "
+                        "Default false — only operational projects (active files or empty)."
                     ),
                     "default": False,
                 },
@@ -368,9 +368,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "  INNER JOIN ("
                         "    SELECT project_id FROM files "
                         "    WHERE " + WHERE_FILES_ACTIVE + " GROUP BY project_id"
-                        "  ) a ON p.id = a.project_id"
-                        + _proj_del
-                        + "  UNION "
+                        "  ) a ON p.id = a.project_id" + _proj_del + "  UNION "
                         "  SELECT p.* FROM projects p "
                         "  WHERE p.id NOT IN (SELECT project_id FROM files)"
                         + _proj_del
@@ -395,9 +393,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     processing_paused = row.get("processing_paused")
                     deleted_raw = row.get("deleted")
                     deleted_flag = (
-                        bool(deleted_raw)
-                        if deleted_raw is not None
-                        else False
+                        bool(deleted_raw) if deleted_raw is not None else False
                     )
                     projects.append(
                         {
@@ -534,7 +530,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             )
             return result
         except asyncio.TimeoutError:
-            logger.info(
+            logger.debug(
                 "[CHAIN] list_projects asyncio.TimeoutError timeout_s=%s",
                 _LIST_PROJECTS_DB_TIMEOUT,
             )

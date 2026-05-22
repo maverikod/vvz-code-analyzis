@@ -8,7 +8,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import re
-from typing import Any
+import uuid
+from typing import Any, Iterator
 
 from markdown_it import MarkdownIt
 
@@ -17,6 +18,63 @@ from ..errors import PreviewError, input_error, INPUT_ERROR_UNKNOWN_NODE_REF
 _md = MarkdownIt()
 
 _CONTENT_SUFFIX = "/__content"
+_MD_SKIP_TOKEN_TYPES = frozenset({"inline"})
+
+
+def iter_md_block_tokens(tokens: list[Any]) -> Iterator[Any]:
+    """Yield markdown-it block tokens that have source line maps."""
+    for token in tokens:
+        if token.map is None or token.type in _MD_SKIP_TOKEN_TYPES:
+            continue
+        if token.type.endswith("_close"):
+            continue
+        yield token
+
+
+def md_block_node_ref(file_path: str, token: Any) -> str:
+    """Stable uuid5 node_ref for a markdown-it block token (matches preview)."""
+    start = token.map[0]
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{file_path}:{token.type}:{start}"))
+
+
+def _normalize_md_node_ref(node_ref: str) -> str:
+    ref = node_ref.strip()
+    if ref.startswith("[") and ref.endswith("]"):
+        return ref[1:-1].strip()
+    return ref
+
+
+def _uuid_path_candidates(file_path: str) -> list[str]:
+    """Paths used when computing uuid5 block ids (draft vs on-disk source)."""
+    candidates = [file_path]
+    if file_path.endswith(".draft"):
+        original = file_path[: -len(".draft")]
+        if original not in candidates:
+            candidates.append(original)
+    else:
+        draft = f"{file_path}.draft"
+        if draft not in candidates:
+            candidates.append(draft)
+    return candidates
+
+
+def _resolve_block_uuid_line_range(
+    source: str,
+    node_ref: str,
+    file_path: str,
+) -> tuple[int, int] | None:
+    """Map a uuid5 block ``node_ref`` to inclusive 1-based line bounds."""
+    try:
+        uuid.UUID(node_ref)
+    except ValueError:
+        return None
+    block_tokens = list(iter_md_block_tokens(_md.parse(source)))
+    for candidate in _uuid_path_candidates(file_path):
+        for token in block_tokens:
+            if md_block_node_ref(candidate, token) == node_ref:
+                start, end = token.map
+                return start + 1, end
+    return None
 
 
 def _slugify(text: str) -> str:
@@ -124,8 +182,15 @@ def _body_line_range(
 def resolve_markdown_line_range(
     source: str,
     node_ref: str,
+    *,
+    file_path: str | None = None,
 ) -> tuple[int, int] | PreviewError:
-    """Resolve a markdown preview node_ref to inclusive 1-based line bounds."""
+    """Resolve a markdown preview node_ref to inclusive 1-based line bounds.
+
+    Supports section slug paths, ``/__content`` suffixes, and uuid5 block ids
+    from annotated full-text preview when ``file_path`` is supplied.
+    """
+    node_ref = _normalize_md_node_ref(node_ref)
     if node_ref == "__content" or node_ref.endswith(_CONTENT_SUFFIX):
         parent_ref = (
             "" if node_ref == "__content" else node_ref[: -len(_CONTENT_SUFFIX)]
@@ -165,6 +230,10 @@ def resolve_markdown_line_range(
 
     match = next((e for e in entries if e["node_ref"] == node_ref), None)
     if match is None:
+        if file_path is not None:
+            block_bounds = _resolve_block_uuid_line_range(source, node_ref, file_path)
+            if block_bounds is not None:
+                return block_bounds
         return input_error(
             INPUT_ERROR_UNKNOWN_NODE_REF,
             f"Markdown node_ref {node_ref!r} not found in document.",

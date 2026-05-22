@@ -826,6 +826,48 @@ async def test_universal_file_preview_md_annotated_full_text_without_session(
 
 
 @pytest.mark.asyncio
+async def test_universal_file_preview_md_empty_node_ref_same_as_omit(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Blank node_ref must not drill into section-tree root; same as omitted."""
+    root = tmp_path
+    (root / "projectid").write_text(
+        json.dumps({"id": "md-empty-ref-proj"}), encoding="utf-8"
+    )
+    md = root / "notes.md"
+    md.write_text("# Title\n\nBody line.\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_project = MagicMock()
+    mock_project.root_path = str(root)
+    mock_db.get_project.return_value = mock_project
+
+    cmd = UniversalFilePreviewCommand()
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+    ):
+        base = {
+            "project_id": "md-empty-ref-proj",
+            "file_path": "notes.md",
+            "full_text_max_lines": 9999,
+        }
+        omitted = await cmd.execute(**cmd.validate_params(base))
+        empty_ref = await cmd.execute(
+            **cmd.validate_params({**base, "node_ref": ""})
+        )
+        whitespace = await cmd.execute(
+            **cmd.validate_params({**base, "node_ref": "   "})
+        )
+
+    for result in (omitted, empty_ref, whitespace):
+        assert isinstance(result, SuccessResult)
+        focus = (result.data or {}).get("focus", {})
+        assert focus.get("node_kind") == "tree_node"
+        assert (focus.get("attributes") or {}).get("full_text") is True
+        assert (result.data or {}).get("total_blocks", 0) >= 2
+
+
+@pytest.mark.asyncio
 async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
     tmp_path: pathlib.Path,
 ) -> None:

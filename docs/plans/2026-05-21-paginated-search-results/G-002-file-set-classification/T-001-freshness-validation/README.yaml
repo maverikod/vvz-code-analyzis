@@ -1,0 +1,33 @@
+step_id: T-001
+parent_global_step: G-002
+name: Freshness Validation
+description: "Creates the FreshnessValidation (C-014) mechanism that decides whether
+  one indexed file representation still matches current disk content. Compares the
+  stored checksum or modification metadata in the database against the current file
+  on disk. If the stored checksum matches the current file checksum, the file is fresh
+  and eligible for IndexedFileSet. If the checksums diverge, or if modification time
+  indicates the file changed after indexing, the file is stale and is routed to DynamicFileSet.
+  Files absent from the database entirely are routed to DynamicFileSet without a checksum
+  comparison.\n"
+concepts:
+- C-014
+inputs:
+- name: file_path
+  type: project-relative path
+  description: Path of the file to evaluate.
+- name: indexed_checksum
+  type: string or null
+  description: Checksum stored in the database for this file at last indexing 
+    time, or null if the file is not in the database.
+- name: current_checksum
+  type: string
+  description: Checksum of the file as currently present on disk.
+outputs:
+- name: freshness_result
+  type: one of [fresh, stale, absent]
+  description: fresh means the indexed state matches current disk content; stale
+    means the indexed state is outdated; absent means the file has no database 
+    record.
+atomic_steps:
+- A-001
+status: draft

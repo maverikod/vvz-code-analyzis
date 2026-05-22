@@ -21,6 +21,8 @@ from code_analysis_client.config import (
     adapter_settings_to_jsonrpc_kwargs,
     load_server_config,
 )
+from code_analysis_client.file_session import FileSessionClient
+from code_analysis_client.universal_file import UniversalFileClient
 from code_analysis_client.server_schema import fetch_command_schema_from_server
 from code_analysis_client.validation import (
     prepare_params_for_schema,
@@ -118,6 +120,16 @@ class CodeAnalysisAsyncClient:
     def clear_command_schema_cache(self) -> None:
         """Drop cached command schemas (after ``reload`` or when server definitions change)."""
         self._command_schema_cache.clear()
+
+    @property
+    def file_sessions(self) -> FileSessionClient:
+        """Session workflow: ``session_*``, ``subordinate_session_*``, transfer, advisory locks."""
+        return FileSessionClient(self)
+
+    @property
+    def universal_files(self) -> UniversalFileClient:
+        """Universal edit-session workflow (``universal_file_*`` commands)."""
+        return UniversalFileClient(self)
 
     async def get_command_schema(
         self, command: str, *, refresh: bool = False

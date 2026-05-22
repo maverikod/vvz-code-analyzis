@@ -1,0 +1,69 @@
+step_id: A-001
+parent_tactical_step: T-006
+name: Create dead session detection and background cleaner module
+target_file: code_analysis/search_session/cleaner.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-010
+- C-011
+prompt: "Create the file code_analysis/search_session/cleaner.py.\n\nMRS excerpt:\n\
+  C-010 DeadSessionDetection: Rule set for deciding that a SearchSession is\ndead
+  or orphaned. Properties: treats missing main_pid as dead; treats\nprocess_start_time
+  mismatch as dead (PID reuse); treats stale heartbeat\nbeyond hard timeout as timed_out
+  or orphaned; may be applied by status\nreads and by the background cleaner.\n\n\
+  C-011 BackgroundSessionCleaner: Background maintenance process that removes\nexpired,
+  closed, or dead SearchSessionDirectory trees. Properties: runs\nindependently of
+  client result access; deletes completed, failed, cancelled,\ntimed_out, closed,
+  expired, dead sessions after policy allows; must not\ndelete live running sessions
+  whose process identity and heartbeat are valid;\ndetects orphan running sessions
+  through DeadSessionDetection.\n\nImports (each on its own line):\n  import datetime\n\
+  \  import os\n  import pathlib\n  import shutil\n  import typing\n  from code_analysis.search_session.manifest
+  import read_manifest\n  from code_analysis.search_session.ttl_policy import DEFAULT_SESSION_TTL_SECONDS\n\
+  \nSignatures and return types of imported symbols (for reference; do not redefine):\n\
+  \  read_manifest(directory: pathlib.Path) -> SessionManifest\n    SessionManifest
+  is a dataclass with fields:\n      search_id: str\n      status: str  (one of running/completed/failed/cancelled/timed_out/expired/closed)\n\
+  \      phase: str\n      created_at: str   (ISO 8601 UTC)\n      last_access_at:
+  str  (ISO 8601 UTC)\n      heartbeat_at: str  (ISO 8601 UTC)\n      request_params:
+  dict\n      process_identity: ServerProcessIdentity\n        ServerProcessIdentity
+  has fields:\n          main_pid: int\n          process_start_time: float\n    \
+  \      host: Optional[str]\n          instance_id: Optional[str]\n      produced_results:
+  int\n      written_pages: int\n      scanned_files: int\n      warning_count: int\n\
+  \      error_count: int\n      page_readiness: dict\n    Raises FileNotFoundError
+  when manifest.json does not exist.\n  DEFAULT_SESSION_TTL_SECONDS: int = 1800\n\n\
+  Module-level constant:\n  HARD_TIMEOUT_SECONDS: int = 120\n  Docstring: \"Maximum
+  seconds a running session heartbeat may be silent\n  before it is considered timed
+  out or orphaned.\"\n\n1. Define function is_pid_alive(pid: int, process_start_time:
+  float) -> bool:\n   On Linux reads /proc/{pid}/stat to get process start time in
+  jiffies,\n   converts using os.sysconf('SC_CLK_TCK'), compares with process_start_time.\n\
+  \   If /proc/{pid} does not exist returns False. If start times do not match\n \
+  \  (PID reused) returns False. Returns True only when PID exists and start\n   time
+  matches.\n\n2. Define function is_session_dead(\n     manifest_status: str,\n  \
+  \   main_pid: int,\n     process_start_time: float,\n     heartbeat_at_iso: str,\n\
+  \     hard_timeout_seconds: int = HARD_TIMEOUT_SECONDS,\n   ) -> bool:\n   If manifest_status
+  is not \"running\" returns False.\n   If is_pid_alive(main_pid, process_start_time)
+  is False returns True.\n   Parses heartbeat_at_iso as UTC datetime via\n   datetime.datetime.fromisoformat(heartbeat_at_iso).
+  If the heartbeat is\n   older than hard_timeout_seconds seconds returns True. Otherwise
+  False.\n\n3. Define function should_clean_session(\n     session_dir: pathlib.Path,\n\
+  \     ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,\n     hard_timeout_seconds:
+  int = HARD_TIMEOUT_SECONDS,\n   ) -> bool:\n   Reads manifest via read_manifest(session_dir).
+  Returns False on any exception.\n   For statuses completed/failed/cancelled/timed_out/expired/closed:\n\
+  \     parses last_access_at; if older than ttl_seconds seconds returns True.\n \
+  \  For status running: applies is_session_dead with fields from\n     manifest.process_identity.main_pid,
+  manifest.process_identity.process_start_time,\n     manifest.heartbeat_at; returns
+  True if dead.\n   Otherwise returns False.\n\n4. Define function clean_session_directory(session_dir:
+  pathlib.Path) -> None:\n   Calls shutil.rmtree(session_dir, ignore_errors=True).\n\
+  \n5. Define function run_cleaner_pass(\n     base_dir: pathlib.Path,\n     ttl_seconds:
+  int = DEFAULT_SESSION_TTL_SECONDS,\n   ) -> int:\n   Iterates over immediate subdirectories
+  of base_dir.\n   For each subdirectory calls should_clean_session(subdir, ttl_seconds).\n\
+  \   If True calls clean_session_directory(subdir).\n   Returns count of directories
+  removed.\n\nConstraints:\n- All public names must have docstrings.\n- No third-party
+  imports.\n- A live running session (valid PID, fresh heartbeat) must never be removed.\n"
+verification:
+  type: import
+  target: code_analysis/search_session/cleaner.py
+  expected: Module imports without error. `is_session_dead`, 
+    `should_clean_session`, `run_cleaner_pass`, `clean_session_directory` are 
+    present and callable.
+status: draft

@@ -1,0 +1,50 @@
+step_id: T-004
+parent_global_step: G-005
+name: Preview reference contract
+description: "Create the PreviewReference (C-017) domain entity as the canonical way
+  to expose\nstructural search results for client inspection. Define each PreviewReference
+  to\ncarry the project-relative file path, a stable node identifier or selector sufficient\n\
+  for canonical preview inspection, and an optional draft session identifier when\n\
+  the result originates from draft-session content. Require PreviewReference to be\n\
+  sufficient for the canonical preview inspection mechanism per C-017: search results\n\
+  must return preview-compatible references instead of inventing a separate node\n\
+  display model. Enforce stable-identifier eligibility: PreviewReference must never\n\
+  expose unstable node identifiers, and when stable node identity cannot be guaranteed\n\
+  for a candidate result, that result must be withheld from preview-compatible output\n\
+  rather than published with an unstable identifier. Position PreviewReference as\n\
+  navigable preview material derived from validated TreeRepresentation (C-015) nodes\n\
+  so structured project content remains inspectable through the shared preview\ninspection
+  contract.\n"
+concepts:
+- C-017
+- C-015
+inputs:
+- name: candidate_structural_result
+  type: tree-backed match context
+  description: A validated tree node or block together with its originating file
+    context and optional draft-session scope supplied by upstream structural 
+    processing.
+- name: stable_node_identity_policy
+  type: identifier eligibility rules
+  description: Cross-context stable node identity requirements from 
+    TreeRepresentation (C-015) that determine whether a candidate result may 
+    become preview-compatible.
+- name: canonical_preview_inspection_contract
+  type: preview inspection contract
+  description: Required fields for canonical preview inspection—project-relative
+    file path, stable node identifier or selector, and optional draft session 
+    identifier—that PreviewReference must satisfy without introducing an 
+    alternate display schema.
+outputs:
+- name: preview_reference_entity
+  type: domain entity contract
+  description: Complete PreviewReference (C-017) payload schema, draft-session 
+    field rules, canonical preview inspection mapping, and unstable-identifier 
+    rejection policy.
+- name: preview_compatible_result_references
+  type: reference collection
+  description: PreviewReference instances eligible for return to clients as 
+    navigable preview material for structural results.
+atomic_steps:
+- A-001
+status: draft

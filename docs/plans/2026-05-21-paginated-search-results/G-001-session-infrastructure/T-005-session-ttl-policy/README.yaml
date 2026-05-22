@@ -1,0 +1,22 @@
+step_id: T-005
+parent_global_step: G-001
+name: Session TTL Policy
+description: "Creates the SessionTTLPolicy (C-007) entity as the configuration policy
+  controlling how long inactive SearchSessionDirectory data is retained after LastAccessTimestamp.
+  Defines a code constant providing the default TTL value in seconds. Extends the
+  configuration generator to emit the TTL setting. Extends the configuration validator
+  to reject missing, non-integer, zero, negative, and out-of-range TTL values.\n"
+concepts:
+- C-007
+inputs:
+- name: config_schema
+  type: configuration schema object
+  description: Existing configuration schema to which the TTL setting is added.
+outputs:
+- name: ttl_policy
+  type: SessionTTLPolicy (C-007)
+  description: TTL policy entity with its default constant, generator emission, 
+    and validator constraints fully defined.
+atomic_steps:
+- A-001
+status: draft

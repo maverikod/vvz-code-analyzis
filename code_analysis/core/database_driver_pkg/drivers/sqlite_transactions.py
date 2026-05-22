@@ -43,7 +43,7 @@ class SQLiteTransactionManager:
         """
         try:
             transaction_id = str(uuid.uuid4())
-            logger.info(
+            logger.debug(
                 "[CHAIN] sqlite_transactions begin_transaction tid=%s",
                 transaction_id[:8] + "…",
             )
@@ -73,7 +73,7 @@ class SQLiteTransactionManager:
         Raises:
             TransactionError: If transaction cannot be committed
         """
-        logger.info(
+        logger.debug(
             "[CHAIN] sqlite_transactions commit_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
             len(self._transactions),
@@ -105,7 +105,7 @@ class SQLiteTransactionManager:
         Raises:
             TransactionError: If transaction cannot be rolled back
         """
-        logger.info(
+        logger.debug(
             "[CHAIN] sqlite_transactions rollback_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
             len(self._transactions),

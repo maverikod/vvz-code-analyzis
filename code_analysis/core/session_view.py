@@ -132,25 +132,23 @@ def build_session_view(
         )
 
     sub_rows = database.execute(
-        "SELECT ss.subordinate_session_id, ss.server_uuid, ss.comment AS link_comment, "
-        "cs.comment AS subordinate_comment "
+        "SELECT ss.server_uuid, ss.comment AS link_comment, "
+        "cs.comment AS leading_comment "
         "FROM subordinate_sessions ss "
-        "LEFT JOIN client_sessions cs ON cs.session_id = ss.subordinate_session_id "
+        "LEFT JOIN client_sessions cs ON cs.session_id = ss.parent_session_id "
         "WHERE ss.parent_session_id = ? "
-        "ORDER BY ss.server_uuid ASC, ss.subordinate_session_id ASC",
+        "ORDER BY ss.server_uuid ASC",
         (session_id,),
     )
     subordinate_sessions: list[dict[str, object]] = []
     for row in sub_rows.get("data") or []:
         row_dict = dict(row)
-        sub_id = str(row_dict["subordinate_session_id"])
         server_uuid = str(row_dict["server_uuid"])
         subordinate_sessions.append(
             {
-                "subordinate_session_id": sub_id,
                 "server_uuid": server_uuid,
                 "session_presentation": format_session_presentation(
-                    row_dict.get("subordinate_comment"), sub_id
+                    row_dict.get("leading_comment"), session_id
                 ),
                 "server_presentation": resolve_server_presentation_for_uuid(
                     server_uuid,

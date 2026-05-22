@@ -40,7 +40,6 @@ from tests.sqlite_in_process_legacy_facade import make_sqlite_in_process_legacy_
 
 SERVER_UUID = "880e8400-e29b-41d4-a716-446655440003"
 PARENT_ID = "11111111-1111-4111-8111-111111111111"
-CHILD_ID = "22222222-2222-4222-8222-222222222222"
 
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
@@ -108,15 +107,12 @@ def test_build_session_view_with_locks_and_subordinates() -> None:
             conn.commit()
             conn.close()
 
-            parent = create_client_session(facade, comment="parent")
-            child = create_client_session(facade, comment="child worker")
+            parent = create_client_session(facade, comment="leading session")
             parent_id = str(parent["session_id"])
-            child_id = str(child["session_id"])
             open_session_file(facade, parent_id, project_id, file_id)
             create_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
                 comment="link note",
             )
@@ -139,8 +135,7 @@ def test_build_session_view_with_locks_and_subordinates() -> None:
 
             subs = view["subordinate_sessions"]
             assert len(subs) == 1
-            assert subs[0]["subordinate_session_id"] == child_id
-            assert subs[0]["session_presentation"] == "child worker"
+            assert subs[0]["session_presentation"] == "leading session"
             assert subs[0]["server_presentation"]["title"] == "Local"
             assert subs[0]["link_comment"] == "link note"
         finally:

@@ -33,8 +33,11 @@ def get_project_file_advisory_lock_batch_schema() -> Dict[str, Any]:
                         "session_id": {
                             "type": "string",
                             "description": (
-                                "Runtime lock session id from runtime_lock_sessions. "
-                                "By default it must match this server process session."
+                                "Lock owner session id. Accepts a client_sessions id "
+                                "(from session_create) or a runtime_lock_sessions id "
+                                "for this daemon process. Non-client runtime ids must "
+                                "match the current process session unless "
+                                "allow_foreign_session=true."
                             ),
                         },
                         "project_id": {
@@ -72,8 +75,19 @@ def get_project_file_advisory_lock_batch_schema() -> Dict[str, Any]:
                 "type": "boolean",
                 "default": False,
                 "description": (
-                    "When false, only the current process runtime session may be used. "
-                    "When true, any existing runtime_lock_sessions row is accepted."
+                    "When false, only the current process runtime session may be used "
+                    "for non-client session_id values. When true, any existing "
+                    "runtime_lock_sessions row is accepted. Client session ids from "
+                    "session_create are always allowed when present in client_sessions."
+                ),
+            },
+            "timeout_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": (
+                    "Optional flock acquisition timeout in seconds for action=lock. "
+                    "When omitted, flock blocks until the lock is available. Applies "
+                    "to the OS sidecar lock only (Unix); Windows flock is a no-op."
                 ),
             },
         },

@@ -25,6 +25,7 @@ from code_analysis_client.server_api import (
     FILE_SESSION_FACADE_METHODS,
     LEGACY_REMOVED_COMMANDS,
     REMOVED_COMMANDS,
+    TRANSFER_FACADE_METHODS,
     UNIVERSAL_FILE_COMMANDS,
 )
 from code_analysis_client.universal_file import UniversalFileClient
@@ -48,6 +49,7 @@ __all__ = [
     "LEGACY_REMOVED_COMMANDS",
     "REMOVED_COMMANDS",
     "SessionNotFoundError",
+    "TRANSFER_FACADE_METHODS",
     "UNIVERSAL_FILE_COMMANDS",
     "UniversalFileClient",
     "ValidatedCommandsProxy",

@@ -481,7 +481,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         self.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
         _now = sql_julian_timestamp_now_expr(self)
         self.execute(
-            f"UPDATE files SET updated_at = {_now} WHERE id = ?",
+            f"UPDATE files SET needs_chunking = 1, updated_at = {_now} WHERE id = ?",
             (file_id,),
         )
         return True

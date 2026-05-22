@@ -42,11 +42,14 @@ def _default_server_uuid(command: BaseMCPCommand) -> str:
 
 
 class SubordinateSessionCreateCommand(BaseMCPCommand):
-    """Create a subordinate session link."""
+    """Create a subordinate server link for a leading session."""
 
     name = "subordinate_session_create"
-    version = "1.0.0"
-    descr = "Link a subordinate client session to a leading session on a server."
+    version = "1.1.0"
+    descr = (
+        "Register a leading client session on a subordinate server "
+        "(uses parent_session_id on that server)."
+    )
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -60,7 +63,6 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
         ] = "Server instance UUID4. Defaults to registration.instance_uuid when omitted."
         schema["required"] = [
             "parent_session_id",
-            "subordinate_session_id",
             "comment",
         ]
         return {
@@ -73,7 +75,6 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
     async def execute(  # type: ignore[override]
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         comment: str,
         server_uuid: Optional[str] = None,
         **kwargs: Any,
@@ -90,7 +91,6 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
             row = create_subordinate_session(
                 database,
                 parent_session_id=parent_session_id,
-                subordinate_session_id=subordinate_session_id,
                 server_uuid=server,
                 comment=comment,
             )
@@ -110,11 +110,11 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
 
 
 class SubordinateSessionGetCommand(BaseMCPCommand):
-    """Read one subordinate session link."""
+    """Read one subordinate server link."""
 
     name = "subordinate_session_get"
-    version = "1.0.0"
-    descr = "Get one subordinate session link by composite key."
+    version = "1.1.0"
+    descr = "Get one subordinate server link by (parent_session_id, server_uuid)."
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -133,7 +133,6 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
     async def execute(  # type: ignore[override]
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -143,7 +142,6 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
             row = get_subordinate_session(
                 database,
                 parent_session_id=parent_session_id,
-                subordinate_session_id=subordinate_session_id,
                 server_uuid=server_uuid,
             )
         except ValueError as e:
@@ -153,9 +151,7 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
                 code="SUBORDINATE_SESSION_NOT_FOUND",
                 message=(
                     "Subordinate session link not found for "
-                    f"parent={parent_session_id!r}, "
-                    f"subordinate={subordinate_session_id!r}, "
-                    f"server={server_uuid!r}."
+                    f"parent={parent_session_id!r}, server={server_uuid!r}."
                 ),
             )
         return SuccessResult(data=row)
@@ -166,11 +162,11 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
 
 
 class SubordinateSessionUpdateCommand(BaseMCPCommand):
-    """Update comment on a subordinate session link."""
+    """Update comment on a subordinate server link."""
 
     name = "subordinate_session_update"
-    version = "1.0.0"
-    descr = "Update the comment on a subordinate session link."
+    version = "1.1.0"
+    descr = "Update the comment on a subordinate server link."
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -189,7 +185,6 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
     async def execute(  # type: ignore[override]
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
         comment: str,
         **kwargs: Any,
@@ -200,7 +195,6 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
             row = update_subordinate_session(
                 database,
                 parent_session_id=parent_session_id,
-                subordinate_session_id=subordinate_session_id,
                 server_uuid=server_uuid,
                 comment=comment,
             )
@@ -216,11 +210,11 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
 
 
 class SubordinateSessionDeleteCommand(BaseMCPCommand):
-    """Delete a subordinate session link."""
+    """Delete a subordinate server link."""
 
     name = "subordinate_session_delete"
-    version = "1.0.0"
-    descr = "Delete a subordinate session link (not the client sessions themselves)."
+    version = "1.1.0"
+    descr = "Delete a subordinate server link (not the leading client session)."
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -239,7 +233,6 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
     async def execute(  # type: ignore[override]
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -249,7 +242,6 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
             result = delete_subordinate_session(
                 database,
                 parent_session_id=parent_session_id,
-                subordinate_session_id=subordinate_session_id,
                 server_uuid=server_uuid,
             )
         except SubordinateSessionNotFoundError as e:
@@ -264,11 +256,11 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
 
 
 class SubordinateSessionListCommand(BaseMCPCommand):
-    """List subordinate session links."""
+    """List subordinate server links."""
 
     name = "subordinate_session_list"
-    version = "1.0.0"
-    descr = "List subordinate session links with optional filters."
+    version = "1.1.0"
+    descr = "List subordinate server links with optional filters."
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -283,10 +275,6 @@ class SubordinateSessionListCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional filter: leading session UUID4.",
                 },
-                "subordinate_session_id": {
-                    "type": "string",
-                    "description": "Optional filter: subordinate session UUID4.",
-                },
                 "server_uuid": {
                     "type": "string",
                     "description": "Optional filter: server instance UUID4.",
@@ -299,7 +287,6 @@ class SubordinateSessionListCommand(BaseMCPCommand):
     async def execute(  # type: ignore[override]
         self,
         parent_session_id: Optional[str] = None,
-        subordinate_session_id: Optional[str] = None,
         server_uuid: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -309,7 +296,6 @@ class SubordinateSessionListCommand(BaseMCPCommand):
             rows = list_subordinate_sessions(
                 database,
                 parent_session_id=parent_session_id,
-                subordinate_session_id=subordinate_session_id,
                 server_uuid=server_uuid,
             )
         except ValueError as e:

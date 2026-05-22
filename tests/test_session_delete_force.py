@@ -55,18 +55,15 @@ def test_delete_without_force_fails_on_subordinates() -> None:
         facade, client = make_sqlite_in_process_legacy_facade(root)
         try:
             parent = create_client_session(facade, comment="parent")
-            child = create_client_session(facade, comment="child")
             create_subordinate_session(
                 facade,
                 parent_session_id=str(parent["session_id"]),
-                subordinate_session_id=str(child["session_id"]),
                 server_uuid=SERVER_UUID,
                 comment="link",
             )
             with pytest.raises(SessionHasSubordinatesError):
                 delete_client_session(facade, str(parent["session_id"]), force=False)
             assert is_session_valid(facade, str(parent["session_id"]))
-            assert is_session_valid(facade, str(child["session_id"]))
         finally:
             client.disconnect()
 
@@ -87,21 +84,18 @@ def test_delete_without_force_fails_on_locks() -> None:
             client.disconnect()
 
 
-def test_delete_with_force_removes_subordinates_and_parent() -> None:
+def test_delete_with_force_removes_links_and_parent() -> None:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         facade, client = make_sqlite_in_process_legacy_facade(root)
         try:
             project_id, file_id = _insert_project_and_file(facade, root / "test.db")
             parent = create_client_session(facade, comment="parent")
-            child = create_client_session(facade, comment="child")
             parent_id = str(parent["session_id"])
-            child_id = str(child["session_id"])
             open_session_file(facade, parent_id, project_id, file_id)
             create_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
                 comment="link",
             )
@@ -110,7 +104,6 @@ def test_delete_with_force_removes_subordinates_and_parent() -> None:
             assert result["released_lock_count"] == 1
             assert result["released_subordinate_count"] == 1
             assert get_client_session(facade, parent_id) is None
-            assert get_client_session(facade, child_id) is None
         finally:
             client.disconnect()
 

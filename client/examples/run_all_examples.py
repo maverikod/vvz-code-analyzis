@@ -216,7 +216,10 @@ from code_analysis_client import (  # noqa: E402
     prepare_params_for_schema,
     validate_params_against_schema,
 )
-from code_analysis_client.server_api import assert_file_session_facade_complete  # noqa: E402
+from code_analysis_client.server_api import (  # noqa: E402
+    assert_file_session_facade_complete,
+    assert_transfer_facade_complete,
+)
 
 CLIENT_API_COVERAGE = frozenset(
     {
@@ -228,6 +231,7 @@ CLIENT_API_COVERAGE = frozenset(
         "server_schema.parse_schema_from_help_payload",
         "server_schema.fetch_command_schema_from_server",
         "server_api.assert_file_session_facade_complete",
+        "server_api.assert_transfer_facade_complete",
         "CodeAnalysisAsyncClient.__init__",
         "CodeAnalysisAsyncClient.from_jsonrpc_kwargs",
         "CodeAnalysisAsyncClient.from_adapter_settings",
@@ -281,6 +285,7 @@ async def ex_load_server_config_and_adapter_helpers(cfg_path: Path) -> None:
     _ok(kwargs["port"] == settings["port"], "port mismatch in jsonrpc kwargs")
     _ok("protocol" in kwargs, "jsonrpc kwargs missing protocol")
     assert_file_session_facade_complete()
+    assert_transfer_facade_complete()
 
 
 async def ex_constructors(cfg_path: Path) -> None:

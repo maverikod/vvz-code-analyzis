@@ -61,7 +61,6 @@ def test_subordinate_command_metadata(name: str, expected_cls: type) -> None:
 async def test_subordinate_session_create_execute() -> None:
     row = {
         "parent_session_id": "11111111-1111-4111-8111-111111111111",
-        "subordinate_session_id": "22222222-2222-4222-8222-222222222222",
         "server_uuid": "880e8400-e29b-41d4-a716-446655440003",
         "comment": "worker",
     }
@@ -82,7 +81,6 @@ async def test_subordinate_session_create_execute() -> None:
         cmd = SubordinateSessionCreateCommand()
         result = await cmd.execute(
             parent_session_id=row["parent_session_id"],
-            subordinate_session_id=row["subordinate_session_id"],
             comment="worker",
         )
 
@@ -90,7 +88,6 @@ async def test_subordinate_session_create_execute() -> None:
     create_fn.assert_called_once_with(
         mock_db,
         parent_session_id=row["parent_session_id"],
-        subordinate_session_id=row["subordinate_session_id"],
         server_uuid=row["server_uuid"],
         comment="worker",
     )
@@ -137,7 +134,6 @@ async def test_subordinate_session_get_not_found() -> None:
         cmd = SubordinateSessionGetCommand()
         result = await cmd.execute(
             parent_session_id="11111111-1111-4111-8111-111111111111",
-            subordinate_session_id="22222222-2222-4222-8222-222222222222",
             server_uuid="880e8400-e29b-41d4-a716-446655440003",
         )
 

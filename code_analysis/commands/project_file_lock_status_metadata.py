@@ -97,7 +97,7 @@ def get_project_file_lock_status_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "error_cases": {
             "PROJECT_NOT_FOUND": {
                 "description": "project_id is missing from the database.",
-                "message": "Project with ID ... not found",
+                "message": "Project not found: {project_id}",
                 "solution": "Call list_projects and retry with a valid UUID.",
             },
             "FILE_NOT_FOUND": {

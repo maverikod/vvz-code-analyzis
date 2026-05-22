@@ -38,7 +38,7 @@ def get_session_open_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Execution order:\n"
             "1. SessionTouchRule — update last_active_at or SESSION_NOT_FOUND.\n"
             "2. SecurityPolicy check.\n"
-            "3. INSERT OR IGNORE into session_file_locks.\n\n"
+            "3. Insert into session_file_locks when absent (idempotent).\n\n"
             "Locks are logical DB records (not OS flock). They attribute which session "
             "has a file open for coordination and session_delete guards."
         ),

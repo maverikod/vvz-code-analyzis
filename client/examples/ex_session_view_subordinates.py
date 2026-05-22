@@ -193,24 +193,23 @@ async def run_all() -> int:
 
         async def pos_subordinate_crud_and_view() -> None:
             parent = await fs.create_session("ex_session_view parent")
-            child = await fs.create_session("ex_session_view child")
             try:
                 created = await fs.create_subordinate_session(
                     parent,
-                    child,
                     "worker link for view demo",
                 )
                 server_uuid = str(created.get("server_uuid") or "").strip()
                 if not server_uuid:
                     raise AssertionError(f"create missing server_uuid: {created!r}")
+                if str(created.get("parent_session_id") or "") != parent:
+                    raise AssertionError(f"create parent mismatch: {created!r}")
 
-                got = await fs.get_subordinate_session(parent, child, server_uuid)
-                if str(got.get("subordinate_session_id") or "") != child:
+                got = await fs.get_subordinate_session(parent, server_uuid)
+                if str(got.get("parent_session_id") or "") != parent:
                     raise AssertionError(f"get mismatch: {got!r}")
 
                 updated = await fs.update_subordinate_session(
                     parent,
-                    child,
                     server_uuid,
                     "updated comment",
                 )
@@ -221,13 +220,13 @@ async def run_all() -> int:
                 links = listed.get("links") or []
                 if int(listed.get("count") or 0) < 1:
                     raise AssertionError(f"list empty: {listed!r}")
-                ids = {
-                    str(row.get("subordinate_session_id"))
+                servers = {
+                    str(row.get("server_uuid"))
                     for row in links
                     if isinstance(row, dict)
                 }
-                if child not in ids:
-                    raise AssertionError(f"child not in list: {ids!r}")
+                if server_uuid not in servers:
+                    raise AssertionError(f"server not in list: {servers!r}")
 
                 await fs.lock_file(parent, fx.project_id, fx.file_id)
                 view = await fs.view_session(parent)
@@ -235,43 +234,37 @@ async def run_all() -> int:
                 if not by_proj:
                     raise AssertionError(f"view missing locked files: {view!r}")
                 subs = view.get("subordinate_sessions") or []
-                sub_ids = {
-                    str(row.get("subordinate_session_id"))
-                    for row in subs
-                    if isinstance(row, dict)
+                sub_servers = {
+                    str(row.get("server_uuid")) for row in subs if isinstance(row, dict)
                 }
-                if child not in sub_ids:
+                if server_uuid not in sub_servers:
                     raise AssertionError(f"view missing subordinate: {view!r}")
 
                 await fs.unlock_file(parent, fx.project_id, fx.file_id)
-                await fs.delete_subordinate_session(parent, child, server_uuid)
+                await fs.delete_subordinate_session(parent, server_uuid)
                 empty = await fs.list_subordinate_sessions(parent_session_id=parent)
                 if int(empty.get("count") or 0) != 0:
                     raise AssertionError(f"links remain after delete: {empty!r}")
             finally:
-                await fs.delete_session(child, force=True)
                 await fs.delete_session(parent, force=True)
 
         async def neg_delete_parent_with_subordinate_no_force() -> None:
             parent = await fs.create_session("ex_session_view delete guard parent")
-            child = await fs.create_session("ex_session_view delete guard child")
             try:
-                link = await fs.create_subordinate_session(parent, child, "guard link")
+                link = await fs.create_subordinate_session(parent, "guard link")
                 server_uuid = str(link.get("server_uuid") or "").strip()
                 resp = await client.call(
                     "session_delete",
                     {"session_id": parent, "force": False},
                 )
                 expect_error(resp, "SESSION_HAS_SUBORDINATES", "delete parent")
-                await fs.delete_subordinate_session(parent, child, server_uuid)
+                await fs.delete_subordinate_session(parent, server_uuid)
             finally:
-                await fs.delete_session(child, force=True)
                 await fs.delete_session(parent, force=True)
 
         async def pos_force_delete_releases_subordinates() -> None:
             parent = await fs.create_session("ex_session_view force parent")
-            child = await fs.create_session("ex_session_view force child")
-            await fs.create_subordinate_session(parent, child, "force link")
+            await fs.create_subordinate_session(parent, "force link")
             deleted = await fs.delete_session(parent, force=True)
             if deleted.get("deleted") is not True:
                 raise AssertionError(deleted)
@@ -284,11 +277,6 @@ async def run_all() -> int:
                 {"session_id": parent},
             )
             expect_error(resp, "SESSION_NOT_FOUND", "parent gone")
-            resp_child = await client.call(
-                "session_list_file_locks",
-                {"session_id": child},
-            )
-            expect_error(resp_child, "SESSION_NOT_FOUND", "child gone after force")
 
         async def neg_view_unknown_session() -> None:
             fake = str(uuid.uuid4())

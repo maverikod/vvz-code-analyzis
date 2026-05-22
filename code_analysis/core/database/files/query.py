@@ -157,7 +157,7 @@ def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
     self._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
     _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        f"UPDATE files SET updated_at = {_now} WHERE id = ?",
+        f"UPDATE files SET needs_chunking = 1, updated_at = {_now} WHERE id = ?",
         (file_id,),
     )
     self._commit()

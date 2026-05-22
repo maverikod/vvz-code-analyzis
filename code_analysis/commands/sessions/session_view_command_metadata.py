@@ -19,7 +19,6 @@ from code_analysis.commands.sessions.session_commands_metadata_common import (
 )
 from code_analysis.commands.sessions.subordinate_session_commands_metadata import (
     EXAMPLE_SERVER_UUID,
-    EXAMPLE_SUBORDINATE_SESSION_ID,
 )
 
 
@@ -40,11 +39,11 @@ def get_session_view_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "and files with file_id, file_path (project-relative when indexed), "
             "locked_at.\n\n"
             "2. **subordinate_sessions** — links where this session is the parent. "
-            "Each entry includes subordinate_session_id, server_uuid, "
-            "session_presentation (subordinate session comment when the session "
-            "row exists), server_presentation (title/description/version when "
-            "server_uuid matches this server's registration.instance_uuid), "
-            "and link_comment from the subordinate_sessions row.\n\n"
+            "Each entry includes server_uuid, session_presentation (parent session "
+            "comment when the session row exists), server_presentation "
+            "(title/description/version when server_uuid matches this server's "
+            "registration.instance_uuid), and link_comment from the "
+            "subordinate_sessions row.\n\n"
             "Execution order: SessionTouchRule -> SecurityPolicy -> view build."
         ),
         "parameters": {
@@ -78,7 +77,6 @@ def get_session_view_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "subordinate_session_count": 1,
                 "subordinate_sessions": [
                     {
-                        "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                         "server_uuid": EXAMPLE_SERVER_UUID,
                         "session_presentation": "worker session",
                         "server_presentation": {

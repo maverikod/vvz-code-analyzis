@@ -16,17 +16,19 @@ from code_analysis.commands.sessions.session_commands_metadata_common import (
 )
 
 EXAMPLE_SERVER_UUID = "880e8400-e29b-41d4-a716-446655440003"
-EXAMPLE_SUBORDINATE_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
 _COMPOSITE_KEY_FIELDS = {
-    "parent_session_id": "Leading (parent) client session UUID4.",
-    "subordinate_session_id": "Subordinate client session UUID4.",
-    "server_uuid": "Server instance UUID4 (registration.instance_uuid).",
-    "comment": "Human-readable label for this link.",
+    "parent_session_id": (
+        "Leading client session UUID4. The same id is used on subordinate servers."
+    ),
+    "server_uuid": "Subordinate server instance UUID4 (registration.instance_uuid).",
+    "comment": "Human-readable label for this server link.",
 }
 
 
-def composite_key_parameters(*, include_comment: bool = False) -> Dict[str, Any]:
+def composite_key_parameters(
+    *, include_comment: bool = False, server_uuid_required: bool = True
+) -> Dict[str, Any]:
     """Metadata parameters for composite primary key fields."""
     params: Dict[str, Any] = {
         "parent_session_id": {
@@ -35,16 +37,10 @@ def composite_key_parameters(*, include_comment: bool = False) -> Dict[str, Any]
             "required": True,
             "examples": [EXAMPLE_SESSION_ID],
         },
-        "subordinate_session_id": {
-            "description": _COMPOSITE_KEY_FIELDS["subordinate_session_id"],
-            "type": "string",
-            "required": True,
-            "examples": [EXAMPLE_SUBORDINATE_SESSION_ID],
-        },
         "server_uuid": {
             "description": _COMPOSITE_KEY_FIELDS["server_uuid"],
             "type": "string",
-            "required": True,
+            "required": server_uuid_required,
             "examples": [EXAMPLE_SERVER_UUID],
         },
     }
@@ -65,16 +61,12 @@ def composite_key_schema(*, include_comment: bool = False) -> Dict[str, Any]:
             "type": "string",
             "description": _COMPOSITE_KEY_FIELDS["parent_session_id"],
         },
-        "subordinate_session_id": {
-            "type": "string",
-            "description": _COMPOSITE_KEY_FIELDS["subordinate_session_id"],
-        },
         "server_uuid": {
             "type": "string",
             "description": _COMPOSITE_KEY_FIELDS["server_uuid"],
         },
     }
-    required = ["parent_session_id", "subordinate_session_id", "server_uuid"]
+    required = ["parent_session_id", "server_uuid"]
     if include_comment:
         props["comment"] = {
             "type": "string",
@@ -87,10 +79,8 @@ def composite_key_schema(*, include_comment: bool = False) -> Dict[str, Any]:
 def subordinate_session_not_found_error() -> Dict[str, Any]:
     """SUBORDINATE_SESSION_NOT_FOUND error_cases entry."""
     return {
-        "description": "No row matches the composite primary key.",
-        "message": (
-            "Subordinate session link not found for parent/subordinate/server."
-        ),
+        "description": "No row matches (parent_session_id, server_uuid).",
+        "message": "Subordinate session link not found for parent/server.",
         "solution": "Call subordinate_session_list or verify UUIDs and retry.",
     }
 
@@ -107,9 +97,9 @@ def subordinate_session_already_exists_error() -> Dict[str, Any]:
 def invalid_params_error() -> Dict[str, Any]:
     """INVALID_PARAMS error_cases entry."""
     return {
-        "description": "UUID validation failed or parent equals subordinate.",
+        "description": "UUID validation failed.",
         "message": "Invalid subordinate session parameters.",
-        "solution": "Pass distinct valid UUID4 values for all identifiers.",
+        "solution": "Pass valid UUID4 values for parent_session_id and server_uuid.",
     }
 
 
@@ -118,14 +108,12 @@ def row_return_value(*, description: str) -> Dict[str, Any]:
     return standard_success_return(
         description=description,
         data_fields={
-            "parent_session_id": "Leading session UUID4.",
-            "subordinate_session_id": "Subordinate session UUID4.",
-            "server_uuid": "Server instance UUID4.",
+            "parent_session_id": "Leading session UUID4 (used on the subordinate server).",
+            "server_uuid": "Subordinate server instance UUID4.",
             "comment": "Link comment string.",
         },
         example={
             "parent_session_id": EXAMPLE_SESSION_ID,
-            "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
             "server_uuid": EXAMPLE_SERVER_UUID,
             "comment": "worker-on-server-b",
         },
@@ -142,22 +130,23 @@ def get_subordinate_session_create_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Creates a persisted link between a leading client session and a "
-            "subordinate client session on a specific server instance.\n\n"
-            "Both session IDs must exist in client_sessions and must differ. "
-            "The composite key (parent_session_id, subordinate_session_id, "
-            "server_uuid) must be unique.\n\n"
+            "Registers a leading client session on a subordinate server instance.\n\n"
+            "The leading session must exist in client_sessions. Subordinate servers "
+            "use parent_session_id as session_id — no second client session row is "
+            "stored.\n\n"
+            "The composite key (parent_session_id, server_uuid) must be unique.\n\n"
             "When server_uuid is omitted, the current server "
             "registration.instance_uuid is used."
         ),
-        "parameters": composite_key_parameters(include_comment=True),
+        "parameters": composite_key_parameters(
+            include_comment=True, server_uuid_required=False
+        ),
         "return_value": row_return_value(description="Link created."),
         "usage_examples": [
             {
-                "description": "Link a worker session to a coordinator on this server",
+                "description": "Register leading session on this server",
                 "command": {
                     "parent_session_id": EXAMPLE_SESSION_ID,
-                    "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                     "comment": "planner worker",
                 },
                 "explanation": "server_uuid defaults to this server's instance UUID.",
@@ -168,11 +157,17 @@ def get_subordinate_session_create_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "SUBORDINATE_SESSION_ALREADY_EXISTS": (
                 subordinate_session_already_exists_error()
             ),
-            "INVALID_PARAMS": invalid_params_error(),
+            "INVALID_PARAMS": {
+                **invalid_params_error(),
+                "description": (
+                    "UUID validation failed or server_uuid is required when "
+                    "registration.instance_uuid is unset."
+                ),
+            },
         },
         "best_practices": [
-            "Create both client sessions with session_create before linking.",
-            "Use list filters on subordinate_session_list to audit links per parent.",
+            "Create the leading session with session_create before linking.",
+            "Use subordinate_session_list to audit links per parent or server.",
         ],
     }
 
@@ -186,7 +181,7 @@ def get_subordinate_session_get_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "category": cls.category,
         "author": cls.author,
         "email": cls.email,
-        "detailed_description": "Fetch one subordinate session link by composite key.",
+        "detailed_description": "Fetch one subordinate server link by composite key.",
         "parameters": composite_key_parameters(),
         "return_value": row_return_value(description="Link row returned."),
         "usage_examples": [
@@ -194,7 +189,6 @@ def get_subordinate_session_get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Read one link",
                 "command": {
                     "parent_session_id": EXAMPLE_SESSION_ID,
-                    "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                     "server_uuid": EXAMPLE_SERVER_UUID,
                 },
                 "explanation": "Returns comment and identifiers.",
@@ -227,7 +221,6 @@ def get_subordinate_session_update_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Rename link comment",
                 "command": {
                     "parent_session_id": EXAMPLE_SESSION_ID,
-                    "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                     "server_uuid": EXAMPLE_SERVER_UUID,
                     "comment": "renamed worker",
                 },
@@ -254,20 +247,19 @@ def get_subordinate_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Delete one subordinate session link. Does not delete client_sessions rows."
+            "Delete one subordinate server link. Does not delete the leading "
+            "client_sessions row."
         ),
         "parameters": composite_key_parameters(),
         "return_value": standard_success_return(
             description="Link deleted.",
             data_fields={
                 "parent_session_id": "Leading session UUID4.",
-                "subordinate_session_id": "Subordinate session UUID4.",
                 "server_uuid": "Server instance UUID4.",
                 "deleted": "Always true on success.",
             },
             example={
                 "parent_session_id": EXAMPLE_SESSION_ID,
-                "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                 "server_uuid": EXAMPLE_SERVER_UUID,
                 "deleted": True,
             },
@@ -277,10 +269,9 @@ def get_subordinate_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Remove link",
                 "command": {
                     "parent_session_id": EXAMPLE_SESSION_ID,
-                    "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                     "server_uuid": EXAMPLE_SERVER_UUID,
                 },
-                "explanation": "Client sessions remain until session_delete.",
+                "explanation": "Leading session remains until session_delete.",
             }
         ],
         "error_cases": {
@@ -288,7 +279,7 @@ def get_subordinate_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "INVALID_PARAMS": invalid_params_error(),
         },
         "best_practices": [
-            "Deleting a link does not close file locks on either session.",
+            "Deleting a link does not close file locks on the leading session.",
         ],
     }
 
@@ -303,8 +294,8 @@ def get_subordinate_session_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "List subordinate session links with optional filters on parent, "
-            "subordinate, or server UUID."
+            "List subordinate server links with optional filters on parent or "
+            "server UUID."
         ),
         "parameters": {
             "parent_session_id": {
@@ -312,12 +303,6 @@ def get_subordinate_session_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "type": "string",
                 "required": False,
                 "examples": [EXAMPLE_SESSION_ID],
-            },
-            "subordinate_session_id": {
-                "description": "Optional filter: subordinate session UUID4.",
-                "type": "string",
-                "required": False,
-                "examples": [EXAMPLE_SUBORDINATE_SESSION_ID],
             },
             "server_uuid": {
                 "description": "Optional filter: server instance UUID4.",
@@ -336,7 +321,6 @@ def get_subordinate_session_list_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "links": [
                     {
                         "parent_session_id": EXAMPLE_SESSION_ID,
-                        "subordinate_session_id": EXAMPLE_SUBORDINATE_SESSION_ID,
                         "server_uuid": EXAMPLE_SERVER_UUID,
                         "comment": "worker",
                     }

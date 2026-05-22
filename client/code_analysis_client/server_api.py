@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Callable, Dict, FrozenSet
+from typing import Callable, Dict, FrozenSet, Tuple
 
 # Removed from the public server surface — do not use in client facades or docs.
 LEGACY_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
@@ -105,6 +105,16 @@ FILE_SESSION_FACADE_METHODS: Dict[str, str] = {
     "subordinate_session_list": "list_subordinate_sessions",
 }
 
+# Transfer / advisory-lock commands may map to more than one façade method.
+TRANSFER_FACADE_METHODS: Dict[str, Tuple[str, ...]] = {
+    "project_file_transfer_download_begin": ("download",),
+    "project_file_transfer_upload_save": ("upload", "upload_new"),
+    "project_file_advisory_lock_batch": (
+        "lock_files_advisory",
+        "unlock_files_advisory",
+    ),
+}
+
 
 def assert_file_session_facade_complete() -> None:
     """Raise ``AssertionError`` if ``FILE_SESSION_FACADE_METHODS`` is incomplete."""
@@ -122,6 +132,26 @@ def assert_file_session_facade_complete() -> None:
             raise AssertionError(
                 f"FileSessionClient missing method {method_name!r} for command {command!r}"
             )
+
+
+def assert_transfer_facade_complete() -> None:
+    """Raise ``AssertionError`` if ``TRANSFER_FACADE_METHODS`` is incomplete."""
+    missing_cmds = TRANSFER_AND_LOCK_COMMANDS - set(TRANSFER_FACADE_METHODS)
+    extra_cmds = set(TRANSFER_FACADE_METHODS) - TRANSFER_AND_LOCK_COMMANDS
+    if missing_cmds or extra_cmds:
+        raise AssertionError(
+            "TRANSFER_FACADE_METHODS out of sync with TRANSFER_AND_LOCK_COMMANDS: "
+            f"missing={sorted(missing_cmds)!r} extra={sorted(extra_cmds)!r}"
+        )
+    from code_analysis_client.file_session import FileSessionClient
+
+    for command, method_names in TRANSFER_FACADE_METHODS.items():
+        for method_name in method_names:
+            if not hasattr(FileSessionClient, method_name):
+                raise AssertionError(
+                    f"FileSessionClient missing method {method_name!r} "
+                    f"for command {command!r}"
+                )
 
 
 def _command_registered(get_command: Callable[[str], object], name: str) -> bool:

@@ -24,13 +24,15 @@ def get_project_file_advisory_lock_batch_metadata(cls: Type[Any]) -> Dict[str, A
             "or releases a lease for one project file under the **registered watched project** "
             "(``list_projects`` → ``root_path`` in a configured watch_dir), not relative to the "
             "analysis server's own codebase. The command uses the shared ``file.lock`` sidecar "
-            "convention and mirrors ownership in ``runtime_file_lock_leases``. Processing is "
+            "convention and mirrors ownership in ``file_advisory_lock_leases``. Processing is "
             "per item: failures are returned inside ``results`` and do not roll back earlier "
             "successful items.\n\n"
-            "For safety, arbitrary session ids are rejected by default. Use the current "
-            "process ``runtime_lock_sessions.session_id`` unless ``allow_foreign_session`` "
-            "is explicitly true for diagnostics. Unlock is idempotent: a missing lease is "
-            "reported as success."
+            "Session ids may be client sessions (``session_create`` / ``client_sessions``) "
+            "or daemon runtime sessions (``runtime_lock_sessions``). Client ids are "
+            "registered into ``runtime_lock_sessions`` on demand and are not subject to "
+            "``allow_foreign_session``. For daemon runtime ids, only the current process "
+            "session is accepted unless ``allow_foreign_session`` is true. Unlock is "
+            "idempotent: a missing lease is reported as success."
         ),
         "parameters": {
             "items": {
@@ -40,7 +42,9 @@ def get_project_file_advisory_lock_batch_metadata(cls: Type[Any]) -> Dict[str, A
                 "type": "array",
                 "required": True,
                 "items": {
-                    "session_id": "Existing runtime lock session id.",
+                    "session_id": (
+                        "Client session id (session_create) or runtime lock session id."
+                    ),
                     "project_id": "Project UUID.",
                     "file_path": (
                         "Path relative to that project's root_path (watched tree), not the server install."
@@ -51,11 +55,20 @@ def get_project_file_advisory_lock_batch_metadata(cls: Type[Any]) -> Dict[str, A
             },
             "allow_foreign_session": {
                 "description": (
-                    "Allow an existing session id owned by another process. Default false."
+                    "Allow a runtime_lock_sessions id owned by another process. "
+                    "Does not restrict client_sessions ids. Default false."
                 ),
                 "type": "boolean",
                 "required": False,
                 "default": False,
+            },
+            "timeout_seconds": {
+                "description": (
+                    "Optional seconds to wait for flock on action=lock. Omitted means "
+                    "block until available."
+                ),
+                "type": "number",
+                "required": False,
             },
         },
         "return_value": {
@@ -65,10 +78,17 @@ def get_project_file_advisory_lock_batch_metadata(cls: Type[Any]) -> Dict[str, A
                     "mean every item succeeded."
                 ),
                 "data": {
-                    "results": "List of per-item results with index, action, session_id, project_id, file_path, ok, and optional code/message/details.",
+                    "results": (
+                        "List of per-item results with index, action, session_id, "
+                        "project_id, file_path, ok, and optional lock_mode, lock_path, "
+                        "code, message, details."
+                    ),
                     "total": "Number of input items.",
                     "succeeded": "Number of ok item results.",
                     "failed": "Number of failed item results.",
+                    "current_session_id": (
+                        "Runtime lock session id for this server process (daemon role)."
+                    ),
                 },
                 "example": {
                     "results": [
@@ -125,14 +145,36 @@ def get_project_file_advisory_lock_batch_metadata(cls: Type[Any]) -> Dict[str, A
         ],
         "error_cases": {
             "SESSION_NOT_FOUND": {
-                "description": "session_id has no runtime_lock_sessions row.",
-                "message": "Runtime lock session not found: {session_id}",
-                "solution": "Register/use the current runtime session or enable it through the daemon.",
+                "description": (
+                    "session_id is absent from client_sessions (when used as client id) "
+                    "or from runtime_lock_sessions (when used as runtime id)."
+                ),
+                "message": (
+                    "Client session not found: {session_id} or "
+                    "Runtime lock session not found: {session_id}"
+                ),
+                "solution": (
+                    "Use session_create for client workflows, the current runtime session "
+                    "id, or set allow_foreign_session=true for foreign runtime ids."
+                ),
             },
             "FOREIGN_SESSION_FORBIDDEN": {
-                "description": "session_id does not match the current process and allow_foreign_session=false.",
+                "description": (
+                    "Non-client runtime session_id does not match the current process "
+                    "and allow_foreign_session=false."
+                ),
                 "message": "Foreign runtime lock session is not allowed",
                 "solution": "Use the current session id or set allow_foreign_session=true for diagnostics.",
+            },
+            "PROJECT_NOT_FOUND": {
+                "description": "project_id is missing from the database.",
+                "message": "Project {project_id} not found",
+                "solution": "Call list_projects and retry with a valid project_id.",
+            },
+            "ITEM_ERROR": {
+                "description": "Unexpected exception while processing one batch item.",
+                "message": "Exception text in the item message field.",
+                "solution": "Inspect server logs and retry the failing item.",
             },
             "FILE_NOT_FOUND": {
                 "description": "Lock item target has no non-deleted files row.",

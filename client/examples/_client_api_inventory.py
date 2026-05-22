@@ -33,6 +33,7 @@ REQUIRED_CLIENT_API: FrozenSet[str] = frozenset(
         "server_schema.fetch_command_schema_from_server",
         # server_api (import-time sanity)
         "server_api.assert_file_session_facade_complete",
+        "server_api.assert_transfer_facade_complete",
         # exceptions (raised on live paths)
         "exceptions.SessionNotFoundError",
         # CodeAnalysisAsyncClient

@@ -4,6 +4,21 @@ High-level file transfer and session workflow on top of CodeAnalysisAsyncClient.
 Wraps ``session_*`` and ``subordinate_session_*`` MCP commands plus transfer and
 advisory-lock commands that accept ``session_id``.
 
+Transfer mapping (client façade → server command):
+
+* **Download** — ``download`` → ``project_file_transfer_download_begin`` (``file_id``
+  required; optional ``project_id`` scopes the lookup). Chunk streaming uses the
+  adapter ``download_file`` helper via ``download_to_path``.
+* **Upload** — two façade methods share one save command
+  ``project_file_transfer_upload_save``:
+
+  - ``upload`` — update mode: ``file_id`` only (overwrite an indexed file).
+  - ``upload_new`` — create mode: ``project_id`` + ``file_path`` (path must not
+    be indexed yet).
+
+  Both methods upload bytes through the adapter, then call the same save command
+  with the completed ``transfer_id``.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -39,10 +54,39 @@ def _require_non_empty(value: str, *, field: str) -> str:
 
 
 def _validate_download_target(*, file_id: Optional[str]) -> None:
-    """Download requires ``file_id``."""
+    """Download requires ``file_id`` (server rejects ``file_path``)."""
     fid = str(file_id or "").strip()
     if not fid:
         raise ClientValidationError("file_id is required", field="file_id")
+
+
+def _validate_upload_selector(
+    *,
+    file_id: Optional[str] = None,
+    file_path: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> None:
+    """Mirror server ``_validate_upload_selector_params`` for save payloads."""
+    fid = str(file_id or "").strip()
+    fp = str(file_path or "").strip()
+    pid = str(project_id or "").strip()
+    if fid and fp:
+        raise ClientValidationError(
+            "Specify exactly one of file_id or file_path, not both",
+            field="file_id",
+        )
+    if fid:
+        return
+    if not pid:
+        raise ClientValidationError(
+            "project_id is required when file_id is omitted",
+            field="project_id",
+        )
+    if not fp:
+        raise ClientValidationError(
+            "file_path is required when file_id is omitted",
+            field="file_path",
+        )
 
 
 def _lock_mode_from_flag(lock: bool) -> str:
@@ -109,7 +153,8 @@ class FileSessionClient:
         ``force`` defaults to false (omit on the wire when false). Safe delete
         requires no ``session_file_locks`` and no ``subordinate_sessions`` rows
         where this session is ``parent_session_id``. When ``force`` is true,
-        linked subordinate client sessions and file locks are removed first.
+        subordinate server link rows and file locks for this session are removed
+        before the session row is deleted.
 
         Returns ``session_id``, ``deleted``, ``released_lock_count``, and
         ``released_subordinate_count``.
@@ -129,8 +174,7 @@ class FileSessionClient:
 
         Returns ``locked_files_by_project`` (file_id, file_path,
         project_presentation per project) and ``subordinate_sessions``
-        (subordinate_session_id, server_uuid, session_presentation,
-        server_presentation, link_comment).
+        (server_uuid, session_presentation, server_presentation, link_comment).
         """
         sid = _require_non_empty(session_id, field="session_id")
         return _unwrap(
@@ -143,22 +187,18 @@ class FileSessionClient:
     async def create_subordinate_session(
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         comment: str,
         *,
         server_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Link subordinate to parent (``subordinate_session_create``).
+        """Register leading session on a subordinate server (``subordinate_session_create``).
 
-        ``server_uuid`` defaults to the server's ``registration.instance_uuid``
-        when omitted.
+        The same ``parent_session_id`` is used on the remote server. ``server_uuid``
+        defaults to the server's ``registration.instance_uuid`` when omitted.
         """
         params: Dict[str, Any] = {
             "parent_session_id": _require_non_empty(
                 parent_session_id, field="parent_session_id"
-            ),
-            "subordinate_session_id": _require_non_empty(
-                subordinate_session_id, field="subordinate_session_id"
             ),
             "comment": comment,
         }
@@ -171,7 +211,6 @@ class FileSessionClient:
     async def get_subordinate_session(
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
     ) -> Dict[str, Any]:
         """Fetch one subordinate link (``subordinate_session_get``)."""
@@ -182,9 +221,6 @@ class FileSessionClient:
                     "parent_session_id": _require_non_empty(
                         parent_session_id, field="parent_session_id"
                     ),
-                    "subordinate_session_id": _require_non_empty(
-                        subordinate_session_id, field="subordinate_session_id"
-                    ),
                     "server_uuid": _require_non_empty(server_uuid, field="server_uuid"),
                 },
             )
@@ -193,7 +229,6 @@ class FileSessionClient:
     async def update_subordinate_session(
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
         comment: str,
     ) -> Dict[str, Any]:
@@ -205,9 +240,6 @@ class FileSessionClient:
                     "parent_session_id": _require_non_empty(
                         parent_session_id, field="parent_session_id"
                     ),
-                    "subordinate_session_id": _require_non_empty(
-                        subordinate_session_id, field="subordinate_session_id"
-                    ),
                     "server_uuid": _require_non_empty(server_uuid, field="server_uuid"),
                     "comment": comment,
                 },
@@ -217,12 +249,11 @@ class FileSessionClient:
     async def delete_subordinate_session(
         self,
         parent_session_id: str,
-        subordinate_session_id: str,
         server_uuid: str,
     ) -> Dict[str, Any]:
         """Remove subordinate link only (``subordinate_session_delete``).
 
-        Does not delete ``client_sessions`` rows; use :meth:`delete_session` for that.
+        Does not delete the ``client_sessions`` row for ``parent_session_id``.
         """
         return _unwrap(
             await self._client.call_validated(
@@ -230,9 +261,6 @@ class FileSessionClient:
                 {
                     "parent_session_id": _require_non_empty(
                         parent_session_id, field="parent_session_id"
-                    ),
-                    "subordinate_session_id": _require_non_empty(
-                        subordinate_session_id, field="subordinate_session_id"
                     ),
                     "server_uuid": _require_non_empty(server_uuid, field="server_uuid"),
                 },
@@ -243,7 +271,6 @@ class FileSessionClient:
         self,
         *,
         parent_session_id: Optional[str] = None,
-        subordinate_session_id: Optional[str] = None,
         server_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
         """List subordinate links (``subordinate_session_list``).
@@ -253,8 +280,6 @@ class FileSessionClient:
         params: Dict[str, Any] = {}
         if parent_session_id is not None:
             params["parent_session_id"] = parent_session_id
-        if subordinate_session_id is not None:
-            params["subordinate_session_id"] = subordinate_session_id
         if server_uuid is not None:
             params["server_uuid"] = server_uuid
         return _unwrap(
@@ -391,9 +416,10 @@ class FileSessionClient:
         compression: str = "identity",
         lock: bool = True,
         chunk_size: Optional[int] = None,
-        include_backup_history: bool = False,
+        include_backup_history: bool = True,
+        project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Begin chunked download; returns payload including ``file_id`` and ``transfer_id``."""
+        """Internal: call ``project_file_transfer_download_begin``."""
         fid = _require_non_empty(file_id, field="file_id")
         _validate_download_target(file_id=fid)
         await self.assert_session_exists(session_id)
@@ -406,6 +432,8 @@ class FileSessionClient:
         }
         if chunk_size is not None:
             params["chunk_size"] = chunk_size
+        if project_id is not None:
+            params["project_id"] = _require_non_empty(project_id, field="project_id")
         payload = _unwrap(
             await self._client.call_validated(
                 "project_file_transfer_download_begin",
@@ -423,9 +451,14 @@ class FileSessionClient:
         *,
         compression: str = "identity",
         lock: bool = True,
-        include_backup_history: bool = False,
+        include_backup_history: bool = True,
+        project_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Any]:
-        """Download an indexed file by ``file_id``; returns (begin_payload, receipt)."""
+        """Download an indexed file by ``file_id`` (``project_file_transfer_download_begin``).
+
+        Returns ``(begin_payload, adapter_receipt)``. ``file_path`` is not accepted —
+        resolve ``file_id`` from ``list_project_files`` or ``session_view`` first.
+        """
         fid = _require_non_empty(file_id, field="file_id")
         begin = await self._begin_download(
             session_id,
@@ -433,6 +466,7 @@ class FileSessionClient:
             compression=compression,
             lock=lock,
             include_backup_history=include_backup_history,
+            project_id=project_id,
         )
         transfer_id = str(begin.get("transfer_id") or "").strip()
         if not transfer_id:
@@ -486,8 +520,19 @@ class FileSessionClient:
         unlock_after_write: bool = True,
         dry_run: bool = False,
         backup: bool = True,
+        diff: bool = False,
+        diff_context_lines: Optional[int] = None,
+        commit_message: Optional[str] = None,
+        validate_syntax_only: bool = False,
+        tree_id: Optional[str] = None,
+        lock_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Persist a completed adapter upload (``project_file_transfer_upload_save``)."""
+        _validate_upload_selector(
+            file_id=file_id,
+            file_path=file_path,
+            project_id=project_id,
+        )
         await self.assert_session_exists(session_id)
         params: Dict[str, Any] = {
             "session_id": session_id,
@@ -502,6 +547,18 @@ class FileSessionClient:
             params["file_id"] = file_id
         if file_path is not None:
             params["file_path"] = file_path
+        if diff:
+            params["diff"] = True
+        if diff_context_lines is not None:
+            params["diff_context_lines"] = diff_context_lines
+        if commit_message is not None:
+            params["commit_message"] = commit_message
+        if validate_syntax_only:
+            params["validate_syntax_only"] = True
+        if tree_id is not None:
+            params["tree_id"] = tree_id
+        if lock_mode is not None:
+            params["lock_mode"] = lock_mode
         return _unwrap(
             await self._client.call_validated(
                 "project_file_transfer_upload_save",
@@ -521,11 +578,18 @@ class FileSessionClient:
         unlock: bool = True,
         dry_run: bool = False,
         backup: bool = True,
+        diff: bool = False,
+        diff_context_lines: Optional[int] = None,
+        commit_message: Optional[str] = None,
+        validate_syntax_only: bool = False,
+        tree_id: Optional[str] = None,
+        lock_mode: Optional[str] = None,
     ) -> str:
-        """Create a new project file from uploaded bytes; returns the new ``file_id``.
+        """Create a new project file (``project_file_transfer_upload_save`` create mode).
 
-        ``project_id`` and project-relative ``file_path`` are required. The path must
-        not already be indexed in the database (new file). Server errors otherwise.
+        Pass ``project_id`` and project-relative ``file_path`` only — do not pass
+        ``file_id``. The path must not already be indexed (``FILE_ALREADY_INDEXED``
+        otherwise). Returns the new ``file_id`` (may be empty on ``dry_run``).
         """
         pid = _require_non_empty(project_id, field="project_id")
         fp = _require_non_empty(file_path, field="file_path")
@@ -549,6 +613,12 @@ class FileSessionClient:
             unlock_after_write=unlock,
             backup=backup,
             dry_run=dry_run,
+            diff=diff,
+            diff_context_lines=diff_context_lines,
+            commit_message=commit_message,
+            validate_syntax_only=validate_syntax_only,
+            tree_id=tree_id,
+            lock_mode=lock_mode,
         )
         if dry_run:
             fid = str(saved.get("file_id") or "").strip()
@@ -561,16 +631,23 @@ class FileSessionClient:
         payload: bytes,
         file_id: str,
         *,
+        project_id: Optional[str] = None,
         filename: Optional[str] = None,
         compression: str = "identity",
         unlock: bool = True,
         backup: bool = True,
         dry_run: bool = False,
+        diff: bool = False,
+        diff_context_lines: Optional[int] = None,
+        commit_message: Optional[str] = None,
+        validate_syntax_only: bool = False,
+        tree_id: Optional[str] = None,
+        lock_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Overwrite an existing indexed file from uploaded bytes.
+        """Overwrite an existing indexed file (``project_file_transfer_upload_save`` update mode).
 
-        Only ``file_id`` is required. Returns the server save payload on success
-        or raises :class:`ClientValidationError` on failure.
+        Pass ``file_id`` only. Optional ``project_id`` must match the row if provided.
+        Do not pass ``file_path``. Returns the server save payload.
         """
         fid = _require_non_empty(file_id, field="file_id")
         name = filename or "payload.bin"
@@ -589,9 +666,16 @@ class FileSessionClient:
             session_id,
             str(receipt.transfer_id),
             file_id=fid,
+            project_id=project_id,
             unlock_after_write=unlock,
             backup=backup,
             dry_run=dry_run,
+            diff=diff,
+            diff_context_lines=diff_context_lines,
+            commit_message=commit_message,
+            validate_syntax_only=validate_syntax_only,
+            tree_id=tree_id,
+            lock_mode=lock_mode,
         )
         if not dry_run:
             _extract_file_id(saved)

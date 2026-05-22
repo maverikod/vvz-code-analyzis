@@ -177,7 +177,7 @@ async def test_download_by_file_id_without_project_id() -> None:
             "session_id": "sid",
             "compression": "identity",
             "lock_mode": "full",
-            "include_backup_history": False,
+            "include_backup_history": True,
             "file_id": "fid",
         },
     ) in calls
@@ -228,7 +228,7 @@ async def test_download_lock_false_uses_none_mode() -> None:
             "session_id": "sid",
             "compression": "identity",
             "lock_mode": "none",
-            "include_backup_history": False,
+            "include_backup_history": True,
             "file_id": "fid",
         },
     ) in calls
@@ -369,4 +369,26 @@ async def test_upload_new_requires_project_and_path() -> None:
         fs = FileSessionClient(client)
         with pytest.raises(ClientValidationError, match="file_path is required"):
             await fs.upload_new("sid", b"x", "pid", "")
+    mock_rpc.execute_command.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_commit_upload_rejects_file_id_and_file_path() -> None:
+    mock_rpc = MagicMock()
+    mock_rpc.execute_command = AsyncMock()
+    mock_rpc.help = AsyncMock()
+    with patch(
+        "code_analysis_client.client.JsonRpcClient",
+        return_value=mock_rpc,
+    ):
+        client = CodeAnalysisAsyncClient(host="h", port=1)
+        fs = FileSessionClient(client)
+        with pytest.raises(ClientValidationError, match="exactly one of file_id"):
+            await fs._commit_upload(
+                "sid",
+                "tid",
+                file_id="fid",
+                file_path="src/a.py",
+                project_id="pid",
+            )
     mock_rpc.execute_command.assert_not_called()

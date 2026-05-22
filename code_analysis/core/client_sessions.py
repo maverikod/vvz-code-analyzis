@@ -313,9 +313,8 @@ def delete_client_session(
     SessionHasSubordinatesError when subordinate session links exist (this session
     is the parent).
 
-    If force is True, recursively deletes all linked subordinate client sessions
-    first (each with force=True), then releases file locks on this session, then
-    deletes the session row.
+    If force is True, deletes subordinate server link rows for this session,
+    releases file locks on this session, then deletes the session row.
 
     Args:
         database: DatabaseClient instance.
@@ -333,7 +332,7 @@ def delete_client_session(
     """
     from code_analysis.core.subordinate_sessions import (
         count_subordinate_links_for_parent,
-        list_subordinate_session_ids_for_parent,
+        delete_subordinate_links_for_parent,
     )
 
     if get_client_session(database, session_id) is None:
@@ -353,12 +352,9 @@ def delete_client_session(
 
     released_subordinates = 0
     if force and subordinate_count > 0:
-        for sub_id in list_subordinate_session_ids_for_parent(database, session_id):
-            sub_result = delete_client_session(database, sub_id, force=True)
-            released_subordinates += 1
-            released_subordinates += int(
-                sub_result.get("released_subordinate_count") or 0
-            )
+        released_subordinates = delete_subordinate_links_for_parent(
+            database, session_id
+        )
 
     released = 0
     if force and lock_count > 0:

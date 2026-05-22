@@ -24,10 +24,9 @@ _FORCE_SCHEMA_DESCRIPTION = (
     "session_file_locks and zero rows in subordinate_sessions where this "
     "session is parent_session_id; otherwise SESSION_HAS_LOCKS or "
     "SESSION_HAS_SUBORDINATES is returned and no data is changed. "
-    "When true, deletes every linked subordinate client session recursively "
-    "(each subordinate is removed from client_sessions together with its own "
-    "locks and nested subordinates), then deletes all session_file_locks for "
-    "this session, then deletes the client_sessions row for session_id."
+    "When true, deletes subordinate server link rows for this session, "
+    "releases all session_file_locks for this session, then deletes the "
+    "client_sessions row for session_id."
 )
 
 
@@ -56,14 +55,12 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "parent_session_id=session_id → SESSION_HAS_SUBORDINATES (no mutation).\n"
             "   c. Else DELETE the client_sessions row.\n"
             "4. When force=true:\n"
-            "   a. For each distinct subordinate_session_id linked to session_id "
-            "as parent, call delete_client_session(sub_id, force=true) recursively "
-            "(removes subordinate client sessions, their locks, and their nested "
-            "subordinates).\n"
+            "   a. DELETE all subordinate_sessions rows where parent_session_id "
+            "equals session_id.\n"
             "   b. DELETE all session_file_locks rows for session_id.\n"
             "   c. DELETE the client_sessions row for session_id.\n\n"
-            "Link rows in subordinate_sessions are removed by CASCADE when either "
-            "endpoint session row is deleted. session_roles rows CASCADE on session "
+            "Link rows in subordinate_sessions CASCADE when the parent "
+            "client_sessions row is deleted. session_roles rows CASCADE on session "
             "delete.\n\n"
             "Does not delete runtime_lock_sessions or file_advisory_lock_leases; "
             "use advisory-lock commands separately if needed."
@@ -92,10 +89,9 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "be absent) or when force=true but there were no locks."
                 ),
                 "released_subordinate_count": (
-                    "Count of subordinate client_sessions rows deleted recursively "
-                    "because session_id was their ancestor in subordinate_sessions. "
-                    "Always present; 0 when force=false (no subordinates allowed) or "
-                    "when force=true but there were no linked subordinates."
+                    "Count of subordinate_sessions link rows deleted for this session "
+                    "during this call. Always present; 0 when force=false (links must "
+                    "already be absent) or when force=true but there were no links."
                 ),
             },
             example={
@@ -123,8 +119,8 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Force delete with open locks and subordinate sessions",
                 "command": {"session_id": EXAMPLE_SESSION_ID, "force": True},
                 "explanation": (
-                    "Recursively deletes linked subordinate client sessions, releases "
-                    "file locks on session_id, then deletes the parent session."
+                    "Deletes subordinate_sessions link rows and session_file_locks rows "
+                    "for session_id, then deletes the client_sessions row."
                 ),
             },
         ],
@@ -153,9 +149,8 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "Use force=True to delete them."
                 ),
                 "solution": (
-                    "Remove links with subordinate_session_delete, unlink subordinates "
-                    "via session_view, or retry with force=true to delete subordinate "
-                    "client sessions recursively."
+                    "Remove links with subordinate_session_delete, inspect via "
+                    "session_view, or retry with force=true to delete link rows."
                 ),
             },
             "COMMAND_FORBIDDEN": command_forbidden_error(),
@@ -165,8 +160,8 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "subordinate_session_delete cleanup.",
             "Call session_view before delete to inspect locked_files_by_project and "
             "subordinate_sessions.",
-            "Use force=true only when operator-side teardown must ignore locks and "
-            "subordinate client sessions.",
+            "Use force=true only when operator-side teardown must remove link rows and "
+            "file locks without manual cleanup.",
             "Do not reuse a deleted session_id — call session_create for a new session.",
         ],
     }

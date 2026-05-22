@@ -50,24 +50,21 @@ def test_subordinate_session_crud() -> None:
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:
-            parent = create_client_session(facade, comment="parent")
-            child = create_client_session(facade, comment="child")
+            parent = create_client_session(facade, comment="leading")
             parent_id = str(parent["session_id"])
-            child_id = str(child["session_id"])
 
             row = create_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
                 comment="worker",
             )
             assert row["comment"] == "worker"
+            assert row["parent_session_id"] == parent_id
 
             fetched = get_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
             )
             assert fetched == row
@@ -75,7 +72,6 @@ def test_subordinate_session_crud() -> None:
             updated = update_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
                 comment="renamed",
             )
@@ -88,7 +84,6 @@ def test_subordinate_session_crud() -> None:
             deleted = delete_subordinate_session(
                 facade,
                 parent_session_id=parent_id,
-                subordinate_session_id=child_id,
                 server_uuid=SERVER_UUID,
             )
             assert deleted["deleted"] is True
@@ -96,7 +91,6 @@ def test_subordinate_session_crud() -> None:
                 get_subordinate_session(
                     facade,
                     parent_session_id=parent_id,
-                    subordinate_session_id=child_id,
                     server_uuid=SERVER_UUID,
                 )
                 is None
@@ -110,10 +104,8 @@ def test_create_duplicate_raises() -> None:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:
             parent = create_client_session(facade, comment="parent")
-            child = create_client_session(facade, comment="child")
             kwargs = {
                 "parent_session_id": str(parent["session_id"]),
-                "subordinate_session_id": str(child["session_id"]),
                 "server_uuid": SERVER_UUID,
                 "comment": "x",
             }
@@ -132,7 +124,6 @@ def test_update_missing_raises() -> None:
                 update_subordinate_session(
                     facade,
                     parent_session_id=str(uuid.uuid4()),
-                    subordinate_session_id=str(uuid.uuid4()),
                     server_uuid=SERVER_UUID,
                     comment="nope",
                 )

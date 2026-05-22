@@ -182,6 +182,12 @@ def test_file_session_facade_maps_all_session_commands() -> None:
     assert_file_session_facade_complete()
 
 
+def test_transfer_facade_maps_all_transfer_commands() -> None:
+    from code_analysis_client.server_api import assert_transfer_facade_complete
+
+    assert_transfer_facade_complete()
+
+
 @pytest.mark.asyncio
 async def test_file_session_delete_omits_force_when_false() -> None:
     mock_rpc = MagicMock()

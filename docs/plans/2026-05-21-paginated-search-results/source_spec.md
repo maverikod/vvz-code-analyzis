@@ -18,19 +18,19 @@ Files processed through the database must not be rescanned directly when their i
 
 ## 3. Search Job Paging Model
 
-Search result generation must not return one large unbounded response. Results must be written into page files in a job result directory associated with a search job identifier (job_id). The `search_start` command blocks until the first two page files are written to disk, then returns the job_id and a URL reference to page 1.
+Search result generation must not return one large unbounded response. Results must be grouped into result blocks written into a job result directory associated with a search job identifier (job_id). A result block is a bounded slice of the raw search output whose serialized size must not exceed the configured maximum block size in bytes. Block boundaries must fall between whole search results: a block always contains an integer number of complete results and never splits a single result across blocks. If a single result on its own exceeds the configured maximum block size, that result forms one block by itself and the size limit is exceeded for that block, because result integrity takes precedence over the size limit. The `search_start` command blocks until the directory index and the first result block are written to disk, then returns the job_id and a reference to the job result endpoint.
 
-Each page file is a JSON object containing a bounded list of result records, a `next` field, and a `done` field. The `next` field holds the URL of the next page when that page has been written to disk, or null when the next page is not yet available. The `done` field is false for all intermediate pages and must be true only on the last page of a completed or terminated job. When a new page N is written to disk, page N-1 must be updated to set its `next` field to the URL of page N. Both the initial page write and the subsequent `next` field update must be performed atomically using a temporary file and rename.
+The job result directory must contain a directory index that lists every result block currently written for the job, in order, and an explicit completeness marker. The completeness marker must distinguish two states: search still running, meaning more blocks may appear, and search finished, meaning the listed blocks are final and no further blocks will be added. The index is the single mutable artifact of the job: when a new block is written, only the index is updated to append the new block entry, while previously written blocks remain immutable. Reading the endpoint with the job_id returns this index, giving the client immediate visibility of all available blocks and the current completeness state in one read.
 
-After `search_start` returns, remaining result generation continues in the background. The client follows the `next` chain to retrieve subsequent pages. When the client reaches a page where `next` is null and `done` is false, the job is still running and that page is the last written page so far; the client must poll by re-requesting the same page URL until `next` becomes non-null or `done` becomes true.
+After `search_start` returns, remaining result generation continues in the background. The client retrieves any block directly by its position number against the job result endpoint with the same job_id; random access to any already-listed block is allowed and no sequential traversal is required. To follow progress, the client re-reads the index: while the completeness marker reports search still running, new block entries may continue to appear and the client polls the index until either a needed block is listed or the marker reports search finished. When the marker reports search finished, the set of blocks listed in the index is final.
 
-Tree-query results must participate in the same paging mechanism as other search sources. XPath-like search over a large set of files may produce early pages while the remaining tree validation and node filtering continue in the background.
+Tree-query results must participate in the same paging mechanism as other search sources. XPath-like search over a large set of files may produce early blocks while the remaining tree validation and node filtering continue in the background.
 
 ## 4. Search Response Lifetime and Configuration
 
-Each temporary response directory must contain a service metadata file recording the last access time. Reading any page, status, or manifest for that search must update this last access time.
+Each job result directory must contain a service metadata file recording the last access time. Reading the directory index, any result block, or the search status for that job must update this last access time.
 
-The system configuration must include a search response TTL setting that controls how long temporary response directories live after last access. A code constant must provide the default TTL value. The configuration generator must include this setting, and the configuration validator must reject missing, invalid, non-integer, zero, negative, or out-of-range TTL values according to the declared policy.
+The system configuration must include two related settings. The first is a search response TTL setting that controls how long inactive job result directories live after last access. The second is a maximum result block size setting, expressed in bytes, that bounds the serialized size of a single result block. Each setting must have a code constant providing its default value. The configuration generator must emit both settings, and the configuration validator must reject missing, invalid, non-integer, zero, negative, or out-of-range values for each according to the declared policy. The maximum result block size is distinct from the existing per-result preview size limit: the preview limit bounds one rendered result, while the block size bounds a group of whole results assembled into one block.
 
 ## 5. Universal Tree Representation
 
@@ -70,22 +70,22 @@ fs_grep must support two explicit operating modes. The first mode is classic lin
 
 ## 9. Search Status, Timeout, and Cancellation
 
-Search status must expose whether generation is running, completed, failed, cancelled, or timed out. It must also expose the current phase, such as indexed search, dynamic file discovery, tree validation, tree reconstruction, XPath filtering, page writing, or completion.
+Search status must expose whether generation is running, completed, failed, cancelled, or timed out. It must also expose the current phase, such as indexed search, dynamic file discovery, tree validation, tree reconstruction, XPath filtering, block writing, or completion.
 
-Hard timeout and cancellation rules must apply to dynamic scanning, tree reconstruction, XPath filtering, structural enrichment, and page generation. A timed-out dynamic or structural phase must not contribute partial invalid structural evidence.
+Hard timeout and cancellation rules must apply to dynamic scanning, tree reconstruction, XPath filtering, structural enrichment, and block generation. A timed-out dynamic or structural phase must not contribute partial invalid structural evidence.
 
 
 
 ## 10. Job Directory, Process Identity, and Cleanup
 
-When a model or client starts a search, the server must immediately create a dedicated job result directory before search execution begins. The directory stores the job manifest, page files, and service metadata for that search job.
+When a model or client starts a search, the server must immediately create a dedicated job result directory before search execution begins. The directory stores the job manifest, the directory index, result blocks, and service metadata for that search job.
 
-Job manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
+Job manifest data must include progress metrics derived from the running search context, such as produced result count, written block count, scanned file count, warning count, and error count.
 
 
-Search result records are written progressively into page files by the running search process. Clients retrieve ready pages through ordinary HTTP requests to the job result endpoint; the implementation must not require streaming transport for normal result inspection.
+Search result records are written progressively into result blocks by the running search process. Clients retrieve ready blocks through ordinary HTTP requests to the job result endpoint; the implementation must not require streaming transport for normal result inspection.
 
-Every successful HTTP access to a job page, status, or manifest must refresh the job last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
+Every successful HTTP access to the directory index, a result block, or the search status must refresh the job last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
 
 The job manifest must include the identity of the main server process that owns the job. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the job is dead or orphaned.
 

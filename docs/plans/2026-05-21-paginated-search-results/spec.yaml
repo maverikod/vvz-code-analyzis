@@ -6,126 +6,142 @@ meta:
   source_spec: docs/plans/2026-05-21-paginated-search-results/source_spec.md
 concepts:
 - concept_id: C-001
-  name: SearchSession
   definition: Logical execution context for one search request that owns result 
-    pages, status, metrics, lifetime metadata, and cleanup state.
+    blocks, the directory index, status, metrics, lifetime metadata, and cleanup
+    state.
+  name: SearchSession
   properties:
   - Created immediately when a model or client starts a search request.
-  - Has a unique search_id used for HTTP access to pages and status.
-  - Owns a dedicated session directory for page files and service metadata.
+  - Has a unique search_id used for HTTP access to the directory index, result 
+    blocks, and status.
+  - Owns a dedicated session directory for result blocks, the directory index, 
+    and service metadata.
   - Tracks running, completed, failed, cancelled, timed_out, dead, expired, and 
     closed states.
   source_ranges:
-  - start: 5
-    end: 7
-  - start: 21
-    end: 27
-  - start: 31
-    end: 33
-  - start: 73
-    end: 75
-  - start: 80
-    end: 95
-  - start: 97
-    end: 107
+  - end: 7
+    start: 5
+  - end: 27
+    start: 21
+  - end: 33
+    start: 31
+  - end: 75
+    start: 73
+  - end: 95
+    start: 80
+  - end: 107
+    start: 97
 - concept_id: C-002
-  name: SearchSessionDirectory
   definition: Filesystem directory created for a SearchSession to store result 
-    page files, manifest data, and service metadata.
+    blocks, the directory index, manifest data, and service metadata.
+  name: SearchSessionDirectory
   properties:
   - Created before search execution begins.
-  - Contains page files written by the search worker.
+  - Contains immutable result blocks written by the search worker.
+  - Contains the directory index listing blocks and completeness state.
   - Contains metadata that records last access time and session progress.
   - Is removed by background cleanup when the session expires or is dead.
   source_ranges:
-  - start: 80
-    end: 80
+  - end: 81
+    start: 81
 - concept_id: C-003
-  name: SearchSessionManifest
   definition: Machine-readable state file inside a SearchSessionDirectory 
-    describing request context, process identity, heartbeat, metrics, page 
+    describing request context, process identity, heartbeat, metrics, block 
     readiness, warnings, and errors.
+  name: SearchSessionManifest
   properties:
   - Stores created_at, last_access_at, heartbeat_at, status, and phase.
   - Stores request parameters and metrics inferred from the search context.
-  - Stores page readiness information for HTTP readers.
+  - Stores block readiness information for HTTP readers.
   - Stores ServerProcessIdentity for dead-session detection.
   - Must be updated safely while the search worker, HTTP readers, and cleaner 
     may operate concurrently.
   source_ranges:
-  - start: 80
-    end: 95
+  - end: 83
+    start: 83
+  - end: 90
+    start: 90
+  - end: 93
+    start: 93
 - concept_id: C-004
-  name: SearchPageFile
-  definition: Result page file written inside a SearchSessionDirectory. Contains
-    a bounded list of result records, a next field (URL of the next page or 
-    null), and a done field (true only on the last page). The next field is 
-    updated once atomically when the subsequent page is written; all other 
-    content is final after initial write.
+  name: SearchResultBlock
+  definition: Immutable result block written inside a SearchSessionDirectory. 
+    Contains a bounded slice of the raw search output holding an integer number 
+    of complete search results. Its serialized size must not exceed the 
+    configured maximum block size in bytes, except when a single result is 
+    itself larger than the limit, in which case the block contains that one 
+    result and the limit is exceeded. A block is written once and never modified
+    afterward; navigation between blocks is by position number via the directory
+    index, not by an embedded link.
   properties:
-  - Contains a bounded list of normalized search result records.
-  - Carries a next field pointing to the URL of the subsequent page, or null 
-    when no subsequent page has been written yet.
-  - Carries a done field that is false on all intermediate pages and true only 
-    on the last page of a completed or terminated job.
-  - The next field is updated exactly once, atomically, when the subsequent page
-    is written to disk.
-  - All content except the next field is final after initial write.
+  - Contains an integer number of complete, non-split search results.
+  - Serialized size is bounded by the configured maximum block size in bytes.
+  - When a single result exceeds the limit, the block holds that one result and 
+    the size limit is exceeded, because result integrity takes precedence.
+  - Is immutable after its initial write; no field is updated later.
   - Becomes visible to readers only after it is completely written via atomic 
     rename.
+  - Is addressed by its position number through the directory index.
   source_ranges:
   - start: 21
     end: 27
-  - start: 80
-    end: 85
-  - start: 89
-    end: 89
+  - start: 31
+    end: 33
 - concept_id: C-005
+  definition: Simple HTTP retrieval mechanism for reading a search job's 
+    directory index, individual result blocks by position number, and search 
+    status. Does not require streaming transport.
   name: HTTPResultAccess
-  definition: Simple HTTP retrieval mechanism for reading SearchSession pages, 
-    status, and manifest-backed metadata.
   properties:
-  - Allows clients and models to request ready result pages without streaming 
-    transport.
-  - Updates last_access_at on every successful page, status, or manifest access.
-  - Returns a page-not-ready response when the session is running but the 
-    requested page has not been published yet.
+  - Allows clients and models to request the directory index and ready result 
+    blocks without streaming transport.
+  - Retrieves any result block directly by its position number with the job_id.
+  - Updates last_access_at on every successful index, block, or status access.
+  - Returns a block-not-ready response when the search is running but the 
+    requested block has not been published yet.
   source_ranges:
-  - start: 85
-    end: 89
+  - end: 27
+    start: 23
+  - end: 31
+    start: 31
 - concept_id: C-006
-  name: LastAccessTimestamp
   definition: Timestamp recorded for a SearchSession and refreshed whenever a 
-    client reads any page, status, or manifest for that session.
+    client reads the directory index, a result block, or the search status for 
+    that session.
+  name: LastAccessTimestamp
   properties:
   - Drives TTL-based cleanup of session directories.
   - Must be refreshed by HTTPResultAccess.
   - Must not be confused with heartbeat_at, which indicates writer liveness.
   source_ranges:
-  - start: 31
-    end: 33
-  - start: 87
-    end: 87
+  - end: 33
+    start: 31
+  - end: 88
+    start: 88
 - concept_id: C-007
   name: SessionTTLPolicy
-  definition: Configuration policy controlling how long inactive 
-    SearchSessionDirectory data remains after last access.
+  definition: 'Configuration policy covering two related search response settings:
+    the TTL controlling how long inactive SearchSessionDirectory data remains after
+    last access, and the maximum result block size in bytes that bounds a single SearchResultBlock.
+    The maximum block size is distinct from the existing per-result preview size limit.'
   properties:
-  - Has a default code constant.
-  - Is emitted by the configuration generator.
-  - Is validated by the configuration validator.
+  - Defines a search response TTL and a maximum result block size in bytes.
+  - Each setting has a default code constant.
+  - Both settings are emitted by the configuration generator.
+  - Both settings are checked by the configuration validator.
   - Rejects missing, invalid, non-integer, zero, negative, or out-of-range 
-    values according to policy.
+    values for each setting according to policy.
+  - The maximum block size is separate from the per-result preview size limit.
   source_ranges:
+  - start: 31
+    end: 33
   - start: 33
     end: 33
-  - start: 87
-    end: 95
 - concept_id: C-008
-  name: ServerProcessIdentity
   definition: Identity of the main server process that created or owns a 
     SearchSession, used to detect sessions whose owning process is gone or whose
     PID was reused.
+  name: ServerProcessIdentity
   properties:
   - Includes main_pid.
   - Includes process_start_time to detect PID reuse.
@@ -133,34 +149,35 @@ concepts:
   - A missing process or mismatched process_start_time makes the session dead or
     orphaned.
   source_ranges:
-  - start: 91
-    end: 91
+  - end: 90
+    start: 90
 - concept_id: C-009
-  name: SessionHeartbeat
   definition: Periodic liveness timestamp written by the search execution path 
     while a SearchSession is running.
+  name: SessionHeartbeat
   properties:
   - Stored as heartbeat_at in SearchSessionManifest.
-  - Distinguishes a live search with no ready pages from a stuck or dead worker.
+  - Distinguishes a live search with no ready blocks from a stuck or dead 
+    worker.
   - Older-than-hard-timeout heartbeat marks a running session as timed_out or 
     orphaned.
   source_ranges:
-  - start: 93
-    end: 93
+  - end: 93
+    start: 93
 - concept_id: C-010
-  name: DeadSessionDetection
   definition: Rule set for deciding that a SearchSession is dead or orphaned 
     based on server process identity and heartbeat state.
+  name: DeadSessionDetection
   properties:
   - Treats missing main_pid as dead.
   - Treats process_start_time mismatch as dead because PID reuse is possible.
   - Treats stale heartbeat beyond hard timeout as timed_out or orphaned.
   - May be applied by status reads and by the background cleaner.
   source_ranges:
-  - start: 91
-    end: 93
-  - start: 95
-    end: 95
+  - end: 93
+    start: 90
+  - end: 95
+    start: 95
 - concept_id: C-011
   name: BackgroundSessionCleaner
   definition: Background maintenance process that removes expired, closed, or 
@@ -292,20 +309,20 @@ concepts:
   - start: 69
     end: 69
 - concept_id: C-020
-  name: SearchStatus
   definition: SearchSession state and phase model exposed to clients while 
     search generation proceeds or terminates.
+  name: SearchStatus
   properties:
   - Exposes running, completed, failed, cancelled, timed_out, and dead states.
   - Exposes current phase such as indexed search, dynamic file discovery, tree 
-    validation, tree reconstruction, XPath filtering, page writing, or 
+    validation, tree reconstruction, XPath filtering, block writing, or 
     completion.
-  - Distinguishes page-not-ready from whole-search failure.
+  - Distinguishes block-not-ready from whole-search failure.
   source_ranges:
-  - start: 25
-    end: 27
-  - start: 73
-    end: 75
+  - end: 27
+    start: 25
+  - end: 75
+    start: 73
 - concept_id: C-021
   definition: A currently working search, preview, queue, or status command 
     whose existing public behavior must remain valid during the migration.
@@ -349,13 +366,13 @@ concepts:
     paginated/session-backed behavior without changing default command behavior.
   name: OptionalPaginationParameters
   properties:
-  - May include paginated, page_size, cursor, search_id, include_search_id, or 
-    HTTP page references.
+  - May include fields such as paginated, job_id, include_job_id, a block 
+    position number, or a job result endpoint reference.
   - Must not be required for existing non-paginated callers.
   - Must be documented in command schemas and metadata when exposed.
   source_ranges:
-  - start: 97
-    end: 107
+  - end: 107
+    start: 97
 - concept_id: C-025
   definition: Inventory that separates behavior already present in the codebase 
     from behavior introduced by this plan.
@@ -369,45 +386,42 @@ concepts:
   - start: 97
     end: 107
 - concept_id: C-026
-  name: AtomicPagePublication
+  name: AtomicBlockPublication
   definition: Publication protocol that prevents clients and HTTP readers from 
-    observing partially written page content.
+    observing partially written content. Result blocks and the directory index 
+    are each written to a temporary path and made visible only by atomic rename 
+    after the content is complete.
   properties:
-  - Writes page content through a temporary or unpublished intermediate state.
-  - Publishes a page only after the page content is complete.
-  - Makes finalized immutable page files visible to HTTP readers.
-  - Prevents readers from consuming partially written page content.
+  - Writes block and index content through a temporary intermediate path.
+  - Publishes a block or index update only after the content is complete.
+  - Makes finalized immutable result blocks visible to HTTP readers.
+  - Updates the directory index atomically so readers never see a partially 
+    appended index.
+  - Prevents readers from consuming partially written content.
   source_ranges:
-  - start: 89
-    end: 89
-- concept_id: C-026
-  definition: Protocol ensuring that page file writes and next-field updates are
-    never observed in a partially written state by concurrent readers. 
-    Implemented via temporary file and atomic rename.
-  name: AtomicPagePublication
-  properties:
-  - 'Initial page write: content written to a temp file, then renamed to the final
-    path.'
-  - 'Next-field update: updated content written to a temp file, then renamed over
-    the existing page file.'
-  - Readers never observe a partially written page or a partially updated next 
-    field.
-  source_ranges:
-  - end: 85
-    start: 80
+  - end: 27
+    start: 23
 - concept_id: C-027
-  definition: Opaque string token that identifies a position within a paginated 
-    search job result set. Stable for the lifetime of the job; must not be 
-    parsed or constructed by callers.
-  name: Cursor
+  definition: 'Client-facing directory index of a search job, read through the job
+    result endpoint with the job_id. Lists every result block currently written for
+    the job, in order by position number, and carries an explicit completeness marker
+    distinguishing search still running from search finished. It is the single mutable
+    artifact of the job: appended when a new block is published and otherwise stable.
+    One read gives the client all available blocks and the current completeness state.'
+  name: SearchResultIndex
   properties:
-  - Returned by search_start and embedded in page URLs.
-  - Passed by clients to search_get_page to retrieve a specific page.
-  - 'Opaque: clients must treat it as an uninterpreted string.'
-  - 'Stable: the same cursor always refers to the same page within a job.'
+  - Lists all currently written result blocks in order by position number.
+  - 'Carries a completeness marker with two states: search still running and search
+    finished.'
+  - Is the only mutable artifact of the job; result blocks themselves are 
+    immutable.
+  - Is appended atomically when a new block is published.
+  - Reports a final, closed block set once the completeness marker is search 
+    finished.
+  - Is retrieved by job_id through the job result endpoint in a single read.
   source_ranges:
-  - end: 28
-    start: 19
+  - end: 27
+    start: 23
 relations:
 - from_concept: C-001
   to_concept: C-002
@@ -428,25 +442,26 @@ relations:
 - from_concept: C-002
   to_concept: C-004
   type: owns
-  description: SearchSessionDirectory owns immutable page files.
+  description: SearchSessionDirectory owns immutable result blocks.
   source_ranges:
-  - start: 21
-    end: 21
+  - end: 27
+    start: 23
 - from_concept: C-005
   to_concept: C-004
   type: consumes
-  description: HTTPResultAccess reads published page files.
+  description: HTTPResultAccess reads published result blocks by position 
+    number.
   source_ranges:
-  - start: 25
-    end: 31
+  - end: 27
+    start: 25
 - from_concept: C-005
   to_concept: C-006
   type: produces
-  description: HTTPResultAccess refreshes last access timestamp on page, status,
-    or manifest reads.
+  description: HTTPResultAccess refreshes last access timestamp on index, block,
+    or status reads.
   source_ranges:
-  - start: 31
-    end: 31
+  - end: 31
+    start: 31
 - from_concept: C-007
   to_concept: C-006
   type: uses
@@ -620,16 +635,40 @@ relations:
 - from_concept: C-004
   to_concept: C-026
   type: depends_on
-  description: SearchPageFile publication depends on atomic page publication so 
-    readers only see finalized immutable page files.
+  description: Result block publication depends on atomic block publication so 
+    readers only see finalized immutable blocks.
   source_ranges:
-  - start: 89
-    end: 89
+  - end: 27
+    start: 23
 - from_concept: C-005
   to_concept: C-026
   type: depends_on
-  description: HTTPResultAccess depends on atomic page publication to avoid 
-    reading partial page content.
+  description: HTTPResultAccess depends on atomic block publication to avoid 
+    reading partial block or index content.
   source_ranges:
-  - start: 89
-    end: 89
+  - end: 27
+    start: 23
+- description: SearchSessionDirectory owns the directory index that lists its 
+    result blocks and completeness state.
+  from_concept: C-002
+  source_ranges:
+  - end: 27
+    start: 23
+  to_concept: C-027
+  type: owns
+- description: HTTPResultAccess reads the directory index to discover available 
+    blocks and completeness state.
+  from_concept: C-005
+  source_ranges:
+  - end: 27
+    start: 25
+  to_concept: C-027
+  type: consumes
+- description: The directory index depends on atomic block publication so 
+    readers never observe a partially appended index.
+  from_concept: C-027
+  source_ranges:
+  - end: 27
+    start: 23
+  to_concept: C-026
+  type: depends_on

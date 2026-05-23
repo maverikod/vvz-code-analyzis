@@ -27,7 +27,13 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "Start an edit session for one project file.\n\n"
+            "Start an in-memory edit session for one project file on disk.\n\n"
+            "This session_id is returned by universal_file_open and used by "
+            "universal_file_preview/edit/write/close. It is **not** the same as "
+            "client session commands (session_create, session_open_file, …), which "
+            "use persisted DB locks on file_id and are unrelated to this workflow.\n\n"
+            "File identity: project_id + project-relative file_path only (no file_id).\n"
+            "The file is resolved on disk under the project root; DB indexing is not required.\n\n"
             "universal_file_open is step 1 in the universal file edit workflow:\n"
             "  1. universal_file_open  — open (or create) a file; get session_id\n"
             "  2. universal_file_preview — obtain node_ref values from the current draft\n"
@@ -80,10 +86,12 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "initial_content": {
                 "description": (
                     "Initial content for new files (create=True only). "
-                    "For .py: required; CST tree is built after write. "
-                    "For JSON/YAML: optional raw text written as-is (invalid syntax "
-                    "opens in text mode with is_invalid). "
-                    "Ignored for other formats."
+                    "For .py: required; written to disk, then CST tree is built. "
+                    "For .json: written as-is when non-empty, else `{}\\n`. "
+                    "For .yaml/.yml: written as-is when non-empty (with YAML quoting "
+                    "fixups), else `{}\\n`. Invalid JSON/YAML opens in text fallback "
+                    "with is_invalid. "
+                    "For other text extensions: written as-is when non-empty, else empty file."
                 ),
                 "type": "string",
                 "required": False,
@@ -96,7 +104,7 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "session_id": "UUID for subsequent edit/write/close calls.",
                     "available_operations": "List of supported operation types: insert, delete, replace.",
                     "created": "True when create=True and the file did not exist (optional field).",
-                    "fallback_reason": "PARSE_ERROR when structured parse failed and line-based fallback was used (optional).",
+                    "fallback_reason": "Parse error message when structured parse failed and line-based fallback was used (optional).",
                     "is_invalid": "True when the file has syntax errors and the session opened in line-based fallback (optional).",
                     "warning": "Human-readable explanation when is_invalid is True (optional).",
                 },
@@ -138,9 +146,18 @@ def get_universal_file_open_metadata(cls: Type[Any]) -> Dict[str, Any]:
         ],
         "error_cases": {
             "PARSE_ERROR": {
-                "description": "File not found, locked by another session, or cleanup failed. "
-                "For JSON/YAML parse errors, a text-mode fallback is used instead of this error.",
-                "solution": "Check file_path exists, close any open sessions on the file, and retry.",
+                "description": (
+                    "File not found (create=False), locked by another universal_file_open "
+                    "session, cleanup failed, or unrecoverable parse error. "
+                    "Note: open returns PARSE_ERROR for lock conflicts; "
+                    "universal_file_preview returns FILE_LOCKED for the same situation. "
+                    "For .py/.json/.yaml parse errors at open, text-mode fallback is used "
+                    "instead when possible (is_invalid in success response)."
+                ),
+                "solution": (
+                    "Check file_path exists or pass create=True, close the owning "
+                    "universal_file_close session, and retry."
+                ),
             },
             "UNKNOWN_FORMAT": {
                 "description": "File extension not supported by any handler.",

@@ -1,0 +1,39 @@
+step_id: G-008
+name: MCP Search Job Commands
+description: "Implement the MCP command surface for paginated search jobs. Exposes
+  search_start, search_get_page, search_get_status, search_cancel, and search_close
+  as registered MCP commands with full parameter schemas, metadata, error codes, and
+  routing to the job infrastructure layer. search_start blocks until the first two
+  page files are written, then returns job_id and page_url. All other commands operate
+  on an existing job_id. Commands delegate to SearchJob infrastructure (G-001-si)
+  and page publication layer (G-003) without duplicating their logic.\n"
+concepts:
+- C-001
+- C-005
+- C-020
+- C-021
+- C-022
+relations:
+- from_concept: C-001
+  to_concept: C-005
+  type: produces
+- from_concept: C-022
+  to_concept: C-001
+  type: uses
+- from_concept: C-020
+  to_concept: C-001
+  type: describes
+source_ranges:
+- start: 19
+  end: 28
+- start: 45
+  end: 50
+depends_on:
+- G-001-session-infrastructure
+- G-002-session-lifecycle
+- G-003-page-publication-and-access
+tactical_steps:
+- T-001
+- T-002
+- T-003
+status: draft

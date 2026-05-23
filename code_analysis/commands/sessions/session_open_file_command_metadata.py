@@ -71,8 +71,8 @@ def get_session_open_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "file_id": EXAMPLE_FILE_ID,
                 },
                 "explanation": (
-                    "Call before universal_file_edit or other writes when session "
-                    "locks are enforced."
+                    "Acquires a logical DB lock for coordination and session_delete guards. "
+                    "Independent of universal_file_open edit sessions."
                 ),
             },
         ],

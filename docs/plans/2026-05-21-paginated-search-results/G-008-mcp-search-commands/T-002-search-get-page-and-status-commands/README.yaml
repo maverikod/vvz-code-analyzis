@@ -1,0 +1,35 @@
+step_id: T-002
+parent_global_step: G-008
+name: search_get_page and search_get_status commands
+description: "Implement search_get_page and search_get_status MCP commands. search_get_page
+  accepts job_id and page number; reads the page file from the job directory via HTTPResultAccess
+  and returns its content (results, next, done). Does not proxy HTTP — reads the file
+  directly and returns the payload inline in the MCP response. search_get_status accepts
+  job_id; reads the job manifest and returns current status, phase, progress counters,
+  and heartbeat age. Both commands register schemas and error codes (JOB_NOT_FOUND,
+  PAGE_NOT_READY, JOB_DEAD).\n"
+concepts:
+- C-001
+- C-004
+- C-005
+- C-020
+inputs:
+- name: job_directory
+  type: fs_path
+  description: Job result directory from G-001-si/T-001.
+- name: page_file_model
+  type: schema
+  description: Page file JSON schema from G-003/T-002.
+- name: job_manifest
+  type: schema
+  description: Job manifest schema from G-001-si/T-002.
+outputs:
+- name: search_get_page_command
+  type: mcp_command
+  description: Registered search_get_page command module.
+- name: search_get_status_command
+  type: mcp_command
+  description: Registered search_get_status command module.
+atomic_steps:
+- A-001
+status: draft

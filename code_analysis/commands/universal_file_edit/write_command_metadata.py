@@ -40,14 +40,22 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  write_mode=commit: backup original, atomic write from draft, delete lockfile.\n"
             "  Always call preview first, inspect the diff, then call commit.\n\n"
             "Python (.py) — legacy two-phase when write_mode is omitted:\n"
-            "  First call: diff + lockfile, phase=preview.\n"
+            "  First call: diff + lockfile, phase=preview (response omits write_mode field).\n"
             "  Second call (lockfile matches PID+session): commit, phase=committed.\n"
-            "  Explicit write_mode=preview or commit overrides the lockfile phase.\n\n"
+            "  Explicit write_mode=preview: diff only, no lockfile side effects.\n"
+            "  Explicit write_mode=commit: commits immediately (preview step may be skipped).\n\n"
+            "Invalid-on-open sessions (is_invalid): commit re-parses draft; blocked with "
+            "FORMAT_INVALID_ON_OPEN until syntax is fixed; successful commit may restore "
+            "structural editing (structural_editing_restored in response).\n\n"
+            "Cancel uncommitted changes: call universal_file_close without commit.\n\n"
             "A backup of the original file is always created before the commit write."
         ),
         "parameters": {
             "project_id": {
-                "description": "Project UUID. Use list_projects to discover valid values.",
+                "description": (
+                    "Project UUID. Required by schema. Used on tree-temp commit for "
+                    "project root resolution; sidecar/text commit derive root from session paths."
+                ),
                 "type": "string",
                 "required": True,
                 "examples": ["8772a086-688d-4198-a0c4-f03817cc0e6c"],
@@ -140,15 +148,22 @@ def get_universal_file_write_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Backup or atomic write failed.",
                 "solution": "Check disk space and permissions under the project root.",
             },
-            "SOURCE_CHANGED": {
-                "description": "File on disk changed since the session was opened (tree-temp).",
-                "solution": "Close the session, re-open, re-apply edits, and retry.",
+            "FORMAT_INVALID_ON_OPEN": {
+                "description": (
+                    "Commit blocked for is_invalid session: draft still has parse errors "
+                    "against the original structured format (.py/.json/.yaml)."
+                ),
+                "solution": (
+                    "Fix syntax in the draft via universal_file_edit, preview again, then retry commit."
+                ),
             },
         },
         "best_practices": [
-            "For JSON/YAML and text: always call write_mode=preview first, then write_mode=commit.",
-            "For Python without write_mode: first call is preview, second is commit.",
-            "Repeated write_mode=preview must never commit; phase must match the action.",
+            "For JSON/YAML and text: call write_mode=preview first, inspect diff, then write_mode=commit.",
+            "For Python without write_mode: first call is preview (sets lockfile), second is commit.",
+            "For Python, explicit write_mode=commit skips the lockfile preview step — prefer preview first.",
+            "To discard changes without writing, call universal_file_close (does not commit).",
+            "Repeated write_mode=preview never commits.",
             "After a successful commit, call format_code and lint_code on the file path.",
             "If the server restarts between preview and commit, the lockfile is stale; re-open the session.",
         ],

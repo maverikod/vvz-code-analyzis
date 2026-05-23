@@ -1,0 +1,29 @@
+step_id: T-003
+parent_global_step: G-008
+name: search_cancel and search_close commands
+description: "Implement search_cancel and search_close MCP commands. search_cancel
+  accepts job_id; signals the background worker to stop generation, writes final done=true
+  page with cancellation marker, and transitions job status to cancelled. search_close
+  accepts job_id; marks the job closed and eligible for immediate TTL cleanup (does
+  not wait for TTL expiry). Both commands are idempotent: calling on an already-cancelled
+  or closed job returns success without error. Register schemas and error codes (JOB_NOT_FOUND).\n"
+concepts:
+- C-001
+- C-020
+inputs:
+- name: search_job_infrastructure
+  type: module
+  description: Job status transition and cancellation signal from G-002-sl.
+- name: background_session_cleaner
+  type: module
+  description: Cleaner notification interface from G-007/T-003.
+outputs:
+- name: search_cancel_command
+  type: mcp_command
+  description: Registered search_cancel command module.
+- name: search_close_command
+  type: mcp_command
+  description: Registered search_close command module.
+atomic_steps:
+- A-001
+status: draft

@@ -145,8 +145,20 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "project_id": {"type": "string"},
-                "file_path": {"type": "string"},
+                "project_id": {
+                    "type": "string",
+                    "description": (
+                        "Project UUID. Resolves the project root on disk. "
+                        "Use list_projects to discover valid values."
+                    ),
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Project-relative path to the file. Literal path; no globs. "
+                        "Not interchangeable with file_id (DB row id)."
+                    ),
+                },
                 "create": {
                     "type": "boolean",
                     "default": False,
@@ -213,7 +225,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             project_id: Project UUID.
             file_path: Path relative to project root.
             create: When True, create the file if it does not exist.
-            initial_content: Initial source for new .py files (create=True).
+            initial_content: Initial source when create=True (.py required; also used
+                for .json/.yaml and other text extensions per suffix rules).
             **kwargs: Unused; accepted for adapter compatibility.
 
         Returns:

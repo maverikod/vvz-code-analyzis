@@ -77,14 +77,19 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  line-targeted operation, re-run universal_file_preview with the same session_id\n"
             "  (reads the draft) or pass anchor_head/anchor_tail from the intended target lines.\n"
             "  Multiple line-targeted operations in one batch are sorted bottom-up automatically.\n\n"
+            "Format routing: edit operations are routed by session.format_group from open "
+            "(sidecar, tree-temp, or text). In sidecar/tree-temp without is_invalid fallback, "
+            "only node-based operations apply — line ranges are rejected. After parse-error "
+            "fallback (is_invalid=True), format_group becomes text and line-based edits are used "
+            "until a successful commit restores structural editing.\n\n"
             "The original file on disk is never touched by this command. "
             "Changes reach disk only after universal_file_write (commit phase)."
         ),
         "parameters": {
             "project_id": {
                 "description": (
-                    "Project UUID. Must match the project_id used in universal_file_open. "
-                    "Use list_projects to discover valid values."
+                    "Project UUID. Required by schema for MCP consistency; execute resolves "
+                    "the session by session_id only and does not re-validate project_id."
                 ),
                 "type": "string",
                 "required": True,
@@ -290,10 +295,27 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "message": "Ancestor-descendant pair in batch",
                 "solution": "Split into separate calls or target only the outermost node.",
             },
-            "INVALID_ACTION": {
-                "description": "Unknown value in the type field.",
-                "message": "Invalid action: {action}",
-                "solution": "Use one of: replace, insert, delete.",
+            "INVALID_OPERATION": {
+                "description": (
+                    "Operation rejected: unknown type value, unknown node_id/json_pointer, "
+                    "invalid sidecar insert shape, or tree-temp path not found."
+                ),
+                "message": "No operations built from edit payload",
+                "solution": (
+                    "Verify node_id/json_pointer with universal_file_preview. "
+                    "Use type: replace | insert | delete. "
+                    "For text: check start_line/end_line are within draft bounds."
+                ),
+            },
+            "STALE_NODE_ID": {
+                "description": "Sidecar only: node_id UUID is not present in the current CST tree.",
+                "message": "Stale or unknown node_id",
+                "solution": "Re-run universal_file_preview with session_id and use a fresh node_ref.",
+            },
+            "UNKNOWN_NODE_REF": {
+                "description": "Text only: node_ref slug or index not found in the current draft.",
+                "message": "Unknown node_ref",
+                "solution": "Re-run universal_file_preview with session_id to refresh node_ref values.",
             },
             "LINE_OUT_OF_RANGE": {
                 "description": "Text only: start_line/end_line are outside the current draft bounds.",
@@ -311,15 +333,6 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "The draft shifted since line numbers were collected. Re-run "
                     "universal_file_preview with session_id and retry with fresh line numbers "
                     "or updated anchors."
-                ),
-            },
-            "INVALID_OPERATION": {
-                "description": "Operation rejected: unknown node_id, out-of-range lines, or unknown JSON Pointer.",
-                "message": "No operations built from edit payload",
-                "solution": (
-                    "Verify node_id with universal_file_preview. "
-                    "For text: check start_line/end_line are within file bounds. "
-                    "For tree-temp: check json_pointer exists in the document."
                 ),
             },
             "INVALID_SESSION": {
@@ -348,7 +361,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "For JSON array sibling insert: before_node_id or after_node_id (mutually exclusive with index).",
             "For JSON object sibling insert: before_key or after_key to preserve key order.",
             "For JSON/YAML (tree-temp): pass node_ref from preview into json_pointer, not node_id.",
-            "For text: convert zero-based node_ref to 1-based start_line = int(node_ref) + 1.",
+            "For .md: pass slug node_ref from preview; for .txt/.rst/.adoc convert zero-based node_ref to 1-based start_line.",
             "For text: never reuse line numbers from fulltext_search or an earlier preview after universal_file_edit — re-run universal_file_preview with session_id before each line-targeted edit.",
             "For text: pass anchor_head and anchor_tail together to verify the target range before replace/delete.",
             "For text append: use position='last' without start_line — no need to know the line count.",

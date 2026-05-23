@@ -28,6 +28,8 @@ def get_universal_file_close_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "email": cls.email,
         "detailed_description": (
             "End an edit session and clean up all session artefacts.\n\n"
+            "Releases the in-memory session from universal_file_open. This is unrelated to "
+            "client session commands (session_create, session_close_file, …).\n\n"
             "universal_file_close is the final step in the universal file edit workflow:\n"
             "  1. universal_file_open  — open a file, get session_id\n"
             "  2. universal_file_preview — obtain node_ref values\n"
@@ -52,7 +54,10 @@ def get_universal_file_close_metadata(cls: Type[Any]) -> Dict[str, Any]:
         ),
         "parameters": {
             "project_id": {
-                "description": "Project UUID. Use list_projects to discover valid values.",
+                "description": (
+                    "Project UUID. Required by schema for MCP consistency; execute uses "
+                    "only session_id — paths and format_group come from the EditSession record."
+                ),
                 "type": "string",
                 "required": True,
                 "examples": ["8772a086-688d-4198-a0c4-f03817cc0e6c"],
@@ -105,5 +110,6 @@ def get_universal_file_close_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Call close even when write failed — it cleans up partial artefacts.",
             "Unclosed sessions are lost on server restart but lockfiles may remain on disk; re-opening the file clears them.",
             "Do not call close before committing if you still need to inspect the diff.",
+            "Calling close without commit discards uncommitted draft edits (cancel workflow).",
         ],
     }

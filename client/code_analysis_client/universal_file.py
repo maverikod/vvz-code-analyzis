@@ -20,7 +20,11 @@ if TYPE_CHECKING:
 
 
 class UniversalFileClient:
-    """Edit-session workflow for project files (open → edit → write → close)."""
+    """Edit-session workflow for project files (open → edit → write → close).
+
+    Uses ``session_id`` from ``universal_file_open`` only. Not related to
+    client ``session_*`` commands (``session_create``, ``session_open_file``, …).
+    """
 
     __slots__ = ("_client",)
 
@@ -35,7 +39,10 @@ class UniversalFileClient:
         create: bool = False,
         initial_content: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Start an edit session (``universal_file_open``)."""
+        """Start an edit session (``universal_file_open``).
+
+        Identifies the file by ``project_id`` + ``file_path`` (not ``file_id``).
+        """
         params: Dict[str, Any] = {
             "project_id": project_id,
             "file_path": file_path,
@@ -72,7 +79,12 @@ class UniversalFileClient:
         *,
         write_mode: str = "commit",
     ) -> Dict[str, Any]:
-        """Persist or preview draft (``universal_file_write``)."""
+        """Persist or preview draft (``universal_file_write``).
+
+        Default ``write_mode`` is ``commit`` in this client wrapper. The server
+        default when the parameter is omitted is ``preview``. Pass
+        ``write_mode='preview'`` first to inspect the diff, then ``commit``.
+        """
         return unwrap_command_result(
             await self._client.call_validated(
                 "universal_file_write",
@@ -89,7 +101,7 @@ class UniversalFileClient:
         project_id: str,
         session_id: str,
     ) -> Dict[str, Any]:
-        """End edit session (``universal_file_close``)."""
+        """End edit session (``universal_file_open`` session_id, not client ``session_*``)."""
         return unwrap_command_result(
             await self._client.call_validated(
                 "universal_file_close",

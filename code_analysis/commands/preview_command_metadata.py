@@ -36,8 +36,10 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  Each block in the response carries its own node_ref for further drill-down.\n\n"
             "node_ref format by file type:\n"
             "  sidecar (.py)    — stable UUID (CST node identifier)\n"
-            "  tree-temp (.json/.yaml/.yml) — JSON Pointer string, e.g. /database/host\n"
-            "  text (.md, .txt, …) — zero-based line index string, e.g. '3' for line 4\n\n"
+            "  tree-temp (.json/.yaml/.yml/.jsonl/.ndjson) — JSON Pointer, e.g. /database/host\n"
+            "  markdown (.md)   — dot-separated slug path from document root, e.g. intro.setup; "
+            "root is ''\n"
+            "  plain text (.txt, .rst, .adoc, …) — zero-based line index string, e.g. '3'\n\n"
             "selector parameter:\n"
             "  String slice (contains ':' or starts with '-'): '0:5', '-3:', '2:8'\n"
             "  list[int]: explicit block indices, e.g. [0, 2, 4]\n"
@@ -49,7 +51,8 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  structured CST rendering. Set full_text_max_lines=0 to disable.\n\n"
             "Edit session integration:\n"
             "  Pass session_id from universal_file_open to preview the current draft\n"
-            "  (in-memory tree for tree-temp, draft file for text) instead of disk."
+            "  (in-memory CST tree for sidecar, tree_temp_roots for tree-temp, draft file for text).\n"
+            "  This session_id is unrelated to client session commands (session_create, …)."
         ),
         "parameters": {
             "project_id": {
@@ -106,21 +109,6 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "type": "integer",
                 "required": False,
                 "default": 200,
-            },
-            "preview_max_chars": {
-                "description": (
-                    "Post-render character cap on the preview payload. "
-                    "Oversized previews return preview_chunk with pagination metadata."
-                ),
-                "type": "integer",
-                "required": False,
-                "default": 32000,
-            },
-            "preview_offset": {
-                "description": "Character offset for the next preview page.",
-                "type": "integer",
-                "required": False,
-                "default": 0,
             },
             "session_id": {
                 "description": (
@@ -214,14 +202,30 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "solution": "Use slice syntax (e.g. '0:5', '-3:') or a list of indices/identifiers.",
             },
             "FILE_LOCKED": {
-                "description": "File is locked by another edit session.",
-                "solution": "Pass the session_id of the owning session, or wait for it to be closed.",
+                "description": (
+                    "File is locked by another universal_file_open edit session "
+                    "(preview without session_id). universal_file_open returns PARSE_ERROR "
+                    "for the same lock."
+                ),
+                "solution": (
+                    "Pass the owning session_id from universal_file_open, or call "
+                    "universal_file_close on that session."
+                ),
+            },
+            "CONFLICTING_PARAMETERS": {
+                "description": "Unknown or invalid session_id when resolving edit draft.",
+                "solution": "Re-open the file with universal_file_open and use the new session_id.",
+            },
+            "HANDLER_ERROR": {
+                "description": "Unexpected failure inside a preview handler.",
+                "solution": "Retry; if persistent, check server logs and file content.",
             },
         },
         "best_practices": [
             "Call universal_file_preview before universal_file_edit to obtain valid node_ref values.",
             "For JSON/YAML: node_ref from preview is a JSON Pointer; pass it as json_pointer in edit operations, not node_id.",
-            "For text: node_ref is a zero-based index; convert to 1-based start_line = int(node_ref) + 1 for edit operations.",
+            "For .md: node_ref is a section slug path from preview; pass it as node_ref in edit operations.",
+            "For .txt/.rst/.adoc: node_ref is a zero-based line index; convert to 1-based start_line = int(node_ref) + 1 for edit.",
             "For Python: use full_text_max_lines=0 to force CST structured output and get stable UUID node_refs.",
             "Pass session_id to preview the draft after edits but before commit.",
             "Use selector='0:N' to cap the response size for large files.",

@@ -252,14 +252,34 @@ def _resolve_file_by_id(
             code="FILE_DELETED",
             details={"file_id": fid, "project_id": effective_pid},
         )
-    rel = (row.get("relative_path") or row.get("path") or "").strip()
-    if not rel:
+    rel_raw = (row.get("relative_path") or row.get("path") or "").strip()
+    if not rel_raw:
         return ErrorResult(
             message="File row has no path",
             code="FILE_PATH_MISSING",
             details={"file_id": fid},
         )
-    rel_posix = str(Path(rel).as_posix())
+    rel_posix = str(Path(rel_raw).as_posix())
+    if Path(rel_posix).is_absolute():
+        project = database.get_project(effective_pid)
+        if not project:
+            return ErrorResult(
+                message=f"Project {effective_pid} not found",
+                code="PROJECT_NOT_FOUND",
+                details={"project_id": effective_pid},
+            )
+        root = Path(project.root_path).resolve()
+        try:
+            rel_posix = Path(rel_posix).resolve().relative_to(root).as_posix()
+        except ValueError:
+            return ErrorResult(
+                message=(
+                    "File path is outside project root; "
+                    "use a project-relative path in the files index"
+                ),
+                code="PATH_ERROR",
+                details={"file_id": fid, "path": rel_posix, "project_root": str(root)},
+            )
     return row, rel_posix, effective_pid
 
 

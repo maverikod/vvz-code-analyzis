@@ -75,22 +75,20 @@ Search status must expose whether generation is running, completed, failed, canc
 Hard timeout and cancellation rules must apply to dynamic scanning, tree reconstruction, XPath filtering, structural enrichment, and page generation. A timed-out dynamic or structural phase must not contribute partial invalid structural evidence.
 
 
-## 10. Session Manifest, Process Identity, and Cleanup
 
 ## 10. Job Directory, Process Identity, and Cleanup
 
 When a model or client starts a search, the server must immediately create a dedicated job result directory before search execution begins. The directory stores the job manifest, page files, and service metadata for that search job.
-Search session manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
 
 Job manifest data must include progress metrics derived from the running search context, such as produced result count, written page count, scanned file count, warning count, and error count.
+
 
 Search result records are written progressively into page files by the running search process. Clients retrieve ready pages through ordinary HTTP requests to the job result endpoint; the implementation must not require streaming transport for normal result inspection.
 
 Every successful HTTP access to a job page, status, or manifest must refresh the job last-access timestamp. This timestamp controls inactivity-based TTL cleanup and is separate from the writer heartbeat timestamp.
 
-The session manifest must include the identity of the main server process that owns the session. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the session is dead or orphaned.
-
 The job manifest must include the identity of the main server process that owns the job. At minimum this identity includes main_pid and process_start_time; host and instance_id may also be stored when available. If the main_pid no longer exists, or if the process_start_time does not match because the PID was reused, the job is dead or orphaned.
+
 
 A running search must update a heartbeat timestamp in the job manifest. A running job whose heartbeat is older than the hard timeout must be treated as timed out or orphaned even if its last-access timestamp was recently refreshed.
 

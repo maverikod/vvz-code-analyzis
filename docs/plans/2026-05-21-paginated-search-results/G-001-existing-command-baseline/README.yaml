@@ -1,40 +1,43 @@
 step_id: G-001
 name: Existing command baseline and compatibility contract
-description: >
-  Establish the non-greenfield baseline: existing working search, preview,
-  queue, and status commands remain the default behavior while paginated
-  session-backed behavior is introduced only as an opt-in compatible extension.
+description: "Establish the non-greenfield baseline: existing working search, preview,
+  queue, and status commands remain the default behavior while paginated session-backed
+  behavior is introduced only as an opt-in compatible extension.\n"
 concepts:
-  - C-001
-  - C-021
-  - C-022
-  - C-023
-  - C-024
-  - C-025
+- C-001
+- C-021
+- C-022
+- C-023
+- C-024
+- C-025
 relations:
-  - from_concept: C-022
-    to_concept: C-021
-    type: uses
-  - from_concept: C-021
-    to_concept: C-023
-    type: owns
-  - from_concept: C-024
-    to_concept: C-023
-    type: extends
-  - from_concept: C-025
-    to_concept: C-021
-    type: depends_on
-  - from_concept: C-001
-    to_concept: C-021
-    type: extends
-  - from_concept: C-022
-    to_concept: C-001
-    type: uses
+- from_concept: C-022
+  to_concept: C-021
+  type: uses
+- from_concept: C-021
+  to_concept: C-023
+  type: owns
+- from_concept: C-024
+  to_concept: C-023
+  type: extends
+- from_concept: C-025
+  to_concept: C-021
+  type: depends_on
+- from_concept: C-001
+  to_concept: C-021
+  type: extends
+- from_concept: C-022
+  to_concept: C-001
+  type: uses
 source_ranges:
-  - start: 5
-    end: 7
-  - start: 97
-    end: 107
+- start: 5
+  end: 7
+- start: 97
+  end: 107
 depends_on: []
-tactical_steps: []
+tactical_steps:
+- T-001
+- T-002
+- T-004
+- T-005
 status: draft

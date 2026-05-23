@@ -57,14 +57,22 @@ concepts:
     end: 95
 - concept_id: C-004
   name: SearchPageFile
-  definition: Immutable result page or block file written inside a 
-    SearchSessionDirectory and retrieved through ordinary HTTP access.
+  definition: Result page file written inside a SearchSessionDirectory. Contains
+    a bounded list of result records, a next field (URL of the next page or 
+    null), and a done field (true only on the last page). The next field is 
+    updated once atomically when the subsequent page is written; all other 
+    content is final after initial write.
   properties:
   - Contains a bounded list of normalized search result records.
-  - Becomes visible to readers only after it is completely written.
-  - Must not be rewritten after publication.
-  - May be incomplete only for the final page after search completion, timeout, 
-    failure, or cancellation.
+  - Carries a next field pointing to the URL of the subsequent page, or null 
+    when no subsequent page has been written yet.
+  - Carries a done field that is false on all intermediate pages and true only 
+    on the last page of a completed or terminated job.
+  - The next field is updated exactly once, atomically, when the subsequent page
+    is written to disk.
+  - All content except the next field is final after initial write.
+  - Becomes visible to readers only after it is completely written via atomic 
+    rename.
   source_ranges:
   - start: 21
     end: 27
@@ -372,6 +380,34 @@ concepts:
   source_ranges:
   - start: 89
     end: 89
+- concept_id: C-026
+  definition: Protocol ensuring that page file writes and next-field updates are
+    never observed in a partially written state by concurrent readers. 
+    Implemented via temporary file and atomic rename.
+  name: AtomicPagePublication
+  properties:
+  - 'Initial page write: content written to a temp file, then renamed to the final
+    path.'
+  - 'Next-field update: updated content written to a temp file, then renamed over
+    the existing page file.'
+  - Readers never observe a partially written page or a partially updated next 
+    field.
+  source_ranges:
+  - end: 85
+    start: 80
+- concept_id: C-027
+  definition: Opaque string token that identifies a position within a paginated 
+    search job result set. Stable for the lifetime of the job; must not be 
+    parsed or constructed by callers.
+  name: Cursor
+  properties:
+  - Returned by search_start and embedded in page URLs.
+  - Passed by clients to search_get_page to retrieve a specific page.
+  - 'Opaque: clients must treat it as an uninterpreted string.'
+  - 'Stable: the same cursor always refers to the same page within a job.'
+  source_ranges:
+  - end: 28
+    start: 19
 relations:
 - from_concept: C-001
   to_concept: C-002

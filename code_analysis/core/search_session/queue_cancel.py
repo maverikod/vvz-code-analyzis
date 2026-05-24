@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 def queue_job_id_from_manifest(manifest: SearchSessionManifest) -> Optional[str]:
     """Extract queue_job_id from manifest process block if present."""
-    process = manifest.process or {}
+    proc = manifest.process
+    process: dict = proc if isinstance(proc, dict) else {}  # type: ignore[assignment]
     job_id = process.get("queue_job_id")
     if job_id and str(job_id).strip():
         return str(job_id).strip()
@@ -25,20 +26,19 @@ def queue_job_id_from_manifest(manifest: SearchSessionManifest) -> Optional[str]
 
 
 async def cancel_queued_search_job(queue_job_id: str) -> bool:
-    """Best-effort cancellation of a queued search job.
+    """Best-effort cancellation of a queued search job via queue_stop_job MCP command.
 
-    Returns True when the cancel signal was sent, False when the job was not
-    found or the queue subsystem is unavailable (non-fatal for search_cancel).
+    Returns True when the stop signal was sent, False when unavailable (non-fatal).
     """
     try:
-        from mcp_proxy_adapter.commands.queue.manager import get_queue_manager
+        from mcp_proxy_adapter.commands.command_registry import registry
 
-        mgr = get_queue_manager()
-        mgr.cancel_job(queue_job_id)
-        logger.info("[search_cancel] queue job %s cancel requested", queue_job_id)
+        cmd_cls = registry.get_command("queue_stop_job")
+        await cmd_cls.run(job_id=queue_job_id)
+        logger.info("[search_cancel] queue job %s stop requested", queue_job_id)
         return True
     except Exception as exc:
         logger.warning(
-            "[search_cancel] could not cancel queue job %s: %s", queue_job_id, exc
+            "[search_cancel] could not stop queue job %s: %s", queue_job_id, exc
         )
         return False

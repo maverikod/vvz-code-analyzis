@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from code_analysis.core.search_session.session import SearchSession
 
 MANIFEST_FILENAME = "manifest.json"
 INDEX_FILENAME = "index.json"

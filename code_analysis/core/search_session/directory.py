@@ -14,6 +14,7 @@ MANIFEST_FILENAME = "manifest.json"
 INDEX_FILENAME = "index.json"
 SERVICE_METADATA_FILENAME = "service_metadata.json"
 BLOCKS_DIRNAME = "blocks"
+RELEVANCE_BLOCKS_DIRNAME = "blocks_relevance"
 BUFFER_DIRNAME = "buffer"
 SEARCH_SESSIONS_DIRNAME = "data/search_sessions"
 
@@ -38,6 +39,7 @@ class SearchSessionDirectoryLayout:
     service_metadata_path: Path
     blocks_dir: Path
     buffer_dir: Path
+    relevance_blocks_dir: Path
 
 
 def resolve_search_sessions_root(config_dir: Path) -> Path:
@@ -61,8 +63,8 @@ def provision_search_session_directory(
     """
     Create on-disk session directory tree for ``search_id``.
 
-    Creates ``root``, ``blocks/``, and ``buffer/``. Manifest, index, and service
-    metadata files are created by later steps.
+    Creates ``root``, ``blocks/``, ``blocks_relevance/``, and ``buffer/``.
+    Manifest, index, and service metadata files are created by later steps.
 
     Args:
         config_dir: Project root / config directory.
@@ -76,10 +78,12 @@ def provision_search_session_directory(
     """
     root = resolve_search_sessions_root(config_dir) / search_id
     blocks_dir = root / BLOCKS_DIRNAME
+    relevance_blocks_dir = root / RELEVANCE_BLOCKS_DIRNAME
     buffer_dir = root / BUFFER_DIRNAME
 
     root.mkdir(parents=True, exist_ok=False)
     blocks_dir.mkdir(exist_ok=True)
+    relevance_blocks_dir.mkdir(exist_ok=True)
     buffer_dir.mkdir(exist_ok=True)
 
     return SearchSessionDirectoryLayout(
@@ -88,8 +92,11 @@ def provision_search_session_directory(
         index_path=root / INDEX_FILENAME,
         service_metadata_path=root / SERVICE_METADATA_FILENAME,
         blocks_dir=blocks_dir,
+        relevance_blocks_dir=relevance_blocks_dir,
         buffer_dir=buffer_dir,
     )
+
+
 DIRECTORY_SESSION_MISMATCH: str = "DIRECTORY_SESSION_MISMATCH"
 
 

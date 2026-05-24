@@ -218,3 +218,24 @@ def register_commands_part2(reg: registry) -> None:
             e,
             exc_info=True,
         )
+    try:
+        from .commands.universal_file_edit.open_command import UniversalFileOpenCommand
+        from .commands.universal_file_edit.edit_command import UniversalFileEditCommand
+        from .commands.universal_file_edit.write_command import UniversalFileWriteCommand
+        from .commands.universal_file_edit.close_command import UniversalFileCloseCommand
+        from .commands.universal_file_edit.move_nodes_command import UniversalFileMoveNodesCommand
+
+        reg.register(UniversalFileOpenCommand, "custom")
+        reg.register(UniversalFileEditCommand, "custom")
+        reg.register(UniversalFileWriteCommand, "custom")
+        reg.register(UniversalFileCloseCommand, "custom")
+        reg.register(UniversalFileMoveNodesCommand, "custom")
+        logger.info("Registered universal_file_edit commands")
+    except ImportError as e:
+        logger.warning("Failed to import universal_file_edit commands: %s", e)
+    except Exception as e:
+        logger.error(
+            "Failed to register universal_file_edit commands: %s",
+            e,
+            exc_info=True,
+        )

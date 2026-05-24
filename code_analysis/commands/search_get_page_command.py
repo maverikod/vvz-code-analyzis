@@ -91,16 +91,11 @@ class SearchGetPageCommand(BaseMCPCommand):
             )
         return params
 
-    async def execute(
-        self,
-        job_id: str,
-        block_position: int = 1,
-        wait_for_new_results: bool = False,
-        wait_timeout_seconds: float = 0,
-        **kwargs: Any,
-    ) -> SuccessResult | ErrorResult:
-        job_id = str(job_id).strip()
-        pos = max(1, int(block_position))
+    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        job_id = str(kwargs.get("job_id") or "").strip()
+        pos = max(1, int(kwargs.get("block_position") or 1))
+        wait = bool(kwargs.get("wait_for_new_results", False))
+        timeout = float(kwargs.get("wait_timeout_seconds") or 0)
         storage = self._get_shared_storage()
         ctx = HttpAccessContext(config_dir=storage.config_dir)
         layout = resolve_session_layout(ctx, job_id)
@@ -108,7 +103,7 @@ class SearchGetPageCommand(BaseMCPCommand):
         if not layout.root.is_dir():
             return ErrorResult(
                 message=f"Search session not found: {job_id}",
-                code=SESSION_NOT_FOUND,
+                code=SESSION_NOT_FOUND,  # type: ignore[arg-type]
             )
 
         if layout.manifest_path.is_file():
@@ -116,14 +111,10 @@ class SearchGetPageCommand(BaseMCPCommand):
             if manifest.status == "closed":
                 return ErrorResult(
                     message=f"Session {job_id} is closed; block_position continuation is invalid.",
-                    code=CLOSED_SESSION,
+                    code=CLOSED_SESSION,  # type: ignore[arg-type]
                 )
 
-        deadline = (
-            time.monotonic() + float(wait_timeout_seconds)
-            if wait_for_new_results
-            else None
-        )
+        deadline = time.monotonic() + timeout if wait else None
 
         while True:
             block_path = layout.blocks_dir / f"block_{pos}.json"
@@ -131,7 +122,7 @@ class SearchGetPageCommand(BaseMCPCommand):
                 with open(block_path, encoding="utf-8") as fh:
                     block_data = json.load(fh)
                 self._refresh(layout)
-                manifest = (
+                manifest_obj = (
                     read_manifest(layout) if layout.manifest_path.is_file() else None
                 )
                 index = (
@@ -147,18 +138,26 @@ class SearchGetPageCommand(BaseMCPCommand):
                     has_more = (
                         index.completeness == COMPLETENESS_RUNNING or pos < max_pos
                     )
+                # Normalize: block may store results under 'results', 'items', or be a list directly
+                if isinstance(block_data, list):
+                    items = block_data
+                elif isinstance(block_data, dict):
+                    items = (
+                        block_data.get("items")
+                        or block_data.get("results")
+                        or block_data.get("matches")
+                        or []
+                    )
+                else:
+                    items = []
                 return SuccessResult(
                     data={
                         "job_id": job_id,
                         "block_position": pos,
-                        "items": (
-                            block_data.get("items", block_data)
-                            if isinstance(block_data, dict)
-                            else block_data
-                        ),
+                        "items": items,
                         "has_more": has_more,
-                        "status": manifest.status if manifest else "unknown",
-                        "progress": dict(manifest.metrics) if manifest else {},
+                        "status": manifest_obj.status if manifest_obj else "unknown",
+                        "progress": dict(manifest_obj.metrics) if manifest_obj else {},
                         "warnings": [],
                         "errors": [],
                     }
@@ -170,7 +169,7 @@ class SearchGetPageCommand(BaseMCPCommand):
 
             return ErrorResult(
                 message=f"Block {pos} not yet published for job {job_id}.",
-                code=BLOCK_NOT_READY,
+                code=BLOCK_NOT_READY,  # type: ignore[arg-type]
             )
 
     def _refresh(self, layout):

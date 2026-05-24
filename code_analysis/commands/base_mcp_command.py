@@ -441,7 +441,10 @@ class BaseMCPCommand(Command):
         )
 
     def _handle_error(
-        self: "BaseMCPCommand", error: Exception, error_code: str, operation: str = None
+        self: "BaseMCPCommand",
+        error: Exception,
+        error_code: str,
+        operation: Optional[str] = None,
     ) -> ErrorResult:
         """
         Handle exception and convert to ErrorResult.
@@ -468,13 +471,13 @@ class BaseMCPCommand(Command):
 
             return ErrorResult(
                 message=error.message,
-                code=error.code or error_code,
+                code=error.code or error_code,  # type: ignore[arg-type]
                 details=details,
             )
 
         return ErrorResult(
             message=str(error),
-            code=error_code,
+            code=error_code,  # type: ignore[arg-type]
             details={"error_type": type(error).__name__, "error": str(error)},
         )
 

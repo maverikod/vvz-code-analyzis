@@ -133,10 +133,18 @@ async def run_paginated_cross(
     raw_config: dict[str, Any],
     block_assembler_factory: Callable[..., BlockAssembler] = _make_block_assembler,
 ) -> Optional[int]:
-    """Run legacy cross-search and publish first SearchResultBlock."""
+    """
+    Run cross-search synchronously and publish findings into SearchResultBlocks.
+
+    Forces auto_queue_on_inline_timeout=False so the call never queues —
+    results arrive inline and are written to the buffer immediately.
+    Blocks until the first result block is assembled, then returns.
+    """
     now = time.time()
     require_structural = bool(params.get("require_structural_grep", True))
     backend_params = {k: v for k, v in params.items() if k not in _STRIP_KEYS}
+    # Force inline execution — cross-search must never queue from inside paginated backend.
+    backend_params["auto_queue_on_inline_timeout"] = False
     manifest = SearchSessionManifest(
         search_id=session.search_id,
         created_at=now,
@@ -155,6 +163,12 @@ async def run_paginated_cross(
     if isinstance(result, ErrorResult):
         raise RuntimeError(result.message)
     data = result.data or {}
+    # Guard: if cross-search queued despite the flag, data has no results list.
+    if data.get("queued"):
+        raise RuntimeError(
+            "project_cross_search queued despite auto_queue_on_inline_timeout=False; "
+            "cannot assemble paginated blocks from a queued response"
+        )
     raw_list: list[dict[str, Any]] = []
     if isinstance(data.get("results"), list):
         raw_list = data["results"]

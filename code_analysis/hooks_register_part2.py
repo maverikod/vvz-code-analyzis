@@ -32,6 +32,7 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
+            CreateTextFileMCPCommand,
             DeleteFileMCPCommand,
             DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
@@ -42,6 +43,7 @@ def register_commands_part2(reg: registry) -> None:
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
+        reg.register(CreateTextFileMCPCommand, "custom")
         reg.register(DeleteFileMCPCommand, "custom")
         reg.register(DeleteFilesByMaskMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")
@@ -216,76 +218,3 @@ def register_commands_part2(reg: registry) -> None:
             e,
             exc_info=True,
         )
-
-    try:
-        from .commands.universal_file_edit.open_command import UniversalFileOpenCommand
-        from .commands.universal_file_edit.edit_command import UniversalFileEditCommand
-        from .commands.universal_file_edit.write_command import (
-            UniversalFileWriteCommand,
-        )
-        from .commands.universal_file_edit.close_command import (
-            UniversalFileCloseCommand,
-        )
-        from .commands.universal_file_edit.search_command import (
-            UniversalFileSearchCommand,
-        )
-
-        reg.register(UniversalFileOpenCommand, "custom")
-        reg.register(UniversalFileEditCommand, "custom")
-        reg.register(UniversalFileWriteCommand, "custom")
-        reg.register(UniversalFileCloseCommand, "custom")
-        reg.register(UniversalFileSearchCommand, "custom")
-        logger.info("Registered universal_file_edit commands")
-    except ImportError as e:
-        logger.warning("Failed to import universal_file_edit commands: %s", e)
-    except Exception as e:
-        logger.error(
-            "Failed to register universal_file_edit commands: %s",
-            e,
-            exc_info=True,
-        )
-
-    try:
-        from .commands.sessions.session_create_command import SessionCreateCommand
-        from .commands.sessions.session_delete_command import SessionDeleteCommand
-        from .commands.sessions.session_list_command import SessionListCommand
-        from .commands.sessions.session_view_command import SessionViewCommand
-
-        reg.register(SessionCreateCommand, "session_management")
-        reg.register(SessionDeleteCommand, "session_management")
-        reg.register(SessionListCommand, "session_management")
-        reg.register(SessionViewCommand, "session_management")
-    except ImportError:
-        pass
-
-    try:
-        from .commands.sessions.subordinate_session_commands import (
-            SubordinateSessionCreateCommand,
-            SubordinateSessionDeleteCommand,
-            SubordinateSessionGetCommand,
-            SubordinateSessionListCommand,
-            SubordinateSessionUpdateCommand,
-        )
-
-        reg.register(SubordinateSessionCreateCommand, "session_management")
-        reg.register(SubordinateSessionGetCommand, "session_management")
-        reg.register(SubordinateSessionUpdateCommand, "session_management")
-        reg.register(SubordinateSessionDeleteCommand, "session_management")
-        reg.register(SubordinateSessionListCommand, "session_management")
-    except ImportError:
-        pass
-
-    try:
-        from .commands.sessions.session_open_file_command import SessionOpenFileCommand
-        from .commands.sessions.session_close_file_command import (
-            SessionCloseFileCommand,
-        )
-        from .commands.sessions.session_list_file_locks_command import (
-            SessionListFileLocksCommand,
-        )
-
-        reg.register(SessionOpenFileCommand, "session_management")
-        reg.register(SessionCloseFileCommand, "session_management")
-        reg.register(SessionListFileLocksCommand, "session_management")
-    except ImportError:
-        pass

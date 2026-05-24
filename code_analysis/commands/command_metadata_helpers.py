@@ -85,6 +85,14 @@ def parameters_from_schema(
             entry["enum"] = spec["enum"]
         if "items" in spec:
             entry["items"] = spec["items"]
+        if "minimum" in spec:
+            entry["minimum"] = spec["minimum"]
+        if "maximum" in spec:
+            entry["maximum"] = spec["maximum"]
+        if "minItems" in spec:
+            entry["minItems"] = spec["minItems"]
+        if "maxItems" in spec:
+            entry["maxItems"] = spec["maxItems"]
         if spec.get("examples"):
             entry["examples"] = spec["examples"]
         out[key] = entry

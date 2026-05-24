@@ -14,6 +14,8 @@ This guide is the main entry point for **all MCP commands** of the code-analysis
 
 Quick lookup: [COMMANDS_INDEX.md](COMMANDS_INDEX.md) maps command name → class → source file → doc block.
 
+**Primary path for viewing and editing project files:** [commands/file_editing/](commands/file_editing/) — see [WORKFLOW.md](commands/file_editing/WORKFLOW.md) and [AI_TOOL_USAGE_RULES.md](AI_TOOL_USAGE_RULES.md) §2.
+
 ---
 
 ## Documentation standard per command
@@ -40,6 +42,19 @@ Before any command modifies existing code, the file is placed in **versions** (b
 ---
 
 ## Blocks and command list
+
+### File editing (universal) — `docs/commands/file_editing/` **PRIMARY**
+
+| Command | Doc | Purpose |
+|---------|-----|--------|
+| universal_file_preview | [universal_file_preview.md](commands/file_editing/universal_file_preview.md) | Read-only navigation; obtain edit targets |
+| universal_file_open | [universal_file_open.md](commands/file_editing/universal_file_open.md) | Start edit session |
+| universal_file_search | [universal_file_search.md](commands/file_editing/universal_file_search.md) | XPath on open session CST tree (Python) |
+| universal_file_edit | [universal_file_edit.md](commands/file_editing/universal_file_edit.md) | Mutate in-memory draft |
+| universal_file_write | [universal_file_write.md](commands/file_editing/universal_file_write.md) | Preview diff / commit |
+| universal_file_close | [universal_file_close.md](commands/file_editing/universal_file_close.md) | Release session |
+
+Cross-cutting: [WORKFLOW.md](commands/file_editing/WORKFLOW.md), [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md).
 
 ### AST — `docs/commands/ast/`
 
@@ -85,7 +100,9 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | lint_code | [lint_code.md](commands/code_quality/lint_code.md) | Lint file with Flake8 |
 | type_check_code | [type_check_code.md](commands/code_quality/type_check_code.md) | Type-check with Mypy |
 
-### CST — `docs/commands/cst/`
+### CST — `docs/commands/cst/` (internal; not MCP edit workflow)
+
+> AI agents: use [file_editing/](commands/file_editing/) instead of CST tree commands for editing.
 
 | Command | Doc | Purpose |
 |---------|-----|--------|
@@ -127,8 +144,8 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | restore_deleted_files | [restore_deleted_files.md](commands/file_management/restore_deleted_files.md) | Restore file from deleted state |
 | collapse_versions | [collapse_versions.md](commands/file_management/collapse_versions.md) | Collapse file versions in DB |
 | repair_database | [repair_database.md](commands/file_management/repair_database.md) | Repair file-related DB state |
-| read_project_text_file | [read_project_text_file.md](commands/file_management/read_project_text_file.md) | Raw line read (non-code) or auto-route Python → `get_file_lines` |
-| write_project_text_lines | [write_project_text_lines.md](commands/file_management/write_project_text_lines.md) | Line replace for non-code text; Python paths rejected (`PYTHON_FILE_FORBIDDEN`) |
+| read_project_text_file | [read_project_text_file.md](commands/file_management/read_project_text_file.md) | **Legacy** — use `universal_file_preview` |
+| write_project_text_lines | [write_project_text_lines.md](commands/file_management/write_project_text_lines.md) | **Legacy** — use universal edit session |
 
 ### Log Viewer — `docs/commands/log_viewer/`
 

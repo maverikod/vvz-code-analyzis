@@ -8,10 +8,11 @@ email: vasilyvz@gmail.com
 import uuid
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 def _is_valid_uuid4(value: Optional[str]) -> bool:
@@ -66,6 +67,20 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
         file_path: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "class_name": class_name,
+            "file_path": file_path,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "get_class_hierarchy")
+        project_id = params["project_id"]
+        class_name = params.get("class_name")
+        file_path = params.get("file_path")
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
@@ -209,15 +224,14 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 "for a specific class or all classes in the project. It builds parent-child relationships "
                 "based on base classes stored in the database.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Queries classes table for project classes\n"
-                "5. If class_name provided, filters to that class\n"
-                "6. If file_path provided, filters to classes in that file\n"
-                "7. Parses bases field (JSON array of base class names)\n"
-                "8. Builds hierarchy map with parent-child relationships\n"
-                "9. Returns hierarchy structure with bases and children\n\n"
+                "1. Validates project_id via project registry\n"
+                "2. Opens database connection for the project\n"
+                "3. Queries classes table for project classes\n"
+                "4. If class_name provided, filters to that class\n"
+                "5. If file_path provided, filters to classes in that file\n"
+                "6. Parses bases field (JSON array of base class names)\n"
+                "7. Builds hierarchy map with parent-child relationships\n"
+                "8. Returns hierarchy structure with bases and children\n\n"
                 "Hierarchy Structure:\n"
                 "- Each class entry contains: name, file_path, line, bases (list), children (list), "
                 "and cst_node_id (UUID4) when available and valid\n"
@@ -237,10 +251,9 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 "- If class_name not provided, returns all hierarchies in project"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects)."
                     ),
                     "type": "string",
                     "required": True,
@@ -257,14 +270,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 "file_path": {
                     "description": (
                         "Optional file path to filter by. If provided, only includes classes "
-                        "from this file. Can be absolute or relative to root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
+                        "from this file. Can be absolute or relative to project root."
                     ),
                     "type": "string",
                     "required": False,
@@ -274,7 +280,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 {
                     "description": "Get hierarchy for specific class",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "class_name": "BaseHandler",
                     },
                     "explanation": (
@@ -285,7 +291,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 {
                     "description": "Get all class hierarchies in project",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
                         "Returns complete inheritance hierarchy for all classes in the project."
@@ -294,7 +300,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 {
                     "description": "Get hierarchies for classes in specific file",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "src/handlers.py",
                     },
                     "explanation": (
@@ -305,7 +311,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "project_id='invalid-uuid' not registered",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "GET_CLASS_HIERARCHY_ERROR": {

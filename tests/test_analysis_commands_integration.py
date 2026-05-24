@@ -415,21 +415,6 @@ async def test_semantic_search_limit_respected(
     assert result.data["count"] <= 2
 
 
-def test_semantic_search_validate_params_clamps_limit() -> None:
-    """``limit`` outside 1–100 is normalized before execute."""
-    from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
-
-    cmd = SemanticSearchMCPCommand()
-    pid = str(uuid.uuid4())
-    assert (
-        cmd.validate_params({"project_id": pid, "query": "q", "limit": 0})["limit"] == 1
-    )
-    assert (
-        cmd.validate_params({"project_id": pid, "query": "q", "limit": 500})["limit"]
-        == 100
-    )
-
-
 def test_dedupe_log_files_by_resolved_path() -> None:
     from code_analysis.commands.log_viewer_mcp_commands.list_worker_logs import (
         _dedupe_log_files_by_resolved_path,

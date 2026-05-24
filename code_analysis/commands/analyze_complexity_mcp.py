@@ -8,9 +8,10 @@ email: vasilyvz@gmail.com
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.complexity_analyzer import analyze_file_complexity
+from ..core.exceptions import ValidationError
 from ..core.sql_portable import WHERE_FILES_ACTIVE
 from .base_mcp_command import BaseMCPCommand
 
@@ -69,7 +70,7 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
         file_path: Optional[str] = None,
         min_complexity: int = 1,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
         """Execute complexity analysis.
 
         Args:
@@ -82,9 +83,23 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
         """
         from ..core.progress_tracker import get_progress_tracker_from_context
 
-        progress_tracker = get_progress_tracker_from_context(
-            kwargs.get("context") or {}
-        )
+        extra = dict(kwargs)
+        context = extra.pop("context", None) or {}
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "min_complexity": min_complexity,
+        }
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "analyze_complexity")
+        project_id = params["project_id"]
+        file_path = params.get("file_path")
+        min_complexity = int(params.get("min_complexity", 1))
+
+        progress_tracker = get_progress_tracker_from_context(context)
         try:
             if progress_tracker:
                 progress_tracker.set_status("running")

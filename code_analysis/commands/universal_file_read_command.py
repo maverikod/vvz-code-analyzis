@@ -140,6 +140,32 @@ class UniversalFileReadCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``start_line`` and ``end_line`` outside schema min/max after schema validation."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("start_line", "end_line"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+        return params
+
     @classmethod
     def metadata(cls: Type["UniversalFileReadCommand"]) -> Dict[str, Any]:
         from .command_metadata_helpers import (
@@ -174,7 +200,10 @@ class UniversalFileReadCommand(BaseMCPCommand):
                 },
             },
             return_value=simple_success_return(
-                data_fields={"handler_id": "text|json|yaml|python", "operation": "read"},
+                data_fields={
+                    "handler_id": "text|json|yaml|python",
+                    "operation": "read",
+                },
             ),
             best_practices=[
                 "Prefer this over read_project_text_file for new integrations.",
@@ -191,6 +220,27 @@ class UniversalFileReadCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult:
         try:
+            params: Dict[str, Any] = {
+                "project_id": project_id,
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+            params.update(kwargs)
+            try:
+                params = self.validate_params(params)
+            except ValidationError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="VALIDATION_ERROR",
+                    details=getattr(e, "details", None)
+                    or {"field": getattr(e, "field", None)},
+                )
+            project_id = params["project_id"]
+            file_path = params["file_path"]
+            start_line = params.get("start_line")
+            end_line = params.get("end_line")
+
             try:
                 handler_id = resolve_handler(file_path, "read")
             except RegistryError as e:

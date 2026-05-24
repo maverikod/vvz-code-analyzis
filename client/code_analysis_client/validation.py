@@ -13,12 +13,9 @@ from code_analysis_client.exceptions import ClientValidationError
 
 
 def prepare_params_for_schema(
-    params: Dict[str, Any], schema: Dict[str, Any]
+    params: Dict[str, Any], schema: Dict[str, Any]  # noqa: ARG001
 ) -> Dict[str, Any]:
-    """Drop unknown keys when ``additionalProperties`` is false (same as server base)."""
-    props = schema.get("properties") or {}
-    if not schema.get("additionalProperties", True):
-        return {k: v for k, v in params.items() if k in props}
+    """Return a shallow copy of params for validation and dispatch."""
     return dict(params)
 
 
@@ -34,7 +31,7 @@ def validate_params_against_schema(
             field="params",
         )
     props = schema.get("properties") or {}
-    additional_ok = schema.get("additionalProperties", True)
+    additional_ok = schema.get("additionalProperties", False)
     required_set = set(schema.get("required") or [])
     for key, value in params.items():
         if key not in props:

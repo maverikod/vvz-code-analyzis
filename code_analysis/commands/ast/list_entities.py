@@ -8,10 +8,11 @@ email: vasilyvz@gmail.com
 import uuid
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 def _is_valid_uuid4(value: Optional[str]) -> bool:
@@ -78,6 +79,24 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         offset: int = 0,
         **kwargs,
     ) -> SuccessResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "entity_type": entity_type,
+            "file_path": file_path,
+            "limit": limit,
+            "offset": offset,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "list_code_entities")
+        project_id = params["project_id"]
+        entity_type = params.get("entity_type")
+        file_path = params.get("file_path")
+        limit = params.get("limit")
+        offset = int(params.get("offset", 0))
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.exceptions import ValidationError
 from ..base_mcp_command import BaseMCPCommand
 from ..log_viewer import LogViewerCommand
 
@@ -128,7 +129,7 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Accept log_id with optional ``.log`` suffix (e.g. ``mcp_server.log``)."""
+        """Accept log_id with optional ``.log`` suffix; reject OOB schema bounds."""
         normalized = dict(params)
         lid = normalized.get("log_id")
         if isinstance(lid, str):
@@ -137,7 +138,29 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 base = s[:-4].strip()
                 if base in _LOG_ID_ENUM:
                     normalized["log_id"] = base
-        return super().validate_params(normalized)
+        params = super().validate_params(normalized)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("importance_min", "importance_max"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+        return params
 
     async def execute(
         self,
@@ -156,6 +179,42 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute view worker logs command."""
+        params: Dict[str, Any] = {
+            "log_id": log_id,
+            "log_path": log_path,
+            "worker_type": worker_type,
+            "from_time": from_time,
+            "to_time": to_time,
+            "event_types": event_types,
+            "log_levels": log_levels,
+            "search_pattern": search_pattern,
+            "importance_min": importance_min,
+            "importance_max": importance_max,
+            "tail": tail,
+            "limit": limit,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        log_id = params.get("log_id")
+        log_path = params.get("log_path")
+        worker_type = str(params.get("worker_type") or "file_watcher")
+        from_time = params.get("from_time")
+        to_time = params.get("to_time")
+        event_types = params.get("event_types")
+        log_levels = params.get("log_levels")
+        search_pattern = params.get("search_pattern")
+        importance_min = params.get("importance_min")
+        importance_max = params.get("importance_max")
+        tail = params.get("tail")
+        limit = int(params.get("limit", 1000))
         try:
             resolved_path = log_path
             resolved_worker_type = worker_type

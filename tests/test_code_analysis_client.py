@@ -142,6 +142,34 @@ async def test_call_validated_raises_when_required_missing() -> None:
     mock_rpc.execute_command.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_call_validated_rejects_unknown_key() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"include_deleted": {"type": "boolean"}},
+        "required": [],
+        "additionalProperties": False,
+    }
+    mock_rpc = MagicMock()
+    mock_rpc.help = AsyncMock(
+        return_value={"success": True, "data": {"schema": schema, "metadata": {}}}
+    )
+    mock_rpc.execute_command = AsyncMock()
+    with patch(
+        "code_analysis_client.client.JsonRpcClient",
+        return_value=mock_rpc,
+    ):
+        client = CodeAnalysisAsyncClient(host="h", port=1)
+        from code_analysis_client import ClientValidationError
+
+        with pytest.raises(ClientValidationError, match="unknown parameter"):
+            await client.call_validated(
+                "list_projects",
+                {"include_deleted": False, "extra": 1},
+            )
+    mock_rpc.execute_command.assert_not_called()
+
+
 def test_parse_schema_from_help_unknown_command() -> None:
     from code_analysis_client import (
         ClientValidationError,
@@ -174,6 +202,34 @@ def test_validate_rejects_unknown_key_when_additional_properties_false() -> None
     }
     with pytest.raises(ClientValidationError, match="unknown parameter"):
         validate_params_against_schema({"a": 1, "b": 2}, schema, "cmd")
+
+
+def test_validate_rejects_unknown_key_when_additional_properties_omitted() -> None:
+    from code_analysis_client import (
+        ClientValidationError,
+        validate_params_against_schema,
+    )
+
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}},
+        "required": [],
+    }
+    with pytest.raises(ClientValidationError, match="unknown parameter"):
+        validate_params_against_schema({"a": 1, "b": 2}, schema, "cmd")
+
+
+def test_prepare_params_for_schema_does_not_drop_unknown_keys() -> None:
+    from code_analysis_client import prepare_params_for_schema
+
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}},
+        "required": [],
+        "additionalProperties": False,
+    }
+    params = {"a": 1, "b": 2}
+    assert prepare_params_for_schema(params, schema) == params
 
 
 def test_file_session_facade_maps_all_session_commands() -> None:

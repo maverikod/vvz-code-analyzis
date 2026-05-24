@@ -13,6 +13,8 @@ from typing import Any
 
 from mcp_proxy_adapter.api.core.app_factory import AppFactory
 
+from code_analysis.core.search_session.cleaner import register_search_session_cleanup
+from code_analysis.core.search_session.http_routes import register_search_job_routes
 from code_analysis.main_app_events import register_startup_shutdown_events
 from code_analysis.main_server_presentation import resolve_server_presentation
 from code_analysis.openapi_mcp_proxy_compat import patch_app_openapi_for_mcp_proxy
@@ -37,6 +39,13 @@ def create_app_with_events(
     register_startup_shutdown_events(app, app_config, worker_manager)
     app.state.worker_manager = worker_manager
     patch_app_openapi_for_mcp_proxy(app)
+    config_dir = config_path.parent
+    register_search_job_routes(app, config_dir=config_dir)
+    register_search_session_cleanup(
+        app,
+        config_dir=config_dir,
+        app_config=app_config,
+    )
 
     return app
 

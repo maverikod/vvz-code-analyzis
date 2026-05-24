@@ -274,6 +274,32 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             ),
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``start_line`` and ``end_line`` outside schema min/max after schema validation."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("start_line", "end_line"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -285,6 +311,31 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult:
         try:
+            params: Dict[str, Any] = {
+                "project_id": project_id,
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "new_lines": new_lines,
+                "backup": backup,
+            }
+            params.update(kwargs)
+            try:
+                params = self.validate_params(params)
+            except ValidationError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="VALIDATION_ERROR",
+                    details=getattr(e, "details", None)
+                    or {"field": getattr(e, "field", None)},
+                )
+            project_id = params["project_id"]
+            file_path = params["file_path"]
+            start_line = params["start_line"]
+            end_line = params["end_line"]
+            new_lines = params["new_lines"]
+            backup = bool(params.get("backup", True))
+
             blocked = reject_if_source_code_text_path(file_path)
             if blocked is not None:
                 return blocked
@@ -293,12 +344,6 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             if plain_text_error is not None:
                 return plain_text_error
 
-            if start_line < 1 or end_line < 1:
-                return ErrorResult(
-                    message="start_line and end_line must be >= 1",
-                    code="INVALID_RANGE",
-                    details={"start_line": start_line, "end_line": end_line},
-                )
             if start_line > end_line:
                 return ErrorResult(
                     message="start_line must be <= end_line",

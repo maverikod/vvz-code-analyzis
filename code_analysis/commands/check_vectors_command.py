@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.exceptions import ValidationError
 from .base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ class CheckVectorsCommand(BaseMCPCommand):
         self,
         project_id: str,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
         """
         Execute check vectors command.
 
@@ -155,6 +156,14 @@ class CheckVectorsCommand(BaseMCPCommand):
             ErrorResult with code "PROJECT_NOT_FOUND" if project_id not found in database
             ErrorResult with code "CHECK_VECTORS_ERROR" for other errors
         """
+        params: Dict[str, Any] = {"project_id": project_id}
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "check_vectors")
+        project_id = params["project_id"]
+
         try:
             from ..core.config import get_driver_config
             from ..core.storage_paths import load_raw_config

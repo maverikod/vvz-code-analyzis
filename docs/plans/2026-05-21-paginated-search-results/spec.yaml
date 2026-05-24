@@ -2,7 +2,7 @@ meta:
   title: Paginated Search and Universal Tree Query Machine Specification
   spec_id: paginated-search-results
   version: '0.1'
-  status: draft
+  status: ready_for_review
   source_spec: docs/plans/2026-05-21-paginated-search-results/source_spec.md
 concepts:
 - concept_id: C-001
@@ -18,19 +18,11 @@ concepts:
     and service metadata.
   - Tracks running, completed, failed, cancelled, timed_out, dead, expired, and 
     closed states.
-  source_ranges:
-  - end: 7
-    start: 5
-  - end: 27
-    start: 21
-  - end: 33
-    start: 31
-  - end: 75
-    start: 73
-  - end: 95
-    start: 80
-  - end: 107
-    start: 97
+  source_labels:
+  - '{zhp1}'
+  - '{dsy4}'
+  - '{hpqf}'
+  - '{5tnm}'
 - concept_id: C-002
   definition: Filesystem directory created for a SearchSession to store result 
     blocks, the directory index, manifest data, and service metadata.
@@ -41,9 +33,8 @@ concepts:
   - Contains the directory index listing blocks and completeness state.
   - Contains metadata that records last access time and session progress.
   - Is removed by background cleanup when the session expires or is dead.
-  source_ranges:
-  - end: 81
-    start: 81
+  source_labels:
+  - '{hpqf}'
 - concept_id: C-003
   definition: Machine-readable state file inside a SearchSessionDirectory 
     describing request context, process identity, heartbeat, metrics, block 
@@ -56,13 +47,10 @@ concepts:
   - Stores ServerProcessIdentity for dead-session detection.
   - Must be updated safely while the search worker, HTTP readers, and cleaner 
     may operate concurrently.
-  source_ranges:
-  - end: 83
-    start: 83
-  - end: 90
-    start: 90
-  - end: 93
-    start: 93
+  source_labels:
+  - '{nyox}'
+  - '{6diy}'
+  - '{ymk7}'
 - concept_id: C-004
   name: SearchResultBlock
   definition: Immutable result block written inside a SearchSessionDirectory. 
@@ -82,11 +70,9 @@ concepts:
   - Becomes visible to readers only after it is completely written via atomic 
     rename.
   - Is addressed by its position number through the directory index.
-  source_ranges:
-  - start: 21
-    end: 27
-  - start: 31
-    end: 33
+  source_labels:
+  - '{uj1g}'
+  - '{pwy8}'
 - concept_id: C-005
   definition: Simple HTTP retrieval mechanism for reading a search job's 
     directory index, individual result blocks by position number, and search 
@@ -99,11 +85,11 @@ concepts:
   - Updates last_access_at on every successful index, block, or status access.
   - Returns a block-not-ready response when the search is running but the 
     requested block has not been published yet.
-  source_ranges:
-  - end: 27
-    start: 23
-  - end: 31
-    start: 31
+  source_labels:
+  - '{4cv1}'
+  - '{lann}'
+  - '{br58}'
+  - '{6cni}'
 - concept_id: C-006
   definition: Timestamp recorded for a SearchSession and refreshed whenever a 
     client reads the directory index, a result block, or the search status for 
@@ -113,11 +99,9 @@ concepts:
   - Drives TTL-based cleanup of session directories.
   - Must be refreshed by HTTPResultAccess.
   - Must not be confused with heartbeat_at, which indicates writer liveness.
-  source_ranges:
-  - end: 33
-    start: 31
-  - end: 88
-    start: 88
+  source_labels:
+  - '{xxer}'
+  - '{6cni}'
 - concept_id: C-007
   name: SessionTTLPolicy
   definition: 'Configuration policy covering two related search response settings:
@@ -132,11 +116,8 @@ concepts:
   - Rejects missing, invalid, non-integer, zero, negative, or out-of-range 
     values for each setting according to policy.
   - The maximum block size is separate from the per-result preview size limit.
-  source_ranges:
-  - start: 31
-    end: 33
-  - start: 33
-    end: 33
+  source_labels:
+  - '{oa6t}'
 - concept_id: C-008
   definition: Identity of the main server process that created or owns a 
     SearchSession, used to detect sessions whose owning process is gone or whose
@@ -148,9 +129,8 @@ concepts:
   - May include host and instance_id when available.
   - A missing process or mismatched process_start_time makes the session dead or
     orphaned.
-  source_ranges:
-  - end: 90
-    start: 90
+  source_labels:
+  - '{6diy}'
 - concept_id: C-009
   definition: Periodic liveness timestamp written by the search execution path 
     while a SearchSession is running.
@@ -161,9 +141,8 @@ concepts:
     worker.
   - Older-than-hard-timeout heartbeat marks a running session as timed_out or 
     orphaned.
-  source_ranges:
-  - end: 93
-    start: 93
+  source_labels:
+  - '{ymk7}'
 - concept_id: C-010
   definition: Rule set for deciding that a SearchSession is dead or orphaned 
     based on server process identity and heartbeat state.
@@ -173,11 +152,10 @@ concepts:
   - Treats process_start_time mismatch as dead because PID reuse is possible.
   - Treats stale heartbeat beyond hard timeout as timed_out or orphaned.
   - May be applied by status reads and by the background cleaner.
-  source_ranges:
-  - end: 93
-    start: 90
-  - end: 95
-    start: 95
+  source_labels:
+  - '{6diy}'
+  - '{ymk7}'
+  - '{7u1o}'
 - concept_id: C-011
   name: BackgroundSessionCleaner
   definition: Background maintenance process that removes expired, closed, or 
@@ -190,9 +168,8 @@ concepts:
   - Must not delete live running sessions whose process identity and heartbeat 
     are valid.
   - Detects orphan running sessions through DeadSessionDetection.
-  source_ranges:
-  - start: 95
-    end: 95
+  source_labels:
+  - '{7u1o}'
 - concept_id: C-012
   name: IndexedFileSet
   definition: Set of files that can be searched through the database or index 
@@ -202,9 +179,11 @@ concepts:
   - Requires checksum or modification metadata validation.
   - Excludes stale, changed, missing, draft-only, or unavailable-index files.
   - Must not be rescanned directly by dynamic grep when current.
-  source_ranges:
-  - start: 11
-    end: 17
+  source_labels:
+  - '{ulzd}'
+  - '{5l14}'
+  - '{vmo8}'
+  - '{jq0g}'
 - concept_id: C-013
   name: DynamicFileSet
   definition: Set of files that must be processed directly from disk or draft 
@@ -215,13 +194,10 @@ concepts:
   - Processed dynamically through the same tree construction path as the indexer
     when structural processing is required.
   - Scans only supported formats by default.
-  source_ranges:
-  - start: 11
-    end: 17
-  - start: 55
-    end: 55
-  - start: 67
-    end: 69
+  source_labels:
+  - '{5l14}'
+  - '{yr60}'
+  - '{3454}'
 - concept_id: C-014
   name: FreshnessValidation
   definition: Validation step that decides whether an indexed file 
@@ -230,11 +206,9 @@ concepts:
   - Uses checksums and/or modification metadata.
   - Moves stale indexed files into DynamicFileSet.
   - Follows the same principle as tree sidecar validation.
-  source_ranges:
-  - start: 15
-    end: 17
-  - start: 41
-    end: 41
+  source_labels:
+  - '{vmo8}'
+  - '{ygmh}'
 - concept_id: C-015
   name: TreeRepresentation
   definition: Stable structural representation for supported files, including 
@@ -247,9 +221,10 @@ concepts:
   - Is validated using checksum or equivalent freshness metadata before 
     structural processing.
   - Is recreated when missing or invalid.
-  source_ranges:
-  - start: 37
-    end: 43
+  source_labels:
+  - '{7qgh}'
+  - '{cgms}'
+  - '{ygmh}'
 - concept_id: C-016
   name: XPathLikeFilter
   definition: Universal structural filter that evaluates XPath-like queries over
@@ -261,9 +236,12 @@ concepts:
   - Returns only matching tree nodes.
   - Shares structure model, node identifiers, and selector semantics with the 
     indexer.
-  source_ranges:
-  - start: 47
-    end: 55
+  source_labels:
+  - '{41c7}'
+  - '{om7b}'
+  - '{g9of}'
+  - '{wgzg}'
+  - '{yr60}'
 - concept_id: C-017
   name: PreviewReference
   definition: Reference embedded in a search result that is sufficient to 
@@ -273,11 +251,10 @@ concepts:
   - Includes draft session identifier for draft-session results.
   - Must not expose unstable node identifiers.
   - Is the canonical result presentation mechanism for structural results.
-  source_ranges:
-  - start: 43
-    end: 43
-  - start: 59
-    end: 63
+  source_labels:
+  - '{8c3h}'
+  - '{dim0}'
+  - '{heid}'
 - concept_id: C-018
   name: StructuralEvidence
   definition: Search evidence that is valid only when backed by a validated 
@@ -289,11 +266,9 @@ concepts:
     preview-compatible nodes.
   - Timed-out dynamic or structural phases must not contribute invalid partial 
     structural evidence.
-  source_ranges:
-  - start: 63
-    end: 63
-  - start: 69
-    end: 75
+  source_labels:
+  - '{olx9}'
+  - '{ilmi}'
 - concept_id: C-019
   name: GrepSearchMode
   definition: Explicit operating mode of fs_grep, either classic line grep or 
@@ -305,9 +280,8 @@ concepts:
   - Structural mode is the default.
   - Classic line grep must not count as project cross-search structural evidence
     unless converted.
-  source_ranges:
-  - start: 69
-    end: 69
+  source_labels:
+  - '{6fcd}'
 - concept_id: C-020
   definition: SearchSession state and phase model exposed to clients while 
     search generation proceeds or terminates.
@@ -318,11 +292,9 @@ concepts:
     validation, tree reconstruction, XPath filtering, block writing, or 
     completion.
   - Distinguishes block-not-ready from whole-search failure.
-  source_ranges:
-  - end: 27
-    start: 25
-  - end: 75
-    start: 73
+  source_labels:
+  - '{5tnm}'
+  - '{ilmi}'
 - concept_id: C-021
   definition: A currently working search, preview, queue, or status command 
     whose existing public behavior must remain valid during the migration.
@@ -332,9 +304,9 @@ concepts:
   - Keeps current non-paginated behavior as the default for existing callers.
   - Must not be replaced by an incompatible greenfield subsystem.
   - May be extended through optional parameters or compatible bridge commands.
-  source_ranges:
-  - start: 97
-    end: 107
+  source_labels:
+  - '{tuj9}'
+  - '{3crm}'
 - concept_id: C-022
   definition: Compatibility layer that adds paginated and session-backed 
     behavior around existing command implementations without breaking current 
@@ -346,9 +318,10 @@ concepts:
   - Preserves existing validation, schemas, queue behavior, timeout behavior, 
     direct payloads, structural results, and preview references.
   - Must avoid duplicating working search logic.
-  source_ranges:
-  - start: 97
-    end: 107
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  - '{rn07}'
 - concept_id: C-023
   definition: Public command contract that keeps current behavior stable while 
     allowing optional paginated extensions.
@@ -358,9 +331,9 @@ concepts:
   - New pagination fields are optional.
   - Existing callers do not need to change.
   - Bridge commands must be documented when used.
-  source_ranges:
-  - start: 97
-    end: 107
+  source_labels:
+  - '{3crm}'
+  - '{ebj8}'
 - concept_id: C-024
   definition: Optional request or response fields that enable 
     paginated/session-backed behavior without changing default command behavior.
@@ -370,9 +343,8 @@ concepts:
     position number, or a job result endpoint reference.
   - Must not be required for existing non-paginated callers.
   - Must be documented in command schemas and metadata when exposed.
-  source_ranges:
-  - end: 107
-    start: 97
+  source_labels:
+  - '{ebj8}'
 - concept_id: C-025
   definition: Inventory that separates behavior already present in the codebase 
     from behavior introduced by this plan.
@@ -382,9 +354,9 @@ concepts:
   - Identifies which paging/session behaviors are new.
   - Prevents the implementation plan from duplicating existing search logic.
   - Helps global steps target migration work instead of greenfield replacement.
-  source_ranges:
-  - start: 97
-    end: 107
+  source_labels:
+  - '{rn07}'
+  - '{tuj9}'
 - concept_id: C-026
   name: AtomicBlockPublication
   definition: Publication protocol that prevents clients and HTTP readers from 
@@ -398,9 +370,9 @@ concepts:
   - Updates the directory index atomically so readers never see a partially 
     appended index.
   - Prevents readers from consuming partially written content.
-  source_ranges:
-  - end: 27
-    start: 23
+  source_labels:
+  - '{4cv1}'
+  - '{g9xv}'
 - concept_id: C-027
   definition: 'Client-facing directory index of a search job, read through the job
     result endpoint with the job_id. Lists every result block currently written for
@@ -419,256 +391,404 @@ concepts:
   - Reports a final, closed block set once the completeness marker is search 
     finished.
   - Is retrieved by job_id through the job result endpoint in a single read.
-  source_ranges:
-  - end: 27
-    start: 23
+  source_labels:
+  - '{4cv1}'
+  - '{lann}'
+- concept_id: C-028
+  definition: Dedicated accumulation subdirectory inside a 
+    SearchSessionDirectory where the main search thread writes each finding as 
+    one separate file the moment it is produced, holding raw findings until a 
+    result block is assembled from them.
+  name: RawFindingBuffer
+  properties:
+  - Holds each produced finding as one separate file written by the main search 
+    thread.
+  - Contains a lock file recording the owner process PID of the active block 
+    assembler.
+  - A lock whose owner PID is no longer alive is stale and may be reclaimed.
+  - Assembled findings are deleted from the buffer after their block is 
+    published.
+  - Is deleted once the search status is completed and the buffer is empty.
+  - Is internal to result production and is not exposed to HTTP readers.
+  source_labels:
+  - '{g9xv}'
+- concept_id: C-029
+  definition: Parallel thread that drains the RawFindingBuffer into result 
+    blocks under a buffer lock, so the main search thread is never blocked by 
+    block sizing.
+  name: BlockAssembler
+  properties:
+  - Acquires the buffer lock on entry; exits if a live owner already holds it; 
+    reclaims a stale lock whose owner PID is dead.
+  - 'Loops under the lock: forms a result block when buffered volume reaches the maximum
+    block size or the search status is completed.'
+  - Atomically publishes each block, appends its entry to the directory index, 
+    updates the manifest, then deletes the assembled findings.
+  - Releases the lock and exits when the volume is below the limit and the 
+    search is not completed.
+  - On completed status with an empty buffer, sets the index completeness marker
+    to search finished and deletes the buffer and lock.
+  - Never deletes the session directory; retained blocks and index are removed 
+    only later by the background cleaner under TTL.
+  - Is run one final time by the main thread after the status becomes completed,
+    to drain trailing findings.
+  source_labels:
+  - '{g9xv}'
 relations:
 - from_concept: C-001
   to_concept: C-002
   type: owns
   description: SearchSession owns the session directory that stores its files 
     and metadata.
-  source_ranges:
-  - start: 21
-    end: 21
+  source_labels:
+  - '{hpqf}'
 - from_concept: C-002
   to_concept: C-003
   type: owns
   description: SearchSessionDirectory owns the manifest that records state and 
     metrics.
-  source_ranges:
-  - start: 31
-    end: 33
+  source_labels:
+  - '{hpqf}'
+  - '{nyox}'
 - from_concept: C-002
   to_concept: C-004
   type: owns
   description: SearchSessionDirectory owns immutable result blocks.
-  source_ranges:
-  - end: 27
-    start: 23
+  source_labels:
+  - '{hpqf}'
+  - '{uj1g}'
 - from_concept: C-005
   to_concept: C-004
   type: consumes
   description: HTTPResultAccess reads published result blocks by position 
     number.
-  source_ranges:
-  - end: 27
-    start: 25
+  source_labels:
+  - '{lann}'
+  - '{br58}'
 - from_concept: C-005
   to_concept: C-006
   type: produces
   description: HTTPResultAccess refreshes last access timestamp on index, block,
     or status reads.
-  source_ranges:
-  - end: 31
-    start: 31
+  source_labels:
+  - '{6cni}'
 - from_concept: C-007
   to_concept: C-006
   type: uses
   description: SessionTTLPolicy uses last access timestamp to determine 
     expiration.
-  source_ranges:
-  - start: 31
-    end: 33
+  source_labels:
+  - '{oa6t}'
+  - '{xxer}'
 - from_concept: C-003
   to_concept: C-008
   type: owns
   description: SearchSessionManifest stores main server process identity.
-  source_ranges:
-  - start: 91
-    end: 91
+  source_labels:
+  - '{6diy}'
 - from_concept: C-003
   to_concept: C-009
   type: owns
   description: SearchSessionManifest stores heartbeat information for running 
     searches.
-  source_ranges:
-  - start: 93
-    end: 93
+  source_labels:
+  - '{ymk7}'
 - from_concept: C-010
   to_concept: C-008
   type: uses
   description: DeadSessionDetection uses main PID and process start time to 
     detect missing or reused server processes.
-  source_ranges:
-  - start: 91
-    end: 91
+  source_labels:
+  - '{6diy}'
 - from_concept: C-010
   to_concept: C-009
   type: uses
   description: DeadSessionDetection uses stale heartbeat to detect stuck or 
     orphan sessions.
-  source_ranges:
-  - start: 93
-    end: 93
+  source_labels:
+  - '{ymk7}'
 - from_concept: C-011
   to_concept: C-010
   type: uses
   description: BackgroundSessionCleaner uses dead-session detection before 
     deleting orphaned running sessions.
-  source_ranges:
-  - start: 95
-    end: 95
+  source_labels:
+  - '{7u1o}'
 - from_concept: C-011
   to_concept: C-002
   type: consumes
   description: BackgroundSessionCleaner removes session directories when cleanup
     policy allows it.
-  source_ranges:
-  - start: 95
-    end: 95
+  source_labels:
+  - '{7u1o}'
 - from_concept: C-014
   to_concept: C-012
   type: produces
   description: FreshnessValidation determines which indexed files remain fresh.
-  source_ranges:
-  - start: 13
-    end: 17
+  source_labels:
+  - '{vmo8}'
+  - '{5l14}'
 - from_concept: C-014
   to_concept: C-013
   type: produces
   description: FreshnessValidation moves stale or changed files into the dynamic
     file set.
-  source_ranges:
-  - start: 13
-    end: 17
+  source_labels:
+  - '{vmo8}'
+  - '{5l14}'
 - from_concept: C-013
   to_concept: C-015
   type: uses
   description: Dynamic file processing uses the same tree construction path as 
     the indexer.
-  source_ranges:
-  - start: 55
-    end: 55
+  source_labels:
+  - '{yr60}'
 - from_concept: C-016
   to_concept: C-015
   type: uses
   description: XPathLikeFilter operates on validated tree representations.
-  source_ranges:
-  - start: 47
-    end: 49
+  source_labels:
+  - '{41c7}'
 - from_concept: C-016
   to_concept: C-017
   type: produces
   description: XPath-like filtering produces preview-compatible node references 
     for matching nodes.
-  source_ranges:
-  - start: 59
-    end: 61
+  source_labels:
+  - '{8c3h}'
 - from_concept: C-018
   to_concept: C-015
   type: depends_on
   description: StructuralEvidence depends on validated tree representation.
-  source_ranges:
-  - start: 63
-    end: 75
+  source_labels:
+  - '{olx9}'
 - from_concept: C-018
   to_concept: C-017
   type: depends_on
   description: StructuralEvidence depends on preview-compatible result 
     references.
-  source_ranges:
-  - start: 59
-    end: 63
+  source_labels:
+  - '{olx9}'
+  - '{8c3h}'
 - from_concept: C-019
   to_concept: C-018
   type: produces
   description: Structural grep mode produces structural evidence, while classic 
     line grep does not unless converted.
-  source_ranges:
-  - start: 69
-    end: 69
+  source_labels:
+  - '{6fcd}'
 - from_concept: C-001
   to_concept: C-020
   type: owns
   description: SearchSession owns and exposes its current status and phase.
-  source_ranges:
-  - start: 73
-    end: 75
+  source_labels:
+  - '{5tnm}'
 - description: IncrementalCompatibilityLayer builds on existing working 
     commands.
   from_concept: C-022
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-021
   type: uses
+  source_labels:
+  - '{ebj8}'
+  - '{tuj9}'
 - description: ExistingSearchCommand owns a backward-compatible public contract.
   from_concept: C-021
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-023
   type: owns
+  source_labels:
+  - '{3crm}'
 - description: OptionalPaginationParameters extend the command contract without 
     changing default behavior.
   from_concept: C-024
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-023
   type: extends
+  source_labels:
+  - '{ebj8}'
 - description: ExistingBehaviorInventory depends on inspecting existing working 
     commands.
   from_concept: C-025
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-021
   type: depends_on
+  source_labels:
+  - '{rn07}'
+  - '{tuj9}'
 - description: SearchSession-backed behavior extends existing command behavior 
     when pagination is requested; it does not replace the command by default.
   from_concept: C-001
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-021
   type: extends
+  source_labels:
+  - '{tuj9}'
+  - '{ebj8}'
 - description: IncrementalCompatibilityLayer may route paginated execution 
     through SearchSession.
   from_concept: C-022
-  source_ranges:
-  - start: 97
-    end: 107
   to_concept: C-001
   type: uses
+  source_labels:
+  - '{ebj8}'
 - from_concept: C-004
   to_concept: C-026
   type: depends_on
   description: Result block publication depends on atomic block publication so 
     readers only see finalized immutable blocks.
-  source_ranges:
-  - end: 27
-    start: 23
+  source_labels:
+  - '{4cv1}'
+  - '{g9xv}'
 - from_concept: C-005
   to_concept: C-026
   type: depends_on
   description: HTTPResultAccess depends on atomic block publication to avoid 
     reading partial block or index content.
-  source_ranges:
-  - end: 27
-    start: 23
+  source_labels:
+  - '{4cv1}'
 - description: SearchSessionDirectory owns the directory index that lists its 
     result blocks and completeness state.
   from_concept: C-002
-  source_ranges:
-  - end: 27
-    start: 23
   to_concept: C-027
   type: owns
+  source_labels:
+  - '{hpqf}'
+  - '{4cv1}'
 - description: HTTPResultAccess reads the directory index to discover available 
     blocks and completeness state.
   from_concept: C-005
-  source_ranges:
-  - end: 27
-    start: 25
   to_concept: C-027
   type: consumes
+  source_labels:
+  - '{4cv1}'
+  - '{lann}'
 - description: The directory index depends on atomic block publication so 
     readers never observe a partially appended index.
   from_concept: C-027
-  source_ranges:
-  - end: 27
-    start: 23
   to_concept: C-026
   type: depends_on
+  source_labels:
+  - '{4cv1}'
+- description: SearchSessionDirectory owns the raw finding buffer used during 
+    result production.
+  from_concept: C-002
+  to_concept: C-028
+  type: owns
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler consumes findings from the raw finding buffer.
+  from_concept: C-029
+  to_concept: C-028
+  type: consumes
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler produces result blocks from buffered findings.
+  from_concept: C-029
+  to_concept: C-004
+  type: produces
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler updates the directory index by appending each 
+    published block entry.
+  from_concept: C-029
+  to_concept: C-027
+  type: uses
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler updates the manifest with block readiness and 
+    metrics.
+  from_concept: C-029
+  to_concept: C-003
+  type: uses
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler depends on atomic block publication so readers 
+    never see partial blocks or index.
+  from_concept: C-029
+  to_concept: C-026
+  type: depends_on
+  source_labels:
+  - '{g9xv}'
+- description: BlockAssembler depends on the maximum result block size policy to
+    decide block boundaries.
+  from_concept: C-029
+  to_concept: C-007
+  type: depends_on
+  source_labels:
+  - '{g9xv}'
+  - '{oa6t}'
+- description: BackgroundSessionCleaner uses the session TTL policy to decide 
+    which sessions are expired.
+  from_concept: C-011
+  source_labels:
+  - '{7u1o}'
+  - '{oa6t}'
+  to_concept: C-007
+  type: uses
+- from_concept: C-002
+  to_concept: C-006
+  type: owns
+  description: SearchSessionDirectory owns the last-access timestamp; 
+    initialised on directory creation and refreshed by HTTP reads.
+  source_labels:
+  - '{xxer}'
+- description: IncrementalCompatibilityLayer routes paginated execution to 
+    SearchResultBlock delivery.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-004
+  type: uses
+- description: IncrementalCompatibilityLayer exposes SearchStatus through 
+    session lifecycle commands.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-020
+  type: uses
+- description: IncrementalCompatibilityLayer reads SearchResultIndex to deliver 
+    blocks through lifecycle commands.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-027
+  type: uses
+- description: Lifecycle commands read SearchSessionManifest for status 
+    snapshots and cancellation.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-003
+  type: uses
+- description: search_get_status is distinct from HTTPResultAccess; lifecycle 
+    commands complement HTTP retrieval.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-005
+  type: uses
+- description: search_close block retention and expiration depends on 
+    SessionTTLPolicy.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-007
+  type: uses
+- description: search_close leaves blocks until BackgroundSessionCleaner TTL 
+    removes the session directory.
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-011
+  type: uses
+- description: 'Migration preserves StructuralEvidence rules: structural results and
+    preview references carry through paginated blocks.'
+  from_concept: C-022
+  source_labels:
+  - '{ebj8}'
+  - '{2w6w}'
+  to_concept: C-018
+  type: uses

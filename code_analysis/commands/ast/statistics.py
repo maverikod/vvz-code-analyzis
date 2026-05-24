@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from ...core.sql_portable import WHERE_FILES_ACTIVE
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 class ASTStatisticsMCPCommand(BaseMCPCommand):
@@ -47,6 +48,18 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
         file_path: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "ast_statistics")
+        project_id = params["project_id"]
+        file_path = params.get("file_path")
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()

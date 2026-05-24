@@ -1,5 +1,8 @@
 # cst_modify_tree
 
+> **MCP AI editing:** use [`universal_file_edit`](../file_editing/universal_file_edit.md) instead.  
+> This command is for **internal** in-memory `tree_id` workflows (`cst_load_file` → … → `cst_save_tree`).
+
 **Command name:** `cst_modify_tree`  
 **Class:** `CSTModifyTreeCommand`  
 **Source:** `code_analysis/commands/cst_modify_tree_command.py`  
@@ -56,6 +59,23 @@ Recommended AI workflow:
 3. cst_modify_tree with preview=false
 4. cst_save_tree (persist to disk)
 5. format_code/lint_code/type_check_code for the changed file
+
+**For MCP agents:** use [universal file workflow](../file_editing/WORKFLOW.md) instead of the steps above.
+
+### Header-only vs full replace (ClassDef / FunctionDef)
+
+When `replace_all_child_nodes` is **false** (default) and replacement text is a **single non-empty line** with no indented body lines, the server patches only the **header** (signature / class line) and preserves body and docstring.
+
+Force full node replacement:
+
+- Send multi-line replacement including body, **or**
+- Set `replace_all_child_nodes: true` on the replace operation.
+
+Same inference applies to `universal_file_edit` (no explicit flag) — see [PYTHON_EDIT_SEMANTICS.md](../file_editing/PYTHON_EDIT_SEMANTICS.md).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `replace_all_child_nodes` | boolean | No | When true, always full replace for ClassDef/FunctionDef (default false) |
 
 Batch behaviour:
 When you send multiple replace or delete operations in one request, each node is resolved in the current module by its position (from metadata). So the second and later operations see the tree after previous ops are applied; you can replace or delete several nodes in one call. Use one batch for related changes.

@@ -10,9 +10,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.duplicate_detector import DuplicateDetector
+from ..core.exceptions import ValidationError
 from ..core.sql_portable import WHERE_FILES_ACTIVE
 from ..core.svo_client_manager import SVOClientManager
 from .base_mcp_command import BaseMCPCommand
@@ -81,9 +82,30 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate params and reject unknown project_id before queuing."""
+        """Validate params; reject unknown project_id and OOB schema bounds."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("min_similarity", "semantic_threshold"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
         return params
 
     async def execute(
@@ -95,7 +117,7 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
         use_semantic: bool = True,
         semantic_threshold: float = 0.85,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
         """Execute duplicate detection.
 
         Args:
@@ -109,6 +131,31 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with duplicate groups.
         """
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "min_lines": min_lines,
+            "min_similarity": min_similarity,
+            "use_semantic": use_semantic,
+            "semantic_threshold": semantic_threshold,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        project_id = params["project_id"]
+        file_path = params.get("file_path")
+        min_lines = int(params.get("min_lines", 5))
+        min_similarity = float(params.get("min_similarity", 0.8))
+        use_semantic = bool(params.get("use_semantic", True))
+        semantic_threshold = float(params.get("semantic_threshold", 0.85))
+
         from ..core.progress_tracker import get_progress_tracker_from_context
 
         progress_tracker = get_progress_tracker_from_context(

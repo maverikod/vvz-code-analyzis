@@ -133,8 +133,6 @@ def _rotate_and_pack_one(
         "packed_paths": [],
         "error": None,
     }
-    backup_count = max(1, min(backup_count, 99))
-
     if not log_path.exists():
         result["skipped"] = True
         result["message"] = "File does not exist; nothing to rotate"

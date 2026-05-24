@@ -232,14 +232,18 @@ def _annotated_line_ref_priority_drill_down(meta: Any) -> tuple[int, int]:
 
 
 def _source_lines_for_tree(tree: Any) -> list[str] | None:
-    """Return split source lines from disk or in-memory module code."""
-    file_path = getattr(tree, "file_path", None)
-    if file_path and pathlib.Path(file_path).is_file():
-        return pathlib.Path(file_path).read_text(encoding="utf-8").splitlines()
+    """Return split source lines for preview annotation.
+
+    In-memory ``tree.module.code`` wins over on-disk ``file_path`` so
+    ``focus.text`` matches the edit-session draft before ``universal_file_write``.
+    """
     module = getattr(tree, "module", None)
     code = getattr(module, "code", None) if module is not None else None
     if isinstance(code, str) and code:
         return code.splitlines()
+    file_path = getattr(tree, "file_path", None)
+    if file_path and pathlib.Path(file_path).is_file():
+        return pathlib.Path(file_path).read_text(encoding="utf-8").splitlines()
     return None
 
 
@@ -346,6 +350,89 @@ def _annotated_full_text(tree: Any, budget: PreviewBudget) -> str | None:
         end_line=file_line_count,
         line_to_stable_id=line_to_stable_id,
     )
+
+
+def clean_logical_lines_for_tree(tree: Any) -> list[str]:
+    """Return clean source lines (no inline ``# @node-id`` rows) from a CST tree."""
+    from code_analysis.core.cst_tree.node_id_markers import strip_persisted_node_ids
+    from code_analysis.core.cst_tree.node_stable_id import (
+        strip_inline_node_id_lines_from_source,
+    )
+
+    module = getattr(tree, "module", None)
+    code = getattr(module, "code", None) if module is not None else None
+    if not isinstance(code, str):
+        return []
+    logical = strip_inline_node_id_lines_from_source(code)
+    logical, _ = strip_persisted_node_ids(logical)
+    return logical.splitlines()
+
+
+def build_logical_line_to_stable_id(
+    tree: Any, clean_lines: list[str]
+) -> dict[int, str]:
+    """Map 1-based *clean* line numbers to ``stable_id`` via structural CST nodes."""
+    import libcst as cst
+
+    line_to_stable_id: dict[int, str] = {}
+    line_priority: dict[int, tuple[int, int]] = {}
+    module = getattr(tree, "module", None)
+    metadata_map = getattr(tree, "metadata_map", None) or {}
+    node_map = getattr(tree, "node_map", None) or {}
+    if module is None or not clean_lines:
+        return line_to_stable_id
+
+    for meta in metadata_map.values():
+        stable_id = getattr(meta, "stable_id", None)
+        if not stable_id:
+            continue
+        kind = getattr(meta, "kind", "") or ""
+        typ = getattr(meta, "type", "") or ""
+        if typ == "ClassDef" and kind != "class":
+            continue
+        if typ == "FunctionDef" and kind not in ("function", "method"):
+            continue
+        if typ not in ("ClassDef", "FunctionDef"):
+            continue
+
+        node = node_map.get(meta.node_id)
+        if not isinstance(node, (cst.FunctionDef, cst.ClassDef)):
+            continue
+        raw = module.code_for_node(node)
+        from code_analysis.core.cst_tree.node_id_markers import strip_persisted_node_ids
+        from code_analysis.core.cst_tree.node_stable_id import (
+            strip_inline_node_id_lines_from_source,
+        )
+
+        logical = strip_inline_node_id_lines_from_source(raw)
+        logical, _ = strip_persisted_node_ids(logical)
+        first = logical.splitlines()[0].strip() if logical.strip() else ""
+        if not first:
+            continue
+        for line_no, line in enumerate(clean_lines, start=1):
+            if line.strip() != first:
+                continue
+            priority = _annotated_line_ref_priority(meta)
+            prev = line_priority.get(line_no)
+            if prev is None or priority < prev:
+                line_to_stable_id[line_no] = stable_id
+                line_priority[line_no] = priority
+            break
+    return line_to_stable_id
+
+
+def render_annotated_clean_lines(
+    clean_lines: list[str],
+    line_to_stable_id: dict[int, str],
+) -> str:
+    """Preview-style text: ``[stable_id]`` prefix on clean lines (no extra rows)."""
+    blank_prefix = " " * _UUID_PREFIX_WIDTH
+    out: list[str] = []
+    for line_no, line in enumerate(clean_lines, start=1):
+        sid = line_to_stable_id.get(line_no)
+        prefix = f"[{sid}] " if sid else blank_prefix
+        out.append(prefix + line)
+    return "\n".join(out)
 
 
 def render_module(tree: Any, budget: PreviewBudget) -> str:

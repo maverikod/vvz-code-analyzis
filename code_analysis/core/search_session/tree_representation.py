@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import yaml
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 from code_analysis.core.cst_tree.tree_sidecar import (
     read_sidecar_payload,
@@ -47,6 +49,11 @@ class TreeFormatKind(str, Enum):
     python_cst = "python_cst"
     markdown = "markdown"
     text = "text"
+class TreeValidityState(str, Enum):
+    """Whether validate_or_recreate_tree returned an existing valid sidecar or rebuilt it."""
+
+    reused = "reused"
+    recreated = "recreated"
 
 
 @dataclass(frozen=True)
@@ -211,10 +218,63 @@ def _recreate_tree_for_format(
     source_abs: Path,
     content_checksum: str,
 ) -> TreeRepresentationRef:
-    """Rebuild a missing or stale sidecar via the indexer hook (not wired yet)."""
-    raise NotImplementedError(
-        f"tree recreation for format {kind.value!r} is not wired; "
-        f"indexer must materialize sidecar for {file_path!r} under {project_root}"
+    """Rebuild a missing or stale sidecar via existing indexer tree builders."""
+    import os
+    import yaml as _yaml
+    source_text = source_abs.read_text(encoding="utf-8")
+    sidecar_path = sidecar_path_for(file_path, project_root)
+    if kind == TreeFormatKind.python_cst:
+        from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
+        from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
+        create_tree_from_code(str(source_abs), source_text, persist_sidecar=True)
+        if not sidecar_path.is_file():
+            write_sidecar_atomic(source_abs, {"source_sha256": content_checksum})
+        digest, root_stable_id = _read_cst_digest_and_root(source_abs, sidecar_path)
+        return TreeRepresentationRef(
+            file_path=file_path, sidecar_path=sidecar_path,
+            content_checksum=content_checksum, root_stable_id=root_stable_id,
+        )
+    if kind == TreeFormatKind.json:
+        from code_analysis.core.json_tree.tree_builder import build_tree_from_data
+        from code_analysis.core.tree_temp.sidecar_payload import serialize_sidecar_to_json_text
+        data = json.loads(source_text)
+        tree = build_tree_from_data(data, source_path=str(source_abs))
+        sidecar_text = serialize_sidecar_to_json_text(tree, source_sha256=content_checksum)
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
+        tmp.write_text(sidecar_text, encoding="utf-8")
+        os.replace(tmp, sidecar_path)
+        return TreeRepresentationRef(
+            file_path=file_path, sidecar_path=sidecar_path,
+            content_checksum=content_checksum, root_stable_id=_read_tree_temp_root_stable_id(sidecar_path),
+        )
+    if kind == TreeFormatKind.yaml:
+        from code_analysis.core.yaml_tree.tree_builder import build_yaml_tree_from_data
+        from code_analysis.core.tree_temp.sidecar_payload import serialize_sidecar_to_json_text
+        data = _yaml.safe_load(source_text)
+        tree = build_yaml_tree_from_data(data, source_path=str(source_abs))
+        sidecar_text = serialize_sidecar_to_json_text(tree, source_sha256=content_checksum)
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
+        tmp.write_text(sidecar_text, encoding="utf-8")
+        os.replace(tmp, sidecar_path)
+        return TreeRepresentationRef(
+            file_path=file_path, sidecar_path=sidecar_path,
+            content_checksum=content_checksum, root_stable_id=_read_tree_temp_root_stable_id(sidecar_path),
+        )
+    # markdown or text — adjacent .tree_sidecar
+    from code_analysis.core.structure_extraction.extractor import extract_structure
+    extract_structure(str(source_abs), ensure_persisted_tree=True)
+    payload: dict = {"source_sha256": content_checksum}
+    root_stable_id = _read_adjacent_root_stable_id(sidecar_path)
+    if root_stable_id is not None:
+        payload["root_stable_id"] = root_stable_id
+    tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, sidecar_path)
+    return TreeRepresentationRef(
+        file_path=file_path, sidecar_path=sidecar_path,
+        content_checksum=content_checksum, root_stable_id=root_stable_id,
     )
 
 
@@ -223,14 +283,11 @@ def validate_or_recreate_tree(
     project_root: Path,
     file_path: str,
     force: bool = False,
-) -> TreeRepresentationRef:
+) -> tuple[TreeRepresentationRef, TreeValidityState]:
     """Validate sidecar checksum against source SHA-256 or recreate when stale.
 
-    When the sidecar is present and its ``source_sha256`` matches the current
-    source file digest, returns a :class:`TreeRepresentationRef` without
-    rebuilding. When the sidecar is missing, invalid, or *force* is True,
-    delegates to :func:`_recreate_tree_for_format` (indexer hook; currently
-    raises ``NotImplementedError`` until wired).
+    Returns (ref, reused) when fresh; (ref, recreated) after rebuild.
+    Raises FileNotFoundError when source absent.
     """
     kind = classify_tree_format(file_path)
     root = project_root.resolve()
@@ -239,32 +296,28 @@ def validate_or_recreate_tree(
         raise FileNotFoundError(f"source file not found: {source_abs}")
     content_checksum = _compute_file_sha256_hex(source_abs)
     sidecar_path = sidecar_path_for(file_path, root)
-
     if not force:
         sidecar_digest, root_stable_id = _read_sidecar_state(
-            kind=kind,
-            source_abs=source_abs,
-            sidecar_path=sidecar_path,
+            kind=kind, source_abs=source_abs, sidecar_path=sidecar_path,
         )
         if sidecar_digest is not None and sidecar_digest == content_checksum:
-            return TreeRepresentationRef(
-                file_path=file_path,
-                sidecar_path=sidecar_path,
-                content_checksum=content_checksum,
-                root_stable_id=root_stable_id,
+            return (
+                TreeRepresentationRef(
+                    file_path=file_path, sidecar_path=sidecar_path,
+                    content_checksum=content_checksum, root_stable_id=root_stable_id,
+                ),
+                TreeValidityState.reused,
             )
-
-    return _recreate_tree_for_format(
-        kind=kind,
-        project_root=root,
-        file_path=file_path,
-        source_abs=source_abs,
-        content_checksum=content_checksum,
+    ref = _recreate_tree_for_format(
+        kind=kind, project_root=root, file_path=file_path,
+        source_abs=source_abs, content_checksum=content_checksum,
     )
+    return ref, TreeValidityState.recreated
 
 
 __all__ = [
     "TreeFormatKind",
+    "TreeValidityState",
     "TreeRepresentationRef",
     "classify_tree_format",
     "sidecar_path_for",

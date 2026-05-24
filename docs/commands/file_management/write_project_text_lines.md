@@ -1,5 +1,8 @@
 # write_project_text_lines
 
+> **Obsolete for MCP editing.** Use [universal_file_edit](../file_editing/universal_file_edit.md) in an edit session.  
+> This command remains for legacy line-replace on **non-code** plain text only.
+
 **Command name:** `write_project_text_lines`  
 **Class:** `WriteProjectTextLinesCommand`  
 **Source:** `code_analysis/commands/write_project_text_lines_command.py`  
@@ -14,7 +17,7 @@ email: vasilyvz@gmail.com
 
 **Non-code plain text** — documentation, configs, etc.: replace lines in place with optional backup and DB update.
 
-**Python / Python-ecosystem paths** (`.py`, `.pyi`, …): **`PYTHON_FILE_FORBIDDEN`** — use **`replace_file_lines`**, CST commands, or other Python workflows; do not use this command for Python sources.
+**Python / Python-ecosystem paths** (`.py`, `.pyi`, …): **`PYTHON_FILE_FORBIDDEN`** — use the [universal edit session](../file_editing/WORKFLOW.md); do not use this command for Python sources.
 
 **Other blocked program-source suffixes:** `CODE_FILE_FORBIDDEN` (see `project_text_file_guard.py`).
 

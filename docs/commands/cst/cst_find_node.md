@@ -10,6 +10,8 @@ email: vasilyvz@gmail.com
 
 ---
 
+> **AI / MCP editing:** use [`universal_file_search`](../file_editing/universal_file_search.md) with `session_id` from `universal_file_open` to search the **edit-session** CST tree. This command uses legacy `tree_id` from `cst_load_file` — separate in-memory session.
+
 ## Purpose (Предназначение)
 
 The cst_find_node command finds nodes in a CST tree using two search modes: simple search (by type, name, position) or XPath-like search (using CSTQuery selectors). Search is performed on the server using the tree stored in memory, so no need to transfer the entire tree to the client.

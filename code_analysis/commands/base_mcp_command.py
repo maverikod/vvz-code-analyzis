@@ -497,6 +497,192 @@ class BaseMCPCommand(Command):
         }
 
     @staticmethod
+    def _try_validate_schema_value(
+        value: Any,
+        prop: Dict[str, Any],
+        *,
+        field: str,
+        command_name: str,
+    ) -> bool:
+        """Return True when *value* satisfies *prop*; False on ValidationError."""
+        try:
+            BaseMCPCommand._validate_schema_value(
+                value,
+                prop,
+                field=field,
+                command_name=command_name,
+            )
+            return True
+        except ValidationError:
+            return False
+
+    @staticmethod
+    def _validate_schema_value(
+        value: Any,
+        prop: Dict[str, Any],
+        *,
+        field: str,
+        command_name: str,
+    ) -> None:
+        """
+        Validate one value against a JSON Schema property (shallow subset).
+
+        Supports type, enum, minimum/maximum, minItems/maxItems, simple
+        array ``items`` schemas (single object with ``type`` only), and
+        ``oneOf`` / ``anyOf`` unions when no top-level ``type`` is set.
+        """
+        expected_type = prop.get("type")
+        one_of = prop.get("oneOf")
+        any_of = prop.get("anyOf")
+        if expected_type is None and (one_of or any_of):
+            branches: list[Dict[str, Any]] = []
+            union_label = ""
+            if isinstance(one_of, list):
+                branches = [b for b in one_of if isinstance(b, dict)]
+                union_label = "oneOf"
+            elif isinstance(any_of, list):
+                branches = [b for b in any_of if isinstance(b, dict)]
+                union_label = "anyOf"
+            if not branches:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} has empty {union_label}",
+                    field=field,
+                    details={union_label: one_of or any_of},
+                )
+            match_count = sum(
+                1
+                for branch in branches
+                if BaseMCPCommand._try_validate_schema_value(
+                    value,
+                    branch,
+                    field=field,
+                    command_name=command_name,
+                )
+            )
+            if union_label == "anyOf":
+                if match_count < 1:
+                    raise ValidationError(
+                        f"{command_name}: parameter {field!r} must match at least "
+                        f"one branch of anyOf, got {type(value).__name__}",
+                        field=field,
+                        details={"anyOf": any_of},
+                    )
+            elif match_count < 1:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must match one branch "
+                    f"of oneOf, got {type(value).__name__}",
+                    field=field,
+                    details={"oneOf": one_of},
+                )
+            if "enum" in prop and value is not None and value not in prop["enum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be one of {prop['enum']!r}, got {value!r}",
+                    field=field,
+                    details={"enum": prop["enum"]},
+                )
+            return
+
+        expected_type = prop.get("type")
+        if expected_type == "string":
+            if not isinstance(value, str):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be string, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+        elif expected_type == "integer":
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be integer, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+            if "minimum" in prop and value < prop["minimum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be >= {prop['minimum']}, got {value}",
+                    field=field,
+                    details={"minimum": prop["minimum"], "value": value},
+                )
+            if "maximum" in prop and value > prop["maximum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be <= {prop['maximum']}, got {value}",
+                    field=field,
+                    details={"maximum": prop["maximum"], "value": value},
+                )
+        elif expected_type == "number":
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be number, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+            if "minimum" in prop and value < prop["minimum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be >= {prop['minimum']}, got {value}",
+                    field=field,
+                    details={"minimum": prop["minimum"], "value": value},
+                )
+            if "maximum" in prop and value > prop["maximum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be <= {prop['maximum']}, got {value}",
+                    field=field,
+                    details={"maximum": prop["maximum"], "value": value},
+                )
+        elif expected_type == "boolean":
+            if not isinstance(value, bool):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be boolean, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+        elif expected_type == "array":
+            if not isinstance(value, list):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be array, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+            if "minItems" in prop and len(value) < prop["minItems"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must have at least "
+                    f"{prop['minItems']} items, got {len(value)}",
+                    field=field,
+                    details={"minItems": prop["minItems"], "actual": len(value)},
+                )
+            if "maxItems" in prop and len(value) > prop["maxItems"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must have at most "
+                    f"{prop['maxItems']} items, got {len(value)}",
+                    field=field,
+                    details={"maxItems": prop["maxItems"], "actual": len(value)},
+                )
+            items_schema = prop.get("items")
+            if isinstance(items_schema, dict) and "type" in items_schema:
+                for index, item in enumerate(value):
+                    if item is None:
+                        continue
+                    BaseMCPCommand._validate_schema_value(
+                        item,
+                        items_schema,
+                        field=f"{field}[{index}]",
+                        command_name=command_name,
+                    )
+        elif expected_type == "object":
+            if not isinstance(value, dict):
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be object, got {type(value).__name__}",
+                    field=field,
+                    details={},
+                )
+        if "enum" in prop and value is not None:
+            if value not in prop["enum"]:
+                raise ValidationError(
+                    f"{command_name}: parameter {field!r} must be one of {prop['enum']!r}, got {value!r}",
+                    field=field,
+                    details={"enum": prop["enum"]},
+                )
+
+    @staticmethod
     def validate_params_against_schema(
         params: Dict[str, Any],
         schema: Dict[str, Any],
@@ -521,7 +707,7 @@ class BaseMCPCommand(Command):
                 details={},
             )
         props = schema.get("properties") or {}
-        additional_ok = schema.get("additionalProperties", True)
+        additional_ok = schema.get("additionalProperties", False)
         required_set = set(schema.get("required") or [])
         for key, value in params.items():
             if key not in props:
@@ -535,57 +721,12 @@ class BaseMCPCommand(Command):
                 continue
             if value is None:
                 continue
-            prop = props[key]
-            expected_type = prop.get("type")
-            if expected_type == "string":
-                if not isinstance(value, str):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be string, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            elif expected_type == "integer":
-                if not isinstance(value, int) or isinstance(value, bool):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be integer, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            elif expected_type == "number":
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be number, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            elif expected_type == "boolean":
-                if not isinstance(value, bool):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be boolean, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            elif expected_type == "array":
-                if not isinstance(value, list):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be array, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            elif expected_type == "object":
-                if not isinstance(value, dict):
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be object, got {type(value).__name__}",
-                        field=key,
-                        details={},
-                    )
-            if "enum" in prop and value is not None:
-                if value not in prop["enum"]:
-                    raise ValidationError(
-                        f"{command_name}: parameter {key!r} must be one of {prop['enum']!r}, got {value!r}",
-                        field=key,
-                        details={"enum": prop["enum"]},
-                    )
+            BaseMCPCommand._validate_schema_value(
+                value,
+                props[key],
+                field=key,
+                command_name=command_name,
+            )
         # Required keys presence check
         for key in required_set:
             if key not in params or params[key] is None:
@@ -603,21 +744,19 @@ class BaseMCPCommand(Command):
 
         Call this before queuing so invalid project_id (and other IDs) are rejected
         immediately instead of after job start. When schema has additionalProperties
-        False, only allowed keys are passed through (transport may inject extra keys).
+        False, unknown keys raise ValidationError.
 
         Args:
             params: Incoming parameters dict.
 
         Returns:
-            Validated params (filtered to schema properties when additionalProperties False).
+            Validated params (unchanged when validation succeeds).
 
         Raises:
             ValidationError: If params fail schema or identifier validation.
         """
         schema = self.get_schema()
-        props = schema.get("properties") or {}
-        if not schema.get("additionalProperties", True):
-            params = {k: v for k, v in params.items() if k in props}
+        params = {k: v for k, v in params.items() if k != "context"}
         BaseMCPCommand.validate_params_against_schema(
             params, schema, command_name=getattr(self, "name", "command")
         )

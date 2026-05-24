@@ -26,6 +26,7 @@ from .models import (
 )
 
 from .node_id_markers import append_persisted_node_ids, strip_persisted_node_ids
+from .node_stable_id import logical_source_from_module
 from .tree_builder import _build_tree_index, get_tree
 
 from .tree_metadata import _resolve_node_id as resolve_parent_id
@@ -134,14 +135,56 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
     return False
 
 
+def _resolve_stable_node_id(tree: CSTTree, ref: str) -> str:
+    """Map preview ``node_ref`` / stable_id to the current span ``node_id``."""
+    if not ref or ref == ROOT_NODE_ID_SENTINEL or ":" in ref:
+        return ref
+    meta = tree.find_by_stable_id(ref)
+    if meta is not None:
+        return meta.node_id
+    if ref in tree.node_map:
+        return ref
+    return ref
+
+
+def _resolve_operation_node_ids(tree: CSTTree, op: TreeOperation) -> TreeOperation:
+    """Resolve stable_id references on an operation to current span node_ids."""
+    updates: Dict[str, str] = {}
+    for field in (
+        "node_id",
+        "parent_node_id",
+        "target_node_id",
+        "start_node_id",
+        "end_node_id",
+    ):
+        raw = getattr(op, field, None)
+        if isinstance(raw, str) and raw:
+            updates[field] = _resolve_stable_node_id(tree, raw)
+    if updates:
+        return dataclasses.replace(op, **updates)
+    return op
+
+
 def _apply_single_op(tree: CSTTree, op: TreeOperation) -> CSTTree:
     """Apply a single validated operation to a tree with full cycle."""
     from .tree_stable_data import extract_stable_data, restore_stable_data
 
+    previous_metadata_map = dict(tree.metadata_map)
+    previous_module = tree.module
     decorator_map = extract_stable_data(tree)
+    pinned_node_id = op.node_id if op.action == TreeOperationType.REPLACE else None
     modified_module = _apply_operation(tree.module, tree, op)
     tree.module = modified_module
-    tree = restore_stable_data(tree, decorator_map)
+    tree = restore_stable_data(
+        tree,
+        decorator_map,
+        previous_metadata_map=previous_metadata_map,
+        previous_module=previous_module,
+        pinned_node_id=pinned_node_id,
+    )
+    from .tree_sidecar import persist_tree_sidecar_after_edit
+
+    persist_tree_sidecar_after_edit(tree)
     return tree
 
 
@@ -171,9 +214,6 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     if not tree:
         raise ValueError(f"Tree not found: {tree_id}")
 
-    for op in operations:
-        _validate_operation(tree, op)
-
     sorted_ops = _sort_operations_for_batch(operations, tree)
     use_mutable_batch = _use_mutable_batch_path(operations, tree)
 
@@ -200,30 +240,20 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
                 persisted_node_ids=persisted_node_ids,
             )
             tree.module_source_sha256_hex = hashlib.sha256(
-                tree.module.code.encode("utf-8")
+                logical_source_from_module(tree.module).encode("utf-8")
             ).hexdigest()
             return tree
 
         modified_module = tree.module
         for op in sorted_ops:
-            # Resolve stable_id -> current node_id after each operation
-            if op.node_id:
-                stable = op.node_id
-                current_nid = next(
-                    (
-                        nid
-                        for nid, m in tree.metadata_map.items()
-                        if m.stable_id == stable
-                    ),
-                    stable,
-                )
-                op = dataclasses.replace(op, node_id=current_nid)
+            op = _resolve_operation_node_ids(tree, op)
+            _validate_operation(tree, op)
             tree = _apply_single_op(tree, op)
 
         modified_module = tree.module
         _validate_module(modified_module)
         tree.module_source_sha256_hex = hashlib.sha256(
-            tree.module.code.encode("utf-8")
+            logical_source_from_module(tree.module).encode("utf-8")
         ).hexdigest()
         return tree
 

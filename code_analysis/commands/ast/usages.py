@@ -10,9 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 from ...core.cst_tree.tree_builder import load_file_to_tree
 from ...core.cst_tree.tree_range_finder import find_node_by_range
 
@@ -140,7 +141,29 @@ class FindUsagesMCPCommand(BaseMCPCommand):
         limit: Optional[int] = None,
         offset: int = 0,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
+        call_params: Dict[str, Any] = {
+            "project_id": project_id,
+            "target_name": target_name,
+            "target_type": target_type,
+            "target_class": target_class,
+            "file_path": file_path,
+            "limit": limit,
+            "offset": offset,
+        }
+        call_params.update(kwargs)
+        try:
+            call_params = self.validate_params(call_params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "find_usages")
+        project_id = call_params["project_id"]
+        target_name = call_params["target_name"]
+        target_type = call_params.get("target_type")
+        target_class = call_params.get("target_class")
+        file_path = call_params.get("file_path")
+        limit = call_params.get("limit")
+        offset = int(call_params.get("offset", 0))
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
@@ -345,13 +368,12 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 "is used in the project. It searches the usages table in the analysis database to "
                 "locate all references to the target entity.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Builds query filtering by target_name, target_type, target_class, file_path\n"
-                "5. If file_path provided, limits search to that specific file\n"
-                "6. Applies pagination: limit and offset\n"
-                "7. Returns list of usages with file_path and valid UUID4 cst_node_id per entity\n\n"
+                "1. Validates project_id via project registry\n"
+                "2. Opens database connection for the project\n"
+                "3. Builds query filtering by target_name, target_type, target_class, file_path\n"
+                "4. If file_path provided, limits search to that specific file\n"
+                "5. Applies pagination: limit and offset\n"
+                "6. Returns list of usages with file_path and valid UUID4 cst_node_id per entity\n\n"
                 "Search Behavior:\n"
                 "- Searches usages table for exact matches on target_name\n"
                 "- Can filter by target_type (method/property/class/function)\n"
@@ -372,10 +394,9 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 "- If file_path provided, searches only in that file"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects)."
                     ),
                     "type": "string",
                     "required": True,
@@ -411,7 +432,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 "file_path": {
                     "description": (
                         "Optional file path to filter by. If provided, only searches for usages "
-                        "within this specific file. Can be absolute or relative to root_dir."
+                        "within this specific file. Can be absolute or relative to project root."
                     ),
                     "type": "string",
                     "required": False,
@@ -432,19 +453,12 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": 0,
                 },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
             },
             "usage_examples": [
                 {
                     "description": "Find all usages of a function",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "target_name": "process_data",
                         "target_type": "function",
                     },
@@ -455,7 +469,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find method usages with class context",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "target_name": "execute",
                         "target_type": "method",
                         "target_class": "TaskHandler",
@@ -467,7 +481,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find usages in specific file",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "target_name": "MyClass",
                         "target_type": "class",
                         "file_path": "src/main.py",
@@ -479,7 +493,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find usages with pagination",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "target_name": "calculate",
                         "limit": 100,
                         "offset": 0,
@@ -492,7 +506,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "project_id='invalid-uuid' not registered",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "FIND_USAGES_ERROR": {

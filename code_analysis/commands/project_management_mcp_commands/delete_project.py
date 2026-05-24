@@ -13,6 +13,7 @@ from ._shared import (
     List,
     Optional,
     SuccessResult,
+    ValidationError,
     logger,
 )
 
@@ -147,8 +148,29 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with deletion summary or ErrorResult on failure.
         """
+        extra = dict(kwargs)
+        extra.pop("context", None)
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "dry_run": dry_run,
+            "delete_from_disk": delete_from_disk,
+        }
+        params.update(extra)
         try:
-            from ...core.exceptions import ValidationError, DatabaseError
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        project_id = params["project_id"]
+        dry_run = bool(params.get("dry_run", False))
+        delete_from_disk = bool(params.get("delete_from_disk", False))
+
+        try:
+            from ...core.exceptions import DatabaseError
             from pathlib import Path
 
             # Config and storage for version_dir/trash_dir (DeleteProjectCommand)

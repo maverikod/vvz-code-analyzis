@@ -16,8 +16,8 @@ from code_analysis.commands.fs_grep_structural_integration import (
     GrepModeApplyResult,
     GrepSearchMode,
     StructuralEvidenceEligibility,
-    apply_ggrep_mode,
-    apply_ggrep_mode_multi_file,
+    apply_grep_mode,
+    apply_grep_mode_multi_file,
 )
 
 __all__ = [
@@ -26,8 +26,8 @@ __all__ = [
     "GrepModeApplyResult",
     "GrepSearchMode",
     "StructuralEvidenceEligibility",
-    "apply_ggrep_mode_multi_file_payload",
-    "apply_ggrep_mode_to_match_payload",
+    "apply_grep_mode_multi_file_payload",
+    "apply_grep_mode_to_match_payload",
     "grep_mode_to_fs_ggrep_params",
 ]
 
@@ -47,7 +47,7 @@ def grep_mode_to_fs_ggrep_params(mode: GrepSearchMode) -> FsGgrepModeParams:
     return FsGgrepModeParams(fast_text_only=True, enrich_blocks=False)
 
 
-def apply_ggrep_mode_to_match_payload(
+def apply_grep_mode_to_match_payload(
     *,
     mode: GrepSearchMode,
     project_root: Path,
@@ -55,7 +55,7 @@ def apply_ggrep_mode_to_match_payload(
     line_matches: list[dict[str, Any]],
 ) -> GrepModeApplyResult:
     """Apply grep mode enrichment to a single-file match payload."""
-    return apply_ggrep_mode(
+    return apply_grep_mode(
         mode=mode,
         project_root=project_root,
         file_path=file_path,
@@ -63,14 +63,14 @@ def apply_ggrep_mode_to_match_payload(
     )
 
 
-def apply_ggrep_mode_multi_file_payload(
+def apply_grep_mode_multi_file_payload(
     *,
     mode: GrepSearchMode,
     project_root: Path,
     line_matches: list[dict[str, Any]],
 ) -> GrepModeApplyResult:
     """Apply grep mode enrichment for paginated multi-file match batches."""
-    return apply_ggrep_mode_multi_file(
+    return apply_grep_mode_multi_file(
         mode=mode,
         project_root=project_root,
         line_matches=line_matches,

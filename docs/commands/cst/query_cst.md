@@ -10,6 +10,8 @@ email: vasilyvz@gmail.com
 
 ---
 
+> **AI / MCP editing:** for XPath on the **open edit-session** draft tree, use [`universal_file_search`](../file_editing/universal_file_search.md) (`session_id`). `query_cst` parses from disk/file path — no session draft.
+
 ## Purpose (Предназначение)
 
 The query_cst command queries Python source code using CSTQuery selectors to locate specific LibCST nodes. It provides a jQuery/XPath-like selector language for finding nodes while preserving formatting and comments.

@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.code_quality import type_check_with_mypy
+from ..core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,13 @@ class TypeCheckCodeCommand(Command):
             ],
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters against command schema before queue or execute."""
+        BaseMCPCommand.validate_params_against_schema(
+            params, self.get_schema(), command_name=self.name
+        )
+        return params
+
     async def execute(
         self: "TypeCheckCodeCommand",
         file_path: str,
@@ -122,6 +130,25 @@ class TypeCheckCodeCommand(Command):
         Returns:
             SuccessResult with type checking result or ErrorResult on failure.
         """
+        params: Dict[str, Any] = {
+            "file_path": file_path,
+            "project_id": project_id,
+            "config_file": config_file,
+            "ignore_errors": ignore_errors,
+        }
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        file_path = str(params["file_path"])
+        project_id = params.get("project_id")
+        config_file = params.get("config_file")
+        ignore_errors = bool(params.get("ignore_errors", False))
         try:
             input_path = Path(file_path)
             if project_id:

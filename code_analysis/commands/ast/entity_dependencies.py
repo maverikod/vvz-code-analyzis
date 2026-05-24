@@ -5,10 +5,11 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.exceptions import ValidationError
 from ..base_mcp_command import BaseMCPCommand
 
 from .entity_dependencies_helpers import (
@@ -24,18 +25,79 @@ from .entity_dependencies_metadata import (
 )
 
 
-def _normalize_entity_id_param(raw: Optional[Any]) -> Optional[Any]:
-    """Accept UUID strings or legacy numeric ids from MCP JSON parameters."""
+def _entity_identifier_present(
+    entity_id: Optional[Any], entity_name: Optional[Any]
+) -> tuple[bool, bool]:
+    """Return (has_entity_id, has_entity_name) for non-blank identifier values."""
+    has_id = False
+    if entity_id is not None:
+        if isinstance(entity_id, bool):
+            has_id = False
+        elif isinstance(entity_id, int):
+            has_id = True
+        elif isinstance(entity_id, str):
+            has_id = bool(entity_id.strip())
+    has_name = isinstance(entity_name, str) and bool(entity_name.strip())
+    return has_id, has_name
+
+
+def _validate_entity_id_param(
+    raw: Optional[Any], *, command_name: str, field: str = "entity_id"
+) -> None:
+    """Enforce entity_id anyOf string|integer; reject bool, list, dict, and other types."""
+    if raw is None:
+        return
+    if isinstance(raw, bool):
+        raise ValidationError(
+            f"{command_name}: parameter {field!r} must be string or integer, got bool",
+            field=field,
+            details={},
+        )
+    if isinstance(raw, int):
+        return
+    if isinstance(raw, str):
+        if not raw.strip():
+            raise ValidationError(
+                f"{command_name}: parameter {field!r} must be a non-empty string",
+                field=field,
+                details={},
+            )
+        return
+    raise ValidationError(
+        f"{command_name}: parameter {field!r} must be string or integer, "
+        f"got {type(raw).__name__}",
+        field=field,
+        details={},
+    )
+
+
+def _validate_entity_identifier_params(
+    params: Dict[str, Any], *, command_name: str
+) -> None:
+    """Require at least one of entity_id or entity_name after schema validation."""
+    entity_id = params.get("entity_id")
+    entity_name = params.get("entity_name")
+    has_id, has_name = _entity_identifier_present(entity_id, entity_name)
+    if not has_id and not has_name:
+        raise ValidationError(
+            f"{command_name}: provide entity_id or entity_name",
+            field="entity_id",
+            details={},
+        )
+
+
+def _normalize_entity_id_param(
+    raw: Optional[Any], *, command_name: str = "command"
+) -> Optional[Union[str, int]]:
+    """Normalize validated entity_id: strip strings; reject invalid types."""
     if raw is None:
         return None
-    if isinstance(raw, str):
-        s = raw.strip()
-        return s if s else None
-    if isinstance(raw, bool):
-        return None
+    _validate_entity_id_param(raw, command_name=command_name)
     if isinstance(raw, int):
         return raw
-    return raw
+    if isinstance(raw, str):
+        return raw.strip()
+    return None
 
 
 class GetEntityDependenciesMCPCommand(BaseMCPCommand):
@@ -101,6 +163,13 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce entity_id anyOf string|integer and require entity_id or entity_name."""
+        params = super().validate_params(params)
+        _validate_entity_id_param(params.get("entity_id"), command_name=self.name)
+        _validate_entity_identifier_params(params, command_name=self.name)
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -118,7 +187,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                     message=f"entity_type must be one of {CALLER_TYPES!r}",
                     code="VALIDATION_ERROR",
                 )
-            eid = _normalize_entity_id_param(entity_id)
+            eid = _normalize_entity_id_param(entity_id, command_name=self.name)
             if eid is None:
                 if not entity_name:
                     return ErrorResult(
@@ -209,6 +278,13 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce entity_id anyOf string|integer and require entity_id or entity_name."""
+        params = super().validate_params(params)
+        _validate_entity_id_param(params.get("entity_id"), command_name=self.name)
+        _validate_entity_identifier_params(params, command_name=self.name)
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -226,7 +302,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                     message=f"entity_type must be one of {CALLEE_TYPES!r}",
                     code="VALIDATION_ERROR",
                 )
-            eid = _normalize_entity_id_param(entity_id)
+            eid = _normalize_entity_id_param(entity_id, command_name=self.name)
             if eid is None:
                 if not entity_name:
                     return ErrorResult(

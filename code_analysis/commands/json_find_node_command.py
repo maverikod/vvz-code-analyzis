@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.exceptions import ValidationError
 from ..core.json_tree.json_query import normalize_key_path, resolve_node_id_from_pointer
 from ..core.json_tree.tree_builder import get_tree
 
@@ -42,16 +43,53 @@ class JsonFindNodeCommand(BaseMCPCommand):
                     "description": "RFC 6901 pointer to value",
                 },
                 "key_path": {
-                    "description": "Simple dotted path or list segments",
+                    "description": "Simple dotted path or list of string segments",
                     "oneOf": [
                         {"type": "string"},
-                        {"type": "array"},
+                        {"type": "array", "items": {"type": "string"}},
                     ],
                 },
             },
             "required": ["tree_id"],
             "additionalProperties": False,
         }
+
+    @staticmethod
+    def _validate_key_path_param(key_path: Any, *, command_name: str) -> None:
+        """Enforce key_path oneOf: string or array of strings."""
+        if isinstance(key_path, str):
+            return
+        if isinstance(key_path, list):
+            for index, item in enumerate(key_path):
+                if not isinstance(item, str):
+                    raise ValidationError(
+                        f"{command_name}: parameter 'key_path' array items must be "
+                        f"strings, got {type(item).__name__} at index {index}",
+                        field="key_path",
+                        details={"index": index, "item_type": type(item).__name__},
+                    )
+            return
+        raise ValidationError(
+            f"{command_name}: parameter 'key_path' must be string or array of "
+            f"strings, got {type(key_path).__name__}",
+            field="key_path",
+            details={},
+        )
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate json_pointer/key_path types and require at least one query param."""
+        params = super().validate_params(params)
+        json_pointer = params.get("json_pointer")
+        key_path = params.get("key_path")
+        if json_pointer is None and key_path is None:
+            raise ValidationError(
+                f"{self.name}: provide json_pointer and/or key_path",
+                field="json_pointer",
+                details={},
+            )
+        if key_path is not None:
+            self._validate_key_path_param(key_path, command_name=self.name)
+        return params
 
     async def execute(
         self,

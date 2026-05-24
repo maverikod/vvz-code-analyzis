@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import ValidationError
 from mcp_proxy_adapter.integrations.queuemgr_integration import (
     QUEUE_MANAGER_ENABLED_DEFAULT,
     get_global_queue_manager,
@@ -42,7 +43,21 @@ class QueueHealthCommand(Command):
 
         return queue_health_command_metadata(cls)
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapter Command validates unknown keys; server execute path calls this explicitly."""
+        return super().validate_params(params)
+
     async def execute(self, **kwargs: Any):
+        params = {k: v for k, v in kwargs.items() if k != "context"}
+        try:
+            self.validate_params(params)
+        except ValidationError as e:
+            data = getattr(e, "data", None) or {}
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details={"field": data.get("field")},
+            )
         queue_cfg = self._safe_get_queue_config()
         queue_enabled = bool(queue_cfg.get("enabled", QUEUE_MANAGER_ENABLED_DEFAULT))
         dep = collect_dependency_compatibility(queue_enabled=queue_enabled)

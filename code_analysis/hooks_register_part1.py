@@ -202,6 +202,9 @@ def register_commands_part1(reg: registry) -> None:
         from .commands.project_cross_search_command import ProjectCrossSearchCommand
 
         reg.register(ProjectCrossSearchCommand, "custom")
+        from .commands.search_start_command import SearchStartCommand
+
+        reg.register(SearchStartCommand, "custom")
         logger.info("✅ Registered search commands")
     except ImportError as e:
         logger.warning("Failed to import search commands: %s", e)

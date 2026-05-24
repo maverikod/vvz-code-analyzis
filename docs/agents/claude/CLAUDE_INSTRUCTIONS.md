@@ -74,6 +74,7 @@ The following files in the repo define the canonical standards. Claude reads the
 **Trigger:** Before opening, reading, or editing any file — read the full rules:
 - View rules: `docs/standards/FILE_VIEW_WORKFLOW.yaml`
 - Edit rules: `docs/standards/FILE_EDIT_WORKFLOW.yaml`
+- Python XPath in open session: `universal_file_search` — see `docs/commands/file_editing/universal_file_search.md`
 
 Obsolete commands — do not use: `universal_file_save`, `create_text_file`, `replace_file_lines`, `write_project_text_lines`.
 ## Search and analysis workflow

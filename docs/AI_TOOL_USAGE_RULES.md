@@ -13,6 +13,7 @@ This document defines rules for AI models on how to use the code analysis server
 |------|---------|------|
 | Inspect / navigate | `universal_file_preview` | Read-only structured view; obtain `node_ref` values for edits |
 | Start session | `universal_file_open` | Open file (or create), get `session_id` and `format_group` |
+| Search session tree | `universal_file_search` | XPath/CSTQuery on **open session CST tree only** (Python sidecar) |
 | Mutate draft | `universal_file_edit` | Apply one or more operations to the in-memory draft |
 | Persist | `universal_file_write` | Preview diff, then commit to disk |
 | End session | `universal_file_close` | Release session; reconcile sidecar/draft artefacts |
@@ -35,7 +36,7 @@ The disk file is **not** updated by `universal_file_edit`. Changes reach disk on
 
 **Project-specific rules**: Code under `test_data/` — [TEST_DATA_AI_RULES.md](TEST_DATA_AI_RULES.md) (server-only read/write for test code).
 
-**Related design**: [plans/2026-05-16-universal-file-edit/source_spec.md](plans/2026-05-16-universal-file-edit/source_spec.md).
+**Related design**: [commands/file_editing/WORKFLOW.md](commands/file_editing/WORKFLOW.md), [plans/2026-05-16-universal-file-edit/source_spec.md](plans/2026-05-16-universal-file-edit/source_spec.md).
 
 ---
 
@@ -49,7 +50,7 @@ The disk file is **not** updated by `universal_file_edit`. Changes reach disk on
 
 1. **View or edit any supported project file → UNIVERSAL FILE COMMANDS ONLY**
    - ✅ **View / discover** → `universal_file_preview` (`project_id`, `file_path`, optional `node_ref`)
-   - ✅ **Edit workflow** → `universal_file_open` → `universal_file_edit` → `universal_file_write` → `universal_file_close`
+   - ✅ **Edit workflow** → `universal_file_open` → (`universal_file_search` optional, Python) → `universal_file_edit` → `universal_file_write` → `universal_file_close`
    - ✅ **Python multi-line** → `code_lines` in `universal_file_edit` (sidecar group)
    - ✅ **Quality after commit** → `format_code`, `lint_code`, `type_check_code`
    - ✅ **Project analysis** → `comprehensive_analysis`, `get_code_entity_info`, etc.
@@ -72,6 +73,7 @@ The disk file is **not** updated by `universal_file_edit`. Changes reach disk on
 ```
 universal_file_preview  →  (optional) navigate with node_ref
 universal_file_open      →  session_id, format_group
+universal_file_search    →  (optional) XPath on session CST tree — Python sidecar only
 universal_file_edit      →  one or more operations (repeat as needed)
 universal_file_write     →  preview diff (tree-temp: write_mode=preview; sidecar/text: first call)
 universal_file_write     →  commit (tree-temp: write_mode=commit; sidecar/text: second call when lock ready)
@@ -90,7 +92,8 @@ format_code / lint_code / type_check_code  →  on committed file
 | Task | Command(s) |
 |------|----------------|
 | See file structure / snippet | `universal_file_preview` |
-| Change file content | `open` → `edit` → `write` → `close` |
+| XPath search in open Python draft | `universal_file_search` (requires `session_id`) |
+| Change file content | `open` → (`search` optional) → `edit` → `write` → `close` |
 | Find exact text / symbol names (indexed) | `fulltext_search` |
 | Find by meaning / concept | `semantic_search` |
 | Find regex on disk (no index) | `fs_grep` |
@@ -164,6 +167,8 @@ casmgr --config config.json restart
 
 ## 2. Universal File Edit Workflow
 
+**Canonical docs:** [commands/file_editing/README.md](commands/file_editing/README.md) · [WORKFLOW.md](commands/file_editing/WORKFLOW.md) · [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md)
+
 ### 2.1 Format groups
 
 `universal_file_open` returns **`format_group`** — it determines how `universal_file_edit` operations are shaped:
@@ -203,6 +208,30 @@ call_server(
 - Optional `create: true` when creating a new file (check schema).
 - Sessions are lost on **server restart** — reopen if needed.
 
+### 2.3b Step 2b — Search session tree (optional, Python sidecar)
+
+**Command:** `universal_file_search`
+
+- **Scope:** only the in-memory CST tree bound to `session_id` — not the project, not disk, not the index.
+- **Format:** Python sidecar (`.py` / `.pyi` / `.pyw`) with structural editing; JSON/YAML/text sessions return `UNSUPPORTED_FORMAT`.
+- **Use when:** you need CSTQuery / XPath over the **current draft** (e.g. `//FunctionDef[name='foo']`, `ClassDef//FunctionDef`) instead of manual drill-down via preview.
+- **Results:** each match has `node_ref` (= `stable_id`) — pass as `node_id` in `universal_file_edit`.
+- **Not a substitute for:** `fulltext_search`, `fs_grep`, `cst_find_node` (legacy `tree_id`), or `universal_file_preview` outline navigation.
+
+```python
+call_server(
+    command="universal_file_search",
+    params={
+        "project_id": "<uuid>",
+        "session_id": "<from universal_file_open>",
+        "query": "ClassDef[name='Widget']//FunctionDef",
+        "include_code": True,
+    },
+)
+```
+
+See [universal_file_search.md](commands/file_editing/universal_file_search.md).
+
 ### 2.4 Step 3 — Edit (draft only)
 
 **Command:** `universal_file_edit`
@@ -227,6 +256,10 @@ call_server(
 ```
 
 Insert/delete: see `help(universal_file_edit)` — container vs sibling `position`, `parent_node_id` (`__root__` for module level).
+
+**Python batch:** multiple **sibling** targets in one `operations` array (class methods, nested functions under the same parent) preserve `stable_id` from preview — no re-preview between those ops. Do **not** combine **parent + child** in one batch (`NESTED_BATCH_FORBIDDEN`).
+
+**Signature-only replace (Python):** single-line `code_lines` with parse stub (`def foo(...) -> T: pass`) updates the header and keeps body/docstring. Details: [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md).
 
 **tree-temp (JSON/YAML)** — use `json_pointer` (not `node_id` for pointers):
 
@@ -466,10 +499,13 @@ Canonical standard: [standards/PYTHON_DOCSTRING_STANDARD.md](standards/PYTHON_DO
 
 ### 6.1 Universal file (view + edit) — **PRIMARY FOR FILE CONTENT**
 
+Per-command docs: [commands/file_editing/](commands/file_editing/)
+
 | Command | Purpose |
 |---------|---------|
 | `universal_file_preview` | Read-only navigation and snippets |
 | `universal_file_open` | Start edit session |
+| `universal_file_search` | XPath/CSTQuery on open session CST tree (Python sidecar) |
 | `universal_file_edit` | Mutate draft |
 | `universal_file_write` | Preview diff / commit to disk |
 | `universal_file_close` | End session |
@@ -651,7 +687,8 @@ All read/write of code under `test_data/` must use the server (MCP), per [TEST_D
 | Goal | Commands |
 |------|----------|
 | **View file** | `universal_file_preview` |
-| **Edit file** | `open` → `edit` → `write` → `close` |
+| **XPath in open Python draft** | `universal_file_search` (with `session_id`) |
+| **Edit file** | `open` → (`search` optional) → `edit` → `write` → `close` |
 | **Find exact text (index)** | `fulltext_search` |
 | **Find by meaning** | `semantic_search` |
 | **Find regex on disk** | `fs_grep` |
@@ -662,4 +699,4 @@ All read/write of code under `test_data/` must use the server (MCP), per [TEST_D
 
 ---
 
-**Remember**: This project is built for AI-driven development through the code-analysis server. File viewing and editing go through **`universal_file_preview`**, **`universal_file_open`**, **`universal_file_edit`**, **`universal_file_write`**, and **`universal_file_close`** — not legacy CST or plain-text MCP commands.
+**Remember**: This project is built for AI-driven development through the code-analysis server. File viewing and editing go through **`universal_file_preview`**, **`universal_file_open`**, **`universal_file_search`** (optional XPath on session tree), **`universal_file_edit`**, **`universal_file_write`**, and **`universal_file_close`** — not legacy CST or plain-text MCP commands.

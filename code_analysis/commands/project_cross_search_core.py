@@ -630,8 +630,7 @@ def merge_evidence(
         )
 
     filtered.sort(key=_sort_key)
-    cap = max(1, min(limit, 200))
-    return all_candidates, filtered[:cap], source_counts
+    return all_candidates, filtered[:limit], source_counts
 
 
 def apply_mode(

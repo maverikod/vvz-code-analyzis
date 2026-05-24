@@ -29,17 +29,16 @@ def get_export_graph_metadata(
             "in DOT (Graphviz) or JSON format. The command provides stable output without failing "
             "when the underlying project contains partial or missing data.\n\n"
             "Operation flow:\n"
-            "1. Validates root_dir exists and is a directory\n"
+            "1. Resolves the project root from required ``project_id``\n"
             "2. Opens database connection\n"
-            "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-            "4. Applies edge limit (default 5000, max 50000, min 1)\n"
-            "5. Based on graph_type:\n"
+            "3. Applies edge limit (default 5000, max 50000, min 1; out-of-range rejected)\n"
+            "4. Based on graph_type:\n"
             "   - 'dependencies': Extracts file-to-module import relationships\n"
             "   - 'hierarchy': Extracts class inheritance relationships\n"
             "   - 'call_graph': Extracts file-to-entity usage relationships\n"
-            "6. If file_path provided, filters results to that file\n"
-            "7. Formats output as DOT (Graphviz) or JSON\n"
-            "8. Returns graph with nodes and edges\n\n"
+            "5. If file_path provided, filters results to that file\n"
+            "6. Formats output as DOT (Graphviz) or JSON\n"
+            "7. Returns graph with nodes and edges\n\n"
             "Graph Types:\n"
             "- dependencies: Shows which files import which modules. "
             "Nodes are file paths and module names. Edges represent imports.\n"
@@ -53,15 +52,16 @@ def get_export_graph_metadata(
             "- json: Structured JSON with nodes array and edges array\n\n"
             "Important notes:\n"
             "- Edge limit prevents memory issues with large projects\n"
+            "- ``limit`` must be 1–50000; out-of-range values are rejected in ``validate_params``\n"
             "- Graph is stable: missing data doesn't cause failures\n"
             "- DOT format escapes special characters in node names\n"
             "- JSON format provides structured data for programmatic use"
         ),
         "parameters": {
-            "root_dir": {
+            "project_id": {
                 "description": (
-                    "Project root directory path. Can be absolute or relative. "
-                    "Must contain data/code_analysis.db file."
+                    "Project UUID (from ``create_project`` or ``list_projects``). Required; "
+                    "selects the project whose graph data is exported."
                 ),
                 "type": "string",
                 "required": True,
@@ -90,33 +90,29 @@ def get_export_graph_metadata(
             },
             "file_path": {
                 "description": (
-                    "Optional file path to limit graph scope. If provided, only includes "
-                    "relationships involving this file. Can be absolute or relative to root_dir."
+                    "Optional project-relative file path to limit graph scope. If provided, "
+                    "only includes relationships involving this file."
                 ),
                 "type": "string",
                 "required": False,
             },
             "limit": {
                 "description": (
-                    "Optional limit on number of edges. Default is 5000. "
-                    "Maximum is 50000, minimum is 1. Prevents memory issues with large projects."
+                    "Optional limit on number of edges (1–50000). Default is 5000. "
+                    "Out-of-range values are rejected. Prevents memory issues with large projects."
                 ),
                 "type": "integer",
                 "required": False,
-            },
-            "project_id": {
-                "description": (
-                    "Optional project UUID. If omitted, inferred from root_dir."
-                ),
-                "type": "string",
-                "required": False,
+                "default": 5000,
+                "minimum": 1,
+                "maximum": 50000,
             },
         },
         "usage_examples": [
             {
                 "description": "Export dependency graph in DOT format",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "graph_type": "dependencies",
                     "format": "dot",
                 },
@@ -128,7 +124,7 @@ def get_export_graph_metadata(
             {
                 "description": "Export class hierarchy in JSON format",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "graph_type": "hierarchy",
                     "format": "json",
                 },
@@ -140,7 +136,7 @@ def get_export_graph_metadata(
             {
                 "description": "Export call graph for specific file",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "graph_type": "call_graph",
                     "file_path": "src/main.py",
                     "format": "json",
@@ -153,7 +149,7 @@ def get_export_graph_metadata(
             {
                 "description": "Export with edge limit",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "graph_type": "dependencies",
                     "limit": 1000,
                 },
@@ -165,7 +161,7 @@ def get_export_graph_metadata(
         "error_cases": {
             "PROJECT_NOT_FOUND": {
                 "description": "Project not found in database",
-                "example": "root_dir='/path' but project not registered",
+                "example": "project_id='550e8400-e29b-41d4-a716-446655440000' but project not registered",
                 "solution": "Ensure project is registered. Run update_indexes first.",
             },
             "EXPORT_GRAPH_ERROR": {

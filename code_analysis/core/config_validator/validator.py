@@ -18,6 +18,7 @@ from .field_values import validate_field_values_impl
 from .result import ValidationResult
 from .section_code_analysis import validate_code_analysis_section_impl
 from .section_database_driver import validate_database_driver_section_impl
+from .section_search_session import validate_search_session_section_impl
 from .section_file_existence import validate_file_existence_impl
 from .section_mtls import (
     validate_external_servers_mtls_impl,
@@ -127,6 +128,7 @@ class CodeAnalysisConfigValidator:
         self._validate_registration_section()
         self._validate_queue_manager_section()
         validate_code_analysis_section_impl(self.config_data, self.validation_results)
+        validate_search_session_section_impl(self.config_data, self.validation_results)
         validate_database_driver_section_impl(self.config_data, self.validation_results)
         validate_file_existence_impl(
             self.config_data,

@@ -27,7 +27,7 @@ from code_analysis.core.cst_tree.node_type_utils import get_decorator_expression
 
 from ..invalid_preview import invalid_source_node
 from ..models import Node, NodeKind
-from ..python_visualizer import render_module, render_node
+from ..python_tree_diff_preview import render_preview_with_optional_diff
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class PythonFileHandler(FileHandler):
                 else PreviewBudget(preview_lines=20, value_preview_len=120)
             )
             self._last_budget = _budget
-            text = render_module(tree, _budget)
+            text = render_preview_with_optional_diff(tree, file_path, _budget)
             root_stable_id = (
                 tree.metadata_map[tree.root_node_id].stable_id
                 if tree.root_node_id and tree.root_node_id in tree.metadata_map
@@ -146,8 +146,18 @@ class PythonFileHandler(FileHandler):
                 f"stable_id {node_ref!r} not found in current CST.",
                 details={"node_ref": node_ref},
             )
-        _budget = getattr(self, "_last_budget", None)
-        text = render_node(session, node_ref, _budget)
+        _budget = getattr(
+            self,
+            "_last_budget",
+            PreviewBudget(preview_lines=20, value_preview_len=120),
+        )
+        file_path = getattr(self, "_last_file_path", "")
+        text = render_preview_with_optional_diff(
+            session,
+            file_path,
+            _budget,
+            focus_stable_id=node_ref,
+        )
         parent_cst_id = meta.node_id
         return Node(
             node_kind=NodeKind.TREE_NODE,

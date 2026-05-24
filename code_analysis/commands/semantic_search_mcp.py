@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.config import get_driver_config
+from ..core.exceptions import ValidationError
 from ..core.faiss_manager import FaissIndexManager
 from ..core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ..core.storage_paths import resolve_storage_paths, get_faiss_index_path
@@ -83,7 +84,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": (
                         "Maximum FAISS neighbors to retrieve (1–100). Default 10. "
-                        "Values outside the range are clamped. Same parameter name as "
+                        "Values outside the range are rejected. Same parameter name as "
                         "fulltext_search / search_ast_nodes."
                     ),
                     "default": 10,
@@ -92,7 +93,12 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "min_score": {
                     "type": "number",
-                    "description": "Minimum similarity score (0.0-1.0)",
+                    "description": (
+                        "Optional minimum similarity score threshold (0.0–1.0). "
+                        "Values outside the range are rejected."
+                    ),
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                 },
             },
             "required": ["project_id", "query"],
@@ -100,13 +106,29 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Clamp ``limit`` to 1–100 after schema validation."""
+        """Reject ``limit`` and ``min_score`` outside schema bounds after schema validation."""
         params = super().validate_params(params)
-        if "limit" in params and params["limit"] is not None:
-            try:
-                params["limit"] = max(1, min(100, int(params["limit"])))
-            except (TypeError, ValueError):
-                params["limit"] = 10
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("limit", "min_score"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
         return params
 
     async def execute(
@@ -129,6 +151,21 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with search results or ErrorResult on failure.
         """
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "query": query,
+            "limit": limit,
+            "min_score": min_score,
+        }
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "semantic_search")
+        project_id = params["project_id"]
+        query = params["query"]
+        limit = int(params.get("limit", 10))
+        min_score = params.get("min_score")
+
         try:
             self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
@@ -579,7 +616,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "5. Loads the FAISS index, or rebuilds it from the database if the file is "
                 "missing and embedded chunks exist (FaissIndexManager)\n"
                 "6. Obtains and L2-normalizes the query embedding (SVOClientManager)\n"
-                "7. Runs FAISS search for up to ``limit`` neighbors (clamped 1–100, default 10)\n"
+                "7. Runs FAISS search for up to ``limit`` neighbors (1–100, default 10; out-of-range rejected)\n"
                 "8. Loads chunk metadata from SQLite and applies optional ``min_score`` filter\n"
                 "9. Returns ranked results with similarity scores\n\n"
                 "Semantic search:\n"
@@ -592,8 +629,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "Important notes:\n"
                 "- Requires a working embedding service\n"
                 "- Requires FAISS (optional dependency); missing FAISS may yield empty results with a warning\n"
-                "- ``limit`` is clamped to 1–100 in ``validate_params``\n"
-                "- ``min_score`` filters by similarity threshold when set"
+                "- ``limit`` must be 1–100; out-of-range values are rejected in ``validate_params``\n"
+                "- ``min_score`` must be 0.0–1.0 when set; filters by similarity threshold"
             ),
             "parameters": {
                 "project_id": {
@@ -620,7 +657,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "limit": {
                     "description": (
                         "Maximum number of FAISS neighbors (1–100). Default 10. Out-of-range "
-                        "values are clamped. Same parameter name as ``fulltext_search`` and "
+                        "values are rejected. Same parameter name as ``fulltext_search`` and "
                         "``search_ast_nodes``."
                     ),
                     "type": "integer",

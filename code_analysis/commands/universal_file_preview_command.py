@@ -24,6 +24,7 @@ from typing import Any, Dict, cast
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
+from ..core.exceptions import ValidationError
 from .base_mcp_command import BaseMCPCommand
 
 
@@ -215,22 +216,34 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
         project_id = params["project_id"]
         file_path = params["file_path"]
         if any(c in file_path for c in _GLOB_CHARS):
-            raise ValueError(INPUT_ERROR_GLOB_IN_FILE_PATH)
+            raise ValidationError(
+                INPUT_ERROR_GLOB_IN_FILE_PATH,
+                field="file_path",
+            )
 
         node_ref = normalize_optional_node_ref(params.get("node_ref"))
 
         selector = params.get("selector")
         if isinstance(selector, str):
             if ":" not in selector and not selector.startswith("-"):
-                raise ValueError(INPUT_ERROR_INVALID_SELECTOR_FORM)
+                raise ValidationError(
+                    INPUT_ERROR_INVALID_SELECTOR_FORM,
+                    field="selector",
+                )
         elif isinstance(selector, list) and selector:
             if not (
                 all(isinstance(x, int) for x in selector)
                 or all(isinstance(x, str) for x in selector)
             ):
-                raise ValueError(INPUT_ERROR_MIXED_SELECTOR_LIST)
+                raise ValidationError(
+                    INPUT_ERROR_MIXED_SELECTOR_LIST,
+                    field="selector",
+                )
             if len(selector) != len(set(map(str, selector))):
-                raise ValueError(INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY)
+                raise ValidationError(
+                    INPUT_ERROR_DUPLICATE_SELECTOR_ENTRY,
+                    field="selector",
+                )
 
         preview_lines = params.get("preview_lines")
         if preview_lines is None:

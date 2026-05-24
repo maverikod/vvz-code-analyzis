@@ -13,7 +13,8 @@ from typing import Any, Dict
 import psutil
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.command_registry import registry
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import ValidationError
 from mcp_proxy_adapter.core.proxy_registration import get_proxy_registration_status
 from mcp_proxy_adapter.integrations.queuemgr_integration import (
     QUEUE_MANAGER_ENABLED_DEFAULT,
@@ -43,17 +44,33 @@ class HealthCommand(Command):
 
     @classmethod
     def metadata(cls: type["HealthCommand"]) -> Dict[str, Any]:
-        from code_analysis.commands.zero_arg_commands_metadata import health_command_metadata
+        from code_analysis.commands.zero_arg_commands_metadata import (
+            health_command_metadata,
+        )
 
         return health_command_metadata(cls)
 
-    async def execute(self, **kwargs: Any) -> SuccessResult:
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapter Command validates unknown keys; server execute path calls this explicitly."""
+        return super().validate_params(params)
+
+    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+        params = {k: v for k, v in kwargs.items() if k != "context"}
+        try:
+            self.validate_params(params)
+        except ValidationError as e:
+            data = getattr(e, "data", None) or {}
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details={"field": data.get("field")},
+            )
         process = psutil.Process(os.getpid())
         start_time = datetime.fromtimestamp(process.create_time())
         uptime_seconds = (datetime.now() - start_time).total_seconds()
         memory_info = process.memory_info()
 
-        queue_cfg = (self._safe_get_queue_config() or {})
+        queue_cfg = self._safe_get_queue_config() or {}
         queue_enabled = bool(
             queue_cfg.get("enabled", QUEUE_MANAGER_ENABLED_DEFAULT)
             if isinstance(queue_cfg, dict)

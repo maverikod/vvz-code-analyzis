@@ -356,16 +356,34 @@ class CSTTree:
         stable_id is assigned once at node creation and never changes,
         even after tree rebuilds caused by insert/delete operations.
 
+        When duplicate rows share a stable_id (e.g. legacy blank-line markers),
+        prefer editable statement/class/function nodes over whitespace leaves.
+
         Args:
             stable_id: The stable user-facing node identifier.
 
         Returns:
             TreeNodeMetadata if found, None otherwise.
         """
-        for meta in self.metadata_map.values():
-            if meta.stable_id == stable_id:
-                return meta
-        return None
+        preferred_types = (
+            "FunctionDef",
+            "AsyncFunctionDef",
+            "ClassDef",
+            "SimpleStatementLine",
+            "Decorator",
+        )
+        candidates = [
+            meta
+            for meta in self.metadata_map.values()
+            if meta.stable_id == stable_id
+        ]
+        if not candidates:
+            return None
+        for node_type in preferred_types:
+            for meta in candidates:
+                if meta.type == node_type:
+                    return meta
+        return candidates[0]
 
     def set_docstring(self, stable_id: str, docstring: "DocstringMeta") -> bool:
         """Set docstring metadata for a node by stable_id without reloading the tree.

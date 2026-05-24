@@ -42,8 +42,10 @@ from code_analysis.commands.universal_file_edit import tree_temp_edit_batch
 class UniversalFileEditCommand(BaseMCPCommand):
     """MCP command that applies a batch of mutation operations to the draft.
 
-    The original file is never touched. For sidecar group, ancestor-descendant
-    pairs in the batch are rejected atomically with NESTED_BATCH_FORBIDDEN.
+    The original file is never touched. For sidecar group, a batch that targets
+    both a parent node and its descendant is rejected with NESTED_BATCH_FORBIDDEN;
+    sibling batches (e.g. class methods, nested functions under the same outer def)
+    are allowed and preserve stable_id across ops.
     """
 
     name = "universal_file_edit"

@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
 from ..core.code_quality import format_code_with_black
+from ..core.exceptions import ValidationError
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,13 @@ class FormatCodeCommand(Command):
             ],
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters against command schema before queue or execute."""
+        BaseMCPCommand.validate_params_against_schema(
+            params, self.get_schema(), command_name=self.name
+        )
+        return params
+
     async def execute(
         self: "FormatCodeCommand",
         file_path: str,
@@ -96,6 +104,21 @@ class FormatCodeCommand(Command):
         Returns:
             SuccessResult with formatting result or ErrorResult on failure.
         """
+        params: Dict[str, Any] = {
+            "file_path": file_path,
+            "project_id": project_id,
+        }
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        file_path = str(params["file_path"])
+        project_id = params.get("project_id")
         try:
             if project_id:
                 root_path = BaseMCPCommand._resolve_project_root(project_id)

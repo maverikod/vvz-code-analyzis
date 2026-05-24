@@ -40,3 +40,5 @@ forbidden:
 - Using fulltext_search or fs_grep directly without first trying 
   project_cross_search.
 - Assuming file content without reading it via universal_file_preview.
+- Using cst_find_node or query_cst for AI edit workflows — use universal_file_search
+  inside an open edit session (Python) or universal_file_preview drill-down.

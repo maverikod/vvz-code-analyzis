@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.exceptions import ValidationError
 from ..base_mcp_command import BaseMCPCommand
 from ..log_viewer import parse_log_timestamp, parse_timing_line
 
@@ -68,12 +69,15 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
                 },
                 "tail": {
                     "type": "integer",
+                    "minimum": 1,
                     "description": "Analyze only last N lines of the log (ignores time filters when set)",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of log lines to scan (default 50000)",
                     "default": 50000,
+                    "minimum": 1,
+                    "maximum": 1000000,
                 },
                 "top_n": {
                     "type": "integer",
@@ -86,6 +90,32 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
             "required": [],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``top_n`` and ``limit`` outside schema min/max after schema validation."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("top_n", "limit", "tail"):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+        return params
 
     def _resolve_worker_log_path(self, worker_type: str) -> Optional[str]:
         """Resolve default log path for worker_type from server config."""
@@ -128,6 +158,32 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute analyze timing bottlenecks: read log, parse [TIMING] lines, aggregate by op_name."""
+        params: Dict[str, Any] = {
+            "log_path": log_path,
+            "worker_type": worker_type,
+            "from_time": from_time,
+            "to_time": to_time,
+            "tail": tail,
+            "limit": limit,
+            "top_n": top_n,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        log_path = params.get("log_path")
+        worker_type = str(params.get("worker_type") or "vectorization")
+        from_time = params.get("from_time")
+        to_time = params.get("to_time")
+        tail = params.get("tail")
+        limit = int(params.get("limit", 50000))
+        top_n = int(params.get("top_n", 10))
         if not self._is_timing_enabled():
             return ErrorResult(
                 code="TIMING_DISABLED",
@@ -152,8 +208,6 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
             )
         dt_from = parse_time_optional(from_time)
         dt_to = parse_time_optional(to_time)
-        top_n = max(1, min(100, top_n))
-        limit = max(1, min(1_000_000, limit))
 
         agg: Dict[str, List[float]] = {}
         lines_scanned = 0

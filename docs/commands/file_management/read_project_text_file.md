@@ -1,5 +1,7 @@
 # read_project_text_file
 
+> **Obsolete for MCP viewing/editing.** Use [universal_file_preview](../file_editing/universal_file_preview.md) (read) and the [universal edit session](../file_editing/WORKFLOW.md) (write).
+
 **Command name:** `read_project_text_file`  
 **Class:** `ReadProjectTextFileCommand`  
 **Source:** `code_analysis/commands/read_project_text_file_command.py`  

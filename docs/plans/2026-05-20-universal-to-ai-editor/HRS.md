@@ -70,74 +70,25 @@ Additional services reachable through the same proxy:
 
 ## File read/write — universal edit workflow
 
-All file reads and writes use the **universal file edit workflow**. This is the only
-correct method. Commands `universal_file_save`, `create_text_file`, `replace_file_lines`,
-`write_project_text_lines` are **obsolete** — do not use them.
+All file reads and writes use the **universal file edit workflow**. Canonical documentation:
 
-### Step 1 — Read: `universal_file_preview`
+- [commands/file_editing/WORKFLOW.md](../commands/file_editing/WORKFLOW.md)
+- [commands/file_editing/PYTHON_EDIT_SEMANTICS.md](../commands/file_editing/PYTHON_EDIT_SEMANTICS.md)
+- [AI_TOOL_USAGE_RULES.md](../AI_TOOL_USAGE_RULES.md) §2
 
-Use to read file content and obtain `node_ref` values before editing.
+Commands `universal_file_save`, `create_text_file`, `replace_file_lines`, `write_project_text_lines`, and the CST tree workflow are **obsolete for MCP** — do not use them.
 
-```
-universal_file_preview(project_id, file_path)
-```
+### Quick steps
 
-### Step 2 — Open: `universal_file_open`
+1. **Read / navigate:** `universal_file_preview(project_id, file_path)` — optional `node_ref`, pass `session_id` when session is open
+2. **Open:** `universal_file_open(project_id, file_path)` → `session_id`, `format_group`
+3. **Edit:** `universal_file_edit(project_id, session_id, operations=[...])` — re-preview before each edit for fresh `node_ref`
+4. **Write:** `universal_file_write` — preview, then commit (see WORKFLOW.md for tree-temp vs sidecar)
+5. **Close:** `universal_file_close(project_id, session_id)`
 
-Opens an existing file or creates a new one (`create=true`).
-Returns `session_id` and `format_group` (text | tree-temp | sidecar).
+Live schemas: `help(server_id="code-analysis-server", command="<name>")`.
 
-```
-universal_file_open(project_id, file_path, create=false)
-```
-
-- `create=true` — creates the file if it does not exist.
-- For `.py`: `initial_content` required when `create=true`.
-- For `.md`, `.txt`, `.yaml`, `.json` etc: file is created empty; content is added via `universal_file_edit`.
-
-### Step 3 — Edit: `universal_file_edit`
-
-Applies operations to the in-memory draft. Never touches disk.
-Operation shape depends on `format_group`:
-
-**text** (`.md`, `.txt`, `.rst`, `.adoc`):
-```json
-{"type": "insert", "position": "last", "content": "line to append"}
-{"type": "replace", "start_line": 3, "end_line": 5, "content": "new content"}
-{"type": "delete", "start_line": 3, "end_line": 5}
-```
-
-**tree-temp** (`.json`, `.yaml`, `.yml`):
-```json
-{"type": "replace", "json_pointer": "/key", "value": "new value"}
-{"type": "insert", "parent_json_pointer": "/list/-", "value": "item"}
-```
-
-**sidecar** (`.py`, `.pyi`, `.pyw`):
-```json
-{"type": "replace", "node_id": "<UUID from universal_file_preview>", "code_lines": ["def f(): ...", "    pass"]}
-```
-
-### Step 4 — Write: `universal_file_write`
-
-Two-phase: first call = preview diff, second call = commit to disk.
-
-```
-universal_file_write(project_id, session_id)          # first: preview
-universal_file_write(project_id, session_id)          # second: commit
-```
-
-**CL-02 applies here:** always inspect the diff from the first call before committing.
-
-### Step 5 — Close: `universal_file_close`
-
-Always call after write (or on abort). Releases session and cleans up artefacts.
-
-```
-universal_file_close(project_id, session_id)
-```
-
-## Pre-task checklist
+### Pre-task checklist
 
 - [ ] Verify UUID via `list_projects`: `8772a086-688d-4198-a0c4-f03817cc0e6c`
 - [ ] Check worker health: `get_worker_status`

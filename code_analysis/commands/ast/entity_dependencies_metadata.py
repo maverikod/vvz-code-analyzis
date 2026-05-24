@@ -30,21 +30,20 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
             "entity depends on (what it calls or uses), using the entity cross-reference table. "
             "You can call it with entity_name + entity_type (resolved to id in the project) or with entity_id.\n\n"
             "Operation flow:\n"
-            "1. Validates root_dir exists and is a directory\n"
-            "2. Opens database connection via proxy\n"
-            "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-            "4. If entity_name given, resolves entity_name + entity_type to entity_id in the project; "
+            "1. Validates project_id via project registry\n"
+            "2. Opens database connection for the project\n"
+            "3. If entity_name given, resolves entity_name + entity_type to entity_id in the project; "
             "if entity_id given, uses it\n"
-            "5. Queries entity_cross_ref table by caller_* column (class_id, method_id, or function_id)\n"
-            "6. Resolves file_id to file_path and cst_node_id via JOIN with classes/methods/functions\n"
-            "7. Returns list of callee entities with type, id, ref_type, file_path, line, cst_node_id (only valid UUID4)\n\n"
+            "4. Queries entity_cross_ref table by caller_* column (class_id, method_id, or function_id)\n"
+            "5. Resolves file_id to file_path and cst_node_id via JOIN with classes/methods/functions\n"
+            "6. Returns list of callee entities with type, id, ref_type, file_path, line, cst_node_id (only valid UUID4)\n\n"
             "Data source: entity_cross_ref table; ref_type: 'call', 'instantiation', 'attribute', 'inherit'. "
             "Use entity_name + entity_type when you have the name from code. Use entity_id when you have the id. "
             "Run update_indexes after code changes to refresh."
         ),
         "parameters": {
-            "root_dir": {
-                "description": "Project root directory path.",
+            "project_id": {
+                "description": "Project UUID (from create_project or list_projects).",
                 "type": "string",
                 "required": True,
             },
@@ -76,17 +75,12 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
                 "type": "string",
                 "required": False,
             },
-            "project_id": {
-                "description": "Optional project UUID.",
-                "type": "string",
-                "required": False,
-            },
         },
         "usage_examples": [
             {
                 "description": "Get dependencies of a function by id",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "entity_type": "function",
                     "entity_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                 },
@@ -97,7 +91,7 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
             {
                 "description": "Get dependencies by name",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "entity_type": "function",
                     "entity_name": "process_data",
                 },
@@ -166,15 +160,15 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
             "a given entity (what calls or uses it), using the entity cross-reference table. "
             "You can call it with entity_name + entity_type (resolved to id in the project) or with entity_id.\n\n"
             "Operation flow:\n"
-            "1. Validates root_dir, opens database\n"
-            "2. Resolves project_id; if entity_name given, resolves to entity_id\n"
+            "1. Validates project_id via project registry\n"
+            "2. Opens database connection for the project; if entity_name given, resolves to entity_id\n"
             "3. Queries entity_cross_ref by callee_* column\n"
             "4. Returns list of caller entities with type, id, ref_type, file_path, line, cst_node_id (valid UUID4)\n\n"
             "Use for impact analysis before renaming or deleting. Run update_indexes after code changes."
         ),
         "parameters": {
-            "root_dir": {
-                "description": "Project root directory path.",
+            "project_id": {
+                "description": "Project UUID (from create_project or list_projects).",
                 "type": "string",
                 "required": True,
             },
@@ -206,17 +200,12 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
                 "type": "string",
                 "required": False,
             },
-            "project_id": {
-                "description": "Optional project UUID.",
-                "type": "string",
-                "required": False,
-            },
         },
         "usage_examples": [
             {
                 "description": "Get dependents of a function by id",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "entity_type": "function",
                     "entity_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                 },
@@ -227,7 +216,7 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
             {
                 "description": "Get dependents by name",
                 "command": {
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "entity_type": "function",
                     "entity_name": "process_data",
                 },

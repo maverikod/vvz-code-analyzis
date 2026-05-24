@@ -181,7 +181,7 @@ class RotateLogsCommand:
 
     def __init__(self, log_path: str, backup_count: int = 5):
         self.log_path = Path(log_path)
-        self.backup_count = max(1, min(backup_count, 99))
+        self.backup_count = backup_count
 
     def _rotation_path(self, n: int) -> Path:
         return Path(str(self.log_path) + "." + str(n))

@@ -3,6 +3,8 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+**Content editing:** [file_editing/](../file_editing/) — not the commands below marked *legacy*.
+
 Each command is described in a separate file: purpose, arguments, return format, and examples.
 
 | Command | Description | Doc |
@@ -14,7 +16,7 @@ Each command is described in a separate file: purpose, arguments, return format,
 | restore_deleted_files | Restore many files (batch; pre-check: no target exists) | [FILE_TRASH.md](FILE_TRASH.md) |
 | collapse_versions | Collapse/prune old file versions | [collapse_versions.md](collapse_versions.md) |
 | repair_database | Logical repair of project DB | [repair_database.md](repair_database.md) |
-| read_project_text_file | Read raw lines (non-code) or auto-route Python paths to `get_file_lines` | [read_project_text_file.md](read_project_text_file.md) |
-| write_project_text_lines | Replace line range for non-code text; Python paths rejected | [write_project_text_lines.md](write_project_text_lines.md) |
+| read_project_text_file | **Legacy** read — use `universal_file_preview` | [read_project_text_file.md](read_project_text_file.md) |
+| write_project_text_lines | **Legacy** line replace — use universal edit session | [write_project_text_lines.md](write_project_text_lines.md) |
 
 See [README.md](README.md) for block overview.

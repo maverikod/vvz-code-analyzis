@@ -32,27 +32,31 @@ def get_node_by_stable_id(session: Any, stable_id: str) -> Optional[cst.CSTNode]
 
 def _resolve_node_id(tree: Optional[CSTTree], node_id: str) -> str:
     """
-    Resolve reserved __root__ to the tree's root node_id.
-    Also resolves stale node_ids from previous cst_modify_tree calls
-    to their current equivalents via tree.node_id_aliases.
-    Also resolves stable_id to current node_id via find_by_stable_id.
+    Resolve ``__root__``, span ``node_id`` aliases, or ``stable_id`` to current span id.
+
+    Preview and edit pass ``stable_id`` (persistent). Internal ``node_id`` may change
+    after each libcst rebuild; ``node_id_aliases`` maps retired span ids forward.
     """
     if node_id == ROOT_NODE_ID_SENTINEL and tree and tree.root_node_id:
         return tree.root_node_id
-    if tree and tree.node_id_aliases:
-        # Walk the alias chain to handle multiple successive operations
-        resolved = node_id
-        seen = set()
+    if not tree:
+        return node_id
+
+    resolved = node_id
+    if tree.node_id_aliases:
+        seen: set[str] = set()
         while resolved in tree.node_id_aliases and resolved not in seen:
             seen.add(resolved)
             resolved = tree.node_id_aliases[resolved]
+
+    if resolved in tree.metadata_map:
         return resolved
-    # Resolve stable_id -> current node_id
-    if tree and node_id not in tree.metadata_map:
-        meta = tree.find_by_stable_id(node_id)
-        if meta:
-            return meta.node_id
-    return node_id
+
+    meta = tree.find_by_stable_id(resolved)
+    if meta is not None:
+        return meta.node_id
+
+    return resolved
 
 
 def get_node_metadata(

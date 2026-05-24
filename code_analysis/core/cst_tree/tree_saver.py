@@ -26,7 +26,7 @@ from .tree_builder import (
     remove_tree,
 )
 from .node_stable_id import strip_inline_node_id_lines_from_source
-from .tree_sidecar import write_sidecar_atomic
+from .tree_sidecar import promote_pending_sidecar_to_final, write_sidecar_atomic
 from .tree_save_verification import (
     FILE_CHANGED_SINCE_LOAD,
     WRITE_VERIFY_FAILED,
@@ -38,6 +38,8 @@ from .tree_save_verification import (
 )
 
 logger = logging.getLogger(__name__)
+
+
 def save_tree_to_file(
     tree_id: str,
     file_path: str,
@@ -339,6 +341,7 @@ def save_tree_to_file(
 
             if sync_result.get("success") and prebuilt_cst_tree_for_sync is not None:
                 try:
+                    promote_pending_sidecar_to_final(target_path)
                     write_sidecar_atomic(target_path, tree)
                 except OSError as exc:
                     logger.warning(

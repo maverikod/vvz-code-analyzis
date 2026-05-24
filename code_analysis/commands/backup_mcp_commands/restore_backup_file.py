@@ -14,6 +14,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.backup_manager import BackupManager
+from ...core.exceptions import ValidationError
 from ...core.git_integration import commit_after_write
 from ...core.database.file_edit_lock import (
     acquire_file_edit_lock_with_retry,
@@ -81,6 +82,25 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
         Returns:
             Success or error result
         """
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "backup_uuid": backup_uuid,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        project_id = params["project_id"]
+        file_path = params["file_path"]
+        backup_uuid = params.get("backup_uuid")
+
         try:
             root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)

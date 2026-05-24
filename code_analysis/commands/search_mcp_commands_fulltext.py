@@ -12,8 +12,10 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.exceptions import ValidationError
 from .base_mcp_command import BaseMCPCommand
 from .search import SearchCommand
+from .search_session_schema import merge_pagination_schema
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get JSON schema for command parameters."""
-        return {
+        base_schema: Dict[str, Any] = {
             "type": "object",
             "description": (
                 "Perform full-text search over indexed code content (FTS5) for a project. "
@@ -59,12 +61,25 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                         "Optional filter by entity_type stored in code_content "
                         "(file, class, method, function, variable, attribute)"
                     ),
+                    "enum": [
+                        "file",
+                        "class",
+                        "method",
+                        "function",
+                        "variable",
+                        "attribute",
+                    ],
                     "examples": ["class", "variable"],
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of results",
+                    "description": (
+                        "Maximum number of results (1–1000). Default 20. "
+                        "Values outside the range are rejected."
+                    ),
                     "default": 20,
+                    "minimum": 1,
+                    "maximum": 1000,
                     "examples": [5, 20, 100],
                 },
             },
@@ -84,23 +99,67 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 },
             ],
         }
+        return merge_pagination_schema(base_schema)
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``limit`` outside schema min/max; ensure project_id exists."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        key = "limit"
+        if key in params and params[key] is not None:
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
 
     async def execute(
         self,
         project_id: str,
         query: str,
         entity_type: Optional[str] = None,
-        limit: int = 20,
-        **kwargs,
+        limit: Optional[int] = None,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute full-text search."""
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "query": query,
+            "entity_type": entity_type,
+            "limit": limit,
+        }
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "fulltext_search")
+        project_id = params["project_id"]
+        query = params["query"]
+        entity_type = params.get("entity_type")
+        if params.get("limit") is None:
+            limit_effective = 20
+        else:
+            limit_effective = int(params["limit"])
         try:
             self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 search_cmd = SearchCommand(database, project_id)
                 results = search_cmd.full_text_search(
-                    query, entity_type=entity_type, limit=limit
+                    query, entity_type=entity_type, limit=limit_effective
                 )
 
                 return SuccessResult(
@@ -155,7 +214,7 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 "- Requires built database (run update_indexes first)\n"
                 "- Uses SQLite FTS5 for fast text search\n"
                 "- Results are ranked by relevance\n"
-                "- Default limit is 20 results\n"
+                "- Default limit is 20 results; ``limit`` must be 1–1000 (out-of-range rejected)\n"
                 "- Entity type filter: 'class', 'method', or 'function'"
             ),
             "parameters": {
@@ -201,12 +260,14 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 },
                 "limit": {
                     "description": (
-                        "Maximum number of results to return. Default is 20. "
-                        "Results are ranked by relevance."
+                        "Maximum number of results to return (1–1000). Default is 20. "
+                        "Values outside the range are rejected. Results are ranked by relevance."
                     ),
                     "type": "integer",
                     "required": False,
                     "default": 20,
+                    "minimum": 1,
+                    "maximum": 1000,
                     "examples": [5, 20, 100],
                 },
                 "project_id": {
@@ -215,6 +276,38 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                     ),
                     "type": "string",
                     "required": False,
+                },
+                "paginated": {
+                    "description": (
+                        "When true, route through SearchSession-backed paginated blocks "
+                        "instead of returning one inline payload. Defaults to false."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+                "job_id": {
+                    "description": (
+                        "Existing paginated search session job_id for continuation "
+                        "or block fetch."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+                "include_job_id": {
+                    "description": (
+                        "When paginated is true, include job_id in the handoff response. "
+                        "Defaults to true."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "block_position": {
+                    "description": "1-based result block position for paginated retrieval.",
+                    "type": "integer",
+                    "required": False,
+                    "minimum": 1,
                 },
             },
             "usage_examples": [
@@ -311,5 +404,6 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 "Adjust limit based on expected result count",
                 "Query text supports partial word matching",
                 "Results are ranked by relevance",
+                "paginated defaults to false; legacy callers omit it for inline results",
             ],
         }

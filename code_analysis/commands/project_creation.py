@@ -419,6 +419,7 @@ class CreateProjectCommand:
                 return {
                     "success": True,
                     "project_id": project_id,
+                    "project_root": str(project_path),
                     "message": f"Created projectid in existing directory and registered: {project_id}",
                     "bootstrap_report": bootstrap_report,
                 }
@@ -485,6 +486,7 @@ class CreateProjectCommand:
             return {
                 "success": True,
                 "project_id": project_id,
+                "project_root": str(project_path),
                 "message": f"Created and registered new project: {project_id}",
                 "bootstrap_report": bootstrap_report,
             }

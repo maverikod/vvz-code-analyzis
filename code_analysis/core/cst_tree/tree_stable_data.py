@@ -1,5 +1,5 @@
 """
-Stable data transfer: move stable_id and decorators between tree nodes and external data.
+Stable identity in metadata: carry ``stable_id`` across CST rebuilds after mutation.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -7,129 +7,188 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import libcst as cst
 
-from .node_stable_id import ensure_stable_id, get_stable_id, set_stable_id
+from .node_id_markers import build_exact_node_key
+from .node_stable_id import get_stable_id
 
 if TYPE_CHECKING:
-    from .models import CSTTree
+    from .models import CSTTree, TreeNodeMetadata
+
+StatementStableKey = Tuple[str, str, str, str]
+
+_STATEMENT_STABLE_TYPES = frozenset(
+    {
+        "SimpleStatementLine",
+        "Expr",
+        "AnnAssign",
+        "Assign",
+        "AugAssign",
+    }
+)
 
 
-class _StableDataInjector(cst.CSTTransformer):
-    """Transformer that ensures every FunctionDef/ClassDef carries its stable_id."""
-
-    def leave_FunctionDef(
-        self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.CSTNode:
-        """Ensure FunctionDef has stable_id."""
-        node, _ = ensure_stable_id(updated_node)
-        return node
-
-    def leave_ClassDef(
-        self, original_node: cst.ClassDef, updated_node: cst.ClassDef
-    ) -> cst.CSTNode:
-        """Ensure ClassDef has stable_id."""
-        node, _ = ensure_stable_id(updated_node)
-        return node
+def normalized_source_span(module: cst.Module, start_line: int, end_line: int) -> str:
+    """Collapse a 1-based inclusive line span to a single normalized text key."""
+    lines = module.code.splitlines()
+    if not lines or start_line < 1 or end_line < start_line:
+        return ""
+    lo = start_line - 1
+    hi = min(len(lines), end_line)
+    if lo >= hi:
+        return ""
+    return " ".join("\n".join(lines[lo:hi]).split())
 
 
-class _StableDataRestorer(cst.CSTTransformer):
-    """Transformer that reads stable_id from nodes after mutation and rebuilds index."""
-
-    def __init__(self, stable_map: dict[str, str], decorator_map: dict[str, list]) -> None:
-        """Initialize with maps from stable_id to node data."""
-        super().__init__()
-        self._stable_map = stable_map  # stable_id -> stable_id (identity, for future use)
-        self._decorator_map = decorator_map  # stable_id -> decorators list
-
-    def leave_FunctionDef(
-        self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
-    ) -> cst.CSTNode:
-        """Restore decorators if lost after replace."""
-        stable = get_stable_id(updated_node)
-        if stable and not updated_node.decorators:
-            decs = self._decorator_map.get(stable)
-            if decs:
-                return updated_node.with_changes(decorators=decs)
-        return updated_node
-
-    def leave_ClassDef(
-        self, original_node: cst.ClassDef, updated_node: cst.ClassDef
-    ) -> cst.CSTNode:
-        """Restore decorators if lost after replace."""
-        stable = get_stable_id(updated_node)
-        if stable and not updated_node.decorators:
-            decs = self._decorator_map.get(stable)
-            if decs:
-                return updated_node.with_changes(decorators=decs)
-        return updated_node
+def build_statement_stable_key(
+    node_type: str,
+    qualname: Optional[str],
+    normalized_text: str,
+) -> StatementStableKey:
+    """Position-independent lookup key for statement-level stable_id."""
+    return ("stmt", node_type, qualname or "", normalized_text)
 
 
-def extract_stable_data(tree: CSTTree) -> dict[str, list]:
-    """Before mutation: read stable_id->decorators from all nodes into plain data.
+def statement_stable_key_from_meta(
+    meta: "TreeNodeMetadata",
+    module: cst.Module,
+) -> Optional[StatementStableKey]:
+    """Statement stable key from pre-mutation metadata and module snapshot."""
+    if meta.type not in _STATEMENT_STABLE_TYPES:
+        return None
+    norm = normalized_source_span(module, meta.start_line, meta.end_line)
+    if not norm:
+        return None
+    return build_statement_stable_key(meta.type, meta.qualname, norm)
 
-    Also ensures every FunctionDef/ClassDef has a stable_id written into it.
-    Updates tree.module in-place with injected stable_ids.
 
-    Args:
-        tree: CSTTree to extract from
+def _obj_to_stable_from_metadata(
+    metadata_map: Dict[str, "TreeNodeMetadata"],
+    source_module: Optional[cst.Module] = None,
+) -> Dict[Any, str]:
+    """Build semantic lookup keys for stable_id preservation across index rebuild."""
+    out: Dict[Any, str] = {}
+    for meta in metadata_map.values():
+        if not meta.stable_id:
+            continue
+        if meta.qualname and meta.type in (
+            "FunctionDef",
+            "AsyncFunctionDef",
+            "ClassDef",
+        ):
+            out.setdefault(("qualname", meta.qualname), meta.stable_id)
+        if source_module is not None:
+            stmt_key = statement_stable_key_from_meta(meta, source_module)
+            if stmt_key is not None:
+                out.setdefault(stmt_key, meta.stable_id)
+    return out
 
-    Returns:
-        dict mapping stable_id -> list of cst.Decorator objects
-    """
-    # Read stable_id -> decorators from metadata_map only (no module modification)
+
+def extract_stable_data(tree: "CSTTree") -> dict[str, list]:
+    """Before mutation: snapshot decorators by ``metadata_map`` stable_id."""
     decorator_map: dict[str, list] = {}
-    for nid, meta in tree.metadata_map.items():
-        node = tree.node_map.get(nid)
+    for _nid, meta in tree.metadata_map.items():
+        node = tree.node_map.get(_nid)
         if node and isinstance(node, (cst.FunctionDef, cst.ClassDef)):
             if meta.stable_id and node.decorators:
                 decorator_map[meta.stable_id] = list(node.decorators)
     return decorator_map
 
 
-def restore_stable_data(tree: CSTTree, decorator_map: dict[str, list]) -> CSTTree:
-    """After mutation: restore decorators from data, rebuild index.
+def _restore_decorators_from_metadata(
+    tree: "CSTTree", decorator_map: dict[str, list]
+) -> None:
+    """Re-attach decorators using ``metadata_map.stable_id`` (not source markers)."""
+    if not decorator_map:
+        return
+    nid_to_stable = {
+        nid: meta.stable_id
+        for nid, meta in tree.metadata_map.items()
+        if meta.stable_id and meta.type in ("FunctionDef", "ClassDef")
+    }
+    if not nid_to_stable:
+        return
 
-    stable_id is already in each unchanged node's leading_lines.
-    New nodes (from replace) get a new stable_id via ensure_stable_id.
-    Decorators are restored for nodes that lost them during replace.
+    targets: dict[int, list] = {}
+    for nid, stable in nid_to_stable.items():
+        node = tree.node_map.get(nid)
+        if node is not None and isinstance(node, (cst.FunctionDef, cst.ClassDef)):
+            decs = decorator_map.get(stable)
+            if decs and not node.decorators:
+                targets[id(node)] = decs
 
-    Args:
-        tree: CSTTree after mutation
-        decorator_map: dict mapping stable_id -> decorators (from extract_stable_data)
+    if not targets:
+        return
 
-    Returns:
-        Updated CSTTree with restored decorators and rebuilt index
+    class _DecRestore(cst.CSTTransformer):
+        def leave_FunctionDef(
+            self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
+        ) -> cst.CSTNode:
+            decs = targets.get(id(original_node))
+            if decs:
+                return updated_node.with_changes(decorators=decs)
+            return updated_node
+
+        def leave_ClassDef(
+            self, original_node: cst.ClassDef, updated_node: cst.ClassDef
+        ) -> cst.CSTNode:
+            decs = targets.get(id(original_node))
+            if decs:
+                return updated_node.with_changes(decorators=decs)
+            return updated_node
+
+    tree.module = tree.module.visit(_DecRestore())
+    for nid, node in list(tree.node_map.items()):
+        decs = targets.get(id(node))
+        if decs and isinstance(node, (cst.FunctionDef, cst.ClassDef)):
+            tree.node_map[nid] = node.with_changes(decorators=decs)
+
+
+def restore_stable_data(
+    tree: "CSTTree",
+    decorator_map: dict[str, list],
+    *,
+    previous_metadata_map: Optional[Dict[str, "TreeNodeMetadata"]] = None,
+    previous_module: Optional[cst.Module] = None,
+    pinned_node_id: Optional[str] = None,
+) -> "CSTTree":
+    """After mutation: rebuild index; ``stable_id`` stays in ``metadata_map`` / sidecar.
+
+    Identity transfer uses semantic keys (qualname, statement text) from the
+    pre-mutation metadata snapshot — not line/column coordinates.
     """
-    # Restore decorators for nodes that lost them (no stable_id injection into source)
-    new_module = tree.module.visit(_StableDataRestorer({}, decorator_map))
-    tree.module = new_module
+    prev = dict(previous_metadata_map) if previous_metadata_map else None
+    mod_for_keys = previous_module if previous_module is not None else tree.module
 
-    # Rebuild full index
     from .tree_builder import _build_tree_index
+
     tree.node_map.clear()
     tree.metadata_map.clear()
     tree.parent_map.clear()
     tree.node_id_aliases.clear()
-    _build_tree_index(tree, node_types=None, max_depth=None, include_children=True)
+    _build_tree_index(
+        tree,
+        node_types=None,
+        max_depth=None,
+        include_children=True,
+        previous_metadata_map=prev,
+        obj_to_stable=(
+            _obj_to_stable_from_metadata(prev, mod_for_keys) if prev else None
+        ),
+        pinned_node_id=pinned_node_id,
+    )
+    _restore_decorators_from_metadata(tree, decorator_map)
 
     return tree
 
 
 def embed_stable_ids_into_tree(tree: "CSTTree") -> None:
-    """Write stable_id from metadata_map into each node's leading_lines.
+    """Legacy: write metadata stable_id into def/class source markers (migration only).
 
-    Must be called after _build_tree_index so that metadata_map is populated.
-    After this call, get_stable_id(node) returns the correct stable_id for
-    every FunctionDef/ClassDef in tree.module, making nodes self-contained.
-    tree.module is replaced in-place with the annotated version.
-
-    Args:
-        tree: CSTTree with populated metadata_map and node_map
+    Edit sessions do not call this: ``stable_id`` is persisted in ``.cst/*.tree``.
     """
-    # Build node_id -> stable_id lookup from metadata
     nid_to_stable: dict[str, str] = {
         nid: meta.stable_id
         for nid, meta in tree.metadata_map.items()
@@ -138,13 +197,13 @@ def embed_stable_ids_into_tree(tree: "CSTTree") -> None:
     if not nid_to_stable:
         return
 
-    # Build reverse: node object (by nid) -> stable_id
-    # node_map maps nid -> cst node object
     node_to_stable: dict[int, str] = {}
     for nid, stable in nid_to_stable.items():
         node_obj = tree.node_map.get(nid)
         if node_obj is not None:
             node_to_stable[id(node_obj)] = stable
+
+    from .node_stable_id import set_stable_id
 
     class _EmbedTransformer(cst.CSTTransformer):
         def leave_FunctionDef(

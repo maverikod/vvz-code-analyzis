@@ -48,7 +48,7 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Important notes:\n"
             "- Database path is taken from server config; no root_dir parameter\n"
             "- file_path_filter uses SQL LIKE '%value%' (substring, case-sensitive)\n"
-            "- limit is clamped between 1 and 1000\n"
+            "- limit must be 1–1000; out-of-range values are rejected in validate_params\n"
             "- If the table does not exist, the command does not fail; it returns total: 0, list: [], table_missing: true\n"
             "- Read-only; no database modifications"
         ),
@@ -69,7 +69,7 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "limit": {
                 "description": (
-                    "Max rows to return. Default 200, capped at 1000. Order: newest first (created_at DESC)."
+                    "Max rows to return. Default 200 (1–1000). Order: newest first (created_at DESC)."
                 ),
                 "type": "integer",
                 "required": False,

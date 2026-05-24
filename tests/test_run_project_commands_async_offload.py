@@ -108,19 +108,29 @@ def test_run_project_script_uses_queue_run_project_module_inline() -> None:
     assert RunProjectModuleCommand.use_queue is False
 
 
-def test_run_project_script_validate_params_rejects_unknown_project() -> None:
-    mock_db = MagicMock()
-    mock_db.disconnect = MagicMock()
-    mock_db.get_project.return_value = None
+def test_run_project_script_validate_params_accepts_params_without_db() -> None:
+    """validate_params checks schema only; project existence is deferred to execute."""
     with patch.object(
         BaseMCPCommand,
         "_open_database_from_config",
-        return_value=mock_db,
-    ):
-        with pytest.raises(ValidationError, match="not found"):
-            RunProjectScriptCommand().validate_params(
-                {"project_id": _VALID_UUID, "file_path": "main.py"}
-            )
+    ) as mock_open_db:
+        result = RunProjectScriptCommand().validate_params(
+            {"project_id": f"  {_VALID_UUID}  ", "file_path": "main.py"}
+        )
+    mock_open_db.assert_not_called()
+    assert result["project_id"] == _VALID_UUID
+    assert result["file_path"] == "main.py"
+
+
+def test_run_project_script_validate_params_rejects_unknown_param() -> None:
+    with pytest.raises(ValidationError, match="unknown parameter"):
+        RunProjectScriptCommand().validate_params(
+            {
+                "project_id": _VALID_UUID,
+                "file_path": "main.py",
+                "unexpected": True,
+            }
+        )
 
 
 def test_run_project_module_validate_params_rejects_unknown_project() -> None:

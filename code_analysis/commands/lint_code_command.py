@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.code_quality import lint_with_flake8
+from ..core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,13 @@ class LintCodeCommand(Command):
             ],
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters against command schema before queue or execute."""
+        BaseMCPCommand.validate_params_against_schema(
+            params, self.get_schema(), command_name=self.name
+        )
+        return params
+
     async def execute(
         self: "LintCodeCommand",
         file_path: str,
@@ -109,6 +117,23 @@ class LintCodeCommand(Command):
         Returns:
             SuccessResult with linting result or ErrorResult on failure.
         """
+        params: Dict[str, Any] = {
+            "file_path": file_path,
+            "project_id": project_id,
+            "ignore": ignore,
+        }
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        file_path = str(params["file_path"])
+        project_id = params.get("project_id")
+        ignore = params.get("ignore")
         try:
             if project_id:
                 root_path = BaseMCPCommand._resolve_project_root(project_id)

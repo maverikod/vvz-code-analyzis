@@ -27,6 +27,7 @@ from .cst_modify_tree_helpers import (
 from .cst_modify_tree_metadata import get_cst_modify_tree_metadata
 from .cst_modify_tree_ops_build import build_tree_operations
 from ..core.cst_tree.models import TreeNodeMetadata, TreeOperation, TreeOperationType
+from ..core.cst_tree.node_stable_id import logical_source_from_module
 from ..core.cst_tree.tree_builder import (
     _attach_disk_snapshot,
     get_tree,
@@ -126,7 +127,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 return build_err
             tree_operations = tree_operations_list
 
-            original_code = original_tree.module.code
+            original_code = logical_source_from_module(original_tree.module)
             index_snapshot = dict(original_tree.metadata_map)
             logger.info(
                 "[TIMING] command=cst_modify_tree step=convert_ops elapsed_sec=%.4f",
@@ -151,7 +152,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 preview_data: Optional[Dict[str, Any]] = None
                 try:
                     modified_tree = modify_tree(tree_id, tree_operations)
-                    modified_code = modified_tree.module.code
+                    modified_code = logical_source_from_module(modified_tree.module)
                     logger.info(
                         "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
                         time.perf_counter() - t_mod,
@@ -265,7 +266,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 return SuccessResult(data=preview_data)
 
             modified_tree = modify_tree(tree_id, tree_operations)
-            modified_code = modified_tree.module.code
+            modified_code = logical_source_from_module(modified_tree.module)
             logger.info(
                 "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
                 time.perf_counter() - t_mod,
@@ -410,7 +411,10 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     # BUG FIX: refresh module_source_sha256_hex after combined save
                     _saved_tree = get_tree(tree_id)
                     if _saved_tree is not None:
-                        _attach_disk_snapshot(_saved_tree, _saved_tree.module.code)
+                        _attach_disk_snapshot(
+                            _saved_tree,
+                            logical_source_from_module(_saved_tree.module),
+                        )
                 finally:
                     database.disconnect()
 

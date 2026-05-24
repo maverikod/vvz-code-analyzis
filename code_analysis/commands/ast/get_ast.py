@@ -13,6 +13,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 class GetASTMCPCommand(BaseMCPCommand):
@@ -189,7 +190,21 @@ class GetASTMCPCommand(BaseMCPCommand):
         file_path: str,
         include_json: bool = True,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "include_json": include_json,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "get_ast")
+        project_id = params["project_id"]
+        file_path = params["file_path"]
+        include_json = bool(params.get("include_json", True))
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database_from_config(auto_analyze=False)
@@ -298,17 +313,16 @@ class GetASTMCPCommand(BaseMCPCommand):
                 "from the analysis database. The AST is stored as JSON and represents the complete "
                 "syntactic structure of the Python code.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Normalizes file_path (converts absolute to relative if possible)\n"
-                "5. Attempts multiple path matching strategies:\n"
+                "1. Validates project_id via project registry\n"
+                "2. Opens database connection for the project\n"
+                "3. Normalizes file_path (converts absolute to relative if possible)\n"
+                "4. Attempts multiple path matching strategies:\n"
                 "   - Exact path match\n"
                 "   - Versioned path pattern (data/versions/{uuid}/...)\n"
                 "   - Filename match (if path contains /)\n"
-                "6. Retrieves AST tree from database for the file\n"
-                "7. If include_json=true, parses and includes full AST JSON\n"
-                "8. Returns file metadata and optionally AST JSON\n\n"
+                "5. Retrieves AST tree from database for the file\n"
+                "6. If include_json=true, parses and includes full AST JSON\n"
+                "7. Returns file metadata and optionally AST JSON\n\n"
                 "Path Resolution:\n"
                 "The command tries multiple strategies to find the file:\n"
                 "1. Exact path match against database\n"
@@ -327,10 +341,9 @@ class GetASTMCPCommand(BaseMCPCommand):
                 "- Path resolution is flexible to handle versioned files"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects)."
                     ),
                     "type": "string",
                     "required": True,
@@ -358,19 +371,12 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": True,
                 },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
             },
             "usage_examples": [
                 {
                     "description": "Get AST with JSON for a file",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "src/main.py",
                         "include_json": True,
                     },
@@ -381,7 +387,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 {
                     "description": "Check if AST exists without retrieving JSON",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "src/main.py",
                         "include_json": False,
                     },
@@ -393,7 +399,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 {
                     "description": "Get AST using absolute path",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "/home/user/projects/my_project/src/main.py",
                     },
                     "explanation": (
@@ -404,7 +410,7 @@ class GetASTMCPCommand(BaseMCPCommand):
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "project_id='invalid-uuid' not registered",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "FILE_NOT_FOUND": {

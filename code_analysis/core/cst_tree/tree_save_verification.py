@@ -32,6 +32,8 @@ from .models import ROOT_NODE_ID_SENTINEL, CSTTree, TreeNodeMetadata, TreeOperat
 
 from .node_id_markers import build_exact_node_key
 
+from .node_stable_id import logical_source_from_module
+
 from .tree_builder import create_tree_from_code, get_tree, remove_tree
 
 from .tree_modifier import modify_tree
@@ -48,15 +50,12 @@ TREE_MODULE_CORRUPT = "TREE_MODULE_CORRUPT"
 class SaveVerificationError(Exception):
     """Raised when a save-time verification invariant fails."""
 
-
     def __init__(
         self, *, code: str, details: Mapping[str, object] | None = None
     ) -> None:
         self.code = code
         self.details: dict[str, object] = dict(details) if details is not None else {}
         super().__init__(code)
-
-
 
 
 def _resolve_meta_for_replay_remap(
@@ -72,8 +71,6 @@ def _resolve_meta_for_replay_remap(
     if id_lookup_tree is not None:
         return id_lookup_tree.metadata_map.get(node_id)
     return None
-
-
 
 
 def _replay_node_id_for_operation_id(
@@ -121,8 +118,6 @@ def _replay_node_id_for_operation_id(
             best_score = score
             best = rid
     return best if best is not None else node_id
-
-
 
 
 def _remap_ops_to_replay_tree(
@@ -173,8 +168,6 @@ def _remap_ops_to_replay_tree(
     return out
 
 
-
-
 def _replay_operations_produce_code_at_path(
     original_source: str,
     tree_operations: Sequence[TreeOperation],
@@ -214,8 +207,6 @@ def _replay_operations_produce_code_at_path(
         remove_tree(new_id)
 
 
-
-
 def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
     """
     Compare current disk UTF-8 bytes (sha256 + length) with the snapshot on ``tree``.
@@ -234,8 +225,6 @@ def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
     raw = text.encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
     return bool(digest == snapshot_hex and len(raw) == tree.disk_source_length)
-
-
 
 
 def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
@@ -269,8 +258,6 @@ def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
     raise SaveVerificationError(code=FILE_CHANGED_SINCE_LOAD, details=dict(details))
 
 
-
-
 def replay_operations_produce_code(
     original_source: str,
     tree_operations: Sequence[TreeOperation],
@@ -280,8 +267,6 @@ def replay_operations_produce_code(
     return _replay_operations_produce_code_at_path(
         original_source, tree_operations, stub, id_lookup_tree=None
     )
-
-
 
 
 def assert_replay_matches(
@@ -306,7 +291,7 @@ def assert_replay_matches(
         str(target_path),
         id_lookup_tree=lookup,
     )
-    working = cast(str, tree.module.code)
+    working = logical_source_from_module(tree.module)
     if replayed == working:
         return
     raise SaveVerificationError(
@@ -317,8 +302,6 @@ def assert_replay_matches(
             "working_length": len(working),
         },
     )
-
-
 
 
 def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
@@ -336,24 +319,16 @@ def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
     )
 
 
-
-
 def assert_tree_module_integrity(tree: CSTTree) -> None:
-    """Raise SaveVerificationError if tree.module.code SHA256 doesn't match recorded snapshot.
+    """Raise SaveVerificationError if logical module source SHA256 doesn't match snapshot.
 
-    Called before cst_modify_tree and before cst_save_tree to catch corrupt in-memory trees.
-    Skipped when module_source_sha256_hex is None (tree created from code, no snapshot yet).
-
-    Args:
-        tree: CSTTree to verify
-
-    Raises:
-        SaveVerificationError: If module code SHA256 mismatches the stored snapshot.
+    Compares canonical source (no legacy inline ``# @node-id`` lines). ``stable_id``
+    lives in ``metadata_map`` / sidecar and is not part of this checksum.
     """
     expected_hex = tree.module_source_sha256_hex
     if expected_hex is None:
         return
-    actual_code = tree.module.code
+    actual_code = logical_source_from_module(tree.module)
     actual_hex = hashlib.sha256(actual_code.encode("utf-8")).hexdigest()
     if actual_hex == expected_hex:
         return
@@ -364,7 +339,7 @@ def assert_tree_module_integrity(tree: CSTTree) -> None:
             "file_path": tree.file_path,
             "expected_sha256": expected_hex,
             "actual_sha256": actual_hex,
-            "expected_lines": tree.module.code.count("\n"),
+            "expected_lines": actual_code.count("\n"),
             "actual_lines": actual_code.count("\n"),
         },
     )

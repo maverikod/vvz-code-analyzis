@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.exceptions import ValidationError
 from .base_mcp_command import BaseMCPCommand
 from .search import SearchCommand
 
@@ -55,6 +56,18 @@ class FindClassesMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """Execute class search."""
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "pattern": pattern,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "find_classes")
+        project_id = params["project_id"]
+        pattern = params.get("pattern")
+
         try:
             self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
@@ -94,12 +107,11 @@ class FindClassesMCPCommand(BaseMCPCommand):
                 "It can search for classes matching a specific pattern or return all classes "
                 "if no pattern is provided.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Searches for classes matching the pattern (if provided)\n"
-                "5. If no pattern provided, returns all classes\n"
-                "6. Returns list of classes with metadata\n\n"
+                "1. Validates project_id via project registry\n"
+                "2. Opens database connection for the project\n"
+                "3. Searches for classes matching the pattern (if provided)\n"
+                "4. If no pattern provided, returns all classes\n"
+                "5. Returns list of classes with metadata\n\n"
                 "Pattern Matching:\n"
                 "- Supports SQL LIKE pattern matching\n"
                 "- Use '%' for wildcard (e.g., '%Manager' matches 'DatabaseManager')\n"
@@ -124,10 +136,9 @@ class FindClassesMCPCommand(BaseMCPCommand):
                 "- Results are sorted by class name"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects)."
                     ),
                     "type": "string",
                     "required": True,
@@ -147,19 +158,12 @@ class FindClassesMCPCommand(BaseMCPCommand):
                         "%Handler%",
                     ],
                 },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
             },
             "usage_examples": [
                 {
                     "description": "Find all classes",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
                         "Returns all classes in the project. May return large result set."
@@ -168,7 +172,7 @@ class FindClassesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find classes by pattern",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "pattern": "%Manager",
                     },
                     "explanation": (
@@ -178,7 +182,7 @@ class FindClassesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find classes starting with pattern",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "pattern": "Base%",
                     },
                     "explanation": (
@@ -189,7 +193,7 @@ class FindClassesMCPCommand(BaseMCPCommand):
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "project_id='invalid-uuid' not registered",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "SEARCH_ERROR": {

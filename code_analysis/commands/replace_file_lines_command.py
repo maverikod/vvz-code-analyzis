@@ -26,6 +26,7 @@ from ..core.backup_manager import BackupManager
 from ..core.git_integration import commit_after_write
 from ..core.file_lock import file_lock
 from ..core.exceptions import ValidationError
+from ..core.file_handlers.text_handler import validate_write_range
 
 logger = logging.getLogger(__name__)
 
@@ -255,11 +256,22 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                     details={"file_path": file_path},
                 )
 
-            low = max(0, min(start_line - 1, total - 1))
-            high = max(0, min(end_line - 1, total - 1))
-            if low > high:
-                low, high = high, low
+            try:
+                validate_write_range(start_line, end_line, total)
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_RANGE",
+                    details={
+                        "file_path": file_path,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "total_lines": total,
+                    },
+                )
 
+            low = start_line - 1
+            high = end_line - 1
             new_content_lines = all_lines[:low] + new_lines + all_lines[high + 1 :]
             source_code = "\n".join(new_content_lines)
 

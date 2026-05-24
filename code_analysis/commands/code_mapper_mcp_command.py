@@ -22,6 +22,7 @@ from .base_mcp_command import BaseMCPCommand
 from .update_indexes_analyzer import analyze_file
 from .update_indexes_metadata import get_metadata as get_update_indexes_metadata
 from .update_indexes_metadata import get_schema as get_update_indexes_schema
+from ..core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -117,14 +118,32 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with update results or ErrorResult on failure.
         """
-        if max_lines is None:
-            max_lines = DEFAULT_MAX_FILE_LINES
-
         from ..core.progress_tracker import get_progress_tracker_from_context
 
-        progress_tracker = get_progress_tracker_from_context(
-            kwargs.get("context") or {}
-        )
+        extra = dict(kwargs)
+        context = extra.pop("context", None) or {}
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "max_lines": max_lines,
+        }
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        project_id = params["project_id"]
+        max_lines_val = params.get("max_lines")
+        if max_lines_val is None:
+            max_lines = DEFAULT_MAX_FILE_LINES
+        else:
+            max_lines = int(max_lines_val)
+
+        progress_tracker = get_progress_tracker_from_context(context)
 
         try:
             if progress_tracker:

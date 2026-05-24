@@ -3,9 +3,10 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-Commands for working with Concrete Syntax Tree: get_file_lines (raw lines without parsing), load, save, reload, find node, get node info, get node by range, get node at line (node + parent in one call), modify tree, create file, convert and save; plus list_cst_blocks and query_cst. Large-buffer CST applies use `cst_apply_buffer` (see command docs).
+> **MCP / AI agents:** do **not** use this block for editing project files.  
+> Use **[file_editing/](../file_editing/)** — `universal_file_preview` → `open` → (`universal_file_search` optional, Python XPath) → `edit` → `write` → `close`.
 
-**Concept and pipeline:** [CST_CONCEPT_AND_PIPELINE.md](../../plans/cst_concept/CST_CONCEPT_AND_PIPELINE.md) — full concept, load-by-levels, node expand (direct/recursive), write node (parent + file), syntax-error handling, and comparison with direct text editing. Subdir `docs/plans/cst_concept/` is used for CST concept and refactoring planning.
+CST commands stay registered for **server development, scripts, and tests**. They operate on in-memory `tree_id` sessions separate from the universal edit session.
 
 ## Commands → File Mapping
 
@@ -16,6 +17,9 @@ Commands for working with Concrete Syntax Tree: get_file_lines (raw lines withou
 | cst_save_tree      | CSTSaveTreeCommand        | `commands/cst_save_tree_command.py`      |
 | cst_reload_tree    | CSTReloadTreeCommand      | `commands/cst_reload_tree_command.py`    |
 | cst_find_node      | CSTFindNodeCommand        | `commands/cst_find_node_command.py`      |
+
+**AI agents:** for XPath on an **open edit-session** tree, use [`universal_file_search`](../file_editing/universal_file_search.md) (`session_id`), not `cst_find_node` (`tree_id`).
+
 | cst_get_node_info  | CSTGetNodeInfoCommand     | `commands/cst_get_node_info_command.py`  |
 | cst_get_node_by_range| CSTGetNodeByRangeCommand| `commands/cst_get_node_by_range_command.py`|
 | cst_get_node_at_line| CSTGetNodeAtLineCommand  | `commands/cst_get_node_at_line_command.py`|
@@ -26,8 +30,14 @@ Commands for working with Concrete Syntax Tree: get_file_lines (raw lines withou
 | list_cst_blocks    | ListCSTBlocksCommand      | `commands/list_cst_blocks_command.py`    |
 | query_cst          | QueryCSTCommand           | `commands/query_cst_command.py`          |
 
-All MCP CST commands inherit from `BaseMCPCommand`. Registration: `code_analysis/hooks.py`.
+Registration: `code_analysis/hooks.py` (`register_auto_import_module`).
+
+## AI editing path
+
+See [file_editing/PYTHON_EDIT_SEMANTICS.md](../file_editing/PYTHON_EDIT_SEMANTICS.md) for how the universal sidecar path applies the same CST modifier (header-only replace, batch rules).
 
 ## Detailed Command Descriptions
 
 See [COMMANDS.md](COMMANDS.md) in this directory for per-command schema, parameters, and behavior.
+
+Legacy workflow guide (redirect): [CST_WORKFLOW_GUIDE.md](../../CST_WORKFLOW_GUIDE.md).

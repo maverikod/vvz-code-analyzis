@@ -22,6 +22,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.progress_tracker import get_progress_tracker_from_context
 from .base_mcp_command import BaseMCPCommand
+from ..core.exceptions import ValidationError
 from .fs_grep_budget import (
     GREP_BUDGET_EXCEEDED,
     GREP_HARD_TIMEOUT,
@@ -29,7 +30,6 @@ from .fs_grep_budget import (
     GREP_TIMEOUT,
     FsGrepBudgetState,
     cap_candidate_paths,
-    clamp_hard_timeout_seconds,
     limits_for_queue,
     limits_for_sync,
     resolve_execution_mode,
@@ -43,7 +43,6 @@ from ..core.search_inline_execution import (
 from ..core.search_timeouts import (
     SEARCH_HARD_TIMEOUT_SECONDS,
     SEARCH_INLINE_TIMEOUT_SECONDS,
-    resolve_inline_timeout_seconds,
 )
 from ..core.structure_extraction.format_registry import (
     should_scan_path,
@@ -135,10 +134,13 @@ class FsGrepCommand(BaseMCPCommand):
                         "Use 0 to disable the guard. Default: 5242880 (5 MiB)."
                     ),
                     "default": 5242880,
+                    "minimum": 0,
+                    "maximum": 1073741824,
                 },
                 "line_preview_len": {
                     "type": "integer",
                     "minimum": 1,
+                    "maximum": 100000,
                     "description": (
                         "Max characters returned per matching line. Default from server config."
                     ),
@@ -263,17 +265,39 @@ class FsGrepCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject bounded parameters outside schema min/max after schema validation."""
         params = super().validate_params(params)
-        params["max_matches"] = max(
-            1, min(10000, int(params.get("max_matches") or 500))
-        )
-        params["enrich_max_results"] = max(
-            0, min(200, int(params.get("enrich_max_results") or 50))
-        )
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in (
+            "max_matches",
+            "enrich_max_results",
+            "max_file_bytes",
+            "line_preview_len",
+            "grep_sync_max_wall_seconds",
+            "hard_timeout_seconds",
+            "inline_timeout_seconds",
+        ):
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
         source = str(params.get("source") or "disk")
         if source not in ("disk", "draft_session", "both"):
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 "source must be disk, draft_session, or both",
                 field="source",
@@ -282,8 +306,6 @@ class FsGrepCommand(BaseMCPCommand):
             source in ("draft_session", "both")
             and not str(params.get("session_id") or "").strip()
         ):
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 "session_id is required when source includes draft_session",
                 field="session_id",
@@ -297,19 +319,6 @@ class FsGrepCommand(BaseMCPCommand):
                 "include_logs=true requires scan_all=true",
                 field="include_logs",
                 details={"code": policy_err},
-            )
-        if params.get("grep_sync_max_wall_seconds") is not None:
-            params["grep_sync_max_wall_seconds"] = max(
-                5.0,
-                min(600.0, float(params["grep_sync_max_wall_seconds"])),
-            )
-        if params.get("hard_timeout_seconds") is not None:
-            params["hard_timeout_seconds"] = clamp_hard_timeout_seconds(
-                params["hard_timeout_seconds"]
-            )
-        if params.get("inline_timeout_seconds") is not None:
-            params["inline_timeout_seconds"] = resolve_inline_timeout_seconds(
-                params["inline_timeout_seconds"]
             )
         return params
 

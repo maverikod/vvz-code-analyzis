@@ -24,6 +24,7 @@ from code_analysis.commands.universal_file_edit.errors import (
 )
 from code_analysis.commands.universal_file_edit.session import EditSession
 from code_analysis.core.cst_tree.models import CSTTree, ROOT_NODE_ID_SENTINEL
+from code_analysis.core.cst_tree.node_stable_id import logical_source_from_module
 from code_analysis.core.cst_tree.tree_builder import (
     get_tree,
     load_file_to_tree,
@@ -121,8 +122,7 @@ def _resolve_stable_to_span(op: Dict[str, Any], tree: CSTTree) -> Dict[str, Any]
             meta = tree.find_by_stable_id(raw)
             if meta is None:
                 raise StaleNodeIdError(
-                    f"stable_id '{raw}' not found in current CST tree. "
-                    "Re-call universal_file_preview after each edit to obtain fresh node_ref values.",
+                    f"stable_id '{raw}' not found in current CST tree metadata.",
                     field=field,
                     stable_id=raw,
                 )
@@ -286,9 +286,21 @@ def validate_sidecar_nested_batch(
     """
     node_ids: List[str] = []
     for op in operations:
-        raw = op.get("parent_node_id")
-        if isinstance(raw, str) and raw:
-            node_ids.append(raw)
+        for field in (
+            "node_id",
+            "parent_node_id",
+            "target_node_id",
+            "start_node_id",
+            "end_node_id",
+        ):
+            raw = op.get(field)
+            if (
+                isinstance(raw, str)
+                and raw
+                and raw != ROOT_NODE_ID_SENTINEL
+                and ":" not in raw
+            ):
+                node_ids.append(raw)
     if len(node_ids) < 2 or tree_id is None:
         return None
     tree = get_tree(tree_id)
@@ -347,7 +359,7 @@ def run_sidecar_cst_edit_batch(
             )
     session.tree_id = tree.tree_id
 
-    batch_original_code = tree.module.code
+    batch_original_code = logical_source_from_module(tree.module)
     batch_original_tree_id = tree.tree_id
     batch_original_metadata = dict(tree.metadata_map)
 
@@ -371,9 +383,8 @@ def run_sidecar_cst_edit_batch(
                         "field": _stale.field,
                         "stable_id": _stale.stable_id,
                         "hint": (
-                            "Call universal_file_preview (with session_id) "
-                            "after each edit to refresh node_ref values "
-                            "before the next operation."
+                            "stable_id was lost from metadata (unexpected). "
+                            "Re-call universal_file_preview with session_id."
                         ),
                     },
                 )

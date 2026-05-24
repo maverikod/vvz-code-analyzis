@@ -28,9 +28,9 @@ from ..core.search_timeouts import (
     resolve_inline_timeout_seconds,
 )
 from .base_mcp_command import BaseMCPCommand
+from ..core.exceptions import ValidationError
 from .fs_grep_budget import (
     GREP_HARD_TIMEOUT,
-    clamp_hard_timeout_seconds,
     resolve_hard_timeout_seconds,
 )
 from .fs_grep_command import FsGrepCommand
@@ -63,19 +63,7 @@ from .semantic_search_mcp import SemanticSearchMCPCommand
 
 logger = logging.getLogger(__name__)
 
-
-def _bounded_int_param(
-    params: Dict[str, Any],
-    key: str,
-    default: int,
-    *,
-    minimum: int,
-    maximum: int,
-) -> int:
-    """Preserve explicit zero; only substitute default when key is omitted or None."""
-    if key not in params or params[key] is None:
-        return default
-    return max(minimum, min(maximum, int(params[key])))
+_BOUNDED_INT_PARAMS = ("limit", "semantic_limit", "fulltext_limit", "grep_limit")
 
 
 def get_project_cross_search_schema() -> Dict[str, Any]:
@@ -298,62 +286,53 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         return get_project_cross_search_schema()
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject out-of-range limits after schema validation; normalize query."""
         params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in _BOUNDED_INT_PARAMS:
+            if key not in params or params[key] is None:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            minimum = prop.get("minimum")
+            maximum = prop.get("maximum")
+            if minimum is not None and value < minimum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+            if maximum is not None and value > maximum:
+                raise ValidationError(
+                    f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                    field=key,
+                    details={"minimum": minimum, "maximum": maximum},
+                )
+
         query = str(params.get("query") or "").strip()
         if not query:
-            from ..core.exceptions import ValidationError
-
             raise ValidationError("query must be non-empty", field="query")
         params["query"] = query
 
         mode = str(params.get("mode") or "intersection")
         if mode not in MODES:
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 f"mode must be one of {list(MODES)}",
                 field="mode",
             )
         profile = str(params.get("profile") or "generic")
         if profile not in PROFILES:
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 f"profile must be one of {list(PROFILES)}",
                 field="profile",
             )
 
-        params["limit"] = _bounded_int_param(
-            params, "limit", 20, minimum=1, maximum=200
-        )
-        params["semantic_limit"] = _bounded_int_param(
-            params, "semantic_limit", 30, minimum=0, maximum=200
-        )
-        params["fulltext_limit"] = _bounded_int_param(
-            params, "fulltext_limit", 30, minimum=0, maximum=200
-        )
-        params["grep_limit"] = _bounded_int_param(
-            params, "grep_limit", 200, minimum=0, maximum=2000
-        )
-        params["min_semantic_score"] = max(
-            0.0, min(1.0, float(params.get("min_semantic_score") or 0.45))
-        )
         params.setdefault("grep_patterns", [])
         params.setdefault("file_pattern", "")
         params.setdefault("include_venv", False)
-        if params.get("grep_sync_max_wall_seconds") is not None:
-            params["grep_sync_max_wall_seconds"] = max(
-                5.0,
-                min(600.0, float(params["grep_sync_max_wall_seconds"])),
-            )
-        if params.get("grep_hard_timeout_seconds") is not None:
-            params["grep_hard_timeout_seconds"] = clamp_hard_timeout_seconds(
-                params["grep_hard_timeout_seconds"]
-            )
         grep_scope = str(params.get("grep_scope") or "index_gap")
         if grep_scope not in ("index_gap", "all", "changed", "draft_only"):
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 "grep_scope must be index_gap, all, changed, or draft_only",
                 field="grep_scope",
@@ -363,22 +342,14 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
             source in ("draft_session", "both")
             and not str(params.get("session_id") or "").strip()
         ):
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 "session_id is required when source includes draft_session",
                 field="session_id",
             )
         if params.get("require_structural_grep", True) and params.get("fast_text_only"):
-            from ..core.exceptions import ValidationError
-
             raise ValidationError(
                 "fast_text_only is not allowed when require_structural_grep=true",
                 field="fast_text_only",
-            )
-        if params.get("inline_timeout_seconds") is not None:
-            params["inline_timeout_seconds"] = resolve_inline_timeout_seconds(
-                params["inline_timeout_seconds"]
             )
         return params
 
@@ -415,9 +386,83 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         inline_timeout_seconds: Optional[float] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        context = kwargs.get("context") or {}
+        extra = dict(kwargs)
+        context = extra.pop("context", None) or {}
         if not isinstance(context, dict):
             context = {}
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "query": query,
+            "grep_patterns": grep_patterns,
+            "file_pattern": file_pattern,
+            "entity_type": entity_type,
+            "mode": mode,
+            "profile": profile,
+            "limit": limit,
+            "semantic_limit": semantic_limit,
+            "fulltext_limit": fulltext_limit,
+            "grep_limit": grep_limit,
+            "min_semantic_score": min_semantic_score,
+            "case_sensitive": case_sensitive,
+            "literal": literal,
+            "include_docs": include_docs,
+            "include_tests": include_tests,
+            "include_hidden": include_hidden,
+            "include_venv": include_venv,
+            "grep_sync_max_wall_seconds": grep_sync_max_wall_seconds,
+            "grep_hard_timeout_seconds": grep_hard_timeout_seconds,
+            "grep_scope": grep_scope,
+            "scan_all": scan_all,
+            "source": source,
+            "session_id": session_id,
+            "require_structural_grep": require_structural_grep,
+            "debug": debug,
+            "fast_text_only": fast_text_only,
+            "auto_queue_on_inline_timeout": auto_queue_on_inline_timeout,
+            "inline_timeout_seconds": inline_timeout_seconds,
+        }
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "project_cross_search")
+
+        project_id = params["project_id"]
+        query = params["query"]
+        grep_patterns = params.get("grep_patterns")
+        file_pattern = str(params.get("file_pattern") or "")
+        entity_type = params.get("entity_type")
+        mode = str(params.get("mode") or "intersection")
+        profile = str(params.get("profile") or "generic")
+        limit = int(params.get("limit", 20))
+        semantic_limit = int(params.get("semantic_limit", 30))
+        fulltext_limit = int(params.get("fulltext_limit", 30))
+        grep_limit = int(params.get("grep_limit", 200))
+        min_semantic_score = float(params.get("min_semantic_score", 0.45))
+        case_sensitive = bool(params.get("case_sensitive", False))
+        literal = bool(params.get("literal", True))
+        include_docs = bool(params.get("include_docs", True))
+        include_tests = bool(params.get("include_tests", True))
+        include_hidden = bool(params.get("include_hidden", False))
+        include_venv = bool(params.get("include_venv", False))
+        grep_sync_max_wall_seconds = params.get("grep_sync_max_wall_seconds")
+        grep_hard_timeout_seconds = params.get("grep_hard_timeout_seconds")
+        grep_scope = str(params.get("grep_scope") or "index_gap")
+        scan_all = bool(params.get("scan_all", False))
+        source = str(params.get("source") or "disk")
+        session_id = params.get("session_id")
+        require_structural_grep = bool(params.get("require_structural_grep", True))
+        debug = bool(params.get("debug", False))
+        fast_text_only = bool(params.get("fast_text_only", False))
+        auto_queue_on_inline_timeout = bool(
+            params.get("auto_queue_on_inline_timeout", True)
+        )
+        inline_timeout_seconds = params.get("inline_timeout_seconds")
+        if inline_timeout_seconds is not None:
+            inline_timeout_seconds = resolve_inline_timeout_seconds(
+                inline_timeout_seconds
+            )
+
         enqueue_params = {
             k: v
             for k, v in {

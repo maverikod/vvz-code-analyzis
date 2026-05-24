@@ -464,6 +464,20 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 make_error(WRITE_FAILED, f"Write failed: {exc}")
             )
 
+        if session.format_group == FORMAT_SIDECAR and session.tree_id:
+            from code_analysis.core.cst_tree.tree_builder import (
+                get_tree as get_cst_tree,
+            )
+            from code_analysis.core.cst_tree.tree_sidecar import (
+                promote_pending_sidecar_to_final,
+                write_sidecar_atomic,
+            )
+
+            tree = get_cst_tree(session.tree_id)
+            if tree is not None:
+                promote_pending_sidecar_to_final(session.abs_path)
+                write_sidecar_atomic(session.abs_path, tree)
+
         delete_lockfile(session.abs_path)
         diff = unified_diff_text(
             original_content,

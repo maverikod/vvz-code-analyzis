@@ -14,6 +14,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.config import get_driver_config
+from ...core.exceptions import ValidationError
 from ...core.faiss_manager import FaissIndexManager
 from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
@@ -89,6 +90,18 @@ class RevectorizeCommand(BaseMCPCommand):
         Returns:
             SuccessResult with revectorization statistics or ErrorResult on failure.
         """
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "force": force,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "revectorize")
+        project_id = params["project_id"]
+        force = bool(params.get("force", False))
+
         try:
             self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)

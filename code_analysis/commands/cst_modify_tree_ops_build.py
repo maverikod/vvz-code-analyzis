@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from mcp_proxy_adapter.commands.result import ErrorResult
 
 from ..core.cst_tree.models import TreeOperation, TreeOperationType
+from ..core.cst_tree.tree_metadata import _resolve_node_id
 from ..cst_query import QueryParseError
 
 from .cst_modify_tree_helpers import (
@@ -32,6 +33,17 @@ def build_tree_operations(
     """
     tree_operations: List[TreeOperation] = []
     for op_dict in operations:
+        op_dict = dict(op_dict)
+        for ref_field in (
+            "node_id",
+            "parent_node_id",
+            "target_node_id",
+            "start_node_id",
+            "end_node_id",
+        ):
+            raw = op_dict.get(ref_field)
+            if isinstance(raw, str) and raw.strip():
+                op_dict[ref_field] = _resolve_node_id(original_tree, raw.strip())
         action_str = op_dict.get("action")
         if action_str == "replace":
             action = TreeOperationType.REPLACE
@@ -236,7 +248,9 @@ def build_tree_operations(
             )
             and op.node_id
         ):
-            meta = original_tree.metadata_map.get(op.node_id)
+            meta = original_tree.metadata_map.get(
+                _resolve_node_id(original_tree, op.node_id)
+            )
             line = getattr(meta, "start_line", None) or 0
             return (0, -line)
         return (1, 0)

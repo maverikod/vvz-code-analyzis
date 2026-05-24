@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 def _is_valid_uuid4(value: Optional[str]) -> bool:
@@ -89,6 +90,26 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
         target_class: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "entity_type": entity_type,
+            "entity_name": entity_name,
+            "file_path": file_path,
+            "line": line,
+            "target_class": target_class,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "get_code_entity_info")
+        project_id = params["project_id"]
+        entity_type = params["entity_type"]
+        entity_name = params["entity_name"]
+        file_path = params.get("file_path")
+        line = params.get("line")
+        target_class = params.get("target_class")
+
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()

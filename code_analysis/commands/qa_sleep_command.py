@@ -9,7 +9,8 @@ import time
 from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.base import Command
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.core.errors import ValidationError
 
 
 class QASleepCommand(Command):
@@ -31,11 +32,13 @@ class QASleepCommand(Command):
                 "seconds": {
                     "type": "number",
                     "default": 30.0,
+                    "minimum": 0,
                     "description": "Total sleep duration in seconds.",
                 },
                 "tick_seconds": {
                     "type": "number",
                     "default": 0.5,
+                    "minimum": 0.1,
                     "description": "Heartbeat log interval while sleeping.",
                 },
             },
@@ -45,15 +48,35 @@ class QASleepCommand(Command):
 
     @classmethod
     def metadata(cls: type["QASleepCommand"]) -> Dict[str, Any]:
-        from code_analysis.commands.zero_arg_commands_metadata import qa_sleep_command_metadata
+        from code_analysis.commands.zero_arg_commands_metadata import (
+            qa_sleep_command_metadata,
+        )
 
         return qa_sleep_command_metadata(cls)
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Adapter Command validates types and schema bounds; reject OOB instead of clamp."""
+        return super().validate_params(params)
+
     async def execute(
         self, seconds: float = 30.0, tick_seconds: float = 0.5, **kwargs: Any
-    ) -> SuccessResult:
-        total = max(0.0, float(seconds))
-        tick = max(0.1, float(tick_seconds))
+    ) -> SuccessResult | ErrorResult:
+        params: Dict[str, Any] = {
+            "seconds": seconds,
+            "tick_seconds": tick_seconds,
+        }
+        params.update({k: v for k, v in kwargs.items() if k != "context"})
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            data = getattr(e, "data", None) or {}
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details={"field": data.get("field")},
+            )
+        total = float(params.get("seconds", 30.0))
+        tick = float(params.get("tick_seconds", 0.5))
         started = time.time()
         elapsed = 0.0
         while elapsed < total:

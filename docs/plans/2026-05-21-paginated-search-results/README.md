@@ -1,6 +1,31 @@
 # Paginated Search Results
 
-Status: draft
+Status: ready_for_review — AS layer green pass in progress; implementation not required for plan freeze.
+
+**Machine plan:** `source_spec.md`, `spec.yaml`, `G-*/T-*/A-*/README.yaml` (GS/T layers `ready_for_review`; G-008 green pass 2026-05-23 — canonical contract `job_id` + `block_position` + `index_url`; T-006 test AS assert block model; wave 2 resolved G-007/T-006 vs G-008/T-005 `search_cancel_command.py` conflict — G-008/T-005 owns MCP lifecycle commands, G-007/T-006 owns queue-cancel hook only).
+
+**Test coverage map:** [tests_required_coverage.yaml](./tests_required_coverage.yaml) — maps each of 12 unit + 6 MCP `tests_required` entries to covering AS (`0/18` covered by existing AS; **8 new AS** under G-008/T-006-test-wiring).
+
+**Карта параллелизации:** [parallelization_map.yaml](./parallelization_map.yaml) — волны G/T/AS, serial chains, critical path, runtime notes. **Без лимита на число субагентов** — только one-file rule и depends_on.
+
+## G-008 contract decision (canonical)
+
+G-008 implementation uses **job_id + block_position + index_url**, not the README opaque `cursor` model below.
+
+| README draft field | G-008 canonical field | Role |
+| --- | --- | --- |
+| `search_id` in `search_start` / lifecycle params | `job_id` | Client-visible SearchSession id (`SearchSession.search_id`) |
+| `page.items` + `next_cursor` | `block_position` (1-based) + block JSON `items` | Each published `SearchResultBlock` is fetched by position from the job index |
+| (not named in draft lifecycle) | `index_url` | HTTP index template, e.g. `/search/jobs/{job_id}/index` |
+| `cursor` / `next_cursor` | **Not used** in G-008 MCP lifecycle | Opaque cursor remains a draft idea only; continuation is `job_id` + next `block_position` |
+
+**Mapping rules:**
+
+- `search_start` with `paginated=true` returns `job_id`, `index_url`, and `first_block_position` (or `null` when no block yet).
+- `search_get_page` requires `job_id`; optional `block_position` defaults to `1`; response includes `items` from `blocks/block_{n}.json`, not cursor slices.
+- `search_get_status`, `search_cancel`, and `search_close` all use `job_id` (not `search_id`).
+- HTTP block reads use the same `job_id` and block position as MCP; `index_url` points at the directory index listing published positions.
+- Plan AS, tests (`G-008/T-006`), and `existing_behavior_inventory.yaml` follow this mapping. README YAML blocks below retain draft cursor wording for historical context only.
 
 This plan captures the initial task/specification for adding paginated and resumable search results to `code-analysis-server` search commands.
 
@@ -10,7 +35,7 @@ language: en
 project: code-analysis-server
 package: code_analysis
 priority: high
-status: draft
+status: ready_for_review
 
 title: >
   Add paginated and resumable search results for fulltext, semantic, fs_grep,

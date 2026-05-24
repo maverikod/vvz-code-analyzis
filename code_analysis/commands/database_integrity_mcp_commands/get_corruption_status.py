@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,17 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with status payload or ErrorResult on failure.
         """
+        extra = dict(kwargs)
+        extra.pop("context", None)
+        params: Dict[str, Any] = {}
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(
+                e, "VALIDATION_ERROR", "get_database_corruption_status"
+            )
+
         try:
             from ...core.db_integrity import (
                 check_sqlite_integrity,

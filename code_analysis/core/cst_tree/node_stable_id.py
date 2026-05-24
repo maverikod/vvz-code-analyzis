@@ -18,8 +18,8 @@ _SUPPORTED = (cst.FunctionDef, cst.ClassDef)
 def strip_inline_node_id_lines_from_source(source: str) -> str:
     """Drop standalone ``# @node-id: <uuid>`` lines from raw source (legacy persistence).
 
-    Used when loading so ``logical_source`` matches ``module.code`` without a second
-    CST strip/reindex pass. Does not alter string literals or other comments.
+    Used when loading/saving so logical ``.py`` has no inline identity markers.
+    ``stable_id`` for edit sessions lives in sidecar ``metadata_map``, not in source.
     """
     lines = source.splitlines()
     kept = [ln for ln in lines if not _INLINE_NODE_ID_LINE_RE.match(ln)]
@@ -29,17 +29,15 @@ def strip_inline_node_id_lines_from_source(source: str) -> str:
     return out
 
 
+def logical_source_from_module(module: cst.Module) -> str:
+    """Canonical source text (no legacy inline ``# @node-id`` lines)."""
+    return strip_inline_node_id_lines_from_source(module.code)
+
+
 def get_stable_id(node: cst.CSTNode) -> Optional[str]:
-    """Extract stable_id from node leading_lines comment.
+    """Extract legacy stable_id from def/class ``leading_lines`` (old on-disk files).
 
-    Returns the UUID string if found, None otherwise.
-    Only FunctionDef and ClassDef nodes carry stable_id comments.
-
-    Args:
-        node: LibCST node to inspect
-
-    Returns:
-        stable_id string or None
+    In-memory edit identity is ``TreeNodeMetadata.stable_id`` / sidecar JSON.
     """
     if not isinstance(node, _SUPPORTED):
         return None
@@ -52,18 +50,7 @@ def get_stable_id(node: cst.CSTNode) -> Optional[str]:
 
 
 def set_stable_id(node: cst.CSTNode, stable_id: str) -> cst.CSTNode:
-    """Return node with stable_id written into leading_lines.
-
-    Replaces existing @node-id comment if present, otherwise prepends one.
-    Only FunctionDef and ClassDef nodes are supported; others returned as-is.
-
-    Args:
-        node: LibCST node to annotate
-        stable_id: UUID4 string to embed
-
-    Returns:
-        Updated node with stable_id comment in leading_lines
-    """
+    """Write legacy ``# @node-id`` into def/class ``leading_lines`` (migration only)."""
     if not isinstance(node, _SUPPORTED):
         return node
     comment_line = cst.EmptyLine(
@@ -81,14 +68,7 @@ def set_stable_id(node: cst.CSTNode, stable_id: str) -> cst.CSTNode:
 
 
 def ensure_stable_id(node: cst.CSTNode) -> tuple[cst.CSTNode, str]:
-    """Ensure node has a stable_id comment, creating one if absent.
-
-    Args:
-        node: LibCST node
-
-    Returns:
-        (updated_node, stable_id) tuple
-    """
+    """Ensure legacy def/class node has inline stable_id (migration only)."""
     existing = get_stable_id(node)
     if existing:
         return node, existing

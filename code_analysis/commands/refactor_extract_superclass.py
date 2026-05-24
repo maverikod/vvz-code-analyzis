@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .refactor import RefactorCommand as InternalRefactorCommand
 from ..core.backup_manager import BackupManager
+from ..core.exceptions import ValidationError
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -376,9 +377,25 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
     ) -> SuccessResult:
         from ..core.progress_tracker import get_progress_tracker_from_context
 
-        progress_tracker = get_progress_tracker_from_context(
-            kwargs.get("context") or {}
-        )
+        extra = dict(kwargs)
+        context = extra.pop("context", None) or {}
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "config": config,
+            "dry_run": dry_run,
+        }
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "extract_superclass")
+        project_id = params["project_id"]
+        file_path = params["file_path"]
+        config = params["config"]
+        dry_run = bool(params.get("dry_run", False))
+
+        progress_tracker = get_progress_tracker_from_context(context)
         try:
             if progress_tracker:
                 progress_tracker.set_status("running")

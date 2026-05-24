@@ -9,9 +9,10 @@ import json
 import uuid
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 
 
 def _is_valid_uuid4(value: Optional[str]) -> bool:
@@ -114,7 +115,27 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
         limit: Optional[int] = None,
         offset: int = 0,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "entity_name": entity_name,
+            "entity_type": entity_type,
+            "target_class": target_class,
+            "limit": limit,
+            "offset": offset,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "find_dependencies")
+        project_id = params["project_id"]
+        entity_name = params["entity_name"]
+        entity_type = params.get("entity_type")
+        target_class = params.get("target_class")
+        limit = params.get("limit")
+        offset = int(params.get("offset", 0))
+
         try:
             self._resolve_project_root(project_id)
             db = self._open_database_from_config(auto_analyze=False)
@@ -298,14 +319,13 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 "is used (depended upon) in the project. It searches through usages and imports "
                 "tables to find all locations where the entity is referenced.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Searches usages table for entity usages (if entity_type is class/function/method/null)\n"
-                "5. Searches imports table for module dependencies (if entity_type is module/null)\n"
-                "6. Applies filters: entity_name, entity_type, target_class\n"
-                "7. Applies pagination: limit and offset\n"
-                "8. Returns list of dependency locations with file paths and line numbers\n\n"
+                "1. Validates project_id via project registry\n"
+                "2. Opens database connection for the project\n"
+                "3. Searches usages table for entity usages (if entity_type is class/function/method/null)\n"
+                "4. Searches imports table for module dependencies (if entity_type is module/null)\n"
+                "5. Applies filters: entity_name, entity_type, target_class\n"
+                "6. Applies pagination: limit and offset\n"
+                "7. Returns list of dependency locations with file paths and line numbers\n\n"
                 "Search Behavior:\n"
                 "- For classes/functions/methods: Searches in usages table where target_name matches\n"
                 "- For modules: Searches in imports table where module or name matches\n"
@@ -325,10 +345,9 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 "- Module search uses LIKE pattern matching for partial matches"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects)."
                     ),
                     "type": "string",
                     "required": True,
@@ -377,19 +396,12 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": 0,
                 },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
             },
             "usage_examples": [
                 {
                     "description": "Find all usages of a class",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "entity_name": "DataProcessor",
                         "entity_type": "class",
                     },
@@ -401,7 +413,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find all calls to a function",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "entity_name": "process_data",
                         "entity_type": "function",
                     },
@@ -412,7 +424,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find method usages with class context",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "entity_name": "execute",
                         "entity_type": "method",
                         "target_class": "TaskHandler",
@@ -425,7 +437,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find module imports with pagination",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "entity_name": "os",
                         "entity_type": "module",
                         "limit": 50,
@@ -439,7 +451,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "project_id='invalid-uuid' not registered",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "FIND_DEPENDENCIES_ERROR": {

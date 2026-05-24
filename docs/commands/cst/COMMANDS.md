@@ -3,6 +3,8 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+> **MCP AI editing:** use [file_editing/](../file_editing/) instead of CST tree commands.
+
 Each command is described in a separate file: purpose, arguments, return format, and examples.
 
 | Command | Description | Doc |

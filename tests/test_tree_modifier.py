@@ -752,6 +752,126 @@ class TestBatchStableIdMarkerRoundTrip:
             remove_tree(tree_id)
 
 
+SOURCE_WIDGET_THREE_METHODS = """
+class Widget:
+    def alpha(self) -> str:
+        return "alpha"
+
+    def beta(self) -> str:
+        return "beta"
+
+    def gamma(self) -> str:
+        return "gamma"
+"""
+
+
+def test_sequential_class_method_edits_preserve_sibling_stable_id(tmp_path) -> None:
+    """Sequential single-op edits: sibling method stable_id survives replace+delete."""
+    path = tmp_path / "widget_methods.py"
+    path.write_text(SOURCE_WIDGET_THREE_METHODS.strip(), encoding="utf-8")
+    tree = create_tree_from_code(str(path), path.read_text(encoding="utf-8"))
+    tree_id = tree.tree_id
+    try:
+        stable_before = _function_stable_ids_by_name(
+            tree_id, ("alpha", "beta", "gamma"), class_name="Widget"
+        )
+        t = get_tree(tree_id)
+        assert t is not None
+        alpha_stable = stable_before["alpha"]
+        beta_stable = stable_before["beta"]
+        gamma_stable = stable_before["gamma"]
+
+        modify_tree(
+            tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.REPLACE,
+                    node_id=alpha_stable,
+                    code_lines=[
+                        "def alpha(self) -> str:",
+                        '    return "alpha-replaced"',
+                    ],
+                )
+            ],
+        )
+        stable_after_replace = _function_stable_ids_by_name(
+            tree_id, ("alpha", "beta", "gamma"), class_name="Widget"
+        )
+        assert stable_after_replace["beta"] == beta_stable
+        assert stable_after_replace["gamma"] == gamma_stable
+
+        modify_tree(
+            tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.DELETE,
+                    node_id=beta_stable,
+                )
+            ],
+        )
+        t2 = get_tree(tree_id)
+        assert t2 is not None
+        remaining = _function_stable_ids_by_name(
+            tree_id, ("alpha", "gamma"), class_name="Widget"
+        )
+        assert remaining["gamma"] == gamma_stable
+        assert "beta" not in t2.module.code
+        assert "gamma" in t2.module.code
+    finally:
+        remove_tree(tree_id)
+
+
+def test_modify_tree_rewrites_sidecar_after_each_operation(tmp_path) -> None:
+    """Each ``modify_tree`` op must atomically rewrite ``.cst/<stem>.tree``."""
+    from code_analysis.core.cst_tree.tree_sidecar import (
+        read_sidecar_payload,
+        sidecar_path_for_py,
+    )
+
+    path = tmp_path / "widget_methods.py"
+    path.write_text(SOURCE_WIDGET_THREE_METHODS.strip(), encoding="utf-8")
+    tree = create_tree_from_code(str(path), path.read_text(encoding="utf-8"))
+    tree_id = tree.tree_id
+    sidecar = sidecar_path_for_py(path)
+    try:
+        stable_before = _function_stable_ids_by_name(
+            tree_id, ("alpha", "beta"), class_name="Widget"
+        )
+        assert not sidecar.is_file()
+
+        modify_tree(
+            tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.REPLACE,
+                    node_id=stable_before["alpha"],
+                    code_lines=[
+                        "def alpha(self) -> str:",
+                        '    return "alpha-replaced"',
+                    ],
+                )
+            ],
+        )
+        assert sidecar.is_file()
+        payload_after_replace = read_sidecar_payload(path)
+        assert payload_after_replace is not None
+
+        modify_tree(
+            tree_id,
+            [
+                TreeOperation(
+                    action=TreeOperationType.DELETE,
+                    node_id=stable_before["beta"],
+                )
+            ],
+        )
+        payload_after_delete = read_sidecar_payload(path)
+        assert payload_after_delete is not None
+        assert payload_after_delete != payload_after_replace
+    finally:
+        remove_tree(tree_id)
+
+
 class TestReplaceClassMethodPreservesDocstringIndent:
     """Replace FunctionDef inside ClassDef: docstring interior keeps method-body indent."""
 

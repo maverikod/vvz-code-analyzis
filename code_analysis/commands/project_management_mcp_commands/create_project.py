@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -19,59 +18,57 @@ from ._shared import (
     uuid,
 )
 
-class CreateProjectMCPCommand:
-    
-    
+
+class CreateProjectMCPCommand(BaseMCPCommand):
     """
-        Create or register a new project.
-    
-        This command:
-        1. Validates that watched directory exists and does not contain projectid file
-        2. Validates that project directory exists
-        3. Checks if project is already registered in database
-        4. Creates projectid file with UUID4 and description
-        5. Registers project in database
-    
-        Returns project ID, whether project already existed, and description.
-    
-        Attributes:
-            name: MCP command name.
-            version: Command version.
-            descr: Short description.
-            category: Command category.
-            author: Command author.
-            email: Author email.
-            use_queue: Whether to run in the background queue.
-        """
-    
-    
+    Create or register a new project.
+
+    This command:
+    1. Validates that watched directory exists and does not contain projectid file
+    2. Validates that project directory exists
+    3. Checks if project is already registered in database
+    4. Creates projectid file with UUID4 and description
+    5. Registers project in database
+
+    Returns project ID, whether project already existed, and description.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
+    """
+
     name = "create_project"
-    
+
     version = "1.0.0"
-    
+
     descr = (
         "Create or register a new project. "
         "Creates projectid file and registers project in database."
     )
-    
+
     category = "project_management"
-    
+
     author = "Vasiliy Zdanovskiy"
-    
+
     email = "vasilyvz@gmail.com"
-    
+
     use_queue = False
-    
+
     @classmethod
     def get_schema(
         cls: type["CreateProjectMCPCommand"],
     ) -> Dict[str, Any]:
         """
         Get JSON schema for command parameters.
-    
+
         Args:
             cls: Command class.
-    
+
         Returns:
             JSON schema dict.
         """
@@ -164,8 +161,7 @@ class CreateProjectMCPCommand:
             "required": ["watch_dir_id", "project_name", "description"],
             "additionalProperties": False,
         }
-    
-    
+
     def validate_params(
         self: "CreateProjectMCPCommand", params: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -173,7 +169,7 @@ class CreateProjectMCPCommand:
         params = super().validate_params(params)
         BaseMCPCommand._validate_watch_dir_id_exists(params["watch_dir_id"])
         return params
-    
+
     async def execute(
         self: "CreateProjectMCPCommand",
         watch_dir_id: str,
@@ -189,13 +185,13 @@ class CreateProjectMCPCommand:
     ) -> SuccessResult | ErrorResult:
         """
         Execute create project command.
-    
+
         Steps:
         1. Create project (projectid file + DB registration).
         2. Scaffold standard directories (tests/, docs/plans/, etc.).
         3. Optionally create .venv.
         4. Optionally deploy rules_template.
-    
+
         Args:
             self: Command instance.
             watch_dir_id: Watch directory ID from watch_dirs table.
@@ -208,7 +204,7 @@ class CreateProjectMCPCommand:
             template_path: Path to external template zip (overrides embedded).
             python_executable: Python interpreter for venv. Default 'python3'.
             **kwargs: Extra args (unused).
-    
+
         Returns:
             SuccessResult with project_id and bootstrap details,
             or ErrorResult on failure.
@@ -217,7 +213,7 @@ class CreateProjectMCPCommand:
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 from ..project_creation import CreateProjectCommand
-    
+
                 cmd = CreateProjectCommand(
                     database=database,
                     watch_dir_id=watch_dir_id,
@@ -225,9 +221,11 @@ class CreateProjectMCPCommand:
                     description=description,
                     project_id=project_id,
                     use_existing_dir=use_existing_dir,
+                    scaffold=False,
+                    create_venv=False,
                 )
                 result = await cmd.execute()
-    
+
                 if not result.get("success"):
                     error_code = result.get("error", "CREATE_PROJECT_ERROR")
                     return self._handle_error(
@@ -241,33 +239,32 @@ class CreateProjectMCPCommand:
                     )
             finally:
                 database.disconnect()
-    
+
             # ── Bootstrap steps ─────────────────────────────────────
             import pathlib
             from ..project_creation import CreateProjectCommand  # noqa: F811
-    
+
             # Resolve project root from watch_dir path + project_name.
             # watch_dir_id is in the DB; we can get the path from result.
-            project_root_str = result.get("project_root") or result.get(
-                "project_path"
-            )
+            project_root_str = result.get("project_root") or result.get("project_path")
             bootstrap_warnings: List[str] = []
-    
+
             if project_root_str:
                 project_root = pathlib.Path(project_root_str)
-            else:
-                # Fallback: locate via watch_dir in config
-                project_root = self._resolve_project_root(
-                    watch_dir_id, project_name
+            elif result.get("project_id"):
+                project_root = BaseMCPCommand._resolve_project_root(
+                    result["project_id"]
                 )
-    
+            else:
+                project_root = None
+
             if project_root is not None and project_root.is_dir():
-                from ..core.project_bootstrap import (
+                from ...core.project_bootstrap import (
                     DirScaffold,
                     TemplateDeployer,
                     VenvCreator,
                 )
-    
+
                 # 1. Standard directory layout
                 scaffold = DirScaffold(project_root)
                 scaffold_result = scaffold.scaffold()
@@ -275,7 +272,7 @@ class CreateProjectMCPCommand:
                     bootstrap_warnings.extend(
                         f"scaffold: {e}" for e in scaffold_result.errors
                     )
-    
+
                 # 2. .venv virtual environment
                 if create_venv:
                     venv = VenvCreator(
@@ -283,21 +280,15 @@ class CreateProjectMCPCommand:
                     )
                     venv_result = venv.create()
                     if not venv_result.success:
-                        bootstrap_warnings.append(
-                            f"venv: {venv_result.message}"
-                        )
+                        bootstrap_warnings.append(f"venv: {venv_result.message}")
                     if venv_result.errors:
                         bootstrap_warnings.extend(
                             f"venv_warn: {e}" for e in venv_result.errors
                         )
-    
+
                 # 3. rules_template deployment
                 if apply_template:
-                    tpl_path = (
-                        pathlib.Path(template_path)
-                        if template_path
-                        else None
-                    )
+                    tpl_path = pathlib.Path(template_path) if template_path else None
                     deployer = TemplateDeployer(project_root, tpl_path)
                     deploy_result = deployer.deploy()
                     if not deploy_result.success:
@@ -308,33 +299,38 @@ class CreateProjectMCPCommand:
                 bootstrap_warnings.append(
                     "project_root not found; skipped bootstrap steps"
                 )
-    
+
             return SuccessResult(
                 data={
+                    "success": True,
                     "project_id": result.get("project_id"),
+                    "already_existed": result.get("already_existed", False),
+                    "description": description,
+                    "watch_dir_id": watch_dir_id,
+                    "project_root": str(project_root) if project_root else None,
                     "bootstrap_warnings": bootstrap_warnings,
+                    "bootstrap_report": result.get("bootstrap_report"),
                 },
                 message=result.get("message", "Project created successfully"),
             )
         except Exception as e:
             return self._handle_error(e, "CREATE_PROJECT_ERROR", "create_project")
-    
-    
+
     @classmethod
     def metadata(cls: type["CreateProjectMCPCommand"]) -> Dict[str, Any]:
         """
-            Get detailed command metadata for AI models.
-    
-            This method provides comprehensive information about the command,
-            including detailed descriptions, usage examples, and edge cases.
-            The metadata should be as detailed and clear as a man page.
-    
-            Args:
-                cls: Command class.
-    
-            Returns:
-                Dictionary with command metadata.
-            """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
         return {
             "name": cls.name,
             "version": cls.version,
@@ -610,4 +606,3 @@ class CreateProjectMCPCommand:
                 "watch_dir_id is returned in response and can be used for CST commands",
             ],
         }
-    

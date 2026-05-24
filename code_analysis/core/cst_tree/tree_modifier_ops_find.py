@@ -41,6 +41,38 @@ _COMPOUND_STMT_TYPES: Tuple[type, ...] = (
 if hasattr(cst, "AsyncFunctionDef"):
     _COMPOUND_STMT_TYPES = _COMPOUND_STMT_TYPES + (cast(type, cst.AsyncFunctionDef),)
 
+_STRUCTURAL_OP_TYPES = frozenset({"FunctionDef", "AsyncFunctionDef", "ClassDef"})
+
+
+def _node_name_matches_metadata(
+    node: cst.CSTNode, metadata: Optional[TreeNodeMetadata]
+) -> bool:
+    """Return True when *node* matches metadata ``name`` for structural ops."""
+    if metadata is None or not metadata.name:
+        return True
+    if isinstance(node, cst.FunctionDef):
+        return node.name.value == metadata.name
+    if isinstance(node, cst.ClassDef):
+        return node.name.value == metadata.name
+    return True
+
+
+def _resolve_structural_node_from_map(
+    tree: CSTTree, node_id: str, metadata: Optional[TreeNodeMetadata]
+) -> Optional[cst.CSTNode]:
+    """Prefer ``node_map`` for class/function deletes when name matches metadata."""
+    if metadata is None or metadata.type not in _STRUCTURAL_OP_TYPES:
+        return None
+    resolved_id = tree.node_id_aliases.get(node_id, node_id)
+    candidate = tree.node_map.get(resolved_id) or tree.node_map.get(node_id)
+    if candidate is None:
+        return None
+    if not isinstance(candidate, (cst.FunctionDef, cst.ClassDef)):
+        return None
+    if not _node_name_matches_metadata(candidate, metadata):
+        return None
+    return candidate
+
 
 def _logical_to_module_line_map(module_lines: List[str]) -> Dict[int, int]:
     """Map 1-based logical line numbers (no ``@node-id`` rows) to module line numbers."""
@@ -195,8 +227,8 @@ def resolve_replace_target_to_current_module(
 def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     """Delete a node from module."""
     metadata = tree.metadata_map.get(node_id)
-    node = None
-    if metadata and hasattr(metadata, "start_line"):
+    node = _resolve_structural_node_from_map(tree, node_id, metadata)
+    if node is None and metadata and hasattr(metadata, "start_line"):
         use_leaf = metadata.type in FINE_GRAINED_REPLACE_NODE_TYPES
         if use_leaf:
             node = find_leaf_node_in_module_by_position(

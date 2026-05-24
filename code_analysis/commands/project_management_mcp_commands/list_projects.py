@@ -16,6 +16,7 @@ from ._shared import (
     List,
     Optional,
     SuccessResult,
+    ValidationError,
     logger,
 )
 
@@ -502,19 +503,17 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "include_deleted": include_deleted,
         }
         params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "list_projects")
+        watched_dir_id = params.get("watched_dir_id")
+        name_contains = params.get("name_contains")
+        comment_contains = params.get("comment_contains")
         if params.get("include_deleted") is None:
             include_deleted_effective = False
         else:
             include_deleted_effective = bool(params["include_deleted"])
-        schema_props = set((self.get_schema().get("properties") or {}).keys())
-        params_present = {
-            k: v for k, v in params.items() if v is not None and k in schema_props
-        }
-        BaseMCPCommand.validate_params_against_schema(
-            params_present,
-            self.get_schema(),
-            command_name=self.name,
-        )
         try:
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(

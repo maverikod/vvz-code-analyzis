@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.exceptions import ValidationError
 from ..base_mcp_command import BaseMCPCommand
 from .list_indexing_errors_metadata import get_metadata
 
@@ -49,15 +50,43 @@ class ListIndexingErrorsMCPCommand(BaseMCPCommand):
                 "limit": {
                     "type": "integer",
                     "description": (
-                        "Maximum number of rows to return. Default 200, capped at 1000. "
+                        "Maximum number of rows to return. Default 200 (1–1000). "
                         "Rows are ordered by created_at DESC (newest first)."
                     ),
                     "default": 200,
+                    "minimum": 1,
+                    "maximum": 1000,
                 },
             },
             "required": [],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``limit`` outside schema min/max after schema validation."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        key = "limit"
+        if key not in params or params[key] is None:
+            return params
+        value = params[key]
+        prop = props.get(key) or {}
+        minimum = prop.get("minimum")
+        maximum = prop.get("maximum")
+        if minimum is not None and value < minimum:
+            raise ValidationError(
+                f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                field=key,
+                details={"minimum": minimum, "maximum": maximum},
+            )
+        if maximum is not None and value > maximum:
+            raise ValidationError(
+                f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                field=key,
+                details={"minimum": minimum, "maximum": maximum},
+            )
+        return params
 
     async def execute(
         self,
@@ -72,6 +101,24 @@ class ListIndexingErrorsMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with data.list = list of {id, project_id, file_path, error_type, error_message, created_at}.
         """
+        params: Dict[str, Any] = {
+            "file_path_filter": file_path_filter,
+            "project_id": project_id,
+            "limit": limit,
+        }
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        file_path_filter = params.get("file_path_filter")
+        project_id = params.get("project_id")
+        limit = int(params.get("limit", 200))
         try:
             db = self._open_database_from_config(auto_analyze=False)
             try:
@@ -79,17 +126,17 @@ class ListIndexingErrorsMCPCommand(BaseMCPCommand):
                     "SELECT id, project_id, file_path, error_type, error_message, created_at "
                     "FROM indexing_errors WHERE 1=1"
                 )
-                params: list = []
+                sql_params: list = []
                 if project_id:
                     sql += " AND project_id = ?"
-                    params.append(project_id)
+                    sql_params.append(project_id)
                 if file_path_filter:
                     sql += " AND file_path LIKE ?"
-                    params.append(f"%{file_path_filter}%")
+                    sql_params.append(f"%{file_path_filter}%")
                 sql += " ORDER BY created_at DESC LIMIT ?"
-                params.append(min(max(1, int(limit)), 1000))
+                sql_params.append(int(limit))
 
-                r = db.execute(sql, tuple(params))
+                r = db.execute(sql, tuple(sql_params))
                 data_list = r.get("data", []) if isinstance(r, dict) else []
                 if data_list and isinstance(data_list[0], (list, tuple)):
                     keys = [

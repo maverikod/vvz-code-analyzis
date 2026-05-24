@@ -3,7 +3,9 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-Commands for file lifecycle and DB repair: cleanup deleted files, collapse versions, repair database, unmark deleted file, batch restore deleted files, and line-oriented read/write via `read_project_text_file` / `write_project_text_lines`. **Read:** Python paths auto-route to `get_file_lines`. **Write:** non-code text only; Python and other blocked source suffixes are refused (see each command doc).
+Commands for **file lifecycle** (delete, trash, restore, DB repair, version collapse) and legacy line-oriented text I/O.
+
+**Editing file content:** use **[file_editing/](../file_editing/)** — not `read_project_text_file` / `write_project_text_lines`.
 
 See [FILE_TRASH.md](FILE_TRASH.md) for file-level trash layout and behaviour (mark, restore, pre-check, permanent delete).
 
@@ -19,6 +21,8 @@ See [FILE_TRASH.md](FILE_TRASH.md) for file-level trash layout and behaviour (ma
 | repair_database      | RepairDatabaseMCPCommand     | (same)                                 |
 | read_project_text_file | ReadProjectTextFileCommand | `commands/read_project_text_file_command.py` |
 | write_project_text_lines | WriteProjectTextLinesCommand | `commands/write_project_text_lines_command.py` |
+
+Legacy text read/write commands remain for compatibility; they are **not** the MCP editing path. See deprecation notes in each command doc.
 
 Internal commands: `CleanupDeletedFilesCommand`, `CollapseVersionsCommand`, `RepairDatabaseCommand`, `UnmarkDeletedFileCommand` in `commands/file_management.py`. All MCP commands inherit from `BaseMCPCommand`.
 

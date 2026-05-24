@@ -1,33 +1,30 @@
 step_id: T-001
 parent_global_step: G-002
-name: Freshness Validation
-description: "Creates the FreshnessValidation (C-014) mechanism that decides whether
-  one indexed file representation still matches current disk content. Compares the
-  stored checksum or modification metadata in the database against the current file
-  on disk. If the stored checksum matches the current file checksum, the file is fresh
-  and eligible for IndexedFileSet. If the checksums diverge, or if modification time
-  indicates the file changed after indexing, the file is stale and is routed to DynamicFileSet.
-  Files absent from the database entirely are routed to DynamicFileSet without a checksum
-  comparison.\n"
+name: FreshnessValidation rules
+description: >
+  Creates the FreshnessValidation decision step that compares indexed file
+  representation against current on-disk content using checksums and/or
+  modification metadata. Defines pass and fail outcomes: files whose indexed
+  checksum or modification state does not match current content are rejected
+  from the indexed path and routed toward dynamic processing. Applies the same
+  freshness principle used for tree sidecar validation.
 concepts:
-- C-014
+  - C-014
 inputs:
-- name: file_path
-  type: project-relative path
-  description: Path of the file to evaluate.
-- name: indexed_checksum
-  type: string or null
-  description: Checksum stored in the database for this file at last indexing 
-    time, or null if the file is not in the database.
-- name: current_checksum
-  type: string
-  description: Checksum of the file as currently present on disk.
+  - name: database_file_record
+    type: IndexedFileRecord
+    description: File metadata known to the database or index for one project file.
+  - name: disk_file_metadata
+    type: DiskFileMetadata
+    description: Current checksum and modification metadata read from the on-disk file.
 outputs:
-- name: freshness_result
-  type: one of [fresh, stale, absent]
-  description: fresh means the indexed state matches current disk content; stale
-    means the indexed state is outdated; absent means the file has no database 
-    record.
+  - name: freshness_verdict
+    type: FreshnessVerdict
+    description: >
+      Pass when indexed state matches disk (FRESH); fail when stale or changed
+      (STALE, MISSING_INDEX, UNAVAILABLE_INDEX). Any non-FRESH verdict routes the
+      file away from indexed search toward dynamic processing (see is_stale_for_dynamic_routing).
 atomic_steps:
 - A-001
-status: draft
+- A-002
+status: frozen

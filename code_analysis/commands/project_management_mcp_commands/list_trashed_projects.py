@@ -12,6 +12,7 @@ from ._shared import (
     ErrorResult,
     Optional,
     SuccessResult,
+    ValidationError,
     logger,
 )
 
@@ -49,10 +50,23 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(
+        self: "ListTrashedProjectsMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate params against schema."""
+        return super().validate_params(params)
+
     async def execute(
         self: "ListTrashedProjectsMCPCommand",
+        trash_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        params: Dict[str, Any] = {"trash_dir": trash_dir}
+        params.update(kwargs)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "list_trashed_projects")
         try:
             from ...core.storage_paths import load_raw_config, resolve_storage_paths
 
@@ -61,12 +75,12 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
             storage = resolve_storage_paths(
                 config_data=config_data, config_path=config_path
             )
-            trash_dir = kwargs.get("trash_dir")
-            if not trash_dir:
-                trash_dir = str(storage.trash_dir)
+            trash_dir_effective = params.get("trash_dir")
+            if not trash_dir_effective:
+                trash_dir_effective = str(storage.trash_dir)
             from ..trash_commands import ListTrashedProjectsCommand
 
-            cmd = ListTrashedProjectsCommand(trash_dir=trash_dir)
+            cmd = ListTrashedProjectsCommand(trash_dir=trash_dir_effective)
             result = cmd.execute()
             if not result.get("success"):
                 return self._handle_error(

@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.comprehensive_analyzer import ComprehensiveAnalyzer
 from ...core.constants import DEFAULT_MAX_FILE_LINES
+from ...core.exceptions import ValidationError
 from ..base_mcp_command import BaseMCPCommand
 from . import schema
 from .execute_batch import run_batch
@@ -74,10 +75,52 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         """Execute comprehensive analysis."""
         from ...core.progress_tracker import get_progress_tracker_from_context
 
+        extra = dict(kwargs)
+        context = extra.pop("context", None) or {}
+        params: Dict[str, Any] = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "max_lines": max_lines,
+            "check_placeholders": check_placeholders,
+            "check_stubs": check_stubs,
+            "check_empty_methods": check_empty_methods,
+            "check_imports": check_imports,
+            "check_long_files": check_long_files,
+            "check_duplicates": check_duplicates,
+            "check_flake8": check_flake8,
+            "check_mypy": check_mypy,
+            "check_docstrings": check_docstrings,
+            "duplicate_min_lines": duplicate_min_lines,
+            "duplicate_min_similarity": duplicate_min_similarity,
+            "mypy_config_file": mypy_config_file,
+            "limit": limit,
+            "offset": offset,
+        }
+        params.update(extra)
+        try:
+            params = self.validate_params(params)
+        except ValidationError as e:
+            return self._handle_error(e, "VALIDATION_ERROR", "comprehensive_analysis")
+        project_id = params["project_id"]
+        file_path = params.get("file_path")
+        max_lines = int(params.get("max_lines", DEFAULT_MAX_FILE_LINES))
+        check_placeholders = bool(params.get("check_placeholders", True))
+        check_stubs = bool(params.get("check_stubs", True))
+        check_empty_methods = bool(params.get("check_empty_methods", True))
+        check_imports = bool(params.get("check_imports", True))
+        check_long_files = bool(params.get("check_long_files", True))
+        check_duplicates = bool(params.get("check_duplicates", True))
+        check_flake8 = bool(params.get("check_flake8", True))
+        check_mypy = bool(params.get("check_mypy", True))
+        check_docstrings = bool(params.get("check_docstrings", True))
+        duplicate_min_lines = int(params.get("duplicate_min_lines", 5))
+        duplicate_min_similarity = float(params.get("duplicate_min_similarity", 0.8))
+        mypy_config_file = params.get("mypy_config_file")
+        limit = params.get("limit")
+        offset = int(params.get("offset", 0))
+
         t_start = time.perf_counter()
-        progress_tracker = get_progress_tracker_from_context(
-            kwargs.get("context") or {}
-        )
+        progress_tracker = get_progress_tracker_from_context(context)
 
         root_path = self._resolve_project_root(project_id)
 

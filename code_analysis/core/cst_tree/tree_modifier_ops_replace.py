@@ -17,6 +17,7 @@ from .tree_modifier_ops_find import (
     find_leaf_node_in_module_by_position,
     find_node_in_module_by_position,
     resolve_replace_target_to_current_module,
+    _resolve_structural_node_from_map,
 )
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
@@ -33,10 +34,12 @@ def replace_node(
 ) -> cst.Module:
     """Replace a node in module with one or more statements or a leaf node."""
     metadata = tree.metadata_map.get(node_id)
-    # Resolve target node: use node from current module by position when
-    # available (after prior ops tree.node_map may point at stale module nodes).
-    node: Optional[cst.CSTNode] = None
-    if metadata and hasattr(metadata, "start_line"):
+    # Resolve target node: prefer node_map for class/function (stable name match),
+    # then position lookup for fine-grained leaves and stale module nodes.
+    node: Optional[cst.CSTNode] = _resolve_structural_node_from_map(
+        tree, node_id, metadata
+    )
+    if node is None and metadata and hasattr(metadata, "start_line"):
         _resolved_id = tree.node_id_aliases.get(node_id, node_id)
         _cand = tree.node_map.get(_resolved_id) or tree.node_map.get(node_id)
         _use_leaf = (_cand is not None and isinstance(_cand, cst.BaseExpression)) or (
@@ -119,6 +122,7 @@ def replace_node(
     parent_id = metadata.parent_id if metadata else None
     parent_metadata = tree.metadata_map.get(parent_id) if parent_id else None
     parent_type = parent_metadata.type if parent_metadata else "unknown"
+
     class NodeReplacer(cst.CSTTransformer):
         def __init__(self, target_node: cst.CSTNode, replacements: list[cst.CSTNode]):
             self.target_node = target_node

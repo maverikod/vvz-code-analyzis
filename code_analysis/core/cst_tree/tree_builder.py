@@ -14,7 +14,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
@@ -35,9 +35,14 @@ from .node_type_utils import (
 )
 from .node_stable_id import (
     get_stable_id as _get_stable_id_from_node,
+    logical_source_from_module,
     strip_inline_node_id_lines_from_source,
 )
-from .tree_stable_data import embed_stable_ids_into_tree
+from .tree_stable_data import (
+    _STATEMENT_STABLE_TYPES,
+    build_statement_stable_key,
+    normalized_source_span,
+)
 from .tree_sidecar import (
     aliases_from_payload,
     metadata_map_from_payload,
@@ -66,13 +71,9 @@ def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNode
 
 
 def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
-    """Record SHA256 + length of disk source and module code snapshot on tree.
-
-    Args:
-        tree: CSTTree to update
-        source: Logical source (stripped of node-id markers) matching tree.module.code
-    """
-    source_bytes = source.encode("utf-8")
+    """Record SHA256 + length of logical source (no ``# @node-id`` markers) on tree."""
+    logical = strip_inline_node_id_lines_from_source(source)
+    source_bytes = logical.encode("utf-8")
     digest = hashlib.sha256(source_bytes).hexdigest()
     tree.disk_source_sha256_hex = digest
     tree.disk_source_length = len(source_bytes)
@@ -101,7 +102,7 @@ def _on_disk_logical_matches_tree_snapshot(path: Path, tree: CSTTree) -> bool:
     snap = tree.disk_source_sha256_hex
     if snap is not None:
         return digest == snap and length == tree.disk_source_length
-    mod_bytes = tree.module.code.encode("utf-8")
+    mod_bytes = logical_source_from_module(tree.module).encode("utf-8")
     return digest == hashlib.sha256(mod_bytes).hexdigest() and length == len(mod_bytes)
 
 
@@ -138,7 +139,7 @@ def _finalize_cst_tree(
     """
     tree.module = module
 
-    if py_path is not None and py_path.is_file():
+    if py_path is not None:
         payload = read_sidecar_payload(py_path)
         if payload is not None and verify_sidecar_against_source(
             logical_source, payload
@@ -167,10 +168,9 @@ def _finalize_cst_tree(
                 )
                 if sidecar_matches_built_tree(tree, payload):
                     tree.node_id_aliases = aliases_from_payload(payload)
-                    embed_stable_ids_into_tree(tree)
                     if raw_disk_source is not None:
                         # SHA must match logical source (no inline/legacy markers)
-                        _attach_disk_snapshot(tree, tree.module.code)
+                        _attach_disk_snapshot(tree, logical_source)
                         # Strip inline/legacy markers from disk unconditionally
                         if raw_disk_source != logical_source and py_path is not None:
                             _strip_legacy_trailer_from_disk(py_path, logical_source)
@@ -190,10 +190,9 @@ def _finalize_cst_tree(
         previous_metadata_map=previous_metadata_map,
         persisted_node_ids=legacy_persisted or None,
     )
-    embed_stable_ids_into_tree(tree)
     if raw_disk_source is not None:
         # SHA must match logical source (no inline/legacy markers)
-        _attach_disk_snapshot(tree, tree.module.code)
+        _attach_disk_snapshot(tree, logical_source)
         # Strip inline/legacy markers from disk unconditionally (regardless of sidecar policy)
         if raw_disk_source != logical_source and py_path is not None:
             _strip_legacy_trailer_from_disk(py_path, logical_source)
@@ -290,19 +289,18 @@ def create_tree_from_code(
 
     tree = CSTTree.create(str(Path(file_path).resolve()), module)
     py_path = Path(file_path).resolve()
-    write_sidecar = bool(persist_sidecar and py_path.is_file())
     _finalize_cst_tree(
         tree,
         module,
         logical_source,
-        py_path=py_path if py_path.is_file() else None,
+        py_path=py_path,
         raw_disk_source=None,
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
         previous_metadata_map=None,
         legacy_persisted=persisted_node_ids,
-        write_sidecar=write_sidecar,
+        write_sidecar=bool(persist_sidecar),
     )
     tree.disk_source_sha256_hex = None
     tree.disk_source_length = 0
@@ -319,14 +317,14 @@ def _build_tree_index(
     include_children: bool = True,
     previous_metadata_map: Optional[Dict[str, TreeNodeMetadata]] = None,
     persisted_node_ids: Optional[PersistedNodeIds] = None,
-    obj_to_stable: Optional[Dict[int, str]] = None,
+    pinned_node_id: Optional[str] = None,
+    obj_to_stable: Optional[Dict[Any, str]] = None,
 ) -> None:
     """
     Build node index and metadata for tree.
 
-    node_id is preserved for unchanged nodes via exact position key.
-    stable_id is a field on each node: copied from previous metadata if the node
-    existed before, otherwise assigned once as node_id. Never changes after that.
+    ``stable_id`` lives in ``TreeNodeMetadata`` (sidecar JSON). After mutation,
+    it is carried over via semantic keys (qualname, statement text), not coordinates.
     """
     wrapper = MetadataWrapper(tree.module, unsafe_skip_copy=True)
     parents = wrapper.resolve(ParentNodeProvider)
@@ -400,6 +398,18 @@ def _build_tree_index(
             node_id = persisted_node_ids[marker_path]
         elif exact_key in exact_key_to_id:
             node_id = exact_key_to_id.pop(exact_key)
+        elif (
+            pinned_node_id
+            and previous_metadata_map
+            and pinned_node_id in previous_metadata_map
+        ):
+            pin_meta = previous_metadata_map[pinned_node_id]
+            if (
+                node_type == pin_meta.type
+                and start_line == pin_meta.start_line
+                and start_col == pin_meta.start_col
+            ):
+                node_id = pinned_node_id
         if node_id is None:
             node_id = str(uuid.uuid4())
         node_to_uuid[id(node)] = node_id
@@ -414,13 +424,34 @@ def _build_tree_index(
         prev_meta = (
             previous_metadata_map.get(node_id) if previous_metadata_map else None
         )
-        stable_id = (
-            (obj_to_stable.get(exact_key) if obj_to_stable else None)
-            or (obj_to_stable.get(('qualname', qualname)) if obj_to_stable and qualname else None)
-            or _get_stable_id_from_node(node)
-            or (prev_meta.stable_id if prev_meta else None)
-            or node_id
-        )
+        if prev_meta is not None and (
+            prev_meta.name != name or prev_meta.type != node_type
+        ):
+            prev_meta = None
+        carried_stable_id = _get_stable_id_from_node(node)
+        if node_type in ("FunctionDef", "AsyncFunctionDef", "ClassDef"):
+            stable_id = (
+                carried_stable_id
+                or (
+                    obj_to_stable.get(("qualname", qualname))
+                    if obj_to_stable and qualname
+                    else None
+                )
+                or (prev_meta.stable_id if prev_meta else None)
+                or node_id
+            )
+        else:
+            stmt_sk = None
+            if obj_to_stable and node_type in _STATEMENT_STABLE_TYPES:
+                norm = normalized_source_span(tree.module, start_line, end_line)
+                if norm:
+                    stmt_sk = build_statement_stable_key(node_type, qualname, norm)
+            stable_id = (
+                carried_stable_id
+                or (obj_to_stable.get(stmt_sk) if stmt_sk else None)
+                or (prev_meta.stable_id if prev_meta else None)
+                or node_id
+            )
         if isinstance(node, cst.Decorator):
             parent_cst = parents.get(node)
             if isinstance(parent_cst, (cst.FunctionDef, cst.ClassDef)):

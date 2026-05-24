@@ -11,6 +11,7 @@ from code_analysis.core.config import ServerConfig
 # Config must contain only what is used in code.
 ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {
     "database",
+    "search_session",
     "all_logs_rotation",
     "git_commit_on_write",
 }

@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 - **Detailed guide:** [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) — main entry point: purpose, arguments, return format, and examples for all commands, with links to per-command docs.
 - **Per-command files:** Each command has a **dedicated file** `docs/commands/<block>/<command_name>.md` (see tables below).
+- **File editing (primary):** [commands/file_editing/](commands/file_editing/) — universal preview/open/edit/write/close workflow.
 
 ## How to use this guide
 
@@ -18,6 +19,21 @@ email: vasilyvz@gmail.com
   - **Examples** — correct and incorrect usage
 - **Block index:** In each block, `COMMANDS.md` lists all commands with links to these per-command files.
 - **Code indices:** `code_analysis/method_index.yaml`, `code_analysis/code_map.yaml` for class/method lookup.
+
+---
+
+## File editing — universal workflow (`docs/commands/file_editing/`)
+
+| Command | Class | Source File |
+|---------|-------|-------------|
+| universal_file_preview | UniversalFilePreviewCommand | commands/universal_file_preview_command.py |
+| universal_file_open | UniversalFileOpenCommand | commands/universal_file_edit/open_command.py |
+| universal_file_search | UniversalFileSearchCommand | commands/universal_file_edit/search_command.py |
+| universal_file_edit | UniversalFileEditCommand | commands/universal_file_edit/edit_command.py |
+| universal_file_write | UniversalFileWriteCommand | commands/universal_file_edit/write_command.py |
+| universal_file_close | UniversalFileCloseCommand | commands/universal_file_edit/close_command.py |
+
+Docs: [README.md](commands/file_editing/README.md), [WORKFLOW.md](commands/file_editing/WORKFLOW.md), [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md).
 
 ---
 
@@ -73,7 +89,9 @@ email: vasilyvz@gmail.com
 
 ---
 
-## CST (`docs/commands/cst/`)
+## CST (`docs/commands/cst/`) — internal / developer APIs
+
+> **MCP agents:** edit files via [file_editing/](commands/file_editing/) only. CST commands remain registered for tooling and server development; do not use `cst_load_file` → `cst_modify_tree` → `cst_save_tree` as the editing workflow.
 
 | Command             | Class                     | Source File                              |
 |---------------------|---------------------------|------------------------------------------|
@@ -111,6 +129,8 @@ email: vasilyvz@gmail.com
 ---
 
 ## File Management (`docs/commands/file_management/`)
+
+Lifecycle, trash, DB repair — **not** primary content editing. For read/write file content use [file_editing/](commands/file_editing/).
 
 | Command              | Class                        | Source File                            |
 |----------------------|-----------------------------|----------------------------------------|

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.exceptions import ValidationError
 from .graph_entity_nodes import (
     build_entity_nodes_call_graph,
     build_entity_nodes_hierarchy,
@@ -90,12 +91,44 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Optional limit on number of edges",
+                    "description": (
+                        "Optional limit on number of edges (1–50000). Default 5000. "
+                        "Values outside the range are rejected."
+                    ),
+                    "default": 5000,
+                    "minimum": 1,
+                    "maximum": 50000,
                 },
             },
             "required": ["project_id"],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``limit`` outside schema min/max after schema validation."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        key = "limit"
+        if key not in params or params[key] is None:
+            return params
+        value = params[key]
+        prop = props.get(key) or {}
+        minimum = prop.get("minimum")
+        maximum = prop.get("maximum")
+        if minimum is not None and value < minimum:
+            raise ValidationError(
+                f"{self.name}: parameter {key!r} must be >= {minimum}, got {value!r}",
+                field=key,
+                details={"minimum": minimum, "maximum": maximum},
+            )
+        if maximum is not None and value > maximum:
+            raise ValidationError(
+                f"{self.name}: parameter {key!r} must be <= {maximum}, got {value!r}",
+                field=key,
+                details={"minimum": minimum, "maximum": maximum},
+            )
+        return params
 
     async def execute(
         self: "ExportGraphMCPCommand",
@@ -119,6 +152,29 @@ class ExportGraphMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with graph data or ErrorResult on failure.
         """
+        call_params: Dict[str, Any] = {
+            "project_id": project_id,
+            "graph_type": graph_type,
+            "format": format,
+            "file_path": file_path,
+            "limit": limit,
+        }
+        call_params.update(kwargs)
+        try:
+            call_params = self.validate_params(call_params)
+        except ValidationError as e:
+            return ErrorResult(
+                message=str(e),
+                code="VALIDATION_ERROR",
+                details=getattr(e, "details", None)
+                or {"field": getattr(e, "field", None)},
+            )
+        project_id = call_params["project_id"]
+        graph_type = str(call_params.get("graph_type") or "dependencies")
+        format = str(call_params.get("format") or "dot")
+        file_path = call_params.get("file_path")
+        limit = call_params.get("limit")
+
         try:
             _ = self._resolve_project_root(project_id)
             db = self._open_database()
@@ -126,7 +182,6 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                 proj_id = project_id
 
                 edge_limit = int(limit) if limit is not None else 5000
-                edge_limit = max(1, min(edge_limit, 50000))
 
                 nodes: set[str] = set()
                 edges: list[dict[str, str]] = []

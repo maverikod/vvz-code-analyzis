@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.core.config.simple_config_generator import SimpleConfigGenerator
 
+from code_analysis.core.search_session.policy import (
+    SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+    SEARCH_SESSION_TTL_SECONDS_DEFAULT,
+)
+
 from .constants import DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
 from .docs_indexing_defaults import default_docs_indexing_dict
 
@@ -352,6 +357,10 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         if exclude_csv is not None:
             di_block["exclude"] = exclude_csv
         ca["docs_indexing"] = di_block
+        ca["search_session"] = {
+            "ttl_seconds": SEARCH_SESSION_TTL_SECONDS_DEFAULT,
+            "max_block_size_bytes": SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+        }
 
         # Save updated config
         with open(base_config_path, "w", encoding="utf-8") as f:

@@ -21,6 +21,7 @@ from .line_command_cst_gate import (
     healthy_parse_blocks_line_ops,
 )
 from ..core.exceptions import ValidationError
+from ..core.file_handlers.text_ranges import validate_range_against_length
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,15 @@ class GetFileLinesCommand(BaseMCPCommand):
                 "end_line": {
                     "type": "integer",
                     "description": "End line (1-based, inclusive)",
+                },
+                "allow_healthy_line_ops": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "When true, allow line reads on Python files with a healthy "
+                        "CST parse. Used when routing from read_project_text_file; "
+                        "default false for direct get_file_lines calls."
+                    ),
                 },
             },
             "required": ["project_id", "file_path", "start_line", "end_line"],
@@ -112,6 +122,29 @@ class GetFileLinesCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult:
         try:
+            params: Dict[str, Any] = {
+                "project_id": project_id,
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "allow_healthy_line_ops": allow_healthy_line_ops,
+            }
+            params.update(kwargs)
+            try:
+                params = self.validate_params(params)
+            except ValidationError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="VALIDATION_ERROR",
+                    details=getattr(e, "details", None)
+                    or {"field": getattr(e, "field", None)},
+                )
+            project_id = params["project_id"]
+            file_path = params["file_path"]
+            start_line = params["start_line"]
+            end_line = params["end_line"]
+            allow_healthy_line_ops = bool(params.get("allow_healthy_line_ops", False))
+
             if start_line > end_line:
                 return ErrorResult(
                     message=f"Invalid range: start_line ({start_line}) > end_line ({end_line})",
@@ -197,13 +230,25 @@ class GetFileLinesCommand(BaseMCPCommand):
                     }
                 )
 
-            # Clamp to actual file range (1-based inclusive)
-            low = max(1, min(start_line, total_lines))
-            high = max(1, min(end_line, total_lines))
-            if low > high:
-                low, high = high, low
-            # 0-based slice
-            lines = all_lines[low - 1 : high]
+            try:
+                validate_range_against_length(
+                    start_line, end_line, total_lines, strict=True
+                )
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_RANGE",
+                    details={
+                        "project_id": project_id,
+                        "file_path": file_path,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "total_lines": total_lines,
+                    },
+                )
+            lines = all_lines[start_line - 1 : end_line]
+            low = start_line
+            high = end_line
 
             return SuccessResult(
                 data={

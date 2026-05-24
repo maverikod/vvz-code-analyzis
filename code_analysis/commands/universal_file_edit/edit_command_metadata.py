@@ -43,7 +43,10 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  For insert (sibling-relative): target_node_id, position before|after "
             "(parent_node_id omitted or __root__).\n"
             '  Shorthand: parent_node_id + position {"after": N} (0-based sibling index).\n'
-            "  Ancestor-descendant pairs in one batch are rejected (NESTED_BATCH_FORBIDDEN).\n\n"
+            "  stable_id (preview node_ref) is preserved across sibling/unrelated ops in one batch;\n"
+            "  re-preview only after failure, full parent replace, or when targets are unknown.\n"
+            "  Nested functions and class methods are normal sibling targets.\n"
+            "  Parent and child in the same batch are rejected (NESTED_BATCH_FORBIDDEN).\n\n"
             "JSON/YAML (.json, .yaml, .yml):\n"
             "  Operations target document nodes via RFC 6901 JSON Pointer or opaque UUID.\n"
             "  universal_file_preview returns node_ref as JSON Pointer string (e.g. '/timeout').\n"
@@ -177,6 +180,34 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 ),
             },
             {
+                "description": "Batch insert and replace sibling Python methods (sidecar)",
+                "command": {
+                    "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                    "session_id": "<from universal_file_open>",
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "target_node_id": "<alpha-method-uuid>",
+                            "position": "after",
+                            "code_lines": [
+                                "",
+                                "def gamma(self) -> bool:",
+                                "    return True",
+                            ],
+                        },
+                        {
+                            "type": "replace",
+                            "node_id": "<beta-method-uuid>",
+                            "code_lines": ["def beta(self) -> int:", "    return 42"],
+                        },
+                    ],
+                },
+                "explanation": (
+                    "Sibling methods in one batch: stable_id from preview stays valid "
+                    "for both ops. Do not combine parent class and child method in one batch."
+                ),
+            },
+            {
                 "description": "Update a JSON scalar field value (tree-temp)",
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
@@ -291,9 +322,15 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "solution": "Open a new session with universal_file_open. Sessions are lost on server restart.",
             },
             "NESTED_BATCH_FORBIDDEN": {
-                "description": "Sidecar only: batch contains an ancestor-descendant node_id pair.",
+                "description": (
+                    "Sidecar only: batch targets both a parent node and its descendant "
+                    "(e.g. replace outer and replace inner_a). Sibling batches are allowed."
+                ),
                 "message": "Ancestor-descendant pair in batch",
-                "solution": "Split into separate calls or target only the outermost node.",
+                "solution": (
+                    "Split into separate universal_file_edit calls, or edit only the "
+                    "outermost node in one batch."
+                ),
             },
             "INVALID_OPERATION": {
                 "description": (
@@ -308,9 +345,15 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 ),
             },
             "STALE_NODE_ID": {
-                "description": "Sidecar only: node_id UUID is not present in the current CST tree.",
+                "description": (
+                    "Sidecar only: stable_id from preview was not found in metadata "
+                    "(unexpected after normal sibling edits)."
+                ),
                 "message": "Stale or unknown node_id",
-                "solution": "Re-run universal_file_preview with session_id and use a fresh node_ref.",
+                "solution": (
+                    "Re-run universal_file_preview with session_id. If persistent, "
+                    "the node may have been removed by a full parent replace."
+                ),
             },
             "UNKNOWN_NODE_REF": {
                 "description": "Text only: node_ref slug or index not found in the current draft.",
@@ -352,9 +395,11 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "Call universal_file_preview before universal_file_edit to obtain valid node_ref values.",
+            "Call universal_file_preview before the first universal_file_edit to obtain node_ref values.",
+            "For Python (sidecar): stable_id from preview is reused across sibling ops in one batch.",
             "For Python (sidecar): use code_lines (list of strings) for multi-line code to avoid JSON escaping issues.",
             "For Python sibling insert: target_node_id + position before|after (not parent_node_id + before).",
+            "For Python: do not combine parent and child node targets in one batch (NESTED_BATCH_FORBIDDEN).",
             "For JSON/YAML replace: value accepts any JSON type — string, number, boolean, null, array, object.",
             "For JSON/YAML replace array: pass a Python list as value; pass [] for an empty array.",
             "For JSON/YAML array append: omit index, or use position='last', or end parent_json_pointer with '/-'.",

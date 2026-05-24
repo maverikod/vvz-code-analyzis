@@ -17,6 +17,7 @@ from code_analysis.commands.universal_file_edit.edit_draft_path_utils import (
 )
 from code_analysis.commands.universal_file_edit.errors import (
     ANCHOR_MISMATCH,
+    INVALID_OPERATION,
     LINE_OUT_OF_RANGE,
     WRITE_FAILED,
     error_result_for_edit,
@@ -52,6 +53,23 @@ def _validate_text_line_operation(
         return None
 
     op_type = op.get("type", "replace")
+    if op_type != "insert" and "start_line" not in op:
+        return error_result_for_edit(
+            "text edit operation has no resolvable target: "
+            "no node_ref produced a line range and no explicit start_line "
+            "was given.",
+            INVALID_OPERATION,
+            {
+                "op_type": op_type,
+                "received_keys": sorted(op.keys()),
+                "hint": (
+                    "For .md/text files use node_ref (zero-based block index "
+                    "or markdown slug from universal_file_preview) plus "
+                    "content, or explicit start_line/end_line. Do not use the "
+                    "Python sidecar form (node_id + code_lines) on text files."
+                ),
+            },
+        )
     start_line, end_line = _resolve_line_range(op)
     line_count = _line_count(buffer)
 

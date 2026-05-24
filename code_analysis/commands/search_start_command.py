@@ -185,7 +185,9 @@ class SearchStartCommand(BaseMCPCommand):
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
         try:
-            params = self.validate_params({k: v for k, v in kwargs.items() if k != "context"})
+            params = self.validate_params(
+                {k: v for k, v in kwargs.items() if k != "context"}
+            )
         except ValidationError as exc:
             return self._handle_error(exc, "VALIDATION_ERROR", self.name)
 
@@ -381,8 +383,15 @@ class SearchStartCommand(BaseMCPCommand):
         layout: SearchSessionDirectoryLayout,
         params: Dict[str, Any],
     ) -> Optional[int]:
-        raise NotImplementedError(
-            "Paginated search_start backend 'cross' is not implemented yet"
+        from .search_paginated_cross import run_paginated_cross
+
+        return await run_paginated_cross(
+            command=ProjectCrossSearchCommand(),
+            params=params,
+            session=session,
+            layout=layout,
+            raw_config=self._get_raw_config(),
+            block_assembler_factory=self._create_block_assembler,
         )
 
     async def _paginated_backend_tree_query(

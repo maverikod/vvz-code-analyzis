@@ -62,21 +62,17 @@ class SearchCancelCommand(BaseMCPCommand):
             )
         return params
 
-    async def execute(self, job_id: str, **kwargs: Any) -> SuccessResult | ErrorResult:
-        job_id = str(job_id).strip()
+    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        job_id = str(kwargs.get("job_id") or "").strip()
         storage = self._get_shared_storage()
         ctx = HttpAccessContext(config_dir=storage.config_dir)
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
-            return ErrorResult(
-                message=f"Search session not found: {job_id}", code=SESSION_NOT_FOUND
-            )
+            return ErrorResult(message=f"Search session not found: {job_id}", code=SESSION_NOT_FOUND)  # type: ignore[arg-type]
 
         if not layout.manifest_path.is_file():
-            return ErrorResult(
-                message=f"Search manifest not found: {job_id}", code=SESSION_NOT_FOUND
-            )
+            return ErrorResult(message=f"Search manifest not found: {job_id}", code=SESSION_NOT_FOUND)  # type: ignore[arg-type]
 
         manifest = read_manifest(layout)
         if manifest.status in _TERMINAL:

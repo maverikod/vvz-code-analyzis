@@ -39,7 +39,7 @@ def test_timed_out_rejected() -> None:
     )
 
     assert verdict.accepted is False
-    assert verdict.reason_code == "PHASE_TIMED_OUT"
+    assert verdict.reason_code == "REJECTED_PHASE_TIMED_OUT"
     assert verdict.preview_ref is None
 
 
@@ -52,7 +52,7 @@ def test_classic_line_without_preview_rejected() -> None:
     )
 
     assert verdict.accepted is False
-    assert verdict.reason_code == "LINE_ONLY_WITHOUT_PREVIEW"
+    assert verdict.reason_code == "REJECTED_LINE_ONLY"
     assert verdict.preview_ref is None
 
 
@@ -66,5 +66,5 @@ def test_valid_structural_accepted() -> None:
     )
 
     assert verdict.accepted is True
-    assert verdict.reason_code == "ACCEPTED"
+    assert verdict.reason_code == "ACCEPTED_STRUCTURAL"
     assert verdict.preview_ref is preview

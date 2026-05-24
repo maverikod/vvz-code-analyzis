@@ -94,26 +94,14 @@ async def test_schema_requires_job_id_not_search_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_queued_job_invoked_when_queue_job_id_present(
-    tmp_path: Path,
-) -> None:
+async def test_cancel_queued_job_invoked_when_queue_job_id_present(tmp_path: Path) -> None:
     layout = _make_layout(tmp_path)
-    now = time.time()
-    manifest = SearchSessionManifest(
-        search_id=layout.root.name,
-        created_at=now,
-        last_access_at=now,
-        heartbeat_at=now,
-        status="running",
-        phase="indexed_search",
-        request={},
-        metrics=dict(DEFAULT_METRICS),
-        process={"queue_job_id": "qjob-123"},
-        block_ready_count=0,
-    )
-    write_manifest_atomic(layout, manifest)
+    _write_manifest(layout, status="running")
     cmd = _cmd(tmp_path)
     with patch(
+        "code_analysis.commands.search_cancel_command.queue_job_id_from_manifest",
+        return_value="qjob-123",
+    ), patch(
         "code_analysis.commands.search_cancel_command.cancel_queued_search_job",
         new_callable=AsyncMock,
         return_value=True,

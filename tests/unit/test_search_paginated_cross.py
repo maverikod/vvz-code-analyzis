@@ -17,22 +17,12 @@ from code_analysis.core.search_session.session import SearchSession, SearchSessi
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 
-def _session(tmp_path: Path) -> SearchSession:
+def _session_and_layout(tmp_path: Path):
+    from code_analysis.core.search_session.directory import provision_search_session_directory
     search_id = str(uuid.uuid4())
-    root = tmp_path / search_id
-    root.mkdir(parents=True)
-    return SearchSession(
-        search_id=search_id, state=SearchSessionState.running, directory_path=root
-    )
-
-
-def _layout(tmp_path: Path, session: SearchSession):
-    from code_analysis.core.search_session.directory import SearchSessionDirectoryLayout
-
-    root = session.directory_path
-    (root / "blocks").mkdir(exist_ok=True)
-    (root / "buffer").mkdir(exist_ok=True)
-    return SearchSessionDirectoryLayout(root=root)
+    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+    session = SearchSession(search_id=search_id, state=SearchSessionState.running, directory_path=layout.root)
+    return session, layout
 
 
 def _fake_assembler_factory(layout, raw_config):
@@ -73,21 +63,12 @@ def test_normalize_cross_finding_includes_line_only_when_not_required() -> None:
 
 @pytest.mark.asyncio
 async def test_run_paginated_cross_publishes_block(tmp_path: Path) -> None:
-    session = _session(tmp_path)
-    layout = _layout(tmp_path, session)
+    session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command.execute = AsyncMock(
-        return_value=SuccessResult(
-            data={
-                "results": [
-                    {
-                        "file_path": "c.py",
-                        "evidence": {"source_mode": "structural"},
-                        "confidence": "high",
-                    }
-                ]
-            }
-        )
+        return_value=SuccessResult(data={"results": [
+            {"file_path": "c.py", "evidence": {"source_mode": "structural"}, "confidence": "high"}
+        ]})
     )
     pos = await run_paginated_cross(
         command=command,

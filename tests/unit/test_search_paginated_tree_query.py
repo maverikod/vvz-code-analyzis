@@ -16,22 +16,12 @@ from code_analysis.commands.search_paginated_tree_query import (
 from code_analysis.core.search_session.session import SearchSession, SearchSessionState
 
 
-def _session(tmp_path: Path) -> SearchSession:
+def _session_and_layout(tmp_path: Path):
+    from code_analysis.core.search_session.directory import provision_search_session_directory
     search_id = str(uuid.uuid4())
-    root = tmp_path / search_id
-    root.mkdir(parents=True)
-    return SearchSession(
-        search_id=search_id, state=SearchSessionState.running, directory_path=root
-    )
-
-
-def _layout(tmp_path: Path, session: SearchSession):
-    from code_analysis.core.search_session.directory import SearchSessionDirectoryLayout
-
-    root = session.directory_path
-    (root / "blocks").mkdir(exist_ok=True)
-    (root / "buffer").mkdir(exist_ok=True)
-    return SearchSessionDirectoryLayout(root=root)
+    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+    session = SearchSession(search_id=search_id, state=SearchSessionState.running, directory_path=layout.root)
+    return session, layout
 
 
 def _fake_assembler_factory(layout, raw_config):
@@ -64,13 +54,10 @@ def test_normalize_tree_query_finding() -> None:
 
 @pytest.mark.asyncio
 async def test_run_paginated_tree_query_returns_1_on_matches(tmp_path: Path) -> None:
-    session = _session(tmp_path)
-    layout = _layout(tmp_path, session)
+    session, layout = _session_and_layout(tmp_path)
 
     def scanner(xpath, file_pattern, project_id):
-        return [
-            {"file_path": "e.py", "start_line": 1, "end_line": 5, "stable_id": "n1"}
-        ]
+        return [{"file_path": "e.py", "start_line": 1, "end_line": 5, "stable_id": "n1"}]
 
     pos = await run_paginated_tree_query(
         params={"project_id": "pid", "xpath": "//FunctionDef", "paginated": True},
@@ -85,8 +72,7 @@ async def test_run_paginated_tree_query_returns_1_on_matches(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_run_paginated_tree_query_returns_none_on_empty(tmp_path: Path) -> None:
-    session = _session(tmp_path)
-    layout = _layout(tmp_path, session)
+    session, layout = _session_and_layout(tmp_path)
 
     pos = await run_paginated_tree_query(
         params={"project_id": "pid", "xpath": "//FunctionDef"},

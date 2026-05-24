@@ -36,13 +36,22 @@ class RawFindingBuffer:
         return self._lock_path
 
     def append_finding(self, finding_id: str, payload: dict) -> Path:
-        """Write one finding JSON file and return its path."""
-        path = self._buffer_dir / f"{finding_id}.json"
-        with open(path, "w", encoding="utf-8") as handle:
+        """
+        Atomically publish one finding JSON file and return its path.
+
+        Writers (search producers) write to a ``.json.tmp`` sidecar, fsync it,
+        then ``os.replace`` it to the final ``.json`` name. The assembler only
+        ever sees fully written ``.json`` files via ``list_findings`` and never
+        observes a partial write — ``os.replace`` is atomic within one filesystem.
+        """
+        final_path = self._buffer_dir / f"{finding_id}.json"
+        tmp_path = self._buffer_dir / f"{finding_id}.json.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False)
             handle.flush()
             os.fsync(handle.fileno())
-        return path
+        os.replace(tmp_path, final_path)
+        return final_path
 
     def list_findings(self) -> list[Path]:
         """Return finding file paths sorted by modification time."""

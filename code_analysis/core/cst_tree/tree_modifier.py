@@ -324,7 +324,7 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
         Parent node_id of nearest insertable container, or None if not found
     """
     # Statement-body container types — valid parent_node_id values (not IndentedBlock)
-    INSERTABLE_TYPES = {"Module", "ClassDef", "FunctionDef"}
+    INSERTABLE_TYPES = {"Module", "ClassDef", "FunctionDef", "IndentedBlock"}
 
     # Resolve alias: after insert the target node may have a new UUID
     resolved = tree.node_id_aliases.get(node_id, node_id)

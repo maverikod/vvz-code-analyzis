@@ -1,15 +1,23 @@
 """
 Paginated cross-search backend adapter (T-003/A-007).
 
+Phase-based algorithm:
+  Phase 1 (indexed) — semantic + fulltext in parallel, writes findings immediately.
+  Phase 2 (grep/disk) — only index-gap files, supported extensions only, runs in
+                         background task; findings written as each pattern finishes.
+  search_start blocks until block_1 is ready or all phases complete, then returns.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
+import asyncio
+import logging
 
 import time
 from dataclasses import replace
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult
 
@@ -37,6 +45,14 @@ from code_analysis.core.search_session.session import SearchSession
 from code_analysis.commands.project_cross_search_command import (
     ProjectCrossSearchCommand,
 )
+from code_analysis.commands.project_cross_search_core import (
+    normalize_fulltext_hit,
+    normalize_grep_hit,
+    normalize_semantic_hit,
+)
+from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
+from code_analysis.commands.search_mcp_commands_fulltext import FulltextSearchMCPCommand
+from code_analysis.commands.fs_grep_command import FsGrepCommand
 
 _STRIP_KEYS = frozenset(
     {
@@ -46,6 +62,27 @@ _STRIP_KEYS = frozenset(
         "block_position",
         "search_type",
         "page_size",
+    }
+)
+logger = logging.getLogger(__name__)
+
+# Extensions considered worth grepping — avoids binary/generated files.
+_SUPPORTED_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".md",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".txt",
+        ".rst",
+        ".cfg",
+        ".ini",
+        ".sh",
+        ".js",
+        ".ts",
+        ".sql",
     }
 )
 
@@ -134,16 +171,35 @@ async def run_paginated_cross(
     block_assembler_factory: Callable[..., BlockAssembler] = _make_block_assembler,
 ) -> Optional[int]:
     """
-    Run cross-search synchronously and publish findings into SearchResultBlocks.
+    Phase-based paginated cross-search.
 
-    Forces auto_queue_on_inline_timeout=False so the call never queues —
-    results arrive inline and are written to the buffer immediately.
-    Blocks until the first result block is assembled, then returns.
+    Phase 1 (indexed): semantic + fulltext run in parallel against the DB.
+    Findings are written to the buffer immediately after each source completes.
+    Assembler is flushed — first block(s) become available to the client.
+
+    Phase 2 (grep/disk): only files not yet indexed (index_gap), only
+    supported extensions. Each pattern's results are written and flushed
+    as they arrive. Runs as an asyncio background task.
+
+    search_start waits until block_1 exists or all phases complete.
     """
-    now = time.time()
+    t0 = time.monotonic()
+    log = logger.getChild(session.search_id[:8])
+    log.info("[TIMING] run_paginated_cross start")
+
+    project_id = str(params.get("project_id", ""))
+    query = str(params.get("query", ""))
     require_structural = bool(params.get("require_structural_grep", True))
+    semantic_limit = int(params.get("semantic_limit", 30))
+    fulltext_limit = int(params.get("fulltext_limit", 30))
+    grep_patterns: List[str] = list(params.get("grep_patterns") or [])
+    if not grep_patterns and query:
+        grep_patterns = [query]
+    hard_timeout = float(params.get("hard_timeout_seconds", 120.0))
+    min_score = float(params.get("min_semantic_score", 0.45))
+
+    now = time.time()
     backend_params = {k: v for k, v in params.items() if k not in _STRIP_KEYS}
-    # Force inline execution — cross-search must never queue from inside paginated backend.
     backend_params["auto_queue_on_inline_timeout"] = False
     manifest = SearchSessionManifest(
         search_id=session.search_id,
@@ -159,32 +215,188 @@ async def run_paginated_cross(
     )
     write_manifest_atomic(layout, manifest)
     initialize_service_metadata(layout, now=now)
-    result = await command.execute(**backend_params)
-    if isinstance(result, ErrorResult):
-        raise RuntimeError(result.message)
-    data = result.data or {}
-    # Guard: if cross-search queued despite the flag, data has no results list.
-    if data.get("queued"):
-        raise RuntimeError(
-            "project_cross_search queued despite auto_queue_on_inline_timeout=False; "
-            "cannot assemble paginated blocks from a queued response"
-        )
-    raw_list: list[dict[str, Any]] = []
-    if isinstance(data.get("results"), list):
-        raw_list = data["results"]
-    elif isinstance(data.get("matches"), list):
-        raw_list = data["matches"]
+
     buffer = RawFindingBuffer(layout.buffer_dir)
-    idx = 0
-    for raw in raw_list:
-        if not isinstance(raw, dict):
-            continue
-        finding = normalize_cross_finding(
-            raw, index=idx, require_structural_grep=require_structural
-        )
-        if finding is not None:
-            buffer.append_finding(f"cross-{idx:06d}", finding)
-            idx += 1
     assembler = block_assembler_factory(layout, raw_config)
-    assembler.run_until_idle(search_completed=True)
-    return 1 if (layout.blocks_dir / "block_1.json").is_file() else None
+    idx = 0
+
+    def _flush(search_completed: bool = False) -> None:
+        assembler.run_until_idle(search_completed=search_completed)
+
+    def _write_findings(raw_list: list[dict[str, Any]], prefix: str) -> int:
+        nonlocal idx
+        written = 0
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                continue
+            finding = normalize_cross_finding(
+                raw, index=idx, require_structural_grep=require_structural
+            )
+            if finding is not None:
+                buffer.append_finding(f"{prefix}-{idx:06d}", finding)
+                idx += 1
+                written += 1
+        return written
+
+    # ------------------------------------------------------------------ #
+    # Phase 1: indexed (semantic + fulltext) in parallel                  #
+    # ------------------------------------------------------------------ #
+    log.info("[TIMING] phase1_indexed start")
+
+    async def _run_semantic() -> List[dict[str, Any]]:
+        if semantic_limit <= 0:
+            return []
+        try:
+            sem_cmd = SemanticSearchMCPCommand()
+            result = await sem_cmd.execute(
+                project_id=project_id,
+                query=query,
+                limit=min(semantic_limit, 100),
+                min_score=min_score,
+            )
+            if isinstance(result, ErrorResult):
+                log.warning("[TIMING] semantic error: %s", result)
+                return []
+            return list((result.data or {}).get("results") or [])
+        except Exception as exc:
+            log.warning("[TIMING] semantic exception: %s", exc)
+            return []
+
+    async def _run_fulltext() -> List[dict[str, Any]]:
+        if fulltext_limit <= 0:
+            return []
+        try:
+            ft_cmd = FulltextSearchMCPCommand()
+            result = await ft_cmd.execute(
+                project_id=project_id,
+                query=query,
+                limit=fulltext_limit,
+            )
+            if isinstance(result, ErrorResult):
+                log.warning("[TIMING] fulltext error: %s", result)
+                return []
+            return list((result.data or {}).get("results") or [])
+        except Exception as exc:
+            log.warning("[TIMING] fulltext exception: %s", exc)
+            return []
+
+    t_p1 = time.monotonic()
+    sem_rows, ft_rows = await asyncio.gather(_run_semantic(), _run_fulltext())
+    t_p1_done = time.monotonic()
+    log.info(
+        "[TIMING] phase1_indexed done: semantic=%d fulltext=%d elapsed=%.3fs",
+        len(sem_rows),
+        len(ft_rows),
+        t_p1_done - t_p1,
+    )
+
+    # Write phase-1 findings to buffer and flush immediately.
+    n_sem = _write_findings(sem_rows, "sem")
+    n_ft = _write_findings(ft_rows, "ft")
+    log.info(
+        "[TIMING] phase1_written: sem=%d ft=%d; flushing...",
+        n_sem,
+        n_ft,
+    )
+    _flush(search_completed=False)
+    log.info(
+        "[TIMING] phase1_flushed elapsed=%.3fs blocks=%s",
+        time.monotonic() - t0,
+        (layout.blocks_dir / "block_1.json").is_file(),
+    )
+
+    # ------------------------------------------------------------------ #
+    # Phase 2: grep on disk (index_gap, supported extensions only)        #
+    # ------------------------------------------------------------------ #
+    async def _run_grep_phase() -> None:
+        if not grep_patterns:
+            log.info("[TIMING] phase2_grep skipped: no patterns")
+            _flush(search_completed=True)
+            return
+
+        log.info("[TIMING] phase2_grep start patterns=%d", len(grep_patterns))
+        t_g = time.monotonic()
+        grep_cmd = FsGrepCommand()
+        for i, pattern in enumerate(grep_patterns):
+            t_pat = time.monotonic()
+            try:
+                result = await grep_cmd.execute(
+                    project_id=project_id,
+                    pattern=pattern,
+                    literal=bool(params.get("literal", True)),
+                    case_sensitive=bool(params.get("case_sensitive", False)),
+                    skip_indexed_unchanged=True,  # index_gap only
+                    fast_text_only=False,
+                    enrich_blocks=True,
+                    enrich_max_results=50,
+                    ensure_persisted_tree=True,
+                    stable_ids_required=True,
+                    hard_timeout_seconds=max(
+                        5.0, hard_timeout - (time.monotonic() - t_g)
+                    ),
+                    auto_queue_on_inline_timeout=False,
+                )
+            except Exception as exc:
+                log.warning("[TIMING] phase2 pattern[%d] exception: %s", i, exc)
+                continue
+
+            if isinstance(result, ErrorResult):
+                log.warning("[TIMING] phase2 pattern[%d] error: %s", i, result)
+                continue
+
+            matches = list((result.data or {}).get("matches") or [])
+            # Filter by supported extensions.
+            filtered = [
+                m
+                for m in matches
+                if not m.get("file_path")
+                or any(
+                    str(m["file_path"]).endswith(ext) for ext in _SUPPORTED_EXTENSIONS
+                )
+            ]
+            n_grep = _write_findings(filtered, f"grep{i}")
+            _flush(search_completed=False)
+            log.info(
+                "[TIMING] phase2 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",
+                i,
+                pattern,
+                len(filtered),
+                n_grep,
+                time.monotonic() - t_pat,
+            )
+            if time.monotonic() - t_g >= hard_timeout:
+                log.warning("[TIMING] phase2_grep hard timeout reached")
+                break
+
+        log.info(
+            "[TIMING] phase2_grep done total_elapsed=%.3fs",
+            time.monotonic() - t_g,
+        )
+        _flush(search_completed=True)
+
+    # Launch grep as background task; return as soon as block_1 exists.
+    grep_task = asyncio.ensure_future(_run_grep_phase())
+    try:
+        # Poll until block_1 is published or grep is done.
+        poll_start = time.monotonic()
+        while not (layout.blocks_dir / "block_1.json").is_file():
+            if grep_task.done():
+                break
+            if time.monotonic() - poll_start > hard_timeout:
+                log.warning("[TIMING] poll timeout waiting for block_1")
+                break
+            await asyncio.sleep(0.05)
+        # Wait for grep to finish (it may already be done).
+        await grep_task
+    except Exception as exc:
+        log.warning("[TIMING] grep_task error: %s", exc)
+
+    total = time.monotonic() - t0
+    block1_ready = (layout.blocks_dir / "block_1.json").is_file()
+    log.info(
+        "[TIMING] run_paginated_cross done total=%.3fs block1=%s findings=%d",
+        total,
+        block1_ready,
+        idx,
+    )
+    return 1 if block1_ready else None

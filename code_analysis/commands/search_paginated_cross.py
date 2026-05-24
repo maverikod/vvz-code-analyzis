@@ -51,6 +51,10 @@ from code_analysis.commands.project_cross_search_core import (
     normalize_semantic_hit,
 )
 from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
+from code_analysis.core.index_coverage import IndexCoverageService
+from code_analysis.core.structure_extraction.format_registry import (
+    is_supported_extension,
+)
 from code_analysis.commands.search_mcp_commands_fulltext import FulltextSearchMCPCommand
 from code_analysis.commands.fs_grep_command import FsGrepCommand
 
@@ -161,6 +165,79 @@ def _make_block_assembler(
     )
 
 
+def _prefilter_candidates(
+    command: ProjectCrossSearchCommand,
+    project_id: str,
+    log: logging.Logger,
+) -> tuple[List[str], List[str]]:
+    """
+    Build the candidate file list and split it into indexed vs index-gap.
+
+    Step 1: walk the project root, keep only supported extensions (skips
+    binary/generated files). Step 2: classify each candidate with
+    IndexCoverageService — index_gap_paths need disk grep, indexed_paths are
+    already covered by the semantic/fulltext DB search.
+
+    Returns (indexed_paths, index_gap_paths), both project-relative POSIX.
+    Never raises: on any failure returns empty lists so the caller can fall
+    back to unrestricted search.
+    """
+    t_pf = time.monotonic()
+    try:
+        project_root = command._resolve_project_root(project_id).resolve()
+    except Exception as exc:
+        log.warning("[TIMING] prefilter: cannot resolve project root: %s", exc)
+        return [], []
+
+    candidates: List[str] = []
+    for path in project_root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(project_root).as_posix()
+        guard = f"/{rel}"
+        if rel.startswith(".") or "/." in guard:
+            continue
+        if "/venv/" in guard or "__pycache__" in rel:
+            continue
+        if "/node_modules/" in guard:
+            continue
+        if is_supported_extension(rel):
+            candidates.append(rel)
+
+    t_walk = time.monotonic()
+    database = None
+    indexed_paths: List[str] = []
+    index_gap_paths: List[str] = []
+    try:
+        database = command._open_database_from_config(auto_analyze=False)
+        coverage = IndexCoverageService(database, project_id, project_root)
+        index_gap_paths, _reasons = coverage.filter_grep_candidates_with_reasons(
+            candidates,
+            skip_indexed_unchanged=True,
+            indexed_only=False,
+        )
+        gap_set = set(index_gap_paths)
+        indexed_paths = [rel for rel in candidates if rel not in gap_set]
+    except Exception as exc:
+        log.warning("[TIMING] prefilter: coverage classification failed: %s", exc)
+        return [], []
+    finally:
+        if database is not None:
+            database.disconnect()
+
+    log.info(
+        "[TIMING] prefilter: candidates=%d indexed=%d index_gap=%d "
+        "walk=%.3fs classify=%.3fs total=%.3fs",
+        len(candidates),
+        len(indexed_paths),
+        len(index_gap_paths),
+        t_walk - t_pf,
+        time.monotonic() - t_walk,
+        time.monotonic() - t_pf,
+    )
+    return indexed_paths, index_gap_paths
+
+
 async def run_paginated_cross(
     *,
     command: ProjectCrossSearchCommand,
@@ -217,7 +294,8 @@ async def run_paginated_cross(
     initialize_service_metadata(layout, now=now)
 
     buffer = RawFindingBuffer(layout.buffer_dir)
-    assembler = block_assembler_factory(layout, raw_config)
+    max_block_size_bytes = load_session_ttl_policy(raw_config).max_block_size_bytes
+    assembler = block_assembler_factory(layout, max_block_size_bytes)
     idx = 0
 
     def _flush(search_completed: bool = False) -> None:
@@ -237,6 +315,13 @@ async def run_paginated_cross(
                 idx += 1
                 written += 1
         return written
+
+    indexed_paths, index_gap_paths = _prefilter_candidates(command, project_id, log)
+    log.info(
+        "[TIMING] prefilter result: indexed=%d index_gap=%d",
+        len(indexed_paths),
+        len(index_gap_paths),
+    )
 
     # ------------------------------------------------------------------ #
     # Phase 1: indexed (semantic + fulltext) in parallel                  #

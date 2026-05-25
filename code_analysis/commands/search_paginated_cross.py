@@ -116,10 +116,10 @@ def normalize_cross_finding(
     )
     return Finding(
         result_id=f"cross-{index:06d}",
-        source=FindingSource.CROSS,
+        source=FindingSource.cross,
         file_path=str(raw.get("file_path") or ""),
         stable_id=str(stable_id),
-        score=score_for_source(FindingSource.CROSS, raw),
+        score=score_for_source(FindingSource.cross, raw),
         mtime=0.0,
     )
 

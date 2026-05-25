@@ -516,22 +516,12 @@ class SearchStartCommand(BaseMCPCommand):
 
             update_manifest_atomic(layout, mutator)
 
-        def finalize_index() -> None:
-            if layout.index_path.is_file():
-                mark_index_finished(layout.index_path)
-                return
-            atomic_write_json(
-                layout.index_path,
-                {"blocks": [], "completeness": COMPLETENESS_FINISHED},
-            )
-
         return BlockAssembler(
             layout,
             RawFindingBuffer(layout.buffer_dir),
             max_block_size_bytes,
             append_index_entry=append_index_entry,
             update_manifest_metrics=update_manifest_metrics,
-            finalize_index=finalize_index,
         )
 
     @staticmethod

@@ -102,7 +102,7 @@ def normalize_cross_finding(
     index: int,
     require_structural_grep: bool = True,
 ) -> Optional[Finding]:
-    """Map a cross-search row to a Finding; return None for line-only grep rows when structural required."""
+    """Map a cross-search row to a Finding; return None for line-only or unaddressable rows."""
     evidence = raw.get("evidence") or {}
     source_mode = evidence.get("source_mode") or raw.get("source_mode") or ""
     if require_structural_grep and source_mode == "classic_line":
@@ -114,6 +114,8 @@ def normalize_cross_finding(
         or raw.get("block_id")
         or ""
     )
+    if not stable_id:
+        return None
     return Finding(
         result_id=f"cross-{index:06d}",
         source=FindingSource.cross,

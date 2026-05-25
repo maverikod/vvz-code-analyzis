@@ -246,10 +246,46 @@ def compute_delta(
                 if not is_in_watch_dir:
                     continue
                 if not db_root_path.exists():
+                    # Project root directory is gone from disk.
+                    # Mark ALL its DB files as deleted so the queue phase
+                    # can cascade-purge all related records.
                     logger.warning(
-                        f"Project {db_project_id} root_path {db_root_path} does not exist. "
-                        "Skipping automatic deletion. Files will be checked again in next scan."
+                        "Project %s root_path %s does not exist on disk; "
+                        "marking all %d DB files as deleted.",
+                        db_project_id,
+                        db_root_path,
+                        0,  # count filled below
                     )
+                    try:
+                        get_raw = getattr(database, "get_project_file_rows", None)
+                        if get_raw is not None:
+                            gone_db_list = get_raw(db_project_id, include_deleted=False)
+                        else:
+                            gone_db_list = database.get_project_files(
+                                db_project_id, include_deleted=False
+                            )
+                        if gone_db_list:
+                            all_deleted = list(
+                                find_missing_files({}, gone_db_list, db_root_path)
+                            )
+                            if all_deleted:
+                                logger.warning(
+                                    "Project %s: scheduling %d files for cascade purge",
+                                    db_project_id,
+                                    len(all_deleted),
+                                )
+                                deltas[db_project_id] = FileDelta(
+                                    new_files=[],
+                                    changed_files=[],
+                                    deleted_files=all_deleted,
+                                )
+                    except Exception as gone_e:
+                        logger.error(
+                            "Failed to build delete delta for gone project %s: %s",
+                            db_project_id,
+                            gone_e,
+                            exc_info=True,
+                        )
                     continue
                 # No scan entries for this project this cycle (e.g. last indexed file removed),
                 # but DB rows must still be reconciled against disk.

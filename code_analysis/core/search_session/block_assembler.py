@@ -19,6 +19,11 @@ from code_analysis.core.search_session.result_block import (
     assemble_block,
     serialize_block,
 )
+from code_analysis.core.search_session.result_index import (
+    COMPLETENESS_FINISHED,
+    mark_index_finished,
+    read_index,
+)
 
 COMPLETENESS_RUNNING = "search_still_running"
 
@@ -28,6 +33,10 @@ _BLOCK_NAME_PATTERN = re.compile(r"^block_(\d+)\.json$")
 class BlockAssembler:
     """
     Drains ``RawFindingBuffer`` into immutable result blocks under a buffer lock.
+
+    Temporal blocks are written in arrival order while the search runs.
+    On completion, all findings are re-segmented by relevance score into a
+    separate ``blocks_relevance/`` set.
     """
 
     def __init__(
@@ -38,25 +47,35 @@ class BlockAssembler:
         *,
         append_index_entry: Callable[[int, str], None],
         update_manifest_metrics: Callable[[dict], None],
-        finalize_index: Callable[[], None],
     ) -> None:
         self._layout = layout
         self._buffer = buffer
         self._max_block_size_bytes = max_block_size_bytes
         self._append_index_entry = append_index_entry
         self._update_manifest_metrics = update_manifest_metrics
-        self._finalize_index = finalize_index
 
     def run_once(self, *, search_completed: bool) -> int:
         """
-        Acquire the buffer lock once and publish as many blocks as allowed.
+        Acquire the buffer lock once and publish as many temporal blocks as
+        allowed.  On ``search_completed`` also triggers re-segmentation and
+        finalizes the index.
 
         Returns:
-            Number of blocks published; ``0`` when the lock is unavailable or no
-            work is performed.
+            Number of blocks published; ``0`` when the lock is unavailable,
+            already finished, or no work is performed.
         """
         if not self._buffer.buffer_dir.exists():
             return 0
+
+        # Idempotent guard: if index is already finished, nothing to do.
+        if self._layout.index_path.is_file():
+            try:
+                idx = read_index(self._layout.index_path)
+                if idx.completeness == COMPLETENESS_FINISHED:
+                    return 0
+            except Exception:
+                pass
+
         if not self._buffer.try_acquire_lock():
             return 0
 
@@ -68,7 +87,7 @@ class BlockAssembler:
                     break
                 if volume == 0:
                     if search_completed:
-                        self._finalize_if_empty()
+                        self._finalize()
                     break
 
                 finding_paths = self._buffer.list_findings()
@@ -83,7 +102,6 @@ class BlockAssembler:
                     break
 
                 assembled_count = len(block.results)
-                assembled_paths = finding_paths[:assembled_count]
                 block_path = self._layout.blocks_dir / f"block_{block.position}.json"
                 atomic_write_bytes(block_path, serialize_block(block))
                 self._append_index_entry(block.position, COMPLETENESS_RUNNING)
@@ -94,11 +112,10 @@ class BlockAssembler:
                         "block_size_bytes": block.serialized_size_bytes,
                     }
                 )
-                self._buffer.remove_findings(assembled_paths)
                 blocks_published += 1
 
                 if search_completed and self._buffer.total_bytes() == 0:
-                    self._finalize_if_empty()
+                    self._finalize()
                     break
 
                 if (
@@ -123,11 +140,81 @@ class BlockAssembler:
                 break
         return total
 
-    def _finalize_if_empty(self) -> None:
-        if self._buffer.total_bytes() != 0:
-            return
-        self._finalize_index()
+    def _finalize(self) -> None:
+        """
+        One-way finalization: re-segment all findings by relevance, write
+        ``blocks_relevance/``, call ``mark_index_finished``, delete buffer.
+
+        Safe to call when buffer is empty (zero findings -> empty relevance set).
+        """
+        relevance_entries = self._build_relevance_blocks()
+        if self._layout.index_path.is_file():
+            mark_index_finished(
+                self._layout.index_path,
+                relevance_blocks=relevance_entries,
+            )
+        else:
+            from code_analysis.core.search_session.atomic_publication import (
+                atomic_write_json,
+            )
+
+            atomic_write_json(
+                self._layout.index_path,
+                {
+                    "blocks": [],
+                    "completeness": COMPLETENESS_FINISHED,
+                    "temporal_blocks": [],
+                    "relevance_blocks": relevance_entries,
+                },
+            )
         self._buffer.delete_buffer()
+
+    def _build_relevance_blocks(self) -> list[dict]:
+        """
+        Read all findings from the buffer, sort by relevance, and write
+        ``blocks_relevance/`` files.  Returns the list of index entries
+        ``{position, size_bytes}`` for the relevance set.
+        """
+        if not self._buffer.buffer_dir.exists():
+            return []
+
+        finding_paths = self._buffer.list_findings()
+        if not finding_paths:
+            return []
+
+        findings = [self._load_finding(p) for p in finding_paths]
+
+        def _sort_key(f: dict) -> tuple:
+            score = f.get("score")
+            score_val = -float(score) if score is not None else 0.0
+            mtime = float(f.get("mtime") or 0.0)
+            result_id = str(f.get("result_id") or "")
+            return (score_val, mtime, result_id)
+
+        findings.sort(key=_sort_key)
+
+        relevance_dir = self._layout.relevance_blocks_dir
+        relevance_dir.mkdir(parents=True, exist_ok=True)
+
+        entries: list[dict] = []
+        position = 0
+        remaining = findings
+        while remaining:
+            position += 1
+            block = assemble_block(
+                remaining,
+                max_block_size_bytes=self._max_block_size_bytes,
+                position=position,
+            )
+            if not block.results:
+                break
+            block_path = relevance_dir / f"block_{block.position}.json"
+            data = serialize_block(block)
+            atomic_write_bytes(block_path, data)
+            entries.append({"position": position, "size_bytes": len(data)})
+            remaining = remaining[len(block.results) :]
+
+        return entries
 
     def _next_block_position(self) -> int:
         highest = 0

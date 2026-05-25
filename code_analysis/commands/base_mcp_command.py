@@ -113,13 +113,47 @@ class BaseMCPCommand(Command):
     def _get_project_id(
         db: DatabaseClient, root_path: Path, project_id: Optional[str] = None
     ) -> Optional[str]:
-        """Resolve or create project ID. Prefer passing project_id and using _resolve_project_root."""
+        """Resolve or create project ID. Prefer passing project_id and using _resolve_project_root.
+
+        When creating a new project, resolves watch_dir_id from the DB so that
+        projects.root_path stores only the project folder name (segment), not an
+        absolute path. This keeps the canonical 3-component scheme consistent:
+        watch_dir_paths.absolute_path / projects.name / files.relative_path.
+        """
         from code_analysis.core.project_root_path import (
             persist_projects_root_path_stored_value,
         )
         from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
         _now_sql = sql_julian_timestamp_now_expr(db)
+
+        def _resolve_watch_dir_id(abs_root: Path) -> Optional[str]:
+            """Return watch_dir_id whose absolute_path is the direct parent of abs_root."""
+            try:
+                rows_result = db.execute(
+                    "SELECT w.watch_dir_id, p.absolute_path FROM watch_dirs w"
+                    " JOIN watch_dir_paths p ON p.watch_dir_id = w.watch_dir_id"
+                    " WHERE p.absolute_path IS NOT NULL",
+                    (),
+                )
+                rows = []
+                if isinstance(rows_result, dict):
+                    rows = rows_result.get("data") or []
+                elif isinstance(rows_result, list):
+                    rows = rows_result
+                for row in rows:
+                    watch_abs = (row.get("absolute_path") or "").strip()
+                    if not watch_abs:
+                        continue
+                    try:
+                        if abs_root.parent.resolve() == Path(watch_abs).resolve():
+                            return str(row["watch_dir_id"])
+                    except (OSError, ValueError):
+                        continue
+            except Exception:
+                pass
+            return None
+
         if project_id:
             project = db.get_project(project_id)
             if project:
@@ -136,9 +170,10 @@ class BaseMCPCommand(Command):
                     },
                 )
             project_name = root_path.name
+            watch_dir_id = _resolve_watch_dir_id(root_path)
             root_stored = persist_projects_root_path_stored_value(
                 project_root_absolute=root_path,
-                watch_dir_id=None,
+                watch_dir_id=watch_dir_id,
                 database=db,
             )
             result = db.execute(
@@ -160,9 +195,10 @@ class BaseMCPCommand(Command):
         if existing_id:
             return existing_id
         new_id = str(uuid.uuid4())
+        watch_dir_id = _resolve_watch_dir_id(root_path)
         root_stored = persist_projects_root_path_stored_value(
             project_root_absolute=root_path,
-            watch_dir_id=None,
+            watch_dir_id=watch_dir_id,
             database=db,
         )
         result = db.execute(

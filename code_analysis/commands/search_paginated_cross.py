@@ -101,6 +101,7 @@ def normalize_cross_finding(
     *,
     index: int,
     require_structural_grep: bool = True,
+    mtime: float = 0.0,
 ) -> Optional[Finding]:
     """Map a cross-search row to a Finding; return None for line-only or unaddressable rows."""
     evidence = raw.get("evidence") or {}
@@ -122,7 +123,7 @@ def normalize_cross_finding(
         file_path=str(raw.get("file_path") or ""),
         stable_id=str(stable_id),
         score=score_for_source(FindingSource.cross, raw),
-        mtime=0.0,
+        mtime=mtime,
     )
 
 
@@ -160,21 +161,12 @@ def _make_block_assembler(
 
         update_manifest_atomic(layout, mutator)
 
-    def _finalize() -> None:
-        if layout.index_path.is_file():
-            mark_index_finished(layout.index_path)
-        else:
-            atomic_write_json(
-                layout.index_path, {"blocks": [], "completeness": COMPLETENESS_FINISHED}
-            )
-
     return BlockAssembler(
         layout,
         RawFindingBuffer(layout.buffer_dir),
         policy.max_block_size_bytes,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
-        finalize_index=_finalize,
     )
 
 
@@ -314,14 +306,49 @@ async def run_paginated_cross(
     def _flush(search_completed: bool = False) -> None:
         assembler.run_until_idle(search_completed=search_completed)
 
+    _mtime_root: list = []
+    _mtime_cache: dict[str, float] = {}
+
+    def _source_mtime(file_path: str) -> float:
+        """Return the source file mtime for a finding, cached per path.
+
+        Resolves the project root once (lazily) and stats the source file so
+        Finding.mtime carries the freshness of the code, used as the relevance
+        tie-break. Returns 0.0 when the path is empty or unavailable.
+        """
+        from pathlib import Path
+
+        if not file_path:
+            return 0.0
+        if file_path in _mtime_cache:
+            return _mtime_cache[file_path]
+        if not _mtime_root:
+            try:
+                _mtime_root.append(command._resolve_project_root(project_id).resolve())
+            except Exception:
+                _mtime_root.append(None)
+        root = _mtime_root[0]
+        value = 0.0
+        if root is not None:
+            try:
+                value = (Path(root) / file_path).stat().st_mtime
+            except OSError:
+                value = 0.0
+        _mtime_cache[file_path] = value
+        return value
+
     def _write_findings(raw_list: list[dict[str, Any]], prefix: str) -> int:
         nonlocal idx
         written = 0
         for raw in raw_list:
             if not isinstance(raw, dict):
                 continue
+            file_path = str(raw.get("file_path") or "")
             finding = normalize_cross_finding(
-                raw, index=idx, require_structural_grep=require_structural
+                raw,
+                index=idx,
+                require_structural_grep=require_structural,
+                mtime=_source_mtime(file_path),
             )
             if finding is not None:
                 buffer.append_finding(f"{prefix}-{idx:06d}", finding.to_dict())

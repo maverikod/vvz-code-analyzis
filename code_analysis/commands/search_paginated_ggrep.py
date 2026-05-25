@@ -28,6 +28,11 @@ from code_analysis.core.search_session.manifest import (
 )
 from code_analysis.core.search_session.policy import load_session_ttl_policy
 from code_analysis.core.search_session.raw_finding_buffer import RawFindingBuffer
+from code_analysis.core.search_session.finding import (
+    Finding,
+    FindingSource,
+    score_for_source,
+)
 from code_analysis.core.search_session.result_index import (
     COMPLETENESS_FINISHED,
     append_block_entry,
@@ -52,17 +57,28 @@ _STRIP_KEYS = frozenset(
 )
 
 
-def normalize_ggrep_match(raw: dict[str, Any], *, index: int) -> dict[str, Any]:
-    """Map a legacy grep match dict to a JSON-safe finding."""
-    return {
-        "result_id": f"grep-{index:06d}",
-        "source": raw.get("source") or "grep",
-        "file_path": str(raw.get("file_path") or ""),
-        "line_number": raw.get("line_number") or raw.get("line"),
-        "preview": raw.get("preview"),
-        "evidence": raw.get("evidence"),
-        "match_text": str(raw.get("match_text") or raw.get("text") or ""),
-    }
+def normalize_ggrep_match(raw: dict[str, Any], *, index: int) -> Optional[Finding]:
+    """Map an enriched grep match to a Finding; return None when no stable node address."""
+    node_ref = (
+        raw.get("node_ref")
+        or (raw.get("evidence") or {}).get("node_ref")
+        or raw.get("block_id")
+        or (raw.get("evidence") or {}).get("block_id")
+        or ""
+    )
+    if not node_ref:
+        return None
+    file_path = str(raw.get("file_path") or raw.get("relative_path") or "")
+    if not file_path:
+        return None
+    return Finding(
+        result_id=f"grep-{index:06d}",
+        source=FindingSource.grep,
+        file_path=file_path,
+        stable_id=str(node_ref),
+        score=score_for_source(FindingSource.grep, raw),
+        mtime=0.0,
+    )
 
 
 def build_ggrep_backend_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -175,7 +191,9 @@ async def run_paginated_ggrep(
     buffer = RawFindingBuffer(layout.buffer_dir)
     for i, raw in enumerate(matches):
         if isinstance(raw, dict):
-            buffer.append_finding(f"grep-{i:06d}", normalize_ggrep_match(raw, index=i))
+            finding = normalize_ggrep_match(raw, index=i)
+            if finding is not None:
+                buffer.append_finding(f"grep-{i:06d}", finding.to_dict())
     assembler = block_assembler_factory(layout, raw_config)
     assembler.run_until_idle(search_completed=True)
     return 1 if (layout.blocks_dir / "block_1.json").is_file() else None

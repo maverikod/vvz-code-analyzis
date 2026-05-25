@@ -31,20 +31,20 @@ class SearchResultIndex:
     - Relevance set: blocks re-segmented by descending relevance after the
       search finishes. Exposed as ``relevance_blocks``; empty until completion.
 
+    The relevance set is considered ready once ``completeness`` is finished and
+    ``relevance_blocks`` is non-empty; no separate flag is stored.
+
     Attributes:
         temporal_blocks: Ordered entries (``position``, ``size_bytes``) for the
             temporal block set published while the search runs.
         completeness: Running or finished completeness marker.
-        reordered: True once the relevance set has been re-segmented and
-            published after completion; False while the search runs.
         relevance_blocks: Ordered entries for the relevance-sorted block set;
-            empty until ``reordered`` is True.
+            empty until the search finishes.
         blocks: Backward-compatible alias mirroring ``temporal_blocks``.
     """
 
     temporal_blocks: list[dict[str, Any]] = field(default_factory=list)
     completeness: str = COMPLETENESS_RUNNING
-    reordered: bool = False
     relevance_blocks: list[dict[str, Any]] = field(default_factory=list)
     blocks: list[dict[str, Any]] = field(default_factory=list)
 
@@ -64,7 +64,6 @@ def _index_to_dict(index: SearchResultIndex) -> dict[str, Any]:
     return {
         "temporal_blocks": temporal,
         "relevance_blocks": list(index.relevance_blocks),
-        "reordered": bool(index.reordered),
         "completeness": index.completeness,
         # Backward-compatible alias: legacy readers expect a flat ``blocks`` key
         # mirroring the temporal set.
@@ -95,13 +94,9 @@ def _index_from_dict(data: dict[str, Any]) -> SearchResultIndex:
     temporal_blocks = _normalize_block_entries(temporal_raw)
     relevance_blocks = _normalize_block_entries(data.get("relevance_blocks"))
     completeness = str(data.get("completeness") or COMPLETENESS_RUNNING)
-    # Legacy indexes have no ``reordered`` flag; treat a populated relevance set
-    # as already reordered for forward compatibility.
-    reordered = bool(data.get("reordered", bool(relevance_blocks)))
     return SearchResultIndex(
         temporal_blocks=temporal_blocks,
         completeness=completeness,
-        reordered=reordered,
         relevance_blocks=relevance_blocks,
     )
 
@@ -127,17 +122,14 @@ def append_block_entry(
         current = read_index(index_path)
         temporal_blocks = list(current.temporal_blocks)
         relevance_blocks = list(current.relevance_blocks)
-        reordered = current.reordered
     else:
         temporal_blocks = []
         relevance_blocks = []
-        reordered = False
 
     temporal_blocks.append({"position": position, "size_bytes": size_bytes})
     updated = SearchResultIndex(
         temporal_blocks=temporal_blocks,
         completeness=completeness,
-        reordered=reordered,
         relevance_blocks=relevance_blocks,
     )
     atomic_write_json(index_path, _index_to_dict(updated))
@@ -153,14 +145,16 @@ def mark_index_finished(
     Mark the index finished and attach the relevance-sorted block set.
 
     Preserves the existing temporal block entries, sets completeness to
-    finished, marks the index as reordered, and records the relevance block
-    entries produced by post-completion re-segmentation.
+    finished, and records the relevance block entries produced by
+    post-completion re-segmentation. Readiness of the relevance set is derived
+    from completeness being finished together with a non-empty relevance set;
+    no separate flag is stored.
 
     Args:
         index_path: Path to the session index JSON.
         relevance_blocks: Entries (``position``, ``size_bytes``) for the
             relevance-sorted block set. None or empty leaves the relevance
-            set empty and reordered False.
+            set empty.
 
     Returns:
         The updated, atomically published SearchResultIndex.
@@ -170,7 +164,6 @@ def mark_index_finished(
     updated = SearchResultIndex(
         temporal_blocks=list(current.temporal_blocks),
         completeness=COMPLETENESS_FINISHED,
-        reordered=bool(relevance),
         relevance_blocks=relevance,
     )
     atomic_write_json(index_path, _index_to_dict(updated))

@@ -23,6 +23,11 @@ from code_analysis.core.search_session.manifest import (
 )
 from code_analysis.core.search_session.policy import load_session_ttl_policy
 from code_analysis.core.search_session.raw_finding_buffer import RawFindingBuffer
+from code_analysis.core.search_session.finding import (
+    EXACT_STRUCTURAL_SCORE,
+    Finding,
+    FindingSource,
+)
 from code_analysis.core.search_session.result_index import (
     COMPLETENESS_FINISHED,
     append_block_entry,
@@ -34,17 +39,22 @@ from code_analysis.core.search_session.service_metadata import (
 from code_analysis.core.search_session.session import SearchSession
 
 
-def normalize_tree_query_finding(raw: dict[str, Any], *, index: int) -> dict[str, Any]:
-    """Map a tree node match dict to a JSON-safe finding."""
-    return {
-        "result_id": f"tree_query-{index:06d}",
-        "source": "tree_query",
-        "file_path": str(raw.get("file_path") or ""),
-        "start_line": raw.get("start_line"),
-        "end_line": raw.get("end_line"),
-        "node_ref": raw.get("stable_id") or raw.get("node_ref"),
-        "selector": raw.get("xpath") or raw.get("selector"),
-    }
+def normalize_tree_query_finding(
+    raw: dict[str, Any], *, index: int
+) -> Optional[Finding]:
+    """Map a tree node match to a Finding; return None when no stable address."""
+    stable_id = str(raw.get("stable_id") or raw.get("node_ref") or "")
+    file_path = str(raw.get("file_path") or "")
+    if not stable_id or not file_path:
+        return None
+    return Finding(
+        result_id=f"tree_query-{index:06d}",
+        source=FindingSource.tree_query,
+        file_path=file_path,
+        stable_id=stable_id,
+        score=EXACT_STRUCTURAL_SCORE,
+        mtime=0.0,
+    )
 
 
 def _make_block_assembler(
@@ -81,21 +91,12 @@ def _make_block_assembler(
 
         update_manifest_atomic(layout, mutator)
 
-    def _finalize() -> None:
-        if layout.index_path.is_file():
-            mark_index_finished(layout.index_path)
-        else:
-            atomic_write_json(
-                layout.index_path, {"blocks": [], "completeness": COMPLETENESS_FINISHED}
-            )
-
     return BlockAssembler(
         layout,
         RawFindingBuffer(layout.buffer_dir),
         policy.max_block_size_bytes,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
-        finalize_index=_finalize,
     )
 
 
@@ -135,7 +136,8 @@ async def run_paginated_tree_query(
     for i, raw in enumerate(raw_matches):
         if isinstance(raw, dict):
             finding = normalize_tree_query_finding(raw, index=i)
-            buffer.append_finding(f"tree_query-{i:06d}", finding)
+            if finding is not None:
+                buffer.append_finding(f"tree_query-{i:06d}", finding.to_dict())
     assembler = block_assembler_factory(layout, raw_config)
     assembler.run_until_idle(search_completed=True)
     return 1 if (layout.blocks_dir / "block_1.json").is_file() else None

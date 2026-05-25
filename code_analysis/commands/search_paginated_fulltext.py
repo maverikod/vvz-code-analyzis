@@ -96,21 +96,12 @@ def _make_block_assembler(
 
         update_manifest_atomic(layout, mutator)
 
-    def _finalize() -> None:
-        if layout.index_path.is_file():
-            mark_index_finished(layout.index_path)
-        else:
-            atomic_write_json(
-                layout.index_path, {"blocks": [], "completeness": COMPLETENESS_FINISHED}
-            )
-
     return BlockAssembler(
         layout,
         RawFindingBuffer(layout.buffer_dir),
         policy.max_block_size_bytes,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
-        finalize_index=_finalize,
     )
 
 

@@ -96,7 +96,7 @@ class Finding:
         """Reconstruct a Finding from a persisted dict."""
         return cls(
             result_id=str(data["result_id"]),
-            source=str(data["source"]),
+            source=FindingSource(data["source"]),
             file_path=str(data["file_path"]),
             stable_id=str(data["stable_id"]),
             score=float(data["score"]),

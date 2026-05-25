@@ -21,7 +21,6 @@ def _make_assembler(
     max_block_size_bytes: int,
     append_index_entry=None,
     update_manifest_metrics=None,
-    finalize_index=None,
 ):
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
@@ -30,7 +29,6 @@ def _make_assembler(
     buffer = RawFindingBuffer(layout.buffer_dir)
     index_entries: list[tuple[int, str]] = []
     metrics_updates: list[dict] = []
-    finalized = {"called": False}
 
     assembler = BlockAssembler(
         layout,
@@ -44,17 +42,14 @@ def _make_assembler(
         ),
         update_manifest_metrics=update_manifest_metrics
         or (lambda metrics: metrics_updates.append(dict(metrics))),
-        finalize_index=finalize_index or (lambda: finalized.update({"called": True})),
     )
-    return assembler, layout, buffer, index_entries, metrics_updates, finalized
+    return assembler, layout, buffer, index_entries, metrics_updates
 
 
 def test_publishes_block_when_threshold_reached(tmp_path) -> None:
-    assembler, layout, buffer, index_entries, metrics_updates, _finalized = (
-        _make_assembler(
-            tmp_path,
-            max_block_size_bytes=40,
-        )
+    assembler, layout, buffer, index_entries, metrics_updates = _make_assembler(
+        tmp_path,
+        max_block_size_bytes=40,
     )
     buffer.append_finding("a", {"id": "a", "body": "1234567890"})
     buffer.append_finding("b", {"id": "b", "body": "1234567890"})
@@ -72,11 +67,9 @@ def test_publishes_block_when_threshold_reached(tmp_path) -> None:
 
 
 def test_final_run_drains_trailing_findings_and_releases_lock(tmp_path) -> None:
-    assembler, layout, buffer, index_entries, _metrics_updates, finalized = (
-        _make_assembler(
-            tmp_path,
-            max_block_size_bytes=10_000,
-        )
+    assembler, layout, buffer, index_entries, _metrics_updates = _make_assembler(
+        tmp_path,
+        max_block_size_bytes=10_000,
     )
     buffer.append_finding("tail", {"id": "tail", "value": 1})
 
@@ -85,7 +78,7 @@ def test_final_run_drains_trailing_findings_and_releases_lock(tmp_path) -> None:
     assert published == 1
     assert (layout.blocks_dir / "block_1.json").is_file()
     assert index_entries == [(1, COMPLETENESS_RUNNING)]
-    assert finalized["called"] is True
+    # _finalize() deletes buffer — verify the real side-effect
     assert buffer.buffer_dir.exists() is False
     assert buffer.lock_path.exists() is False
 
@@ -93,11 +86,9 @@ def test_final_run_drains_trailing_findings_and_releases_lock(tmp_path) -> None:
 def test_exits_without_publishing_when_below_threshold_and_not_completed(
     tmp_path,
 ) -> None:
-    assembler, layout, buffer, index_entries, metrics_updates, finalized = (
-        _make_assembler(
-            tmp_path,
-            max_block_size_bytes=10_000,
-        )
+    assembler, layout, buffer, index_entries, metrics_updates = _make_assembler(
+        tmp_path,
+        max_block_size_bytes=10_000,
     )
     buffer.append_finding("small", {"id": "small"})
 
@@ -107,16 +98,15 @@ def test_exits_without_publishing_when_below_threshold_and_not_completed(
     assert list(layout.blocks_dir.iterdir()) == []
     assert index_entries == []
     assert metrics_updates == []
-    assert finalized["called"] is False
+    # buffer NOT finalized — it must still exist
+    assert buffer.buffer_dir.exists() is True
     assert buffer.lock_path.exists() is False
 
 
 def test_run_until_idle_accumulates_publications(tmp_path) -> None:
-    assembler, layout, buffer, index_entries, _metrics_updates, finalized = (
-        _make_assembler(
-            tmp_path,
-            max_block_size_bytes=10_000,
-        )
+    assembler, layout, buffer, index_entries, _metrics_updates = _make_assembler(
+        tmp_path,
+        max_block_size_bytes=10_000,
     )
     buffer.append_finding("only", {"id": "only"})
 
@@ -125,15 +115,14 @@ def test_run_until_idle_accumulates_publications(tmp_path) -> None:
     assert total == 1
     assert (layout.blocks_dir / "block_1.json").is_file()
     assert index_entries == [(1, COMPLETENESS_RUNNING)]
-    assert finalized["called"] is True
+    # _finalize() deletes buffer
+    assert buffer.buffer_dir.exists() is False
 
 
 def test_second_assembler_exits_when_live_lock_held(tmp_path) -> None:
-    assembler, _layout, buffer, _index_entries, _metrics_updates, _finalized = (
-        _make_assembler(
-            tmp_path,
-            max_block_size_bytes=10,
-        )
+    assembler, _layout, buffer, _index_entries, _metrics_updates = _make_assembler(
+        tmp_path,
+        max_block_size_bytes=10,
     )
     buffer.append_finding("a", {"id": "a", "payload": "x" * 20})
     buffer.append_finding("b", {"id": "b", "payload": "x" * 20})

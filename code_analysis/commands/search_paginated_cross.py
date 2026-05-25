@@ -33,6 +33,11 @@ from code_analysis.core.search_session.manifest import (
 )
 from code_analysis.core.search_session.policy import load_session_ttl_policy
 from code_analysis.core.search_session.raw_finding_buffer import RawFindingBuffer
+from code_analysis.core.search_session.finding import (
+    Finding,
+    FindingSource,
+    score_for_source,
+)
 from code_analysis.core.search_session.result_index import (
     COMPLETENESS_FINISHED,
     append_block_entry,
@@ -96,21 +101,27 @@ def normalize_cross_finding(
     *,
     index: int,
     require_structural_grep: bool = True,
-) -> Optional[dict[str, Any]]:
-    """Map a cross-search row to a finding; return None for line-only grep rows when structural required."""
+) -> Optional[Finding]:
+    """Map a cross-search row to a Finding; return None for line-only grep rows when structural required."""
     evidence = raw.get("evidence") or {}
     source_mode = evidence.get("source_mode") or raw.get("source_mode") or ""
     if require_structural_grep and source_mode == "classic_line":
         return None
-    return {
-        "result_id": f"cross-{index:06d}",
-        "source": "cross",
-        "file_path": str(raw.get("file_path") or ""),
-        "confidence": raw.get("confidence"),
-        "score": raw.get("score"),
-        "evidence": evidence if isinstance(evidence, dict) else {},
-        "source_mode": source_mode,
-    }
+    stable_id = (
+        evidence.get("node_ref")
+        or raw.get("node_ref")
+        or evidence.get("block_id")
+        or raw.get("block_id")
+        or ""
+    )
+    return Finding(
+        result_id=f"cross-{index:06d}",
+        source=FindingSource.CROSS,
+        file_path=str(raw.get("file_path") or ""),
+        stable_id=str(stable_id),
+        score=score_for_source(FindingSource.CROSS, raw),
+        mtime=0.0,
+    )
 
 
 def _make_block_assembler(
@@ -311,7 +322,7 @@ async def run_paginated_cross(
                 raw, index=idx, require_structural_grep=require_structural
             )
             if finding is not None:
-                buffer.append_finding(f"{prefix}-{idx:06d}", finding)
+                buffer.append_finding(f"{prefix}-{idx:06d}", finding.to_dict())
                 idx += 1
                 written += 1
         return written

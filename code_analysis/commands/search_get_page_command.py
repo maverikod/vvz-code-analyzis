@@ -61,6 +61,12 @@ class SearchGetPageCommand(BaseMCPCommand):
                     "default": 1,
                     "description": "1-based block position from job index.",
                 },
+                "ordering": {
+                    "type": "string",
+                    "enum": ["temporal", "relevance"],
+                    "default": "temporal",
+                    "description": "Block set to read: temporal (arrival order) or relevance (score DESC).",
+                },
                 "wait_for_new_results": {
                     "type": "boolean",
                     "default": False,
@@ -94,6 +100,7 @@ class SearchGetPageCommand(BaseMCPCommand):
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         job_id = str(kwargs.get("job_id") or "").strip()
         pos = max(1, int(kwargs.get("block_position") or 1))
+        ordering = str(kwargs.get("ordering") or "temporal")
         wait = bool(kwargs.get("wait_for_new_results", False))
         timeout = float(kwargs.get("wait_timeout_seconds") or 0)
         storage = self._get_shared_storage()
@@ -114,10 +121,16 @@ class SearchGetPageCommand(BaseMCPCommand):
                     code=CLOSED_SESSION,  # type: ignore[arg-type]
                 )
 
+        # Choose block directory based on ordering.
+        if ordering == "relevance":
+            blocks_dir = layout.relevance_blocks_dir
+        else:
+            blocks_dir = layout.blocks_dir
+
         deadline = time.monotonic() + timeout if wait else None
 
         while True:
-            block_path = layout.blocks_dir / f"block_{pos}.json"
+            block_path = blocks_dir / f"block_{pos}.json"
             if block_path.is_file():
                 with open(block_path, encoding="utf-8") as fh:
                     block_data = json.load(fh)
@@ -132,12 +145,20 @@ class SearchGetPageCommand(BaseMCPCommand):
                 )
                 has_more = False
                 if index:
-                    max_pos = max(
-                        (e.get("position", 0) for e in index.blocks), default=0
-                    )
-                    has_more = (
-                        index.completeness == COMPLETENESS_RUNNING or pos < max_pos
-                    )
+                    if ordering == "relevance":
+                        max_pos = max(
+                            (e.get("position", 0) for e in index.relevance_blocks),
+                            default=0,
+                        )
+                        # Relevance set only available after completion; no "more" while running.
+                        has_more = pos < max_pos
+                    else:
+                        max_pos = max(
+                            (e.get("position", 0) for e in index.blocks), default=0
+                        )
+                        has_more = (
+                            index.completeness == COMPLETENESS_RUNNING or pos < max_pos
+                        )
                 # Normalize: block may store results under 'results', 'items', or be a list directly
                 if isinstance(block_data, list):
                     items = block_data
@@ -154,6 +175,7 @@ class SearchGetPageCommand(BaseMCPCommand):
                     data={
                         "job_id": job_id,
                         "block_position": pos,
+                        "ordering": ordering,
                         "items": items,
                         "has_more": has_more,
                         "status": manifest_obj.status if manifest_obj else "unknown",
@@ -168,7 +190,7 @@ class SearchGetPageCommand(BaseMCPCommand):
                 continue
 
             return ErrorResult(
-                message=f"Block {pos} not yet published for job {job_id}.",
+                message=f"Block {pos} not yet published for job {job_id} (ordering={ordering}).",
                 code=BLOCK_NOT_READY,  # type: ignore[arg-type]
             )
 

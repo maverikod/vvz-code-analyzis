@@ -223,3 +223,23 @@ def open_fallback_warning(fallback_reason: str) -> str:
         "Fix the file content and commit with write_mode=commit to restore "
         "structural (node-based) editing."
     )
+
+
+def mode_notice_text(is_invalid: bool, reason: str | None = None) -> str:
+    """Single source of truth for the mode/addressing notice.
+
+    Normal mode -> identifier-based addressing notice.
+    Fallback mode -> line-based addressing warning with the parse-error reason.
+    """
+    if is_invalid:
+        detail = reason or "parse error"
+        return (
+            "Emergency/fallback mode (parse errors). Addressing is line-based "
+            f"(line numbers), NOT by identifiers. Reason: {detail}. Fix syntax "
+            "and commit to restore identifier-based editing."
+        )
+    return (
+        "Normal mode. Address nodes by identifier (node_ref / stable_id from "
+        "preview), NOT by line numbers. Re-run universal_file_preview to get "
+        "current identifiers before editing."
+    )

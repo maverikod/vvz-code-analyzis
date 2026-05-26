@@ -48,6 +48,7 @@ from code_analysis.core.exceptions import ValidationError
 from code_analysis.core.file_handlers.diff_support import unified_diff_text
 from code_analysis.core.git_integration import commit_after_write
 from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    mode_notice_text,
     restore_session_format_after_recovery,
     try_clear_invalid_after_write,
     validate_invalid_session_for_commit,
@@ -270,6 +271,9 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 "diff": diff,
                 "source_sha256_at_open": sha_hex,
                 "is_invalid": session.is_invalid,
+                "mode_notice": mode_notice_text(
+                    session.is_invalid, session.fallback_reason
+                ),
             }
         )
 
@@ -368,6 +372,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         payload = dict(result.data)
         payload.update(recovered)
         payload["is_invalid"] = False
+        payload["mode_notice"] = mode_notice_text(False)
         return SuccessResult(data=payload)
 
     def _sidecar_preview(self, session: EditSession) -> SuccessResult | ErrorResult:
@@ -503,5 +508,8 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 "write_mode": "commit",
                 "diff": diff,
                 "is_invalid": session.is_invalid,
+                "mode_notice": mode_notice_text(
+                    session.is_invalid, session.fallback_reason
+                ),
             }
         )

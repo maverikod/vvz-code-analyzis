@@ -23,6 +23,7 @@ from code_analysis.commands.universal_file_edit.errors import (
     make_error,
 )
 from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    mode_notice_text,
     open_fallback_warning,
 )
 from code_analysis.commands.universal_file_edit.format_group import (
@@ -233,6 +234,8 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             SuccessResult with session_id and available_operations, or ErrorResult
             on failure. When a parse error triggers line-based fallback, the
             response also includes is_invalid, fallback_reason, and warning.
+            Every success response carries mode_notice describing the active mode
+            and addressing scheme (identifier-based vs line-based).
         """
         abs_path = self._resolve_abs_path(project_id, file_path)
         if abs_path is None:
@@ -328,6 +331,9 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             data["is_invalid"] = True
             data["fallback_reason"] = reason
             data["warning"] = open_fallback_warning(reason)
+            data["mode_notice"] = mode_notice_text(True, reason)
+        else:
+            data["mode_notice"] = mode_notice_text(False)
         return SuccessResult(data=data)
 
     def _resolve_abs_path(self, project_id: str, file_path: str) -> Optional[Path]:

@@ -406,24 +406,23 @@ async def process_chunk_only_files(
     self: Any,
     database: Any,
 ) -> Tuple[int, int]:
-    """Vectorize files whose chunks arrived without embeddings (chunk_only mode).
+    """Vectorize per-file chunk batches that arrived without embeddings (chunk_only mode).
 
-    When ``VectorizationWorker.chunk_only`` is True the SVO chunker skips the
-    embedding stage and persists text-only chunks (``embedding_vector IS NULL``).
-    This step runs *before* the regular embed-pass (Step 0) so that the normal
-    FAISS-transfer step (Step 2) sees fully-vectorized chunks.
+    Correct DB access pattern:
+    1. Build file table from DB (read-only query).
+    2. For each file: fetch chunk rows snapshot (read-only).
+    3a. Embed-client success: build UPDATE ops from known params; commit all
+        in a single atomic ``execute_logical_write_operation`` call.
+    3b. Embed-client failure: re-request SVO (full vectorization); build
+        DELETE + UPDATE ops from known params; commit both batches atomically
+        in a single ``execute_logical_write_operation`` call.
 
-    Strategy (per file):
-    1. Collect all un-vectorized chunks for the file.
-    2. Attempt vectorization via embed-client directly.
-    3. On success: write ``embedding_vector`` / ``embedding_model`` back to DB.
-    4. On embed-client failure: delete all chunks for the file and re-request
-       the SVO chunker **with** vectorization enabled (chunk_only=False), then
-       persist the new chunks with embeddings.
+    All SQL params are pre-computed from the snapshot before any write.
+    Every file-level mutation is one atomic transaction.
 
     Args:
         self: VectorizationWorker instance.
-        database: Database client.
+        database: Database client (DatabaseClient RPC or CodeDatabase).
 
     Returns:
         Tuple of (updated_count, error_count).
@@ -440,7 +439,27 @@ async def process_chunk_only_files(
     project_id = getattr(self, "project_id", "")
     md_excl = _sql_exclude_docs_markdown_if_gated(self)
 
-    # Find files that have chunks without embedding_vector (chunk_only artifacts).
+    # Pre-build SQL constants (no multiline strings in ops lists).
+    _EMBED_UPDATE_SQL = (
+        "UPDATE code_chunks"
+        " SET embedding_vector = ?, embedding_model = ?"
+        " WHERE id = ?"
+    )
+    _DELETE_FILE_SQL = (
+        "DELETE FROM code_chunks WHERE file_id = ? AND project_id = ?"
+    )
+    _CHUNK_SELECT_SQL = (
+        "SELECT cc.id, cc.chunk_text"
+        " FROM code_chunks cc"
+        " WHERE cc.file_id = ? AND cc.project_id = ?"
+        "   AND cc.vector_id IS NULL"
+        "   AND cc.embedding_vector IS NULL"
+        "   AND cc.embedding_model IS NULL"
+        "   AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)"
+        " ORDER BY cc.ordinal ASC, cc.id ASC"
+    )
+
+    # Step 1: file table - files that have un-vectorized chunks.
     file_result = database.execute(
         f"""
         SELECT cc.file_id, f.path AS file_path, COUNT(cc.id) AS cnt
@@ -460,12 +479,14 @@ async def process_chunk_only_files(
         (project_id, getattr(self, "max_files_per_pass", 30)),
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
-    files_data = file_result.get("data", []) if isinstance(file_result, dict) else []
+    files_data = (
+        file_result.get("data", []) if isinstance(file_result, dict) else []
+    )
     if not files_data:
         return 0, 0
 
     logger.info(
-        "[chunk_only] %d file(s) need embed-client vectorization", len(files_data)
+        "[chunk_only] %d file(s) have un-vectorized chunks", len(files_data)
     )
 
     for file_row in files_data:
@@ -475,203 +496,192 @@ async def process_chunk_only_files(
         file_id: str = file_row["file_id"]
         file_path: str = file_row.get("file_path", file_id)
 
-        # Select all unvectorized chunks for this file.
-        chunks_result = database.execute(
-            """
-            SELECT cc.id, cc.chunk_text, cc.embedding_model, cc.file_id,
-            cc.source_type, cc.ast_node_type, cc.line, cc.binding_level
-            FROM code_chunks cc
-            WHERE cc.file_id = ? AND cc.project_id = ?
-              AND cc.vector_id IS NULL
-              AND cc.embedding_vector IS NULL
-              AND cc.embedding_model IS NULL
-              AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
-            ORDER BY cc.ordinal ASC, cc.id ASC
-            """,
+        # Step 2: fetch chunk snapshot for this file (fixed before any write).
+        chunk_result = database.execute(
+            _CHUNK_SELECT_SQL,
             (file_id, project_id),
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         chunks = (
-            chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
+            chunk_result.get("data", [])
+            if isinstance(chunk_result, dict)
+            else []
         )
         if not chunks:
             continue
 
-        texts = [r.get("chunk_text") or "" for r in chunks]
-        chunk_ids = [r["id"] for r in chunks]
+        chunk_ids: List[str] = [r["id"] for r in chunks]
+        texts: List[str] = [r.get("chunk_text") or "" for r in chunks]
 
         logger.info(
-            "[chunk_only] file=%s: trying embed-client for %d chunk(s)",
+            "[chunk_only] file=%s: %d chunk(s) to vectorize",
             file_path,
-            len(texts),
+            len(chunks),
         )
 
-        # --- Attempt 1: embed-client direct ---
+        # Step 3a: attempt embed-client vectorization.
         embed_ok = False
-        embeddings: list = []
+        raw_embeddings: list = []
         embedding_model_name: str = ""
         try:
             embedding_client = getattr(svo_mgr, "_embedding_client", None)
             if not embedding_client:
-                raise RuntimeError("No embedding client available")
+                raise RuntimeError("No embedding client configured")
             raw = await embedding_client.cmd("embed", {"texts": texts})
             from code_analysis.core.svo_client_manager_embedding import (
                 _normalize_embed_cmd_response,
             )
-
             data = _normalize_embed_cmd_response(raw)
-            raw_embeddings = data.get("embeddings") or [
+            candidates = data.get("embeddings") or [
                 r.get("embedding") if isinstance(r, dict) else None
                 for r in data.get("results", [])
             ]
-            if raw_embeddings and len(raw_embeddings) == len(texts):
-                # Check for None embeddings — partial failure = treat as full failure.
-                if all(
+            if (
+                candidates
+                and len(candidates) == len(texts)
+                and all(
                     e is not None and isinstance(e, list) and len(e) > 0
-                    for e in raw_embeddings
-                ):
-                    embeddings = raw_embeddings
-                    embedding_model_name = str(data.get("model", "") or "")
-                    embed_ok = True
-                    logger.info(
-                        "[chunk_only] file=%s: embed-client success (%d vectors)",
-                        file_path,
-                        len(embeddings),
-                    )
-                else:
-                    logger.warning(
-                        "[chunk_only] file=%s: embed-client returned None embeddings (%d/%d), falling back to SVO",
-                        file_path,
-                        sum(1 for e in raw_embeddings if e is None),
-                        len(raw_embeddings),
-                    )
+                    for e in candidates
+                )
+            ):
+                raw_embeddings = candidates
+                embedding_model_name = str(data.get("model", "") or "")
+                embed_ok = True
+                logger.info(
+                    "[chunk_only] file=%s: embed-client OK (%d vectors, model=%r)",
+                    file_path,
+                    len(raw_embeddings),
+                    embedding_model_name,
+                )
             else:
                 logger.warning(
-                    "[chunk_only] file=%s: embed-client count mismatch (got %d, need %d), falling back to SVO",
+                    "[chunk_only] file=%s: embed-client incomplete/bad response",
                     file_path,
-                    len(raw_embeddings) if raw_embeddings else 0,
-                    len(texts),
                 )
-        except Exception as e:
+        except Exception as exc:
             logger.warning(
-                "[chunk_only] file=%s: embed-client failed (%s), falling back to SVO with vectorization",
+                "[chunk_only] file=%s: embed-client failed (%s), falling back to SVO",
                 file_path,
-                e,
+                exc,
             )
 
         if embed_ok:
-            # Write embedding_vector + embedding_model back to DB.
-            update_ops = []
-            for chunk_id, emb in zip(chunk_ids, embeddings):
-                update_ops.append(
-                    {
-                        "sql": (
-                            "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?"
-                        ),
-                        "params": [json.dumps(emb), embedding_model_name, chunk_id],
-                    }
-                )
+            # All params known upfront. Commit atomically - counters updated only on success.
+            update_ops: List[Tuple[str, Optional[tuple]]] = [
+                (_EMBED_UPDATE_SQL, (json.dumps(emb), embedding_model_name, cid))
+                for cid, emb in zip(chunk_ids, raw_embeddings)
+            ]
             try:
-                database.execute_batch(
-                    update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
-                )
+                import asyncio as _asyncio
+                lw = getattr(database, "execute_logical_write_operation", None)
+                if callable(lw):
+                    if _asyncio.iscoroutinefunction(lw):
+                        await lw({"batches": [update_ops]})
+                    else:
+                        lw({"batches": [update_ops]})
+                else:
+                    database.execute_batch(
+                        update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+                    )
                 updated_count += len(update_ops)
                 logger.info(
-                    "[chunk_only] file=%s: wrote %d embedding(s) to DB",
+                    "[chunk_only] file=%s: committed %d embedding update(s)",
                     file_path,
                     len(update_ops),
                 )
-            except Exception as e:
+            except Exception as exc:
                 logger.error(
-                    "[chunk_only] file=%s: failed to write embeddings to DB: %s",
+                    "[chunk_only] file=%s: atomic UPDATE failed: %s",
                     file_path,
-                    e,
+                    exc,
                 )
                 error_count += len(update_ops)
             continue
 
-        # --- Attempt 2 (fallback): delete existing chunks, re-request SVO with vectorization ---
+        # Step 3b: embed-client failed - fall back to SVO with full vectorization.
         logger.info(
-            "[chunk_only] file=%s: deleting %d chunk(s) and re-requesting SVO with vectorization",
+            "[chunk_only] file=%s: SVO fallback (will delete %d old chunk(s))",
             file_path,
             len(chunk_ids),
         )
         try:
-            database.execute(
-                "DELETE FROM code_chunks WHERE file_id = ? AND project_id = ?",
-                (file_id, project_id),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-            )
-        except Exception as e:
-            logger.error("[chunk_only] file=%s: delete failed: %s", file_path, e)
-            error_count += len(chunk_ids)
-            continue
-
-        # Re-request SVO with vectorization enabled (chunk_only=False).
-        try:
             t0 = time.time()
             batch_results = await svo_mgr.get_chunks_batch(
-                texts,
-                type="DocBlock",
-                # No chunk_only flag → SVO performs full vectorization.
+                texts, type="DocBlock"
             )
             log_operation_timing(
                 getattr(self, "log_timing", False),
                 logger,
-                "chunk_only_fallback_get_chunks_batch",
+                "chunk_only_svo_fallback",
                 time.time() - t0,
                 file_id=file_id,
                 texts=len(texts),
             )
-        except Exception as e:
+        except Exception as exc:
             logger.error(
-                "[chunk_only] file=%s: SVO fallback chunking failed: %s",
+                "[chunk_only] file=%s: SVO fallback failed: %s",
                 file_path,
-                e,
+                exc,
             )
-            error_count += len(texts)
+            error_count += len(chunk_ids)
             continue
 
-        # Persist newly-vectorized chunks via the shared helper.
-        u_ops, s_ops, u_cnt, e_cnt = _apply_chunker_results_to_db(
+        # Build write ops from SVO results - all params known before any write.
+        svo_update_ops, svo_skip_ops, u_cnt, e_cnt = _apply_chunker_results_to_db(
             chunks, texts, batch_results, self
         )
-        updated_count += u_cnt
-        error_count += e_cnt
-        if u_ops:
-            try:
+
+        if not svo_update_ops and not svo_skip_ops:
+            logger.warning(
+                "[chunk_only] file=%s: SVO returned no usable chunks, skipping",
+                file_path,
+            )
+            error_count += len(chunk_ids)
+            continue
+
+        # DELETE existing + write replacements atomically in one transaction.
+        # batch_0: delete old, batch_1: write new - committed together.
+        delete_ops: List[Tuple[str, Optional[tuple]]] = [
+            (_DELETE_FILE_SQL, (file_id, project_id))
+        ]
+        write_ops = svo_update_ops + svo_skip_ops
+        try:
+            import asyncio as _asyncio
+            lw = getattr(database, "execute_logical_write_operation", None)
+            if callable(lw):
+                if _asyncio.iscoroutinefunction(lw):
+                    await lw({"batches": [delete_ops, write_ops]})
+                else:
+                    lw({"batches": [delete_ops, write_ops]})
+            else:
                 database.execute_batch(
-                    u_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+                    delete_ops + write_ops,
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
-            except Exception as e:
-                logger.error(
-                    "[chunk_only] file=%s: execute_batch after SVO fallback failed: %s",
-                    file_path,
-                    e,
-                )
-                error_count += u_cnt
-                updated_count -= u_cnt
-        if s_ops:
-            try:
-                database.execute_batch(
-                    s_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
-                )
-            except Exception as e:
-                logger.warning(
-                    "[chunk_only] file=%s: vectorization_skipped batch failed: %s",
-                    file_path,
-                    e,
-                )
-        logger.info(
-            "[chunk_only] file=%s: SVO fallback done (updated=%d, errors=%d)",
-            file_path,
-            u_cnt,
-            e_cnt,
-        )
+            # Committed - update counters only after successful write.
+            updated_count += u_cnt
+            error_count += e_cnt
+            logger.info(
+                "[chunk_only] file=%s: SVO fallback committed"
+                " (deleted=%d replaced_with=%d skip=%d errors=%d)",
+                file_path,
+                len(chunk_ids),
+                u_cnt,
+                len(svo_skip_ops),
+                e_cnt,
+            )
+        except Exception as exc:
+            logger.error(
+                "[chunk_only] file=%s: atomic DELETE+write failed: %s",
+                file_path,
+                exc,
+            )
+            # Nothing committed - count old chunk count as errors.
+            error_count += len(chunk_ids)
 
     if updated_count or error_count:
         logger.info(
-            "[chunk_only] total: updated=%d errors=%d",
+            "[chunk_only] done: updated=%d errors=%d",
             updated_count,
             error_count,
         )

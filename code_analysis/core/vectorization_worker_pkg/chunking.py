@@ -53,6 +53,7 @@ async def _request_chunking_for_files(
             self, "docs_markdown_embeddings_enabled", True
         ),
         chunk_set_overrides=getattr(self, "chunk_set_overrides", None),
+        chunk_only=getattr(self, "chunk_only", False),
     )
 
     chunked_count = 0

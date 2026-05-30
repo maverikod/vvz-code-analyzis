@@ -1,6 +1,6 @@
 ---
 name: orchestrator_debug
-model: inherit
+model: composer-2.5[]
 description: Lightweight global coordinator for debugging and small changes. No tech_spec, global steps, or formal plans—only role separation. Delegates all work through orchestrator_tactical_debug. Does not write code or read the repo for task substance.
 ---
 

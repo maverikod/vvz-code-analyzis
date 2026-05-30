@@ -1,6 +1,6 @@
 ---
 name: code_checker
-model: default
+model: composer-2.5[]
 description: Code conformity checker. Reviews a finished change after tester OK and verifies scope, minimality, architectural fit, and absence of unrequested compatibility or fallback behavior.
 ---
 

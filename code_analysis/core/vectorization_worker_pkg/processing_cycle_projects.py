@@ -21,6 +21,7 @@ from ..worker_status_file import (
     write_worker_status,
 )
 from .batch_processor import (
+    process_chunk_only_files,
     process_chunks_missing_embedding_params,
     process_embedding_ready_chunks,
 )
@@ -316,12 +317,30 @@ async def process_projects_in_cycle(
                 worker.project_id = original_project_id_chunking
 
             # Project-cycle Step 2: embedding-ready → FAISS / vector_id
-            write_worker_status(
-                getattr(worker, "status_file_path", None),
-                "assigning_vector_ids",
-                current_file=None,
-                extra={"project_id": project_id},
-            )
+            try:
+                t0_co = time.time()
+                co_updated, co_errors = await process_chunk_only_files(worker, database)
+                log_operation_timing(
+                    getattr(worker, "log_timing", False),
+                    logger,
+                    "Step1_5_chunk_only_vectorize",
+                    time.time() - t0_co,
+                    project_id=project_id,
+                    updated=co_updated,
+                    errors=co_errors,
+                )
+                if co_updated or co_errors:
+                    logger.info(
+                        "[PROJECT_CYCLE STEP 1.5] chunk_only: updated=%d errors=%d project_id=%s",
+                        co_updated, co_errors, project_id,
+                    )
+                    if co_updated > 0:
+                        cycle_activity = True
+            except Exception as e:
+                logger.error(
+                    "[PROJECT_CYCLE STEP 1.5] chunk_only vectorization failed project_id=%s: %s",
+                    project_id, e, exc_info=True,
+                )
             logger.info(
                 "[PROJECT_CYCLE STEP 2] embedding/vectorization project_id=%s",
                 project_id,

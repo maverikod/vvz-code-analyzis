@@ -40,6 +40,7 @@ class VectorizationWorker:
         log_timing: bool = False,
         docs_markdown_embeddings_enabled: bool = True,
         chunk_set_overrides: Optional[Dict[str, str]] = None,
+        chunk_only: bool = False,
         vector_ann_backend: Literal["faiss", "pgvector"] = "faiss",
     ):
         """
@@ -69,6 +70,10 @@ class VectorizationWorker:
                 or FAISS (see ``docs_markdown_vector_gate``).
             chunk_set_overrides: Optional ``code_analysis.vectorization.chunk_set_overrides``
                 mapping (source_type → SVO chunk_set preset) for ``DocstringChunker``.
+            chunk_only: When True, chunking runs normally but embeddings are discarded;
+                chunks are persisted without ``embedding_vector``. Configured via
+                ``code_analysis.vectorization.chunk_only`` or the ``start_worker`` command.
+                Default: False.
             vector_ann_backend: ``faiss`` (SQLite / optional Postgres) or ``pgvector``
                 (PostgreSQL ``embedding_vec`` + HNSW).
         """
@@ -87,6 +92,7 @@ class VectorizationWorker:
         self.status_file_path = Path(status_file_path) if status_file_path else None
         self.log_timing = log_timing
         self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+        self.chunk_only: bool = bool(chunk_only)
         self.chunk_set_overrides: Optional[Dict[str, str]] = (
             dict(chunk_set_overrides) if chunk_set_overrides else None
         )

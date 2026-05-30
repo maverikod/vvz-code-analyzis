@@ -127,6 +127,7 @@ class DocstringChunker:
         log_timing: bool = False,
         docs_markdown_embeddings_enabled: bool = True,
         chunk_set_overrides: Optional[Dict[str, str]] = None,
+        chunk_only: bool = False,
     ) -> None:
         """
         Initialize docstring chunker.
@@ -146,6 +147,9 @@ class DocstringChunker:
                 ``CHUNK_SET_PRESETS`` in svo_client). When absent for a source_type, default
                 logic in ``_chunker_params_for_items`` applies. Invalid values are logged and
                 ignored.
+            chunk_only: When True, embeddings returned by the chunker are discarded and chunks
+                are persisted without ``embedding_vector`` (text-only). Chunking RPC still
+                runs normally; only the vectorization step is suppressed. Default: False.
         """
 
         self.database = database
@@ -155,6 +159,7 @@ class DocstringChunker:
         self.embedding_model = embedding_model
         self.log_timing = log_timing
         self.docs_markdown_embeddings_enabled = bool(docs_markdown_embeddings_enabled)
+        self.chunk_only: bool = bool(chunk_only)
         self._chunk_set_overrides: Dict[str, str] = {}
         if chunk_set_overrides:
             for src_key, preset in chunk_set_overrides.items():
@@ -209,7 +214,12 @@ class DocstringChunker:
             Optional[int],
         ]
     ]:
-        """Build persist rows for one doc item from SVO chunk objects (or [])."""
+        """Build persist rows for one doc item from SVO chunk objects (or []).
+
+        When ``self.chunk_only`` is True the SVO server was called with
+        ``chunk_only=True`` (no embedding stage), so chunks arrive without
+        embeddings. The vectorization worker picks them up later via embed-client.
+        """
         rows: List[
             Tuple[
                 _DocItem,
@@ -375,12 +385,17 @@ class DocstringChunker:
         chunk_set = self._chunk_set_overrides.get(source_type_key) or (
             "technical_text" if is_markdown else "docstring"
         )
-        return {
+        params: Dict[str, Any] = {
             "chunk_set": chunk_set,
             "use_sv": False,
             "language": "en",
             "type": "DocBlock",
         }
+        if self.chunk_only:
+            # Ask SVO not to run the embedding stage; chunks are returned text-only.
+            # The vectorization worker embeds them via embed-client in the next cycle.
+            params["chunk_only"] = True
+        return params
 
     async def _fetch_rows_for_item_with_get_chunks(self, item: _DocItem) -> List[
         Tuple[

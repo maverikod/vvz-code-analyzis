@@ -69,7 +69,6 @@ from code_analysis.commands.preview_command_metadata import (
     get_universal_file_preview_metadata,
 )
 
-
 _GLOB_CHARS = frozenset("*?[")
 
 
@@ -330,6 +329,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
 
             # Tree-temp Sidecar preview: UUID ``node_ref`` delegates drill-down enumeration
             # to NavigationProcedure after Sidecar roots are injected.
+            # JSON Pointer ``node_ref`` uses legacy handler navigation on the draft file.
             nav_kwargs = dict(kwargs)
             nr_probe = kwargs.get("node_ref")
             if isinstance(handler, (JsonFileHandler, YamlFileHandler)) and (
@@ -374,6 +374,8 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 full_text_max_lines=int(kwargs["full_text_max_lines"]),
             )
             nav_kwargs["file_path"] = abs_file_path
+            nav_kwargs["project_root"] = project_root
+            nav_kwargs["rel_file_path"] = kwargs["file_path"]
             # Thread caps through nav_kwargs so open_root receives budget even when
             # resolve_session returns session=None (plain preview, text edit session).
             nav_kwargs["preview_budget"] = budget

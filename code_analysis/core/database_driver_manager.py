@@ -26,41 +26,6 @@ from .constants import (
 logger = logging.getLogger(__name__)
 
 
-def _postgres_in_process_driver_status() -> Optional[Dict[str, Any]]:
-    """If app config uses PostgreSQL, report in-process driver (no subprocess)."""
-    try:
-        from code_analysis.core.config import get_driver_config
-
-        try:
-            from mcp_proxy_adapter.config import get_config
-
-            cfg = get_config()
-            app_config = getattr(cfg, "config_data", {}) or {}
-            if not app_config and getattr(cfg, "config_path", None):
-                import json
-
-                with open(cfg.config_path, "r", encoding="utf-8") as f:
-                    app_config = json.load(f)
-        except Exception:
-            return None
-        dc = get_driver_config(app_config)
-        if not dc or dc.get("type") != "postgres":
-            return None
-        return {
-            "running": True,
-            "pid": None,
-            "socket_path": None,
-            "driver_type": "postgres",
-            "mode": "in_process",
-            "socket_exists": False,
-            "message": (
-                "PostgreSQL driver runs in-process (no database_driver subprocess)"
-            ),
-        }
-    except Exception:
-        return None
-
-
 @dataclass(frozen=True)
 class WorkerStartResult:
     """
@@ -147,17 +112,6 @@ class DatabaseDriverManager:
                 worker_type="database_driver",
                 pid=None,
                 message="Driver config missing 'type' field",
-            )
-
-        if driver_type == "postgres":
-            logger.info(
-                "PostgreSQL uses in-process driver; start_database_driver is a no-op"
-            )
-            return WorkerStartResult(
-                success=True,
-                worker_type="database_driver",
-                pid=None,
-                message="PostgreSQL driver is in-process; subprocess not started",
             )
 
         # Convert sqlite_proxy to sqlite for driver process
@@ -324,10 +278,6 @@ class DatabaseDriverManager:
         Returns:
             Dictionary with driver status information.
         """
-        pg_status = _postgres_in_process_driver_status()
-        if pg_status is not None:
-            return pg_status
-
         workers = self.registry.get_workers("database_driver")
         database_driver_workers = workers.get("database_driver", [])
 

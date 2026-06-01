@@ -179,7 +179,7 @@ def _log_coord(
         parts = [f"{k}={v!r}" for k, v in extra.items() if v is not None]
         if parts:
             base = base + " " + " ".join(parts)
-    logger.debug(base)
+    logger.info(base)
 
 
 def try_acquire_project_activity(

@@ -44,3 +44,27 @@ waves:
       - A-008
     steps:
       - A-009
+  - wave: 5
+    after:
+      - A-009
+    steps:
+      - A-011
+  - wave: 6
+    after:
+      - A-011
+    steps:
+      - A-012
+  - wave: 7
+    parallel:
+      - A-013
+      - A-014
+      - A-015
+      - A-016
+  - wave: 8
+    parallel:
+      - A-017
+      - A-018
+  - wave: 9
+    parallel:
+      - A-019
+      - A-020

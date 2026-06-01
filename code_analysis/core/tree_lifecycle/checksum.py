@@ -35,6 +35,11 @@ from code_analysis.core.search_session.tree_representation import (
     classify_tree_format,
     sidecar_path_for,
 )
+from code_analysis.commands.universal_file_edit.sha_sync_policy import (
+    ShaSyncBranch,
+    ShaSyncDecision,
+    resolve_sha_sync_policy,
+)
 
 
 def compute_content_checksum(content: str) -> str:
@@ -49,6 +54,76 @@ def compute_content_checksum(content: str) -> str:
 def is_tree_valid(content_checksum: str, sidecar_digest: str | None) -> bool:
     """Return True when a sidecar digest exists and matches the content checksum."""
     return sidecar_digest is not None and sidecar_digest == content_checksum
+
+
+class ChecksumSyncPolicy:
+    """ChecksumSyncPolicy (C-006): four-branch tree-vs-source truth decision.
+
+    This is the single mechanism that decides whether a TreeFile (C-003) is
+    current with respect to its SourceFile (C-004), based solely on SHA-256
+    checksums. Checksum computation and verification are the only synchronization
+    trigger; mtime, size, and other file metadata are not used.
+
+    Four-branch decision table (applies uniformly to all formats):
+
+    Branch 1 -- NO_SIDECAR (ShaSyncBranch.NO_SIDECAR):
+        Precondition: no co-located TreeFile exists.
+        Action: build a new tree from the SourceFile content.
+
+    Branch 2 -- SHA_MATCH (ShaSyncBranch.SHA_MATCH):
+        Precondition: TreeFile present; stored checksum == current source
+        checksum.
+        Action: tree is current; no rebuild needed.
+
+    Branch 3 -- SHA_MISMATCH_NO_SESSION (ShaSyncBranch.SHA_MISMATCH_NO_SESSION):
+        Precondition: TreeFile present; checksums differ; no active edit
+        session holds the file.
+        Action: tree is stale; rebuild from SourceFile content.
+
+    Branch 4 -- SHA_MISMATCH_ACTIVE_SESSION
+    (ShaSyncBranch.SHA_MISMATCH_ACTIVE_SESSION):
+        Precondition: TreeFile present; checksums differ; an active edit
+        session holds the file.
+        Action: tree is truth, source copy inside session is stale;
+        do NOT rebuild -- the session tree takes precedence.
+
+    Session-truth invariant (C-006, HRS {a005}):
+        Inside an active edit session the tree is the source of truth.
+        Outside any session the SourceFile (C-004) is the source of truth.
+    """
+
+    #: Re-export the branch enum so callers need only import this class.
+    Branch = ShaSyncBranch
+
+    @staticmethod
+    def decide(
+        *,
+        tree_file_present: bool,
+        stored_checksum: str | None,
+        current_checksum: str,
+        active_session: bool,
+    ) -> ShaSyncDecision:
+        """Run the four-branch decision for one file.
+
+        Args:
+            tree_file_present: True when a co-located TreeFile exists on disk.
+            stored_checksum: SHA-256 hex digest stored in the TreeFile, or None
+                when the TreeFile is absent or its digest is unreadable.
+            current_checksum: SHA-256 hex digest of the current SourceFile
+                content, produced by :func:`compute_content_checksum`.
+            active_session: True when an active edit session currently holds
+                the file; the session tree is the source of truth in that case.
+
+        Returns:
+            A :class:`ShaSyncDecision` whose ``branch`` attribute identifies
+            which of the four branches applies.
+        """
+        return resolve_sha_sync_policy(
+            sidecar_exists=tree_file_present,
+            sidecar_source_sha256=stored_checksum,
+            current_source_sha256=current_checksum,
+            active_session_holds_file=active_session,
+        )
 
 
 def recreate_tree_from_content(
@@ -70,14 +145,11 @@ def recreate_tree_from_content(
     # the per-format builder dependencies lazy (heavy modules).
     if kind == TreeFormatKind.python_cst:
         from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
-        from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
         from code_analysis.core.search_session.tree_representation import (
             _read_cst_digest_and_root,
         )
 
         create_tree_from_code(str(source_abs), content, persist_sidecar=True)
-        if not sidecar_path.is_file():
-            write_sidecar_atomic(source_abs, {"source_sha256": content_checksum})
         _digest, root_stable_id = _read_cst_digest_and_root(source_abs, sidecar_path)
         return TreeRepresentationRef(
             file_path=file_path,
@@ -96,22 +168,28 @@ def recreate_tree_from_content(
 
         if kind == TreeFormatKind.json:
             from code_analysis.core.json_tree.tree_builder import build_tree_from_data
+            from code_analysis.core.tree_temp.json_frontend import (
+                parse_json_source_to_roots,
+            )
 
             data = json.loads(content)
-            tree = build_tree_from_data(data, source_path=str(source_abs))
+            build_tree_from_data(str(source_abs), data)
+            roots = parse_json_source_to_roots(content)
         else:
             import yaml as _yaml
 
+            from code_analysis.core.tree_temp.yaml_frontend import (
+                parse_yaml_source_to_roots,
+            )
             from code_analysis.core.yaml_tree.tree_builder import (
                 build_yaml_tree_from_data,
             )
 
             data = _yaml.safe_load(content)
-            tree = build_yaml_tree_from_data(data, source_path=str(source_abs))
+            build_yaml_tree_from_data(str(source_abs), data)
+            roots = parse_yaml_source_to_roots(content)
 
-        sidecar_text = serialize_sidecar_to_json_text(
-            tree, source_sha256=content_checksum
-        )
+        sidecar_text = serialize_sidecar_to_json_text(content_checksum, roots)
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
         tmp.write_text(sidecar_text, encoding="utf-8")
@@ -123,13 +201,17 @@ def recreate_tree_from_content(
             root_stable_id=_read_tree_temp_root_stable_id(sidecar_path),
         )
 
-    # markdown or plain text — adjacent .tree_sidecar
+    # markdown or plain text — sibling .tree
     from code_analysis.core.structure_extraction.extractor import extract_structure
     from code_analysis.core.search_session.tree_representation import (
         _read_adjacent_root_stable_id,
     )
 
-    extract_structure(str(source_abs), ensure_persisted_tree=True)
+    extract_structure(
+        file_path=str(source_abs),
+        content=content,
+        ensure_persisted_tree=True,
+    )
     payload: dict = {"source_sha256": content_checksum}
     root_stable_id = _read_adjacent_root_stable_id(sidecar_path)
     if root_stable_id is not None:
@@ -173,11 +255,12 @@ def validate_or_recreate_from_content(
             ),
             TreeValidityState.reused,
         )
-    ref = recreate_tree_from_content(
-        kind=kind,
+    # Local import breaks cycle: format_handler → checksum → builder → format_handler.
+    from code_analysis.core.tree_lifecycle.builder import TreeBuilder
+
+    ref = TreeBuilder.build(
         content=content,
         source_abs=source_abs,
-        sidecar_path=sidecar_path,
         file_path=file_path,
         content_checksum=content_checksum,
     )
@@ -225,6 +308,9 @@ def validate_or_recreate_tree_file(
 
 
 __all__ = [
+    "ChecksumSyncPolicy",
+    "ShaSyncBranch",
+    "ShaSyncDecision",
     "compute_content_checksum",
     "is_tree_valid",
     "recreate_tree_from_content",

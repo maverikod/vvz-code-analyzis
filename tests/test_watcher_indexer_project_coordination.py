@@ -324,8 +324,8 @@ def test_busy_project_does_not_stop_whole_watch_dir_cycle(
     pb.mkdir()
     _create_projectid(pa, PA)
     _create_projectid(pb, PB)
-    (pa / "a.py").write_text("# a", encoding="utf-8")
-    (pb / "b.py").write_text("# b", encoding="utf-8")
+    (pa / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (pb / "b.py").write_text("b = 1\n", encoding="utf-8")
     _insert_project(coord_client, pa, PA)
     _insert_project(coord_client, pb, PB)
     # Indexer blocks A; watcher should still process B

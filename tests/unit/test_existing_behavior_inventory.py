@@ -9,14 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 INVENTORY_PATH = (
     Path(__file__).parent.parent.parent
     / "docs/plans/2026-05-21-paginated-search-results/existing_behavior_inventory.yaml"
 )
 
 REQUIRED_COMMAND_NAMES = [
-    "fs_ggrep",
+    "fs_grep",
     "fulltext_search",
     "semantic_search",
     "project_cross_search",
@@ -28,7 +27,7 @@ REQUIRED_COMMAND_NAMES = [
 ]
 
 LEGACY_COMMANDS = {
-    "fs_ggrep",
+    "fs_grep",
     "fulltext_search",
     "semantic_search",
     "project_cross_search",

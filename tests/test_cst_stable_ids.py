@@ -35,6 +35,7 @@ from libcst.metadata import MetadataWrapper, PositionProvider
 from code_analysis.core.cst_tree.tree_finder import find_nodes
 from code_analysis.core.cst_tree.tree_modifier import modify_tree
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
 def _make_db_mock_for_sync() -> MagicMock:
@@ -58,6 +59,7 @@ def _make_db_mock_for_sync() -> MagicMock:
         return [{"affected_rows": 1, "data": None} for _ in ops]
 
     db.execute_batch = MagicMock(side_effect=_batch)
+    db.execute_logical_write_operation = None
     return db
 
 
@@ -171,7 +173,7 @@ def test_save_and_reload_preserve_node_ids(tmp_path: Path) -> None:
     persisted_text = file_path.read_text(encoding="utf-8")
     assert MARKERS_BEGIN not in persisted_text
     assert MARKERS_END not in persisted_text
-    assert (file_path.parent / ".cst" / f"{file_path.stem}.tree").is_file()
+    assert sibling_tree_path(file_path.resolve()).is_file()
 
     reloaded = load_file_to_tree(str(file_path))
     assert reloaded.root_node_id == tree.root_node_id
@@ -276,5 +278,5 @@ def test_sync_with_marked_source_writes_same_root_node_id() -> None:
         file_id=1,
     )
     assert len(root_captured) >= 1
-    (snapshot_id, root_node_id) = root_captured[0]
+    snapshot_id, root_node_id = root_captured[0]
     assert root_node_id == tree.root_node_id

@@ -53,7 +53,6 @@ def normalize_tree_query_finding(
         file_path=file_path,
         stable_id=stable_id,
         score=EXACT_STRUCTURAL_SCORE,
-        mtime=0.0,
     )
 
 

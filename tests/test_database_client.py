@@ -19,9 +19,14 @@ from code_analysis.core.database_client.exceptions import (
     RPCClientError,
     RPCResponseError,
 )
+from code_analysis.core.database_client.rpc_client import RPCClient
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
+
+# Fast-fail when no server/socket exists (default RPC startup_connect_timeout is 30s).
+_FAST_CONNECT_TIMEOUT_SEC = 0.5
+_FAST_CONNECT_POOL_SIZE = 1
 
 
 class TestDatabaseClient:
@@ -439,7 +444,12 @@ class TestDatabaseClient:
     def test_connection_error(self):
         """Test connection error handling."""
         socket_path = "/nonexistent/socket.sock"
-        client = DatabaseClient(socket_path)
+        rpc = RPCClient(
+            socket_path,
+            startup_connect_timeout=_FAST_CONNECT_TIMEOUT_SEC,
+            pool_size=_FAST_CONNECT_POOL_SIZE,
+        )
+        client = DatabaseClient(rpc_client=rpc)
 
         with pytest.raises(ConnectionError):
             client.connect()

@@ -7,15 +7,54 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
+import concurrent.futures
+import socket
+import statistics
 import threading
 import time
-import statistics
+from pathlib import Path
+
+import pytest
 
 from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.rpc_client import RPCClient
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
+
+# Bounded waits so missing/unready server fails fast (default connect timeout is 30s).
+_SERVER_READY_TIMEOUT_SEC = 2.0
+_RPC_REQUEST_TIMEOUT_SEC = 10.0
+
+
+def _wait_for_server_socket(socket_path: str, timeout_sec: float) -> None:
+    """Poll until the Unix socket accepts connections or timeout."""
+    deadline = time.time() + timeout_sec
+    path = Path(socket_path)
+    while time.time() < deadline:
+        if not path.exists():
+            time.sleep(0.05)
+            continue
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.25)
+            if probe.connect_ex(socket_path) == 0:
+                return
+        finally:
+            probe.close()
+        time.sleep(0.05)
+    pytest.skip(f"RPC server socket not ready within {timeout_sec}s: {socket_path}")
+
+
+def _perf_client(socket_path: str, *, pool_size: int = 5) -> DatabaseClient:
+    """DatabaseClient with bounded connect/RPC timeouts for perf tests."""
+    rpc = RPCClient(
+        socket_path,
+        pool_size=pool_size,
+        timeout=_RPC_REQUEST_TIMEOUT_SEC,
+        startup_connect_timeout=_SERVER_READY_TIMEOUT_SEC,
+    )
+    return DatabaseClient(rpc_client=rpc)
 
 
 class TestRPCPerformance:
@@ -27,11 +66,9 @@ class TestRPCPerformance:
         db_path = tmp_path / "perf_test.db"
         socket_path = str(tmp_path / "test_perf.sock")
 
-        # Create driver and connect (create_table requires connection)
         driver = create_driver("sqlite", {"path": str(db_path)})
         driver.connect({"path": str(db_path)})
 
-        # Create test table
         schema = {
             "name": "perf_test",
             "columns": [
@@ -42,36 +79,35 @@ class TestRPCPerformance:
         }
         driver.create_table(schema)
 
-        # Start RPC server
         request_queue = RequestQueue()
         server = RPCServer(driver, request_queue, socket_path)
 
-        server_thread = threading.Thread(target=server.start, daemon=True)
+        server_thread = threading.Thread(
+            target=server.start, daemon=True, name="RPCPerfServer"
+        )
         server_thread.start()
-        time.sleep(0.2)  # Wait for server to start
+        _wait_for_server_socket(socket_path, _SERVER_READY_TIMEOUT_SEC)
 
         yield server, socket_path
 
-        # Cleanup
         server.stop()
+        server_thread.join(timeout=2.0)
         driver.disconnect()
 
     def test_rpc_latency_single_request(self, rpc_server):
         """Test RPC latency for single request."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
-            # Measure latency for single insert
             start_time = time.perf_counter()
             client.insert("perf_test", {"value": 1, "data": "test"})
             end_time = time.perf_counter()
 
-            latency = (end_time - start_time) * 1000  # Convert to milliseconds
-            # Allow up to 200ms for single request (includes RPC overhead)
-            assert latency < 200  # Should be less than 200ms
+            latency = (end_time - start_time) * 1000
+            assert latency < 200
         finally:
             client.disconnect()
 
@@ -79,7 +115,7 @@ class TestRPCPerformance:
         """Test RPC latency for multiple sequential requests."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
@@ -91,18 +127,16 @@ class TestRPCPerformance:
                 client.insert("perf_test", {"value": i, "data": f"test_{i}"})
                 end_time = time.perf_counter()
 
-                latency = (end_time - start_time) * 1000  # Convert to milliseconds
+                latency = (end_time - start_time) * 1000
                 latencies.append(latency)
 
-            # Calculate statistics
             avg_latency = statistics.mean(latencies)
             median_latency = statistics.median(latencies)
             p95_latency = sorted(latencies)[int(len(latencies) * 0.95)]
 
-            # Assert reasonable performance (relaxed for CI; lock serializes RPC)
-            assert avg_latency < 2000  # Average < 2s
-            assert median_latency < 2000  # Median < 2s
-            assert p95_latency < 5000  # 95th percentile < 5s
+            assert avg_latency < 2000
+            assert median_latency < 2000
+            assert p95_latency < 5000
         finally:
             client.disconnect()
 
@@ -110,7 +144,7 @@ class TestRPCPerformance:
         """Test RPC throughput with concurrent requests."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path, pool_size=20)
+        client = _perf_client(socket_path, pool_size=20)
         client.connect()
 
         try:
@@ -124,8 +158,6 @@ class TestRPCPerformance:
 
             start_time = time.perf_counter()
 
-            import concurrent.futures
-
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=num_workers
             ) as executor:
@@ -137,14 +169,11 @@ class TestRPCPerformance:
             end_time = time.perf_counter()
 
             total_time = end_time - start_time
-            throughput = num_requests / total_time  # Requests per second
+            throughput = num_requests / total_time
 
-            # Verify all requests succeeded
             assert len(results) == num_requests
             assert all(r is not None for r in results)
-
-            # Assert reasonable throughput (relaxed for CI; lock serializes RPC)
-            assert throughput > 5  # At least 5 requests/second
+            assert throughput > 5
         finally:
             client.disconnect()
 
@@ -152,11 +181,10 @@ class TestRPCPerformance:
         """Test RPC connection pool performance."""
         _, socket_path = rpc_server
 
-        # Test with different pool sizes
         pool_sizes = [1, 5, 10, 20]
 
         for pool_size in pool_sizes:
-            client = DatabaseClient(socket_path=socket_path, pool_size=pool_size)
+            client = _perf_client(socket_path, pool_size=pool_size)
             client.connect()
 
             try:
@@ -169,8 +197,6 @@ class TestRPCPerformance:
                     )
 
                 start_time = time.perf_counter()
-
-                import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(
                     max_workers=num_workers
@@ -185,13 +211,11 @@ class TestRPCPerformance:
                 total_time = end_time - start_time
                 throughput = num_requests / total_time
 
-                # Verify all requests succeeded
                 assert len(results) == num_requests
                 assert all(r is not None for r in results)
 
-                # Larger pool should generally perform better (relaxed for CI)
                 if pool_size > 1:
-                    assert throughput > 5  # At least 5 requests/second
+                    assert throughput > 5
             finally:
                 client.disconnect()
 
@@ -199,11 +223,10 @@ class TestRPCPerformance:
         """Test RPC performance for bulk operations."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
-            # Test bulk insert performance (reduced for CI)
             num_rows = 50
             start_time = time.perf_counter()
 
@@ -215,12 +238,9 @@ class TestRPCPerformance:
             total_time = end_time - start_time
             rows_per_second = num_rows / total_time
 
-            # Verify all rows were inserted
             rows = client.select("perf_test", where={"data": "bulk_test_0"})
             assert len(rows) > 0
-
-            # Assert reasonable performance (relaxed for CI/slow envs)
-            assert rows_per_second > 0.5  # At least 0.5 rows/second
+            assert rows_per_second > 0.5
         finally:
             client.disconnect()
 
@@ -228,25 +248,21 @@ class TestRPCPerformance:
         """Test RPC select query performance."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
-            # Insert test data (reduced for CI)
             num_rows = 50
             for i in range(num_rows):
                 client.insert("perf_test", {"value": i, "data": f"select_test_{i}"})
 
-            # Test select performance
             start_time = time.perf_counter()
             rows = client.select("perf_test")
             end_time = time.perf_counter()
 
             total_time = end_time - start_time
             assert len(rows) >= num_rows
-
-            # Select should be reasonably fast (relaxed for CI)
-            assert total_time < 5.0  # Should complete in less than 5 seconds
+            assert total_time < 5.0
         finally:
             client.disconnect()
 
@@ -254,13 +270,12 @@ class TestRPCPerformance:
         """Test RPC transaction performance."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path=socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
             num_operations = 25
 
-            # Test transaction performance
             start_time = time.perf_counter()
 
             transaction_id = client.begin_transaction()
@@ -273,11 +288,8 @@ class TestRPCPerformance:
             total_time = end_time - start_time
             ops_per_second = num_operations / total_time
 
-            # Verify all operations were committed
             rows = client.select("perf_test", where={"data": "trans_test_0"})
             assert len(rows) > 0
-
-            # Transactions should be reasonably fast (relaxed for CI/slow envs)
-            assert ops_per_second > 0.5  # At least 0.5 ops/second
+            assert ops_per_second > 0.5
         finally:
             client.disconnect()

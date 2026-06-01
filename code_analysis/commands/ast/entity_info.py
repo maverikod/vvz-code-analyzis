@@ -30,10 +30,17 @@ def _is_valid_uuid4(value: Optional[str]) -> bool:
 
 
 def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Return all entities that have file_path (from JOIN).
-    """
-    return [dict(row) for row in rows if row.get("file_path")]
+    """Return entities with file_path and a valid UUID4 cst_node_id."""
+    entities: List[Dict[str, Any]] = []
+    for row in rows:
+        if not row.get("file_path"):
+            continue
+        raw_cst_node_id = row.get("cst_node_id")
+        cst_node_id = raw_cst_node_id if isinstance(raw_cst_node_id, str) else None
+        if not _is_valid_uuid4(cst_node_id):
+            continue
+        entities.append(dict(row))
+    return entities
 
 
 class GetCodeEntityInfoMCPCommand(BaseMCPCommand):

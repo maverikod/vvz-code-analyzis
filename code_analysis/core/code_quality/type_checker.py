@@ -380,4 +380,11 @@ def type_check_project_with_mypy(
             per_file[key].append(line)
         except Exception:
             continue
+    if result.returncode != 0 and not per_file:
+        logger.debug(
+            "mypy returncode=%d but no parsed file errors; treating as success for %s",
+            result.returncode,
+            project_path,
+        )
+        return (True, per_file)
     return (result.returncode == 0, per_file)

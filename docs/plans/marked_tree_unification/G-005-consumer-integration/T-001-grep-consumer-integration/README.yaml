@@ -51,4 +51,5 @@ atomic_steps:
 - A-005
 - A-006
 - A-007
+- A-008
 status: ready_for_review

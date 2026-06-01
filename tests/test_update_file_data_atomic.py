@@ -259,7 +259,7 @@ def test_add_file_revives_soft_deleted_row_same_path(
     rows_deleted = _fetchall(
         ipc_client,
         "SELECT id FROM files WHERE project_id = ? AND path = ?",
-        (pid, "tombstone_probe.py"),
+        (pid, abs_path),
     )
     assert len(rows_deleted) == 1
     fid2 = ipc_client.add_file(
@@ -273,7 +273,7 @@ def test_add_file_revives_soft_deleted_row_same_path(
     row = _fetchone(
         ipc_client,
         "SELECT id, deleted, lines FROM files WHERE project_id = ? AND path = ?",
-        (pid, "tombstone_probe.py"),
+        (pid, abs_path),
     )
     assert row is not None
     assert int(row.get("deleted") or 0) == 0
@@ -281,6 +281,6 @@ def test_add_file_revives_soft_deleted_row_same_path(
     dup_count = _fetchone(
         ipc_client,
         "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND path = ?",
-        (pid, "tombstone_probe.py"),
+        (pid, abs_path),
     )
     assert int(dup_count["c"]) == 1

@@ -11,6 +11,8 @@ from mcp_proxy_adapter.commands.command_registry import registry
 from mcp_proxy_adapter.commands.hooks import hooks
 from mcp_proxy_adapter.commands.result import SuccessResult
 from mcp_proxy_adapter.integrations.queuemgr_integration import (
+    QueueJobStatus,
+    get_global_queue_manager,
     init_global_queue_manager,
     shutdown_global_queue_manager,
 )
@@ -21,11 +23,35 @@ from code_analysis.commands.fs_grep_command import FsGrepCommand
 from code_analysis.commands.project_cross_search_command import (
     ProjectCrossSearchCommand,
 )
+from code_analysis.core.search_inline_execution import (
+    cancel_pending_enqueue_start_tasks,
+)
 from code_analysis.core.search_timeouts import (
     EXECUTION_MODE_QUEUED,
     INTERNAL_EXECUTION_MODE_KEY,
     SEARCH_INLINE_TIMEOUT_SECONDS,
 )
+
+
+async def _drain_queue_jobs_before_shutdown() -> None:
+    """Stop auto-queued jobs and pending start tasks so pytest loop teardown is clean."""
+    await cancel_pending_enqueue_start_tasks()
+    try:
+        queue_manager = await get_global_queue_manager()
+    except Exception:
+        return
+    active_statuses = {QueueJobStatus.PENDING, QueueJobStatus.RUNNING}
+    try:
+        jobs = await queue_manager.list_jobs()
+    except Exception:
+        return
+    for job in jobs:
+        if job.status in active_statuses:
+            try:
+                await queue_manager.stop_job(job.job_id)
+            except Exception:
+                pass
+    await cancel_pending_enqueue_start_tasks()
 
 
 @pytest_asyncio.fixture
@@ -40,6 +66,7 @@ async def queue_manager():
     try:
         yield
     finally:
+        await _drain_queue_jobs_before_shutdown()
         await shutdown_global_queue_manager()
 
 

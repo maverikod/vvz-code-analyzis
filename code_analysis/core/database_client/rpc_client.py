@@ -211,9 +211,6 @@ class RPCClient:
             if is_process_control
             else self.max_retries
         )
-        # Do not wait on pool for process-control; get connection immediately or create new.
-        pool_wait = 0.0 if is_process_control else 1.0
-
         # Retry logic
         last_error: Optional[Exception] = None
         for attempt in range(effective_retries):
@@ -222,7 +219,6 @@ class RPCClient:
                 out = self._send_request(
                     request=request,
                     request_timeout=effective_timeout,
-                    pool_wait_timeout=pool_wait,
                 )
                 elapsed_ms = (time.perf_counter() - t_rpc) * 1000.0
                 logger.debug(
@@ -268,7 +264,6 @@ class RPCClient:
         self,
         request: RPCRequest,
         request_timeout: Optional[float] = None,
-        pool_wait_timeout: float = 1.0,
     ) -> RPCResponse:
         """Send RPC request and receive response.
 
@@ -289,9 +284,11 @@ class RPCClient:
         rid_short = _short_request_id(request.request_id)
         socket_source = "unknown"
         try:
-            # Get connection from pool or create new one
+            # Get connection from pool or create new one.
+            # Connections are not returned after use (one request per socket), so an
+            # empty pool will not refill; use non-blocking get to avoid idle waits.
             try:
-                sock = self._connection_pool.get(timeout=pool_wait_timeout)
+                sock = self._connection_pool.get_nowait()
                 socket_source = "pool"
             except Empty:
                 socket_source = "after_pool_empty"

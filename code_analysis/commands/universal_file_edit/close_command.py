@@ -127,6 +127,7 @@ class UniversalFileCloseCommand(BaseMCPCommand):
         lock = read_lockfile_pid(session.abs_path)
         if lock is None or lock[1] == session.session_id:
             delete_lockfile(session.abs_path)
+        session.core.close()
         release_session(session_id)
         return SuccessResult(data=payload)
 
@@ -144,7 +145,6 @@ class UniversalFileCloseCommand(BaseMCPCommand):
         """
         from code_analysis.core.cst_tree import tree_builder as cst_builder
         from code_analysis.core.cst_tree.tree_sidecar import (
-            promote_pending_sidecar_to_final,
             read_sidecar_payload,
             verify_sidecar_against_source,
             write_sidecar_atomic,
@@ -156,7 +156,6 @@ class UniversalFileCloseCommand(BaseMCPCommand):
             tree.module.code, payload
         ):
             return {"success": True, "draft_rebuilt": False}
-        promote_pending_sidecar_to_final(session.abs_path)
         write_sidecar_atomic(session.abs_path, tree)
         return {"success": True, "draft_rebuilt": True}
 

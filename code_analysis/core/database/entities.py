@@ -8,7 +8,9 @@ email: vasilyvz@gmail.com
 import json
 import logging
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .logical_write_submit import submit_logical_write_or_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +220,8 @@ def add_import(
     result = self._lastrowid()
     assert result is not None
     return result
+
+
 def add_code_content(
     self,
     file_id: int,
@@ -316,3 +320,60 @@ def add_usage(
     result = self._lastrowid()
     assert result is not None
     return result
+
+
+def replace_usages_for_file(
+    self: Any,
+    file_id: int,
+    rows: Sequence[Dict[str, Any]],
+) -> int:
+    """
+    Replace all usage rows for a file: delete existing rows, then insert new ones.
+
+    Uses ``execute_logical_write_operation`` when available and not inside a
+    transaction; uses a single ``execute_batch`` when already in a transaction
+    (avoids nested logical writes); otherwise falls back to sequential
+    ``execute_batch`` per inner batch.
+
+    Args:
+        file_id: File ID whose usages are replaced.
+        rows: Usage dicts with line, usage_type, target_type, target_name,
+            and optional target_class, context.
+
+    Returns:
+        Number of usage rows inserted (len(rows)).
+    """
+    delete_op: Tuple[str, Tuple[Any, ...]] = (
+        "DELETE FROM usages WHERE file_id = ?",
+        (file_id,),
+    )
+    insert_sql = """
+        INSERT INTO usages (file_id, line, usage_type, target_type, target_name, target_class, context)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+    insert_ops: List[Tuple[str, Tuple[Any, ...]]] = [
+        (
+            insert_sql,
+            (
+                file_id,
+                row["line"],
+                row["usage_type"],
+                row["target_type"],
+                row["target_name"],
+                row.get("target_class"),
+                row.get("context"),
+            ),
+        )
+        for row in rows
+    ]
+
+    in_tx = getattr(self, "_in_transaction", lambda: False)()
+    if in_tx:
+        self.execute_batch([delete_op, *insert_ops])
+    else:
+        batches: List[List[Tuple[str, Tuple[Any, ...]]]] = [[delete_op]]
+        if insert_ops:
+            batches.append(insert_ops)
+        submit_logical_write_or_fallback(self, batches)
+
+    return len(rows)

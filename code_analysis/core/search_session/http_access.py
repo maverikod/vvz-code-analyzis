@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from code_analysis.core.search_session.directory import (
+    BLOCKS_DIRNAME,
+    BUFFER_DIRNAME,
+    INDEX_FILENAME,
+    MANIFEST_FILENAME,
+    RELEVANCE_BLOCKS_DIRNAME,
+    SERVICE_METADATA_FILENAME,
     SearchSessionDirectoryLayout,
     resolve_search_sessions_root,
 )
@@ -49,11 +55,12 @@ def resolve_session_layout(
     root = resolve_search_sessions_root(ctx.config_dir) / job_id
     return SearchSessionDirectoryLayout(
         root=root,
-        manifest_path=root / "manifest.json",
-        index_path=root / "index.json",
-        service_metadata_path=root / "service_metadata.json",
-        blocks_dir=root / "blocks",
-        buffer_dir=root / "buffer",
+        manifest_path=root / MANIFEST_FILENAME,
+        index_path=root / INDEX_FILENAME,
+        service_metadata_path=root / SERVICE_METADATA_FILENAME,
+        blocks_dir=root / BLOCKS_DIRNAME,
+        relevance_blocks_dir=root / RELEVANCE_BLOCKS_DIRNAME,
+        buffer_dir=root / BUFFER_DIRNAME,
     )
 
 

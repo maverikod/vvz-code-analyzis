@@ -180,3 +180,5 @@ backups/
 .cst/
 .trees/
 .terminals/
+
+*.tree

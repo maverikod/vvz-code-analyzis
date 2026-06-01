@@ -9,19 +9,19 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from ...constants import FILE_MODIFICATION_TOLERANCE, LAST_MODIFIED_EPSILON
+from ...constants import LAST_MODIFIED_EPSILON
 from ...exceptions import ProjectIdMismatchError
-from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, sql_julian_timestamp_now_expr
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    sql_julian_timestamp_now_expr,
+)
 
-from .helpers import _last_modified_to_unix
+from .update_checksum_guard import (
+    _is_fk_or_integrity_error,
+    try_skip_reindex_by_checksum,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _is_fk_or_integrity_error(exc: Exception) -> bool:
-    """True if the exception is FK or integrity-related (no silent swallow)."""
-    s = str(exc).lower()
-    return "foreign key" in s or "integrity" in s
 
 
 def update_file_data(
@@ -141,7 +141,22 @@ def update_file_data(
 
         file_id = file_record["id"]
 
-        # Get current file mtime from disk
+        # Checksum-based skip guard (C-022): only when structural index already exists.
+        ast_exists = self._fetchone(
+            "SELECT 1 AS ok FROM ast_trees WHERE file_id = ? LIMIT 1",
+            (file_id,),
+        )
+        if Path(abs_path).exists() and ast_exists is not None:
+            skip_result = try_skip_reindex_by_checksum(
+                self,
+                abs_path=abs_path,
+                file_id=file_id,
+                file_record=file_record,
+            )
+            if skip_result is not None:
+                return skip_result
+
+        # Disk mtime for analyze-path bookkeeping (not a skip criterion).
         try:
             file_path_obj = Path(abs_path)
             if file_path_obj.exists():
@@ -150,52 +165,6 @@ def update_file_data(
                 current_mtime = file_record.get("last_modified", 0)
         except Exception:
             current_mtime = file_record.get("last_modified", 0)
-
-        # Skip full reindex if file exists and stored last_modified matches disk mtime
-        # *and* we already have structural index (AST). Watcher rows often have
-        # last_modified equal to disk mtime on first insert; without this guard,
-        # index_file would "succeed" with skipped=True while never creating AST/chunks.
-        normalized_lm = _last_modified_to_unix(file_record.get("last_modified"))
-        ast_exists = self._fetchone(
-            "SELECT 1 AS ok FROM ast_trees WHERE file_id = ? LIMIT 1",
-            (file_id,),
-        )
-        if (
-            Path(abs_path).exists()
-            and normalized_lm is not None
-            and abs(normalized_lm - current_mtime) <= FILE_MODIFICATION_TOLERANCE
-            and ast_exists is not None
-        ):
-            try:
-                self._clear_file_vectors(file_id)
-                self._execute(
-                    "UPDATE files SET needs_chunking = 1 WHERE id = ?",
-                    (file_id,),
-                )
-                self._commit()
-            except Exception as e:
-                logger.error(
-                    "Error clearing vectors / setting needs_chunking on skip: %s",
-                    e,
-                    exc_info=True,
-                )
-                err_msg = (
-                    f"Database foreign key constraint error: {e}"
-                    if _is_fk_or_integrity_error(e)
-                    else f"Failed on skip path: {e}"
-                )
-                return {
-                    "success": False,
-                    "error": err_msg,
-                    "file_path": abs_path,
-                    "file_id": file_id,
-                }
-            return {
-                "success": True,
-                "file_path": abs_path,
-                "file_id": file_id,
-                "skipped": True,
-            }
 
         # Clear all old records (including CST trees - fixed in Phase 1)
         try:

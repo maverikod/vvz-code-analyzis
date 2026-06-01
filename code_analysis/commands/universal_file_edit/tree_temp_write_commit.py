@@ -19,15 +19,15 @@ import yaml
 if TYPE_CHECKING:
     from code_analysis.commands.universal_file_edit.session import EditSession
 
-from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.universal_file_edit.format_group import FORMAT_TREE_TEMP
 from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
     serialize_tree_temp_roots,
 )
 from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.edit_session import SessionTreeValidity
 from code_analysis.core.file_handlers.diff_support import unified_diff_text
-from code_analysis.core.tree_temp.sidecar_payload import serialize_sidecar_to_json_text
-from code_analysis.core.tree_temp.sidecar_paths import resolve_trees_sidecar_path
+from code_analysis.core.tree_lifecycle.builder import TreeBuilder
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
 def serialize_tree_temp_session_source(session: "EditSession") -> str:
@@ -36,6 +36,8 @@ def serialize_tree_temp_session_source(session: "EditSession") -> str:
         raise ValueError(
             "serialize_tree_temp_session_source requires tree-temp format_group",
         )
+    if session.core.tree_validity == SessionTreeValidity.VALID:
+        return session.core.session_source_path.read_text(encoding="utf-8")
     if session.tree_temp_roots is not None:
         return cast(
             str,
@@ -126,42 +128,23 @@ def commit_tree_temp_to_disk(
     session.dirty = False
 
     if session.tree_temp_roots is not None:
-        project_root = Path(BaseMCPCommand._resolve_project_root(project_id)).resolve()
-        sidecar_path = resolve_trees_sidecar_path(
-            project_root,
-            Path(session.file_path),
-        )
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        payload_txt = serialize_sidecar_to_json_text(
-            sha256_hex,
-            session.tree_temp_roots,
-        )
-        sc_tmp_path: str | None = None
+        sidecar_path = sibling_tree_path(session.abs_path.resolve())
         try:
             if sidecar_path.exists():
                 bm.create_backup(
                     sidecar_path,
                     command="universal_file_write",
                 )
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".tree",
-                dir=str(sidecar_path.parent),
-                delete=False,
-                encoding="utf-8",
-            ) as sctmp:
-                sctmp.write(payload_txt)
-                sc_tmp_path = sctmp.name
-            os.replace(sc_tmp_path, str(sidecar_path))
-            sc_tmp_path = None
+            TreeBuilder.build(
+                content=code,
+                source_abs=session.abs_path.resolve(),
+                file_path=session.file_path,
+                content_checksum=sha256_hex,
+            )
         except OSError:
-            if sc_tmp_path:
-                Path(sc_tmp_path).unlink(missing_ok=True)
             bm.restore_file(rel_str)
             raise
         except Exception as exc:
-            if sc_tmp_path:
-                Path(sc_tmp_path).unlink(missing_ok=True)
             bm.restore_file(rel_str)
             raise ValueError(
                 f"Tree-temp sidecar serialization failed: {exc}",

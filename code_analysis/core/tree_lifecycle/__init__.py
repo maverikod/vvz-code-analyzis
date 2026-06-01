@@ -7,7 +7,12 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from code_analysis.core.tree_lifecycle.builder import TreeBuilder
+from code_analysis.core.tree_lifecycle.lifecycle import TreeLifecycle
 from code_analysis.core.tree_lifecycle.checksum import (
+    ChecksumSyncPolicy,
+    ShaSyncBranch,
+    ShaSyncDecision,
     compute_content_checksum,
     is_tree_valid,
     recreate_tree_from_content,
@@ -16,6 +21,11 @@ from code_analysis.core.tree_lifecycle.checksum import (
 )
 
 __all__ = [
+    "ChecksumSyncPolicy",
+    "ShaSyncBranch",
+    "ShaSyncDecision",
+    "TreeBuilder",
+    "TreeLifecycle",
     "compute_content_checksum",
     "is_tree_valid",
     "recreate_tree_from_content",

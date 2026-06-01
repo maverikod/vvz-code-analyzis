@@ -42,6 +42,7 @@ from code_analysis.core.file_identity import (
     file_row_path_match_values,
     relative_path_for_project,
 )
+from code_analysis.core.tree_lifecycle.checksum import validate_or_recreate_tree_file
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ class ProcessorQueueOps:
     ) -> None:
         row = get_project_activity(database, project_id) or {}
         owner_t = row.get("owner_type", "unknown")
-        logger.debug(
+        logger.info(
             "[WORKER_COORD] watcher skip project_id=%s reason=%s owner_type=%s",
             project_id,
             reason_activity,
@@ -301,7 +302,7 @@ class ProcessorQueueOps:
             watch_dir_id_queue = _watch_dir_id_for_project(self.database, project_id)
 
             watch_dirs: List[Path] = list(self.watch_dirs_resolved)
-            Row = Tuple[str, str, int, float, bool]
+            Row = Tuple[str, str, int, float, bool, str]
             new_rows: List[Row] = []
             changed_rows: List[Row] = []
 
@@ -347,7 +348,30 @@ class ProcessorQueueOps:
                     rel_posix = relative_path_for_project(abs_path, pr)
                     path_obj = Path(abs_path)
                     lines, has_docstring = collect_file_disk_metadata(path_obj)
-                    out.append((rel_posix, abs_path, lines, mtime, has_docstring))
+                    try:
+                        tree_ref, _tree_state = validate_or_recreate_tree_file(
+                            project_root=pr,
+                            file_path=rel_posix,
+                        )
+                    except (FileNotFoundError, ValueError, OSError) as e:
+                        logger.error(
+                            "[QUEUE] TreeLifecycle could not ensure a valid tree "
+                            "for batch path %s: %s",
+                            abs_path,
+                            e,
+                            exc_info=True,
+                        )
+                        return False
+                    out.append(
+                        (
+                            rel_posix,
+                            abs_path,
+                            lines,
+                            mtime,
+                            has_docstring,
+                            tree_ref.content_checksum,
+                        )
+                    )
                     return True
                 except Exception as e:
                     logger.debug(
@@ -391,13 +415,13 @@ class ProcessorQueueOps:
             insert_new_sql = (
                 "INSERT INTO files "
                 "(id, project_id, watch_dir_id, path, relative_path, lines, last_modified, "
-                "has_docstring, created_at, updated_at) "
-                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now}, {_now}) "
+                "has_docstring, tree_checksum, created_at, updated_at) "
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {_now}, {_now}) "
                 "ON CONFLICT (project_id, path) DO NOTHING"
             )
             update_chunk_sql = f"UPDATE files SET needs_chunking = 1 WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
             n_ins = 0
-            for rel_path, abs_path, lines, mtime, has_doc in new_rows:
+            for rel_path, abs_path, lines, mtime, has_doc, tree_checksum in new_rows:
                 n_ins += 1
                 if use_lease and wdb and owner_id and has_work:
                     _watcher_heartbeat_n(
@@ -419,6 +443,7 @@ class ProcessorQueueOps:
                         lines,
                         mtime,
                         has_doc,
+                        tree_checksum,
                     ),
                 )
                 r1, r2, r3 = file_row_path_match_values(
@@ -439,11 +464,19 @@ class ProcessorQueueOps:
                     raise RuntimeError("watcher phase updating_changed not acquired")
             update_changed_sql = (
                 "UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
+                "tree_checksum = ?, "
                 f"deleted = FALSE, updated_at = {_now} "
                 f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
             )
             n_ch = 0
-            for _rel_path, abs_path, lines, mtime, has_doc in changed_rows:
+            for (
+                _rel_path,
+                abs_path,
+                lines,
+                mtime,
+                has_doc,
+                tree_checksum,
+            ) in changed_rows:
                 n_ch += 1
                 if use_lease and wdb and owner_id and has_work:
                     _watcher_heartbeat_n(
@@ -467,7 +500,7 @@ class ProcessorQueueOps:
                 )
                 self._db_execute(
                     update_changed_sql,
-                    (lines, mtime, has_doc, project_id, r1, r2, r3),
+                    (lines, mtime, has_doc, tree_checksum, project_id, r1, r2, r3),
                 )
                 self._db_execute(update_chunk_sql, (project_id, r1, r2, r3))
                 stats["changed_files"] += 1
@@ -632,6 +665,9 @@ class ProcessorQueueOps:
         """Queue file for processing (add/update in DB, mark needs_chunking)."""
         from ..path_normalization import normalize_file_path
         from ..exceptions import ProjectIdMismatchError
+        from code_analysis.core.tree_lifecycle.checksum import (
+            validate_or_recreate_tree_file,
+        )
 
         try:
             watch_dirs: List[str | Path] = list(self.watch_dirs_resolved)
@@ -695,12 +731,35 @@ class ProcessorQueueOps:
             )
 
             try:
+                rel_for_tree = str(
+                    Path(abs_file_path)
+                    .resolve()
+                    .relative_to(Path(project_root).resolve())
+                )
+            except ValueError:
+                rel_for_tree = str(abs_file_path)
+            try:
+                tree_ref, _tree_state = validate_or_recreate_tree_file(
+                    project_root=Path(project_root),
+                    file_path=rel_for_tree,
+                )
+            except (FileNotFoundError, ValueError, OSError) as e:
+                logger.error(
+                    "[QUEUE] TreeLifecycle could not ensure a valid tree for %s: %s",
+                    abs_file_path,
+                    e,
+                    exc_info=True,
+                )
+                return False
+
+            try:
                 file_record = ensure_file_row_for_disk_path(
                     self.database,
                     project_id,
                     abs_file_path,
                     last_modified=mtime,
                     mark_needs_chunking=True,
+                    tree_checksum=tree_ref.content_checksum,
                 )
                 if not file_record or file_record.get("id") is None:
                     logger.error(

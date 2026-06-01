@@ -1,5 +1,5 @@
 """
-CST tree sidecar files: ``{dir}/.cst/{name}.tree`` next to ``{dir}/{name}.py``.
+CST tree sidecar files: ``{dir}/{stem}.{ext}.tree`` next to ``{dir}/{stem}.{ext}``.
 
 Persists node identity (path -> node_id) and full metadata for fast reload when
 the source SHA-256 matches. Replaces trailing ``# cst-node-ids`` blocks in source.
@@ -18,6 +18,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from code_analysis.tree.sibling_convention import sibling_tree_path
+
 from .models import CSTTree, TreeNodeMetadata
 from .node_id_markers import PersistedNodeIds, build_marker_path
 from .node_stable_id import logical_source_from_module
@@ -26,27 +28,6 @@ logger = logging.getLogger(__name__)
 
 SIDECAR_HEADER_PREFIX = "CST_TREE_V1 sha256="
 SIDECAR_FORMAT_VERSION = 1
-PENDING_SIDECAR_SUBDIR = "_pending"
-
-
-def sidecar_path_for_py(py_path: Path) -> Path:
-    """Return ``{parent}/.cst/{stem}.tree`` for a ``.py`` path."""
-    p = py_path.resolve()
-    return p.parent / ".cst" / f"{p.stem}.tree"
-
-
-def pending_sidecar_path_for_py(py_path: Path) -> Path:
-    """Return ``{parent}/.cst/_pending/{stem}.tree`` while ``.py`` is not on disk yet."""
-    p = py_path.resolve()
-    return p.parent / ".cst" / PENDING_SIDECAR_SUBDIR / f"{p.stem}.tree"
-
-
-def resolve_sidecar_write_path(py_path: Path) -> Path:
-    """Final sidecar path when ``.py`` exists, otherwise pending temp path."""
-    py_path = py_path.resolve()
-    if py_path.is_file():
-        return sidecar_path_for_py(py_path)
-    return pending_sidecar_path_for_py(py_path)
 
 
 def compute_source_sha256_hex(logical_source: str) -> str:
@@ -169,20 +150,16 @@ def parse_sidecar_file(content: str) -> Optional[Dict[str, Any]]:
 
 
 def read_sidecar_payload(py_path: Path) -> Optional[Dict[str, Any]]:
-    """Read and parse sidecar for ``py_path`` (final or pending) if it exists."""
-    py_path = py_path.resolve()
-    for path in (sidecar_path_for_py(py_path), pending_sidecar_path_for_py(py_path)):
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as e:
-            logger.debug("Could not read sidecar %s: %s", path, e)
-            continue
-        payload = parse_sidecar_file(text)
-        if payload is not None:
-            return payload
-    return None
+    """Read and parse sibling tree file for ``py_path`` if it exists."""
+    path = sibling_tree_path(py_path.resolve())
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.debug("Could not read sidecar %s: %s", path, e)
+        return None
+    return parse_sidecar_file(text)
 
 
 def render_sidecar_file(payload: Dict[str, Any]) -> str:
@@ -196,35 +173,6 @@ def render_sidecar_file(payload: Dict[str, Any]) -> str:
     return f"{SIDECAR_HEADER_PREFIX}{sha}\n{body_json}\n"
 
 
-def _cleanup_empty_pending_dir(pending_path: Path) -> None:
-    pending_dir = pending_path.parent
-    if pending_dir.name != PENDING_SIDECAR_SUBDIR:
-        return
-    try:
-        pending_dir.rmdir()
-    except OSError:
-        pass
-
-
-def promote_pending_sidecar_to_final(py_path: Path) -> Optional[Path]:
-    """Rename ``.cst/_pending/{stem}.tree`` to ``.cst/{stem}.tree`` when ``.py`` exists."""
-    py_path = py_path.resolve()
-    if not py_path.is_file():
-        return None
-    pending = pending_sidecar_path_for_py(py_path)
-    final = sidecar_path_for_py(py_path)
-    if not pending.is_file():
-        return final if final.is_file() else None
-    final.parent.mkdir(parents=True, exist_ok=True)
-    if final.is_file():
-        pending.unlink(missing_ok=True)
-        _cleanup_empty_pending_dir(pending)
-        return final
-    os.replace(str(pending), str(final))
-    _cleanup_empty_pending_dir(pending)
-    return final
-
-
 def persist_tree_sidecar_after_edit(tree: CSTTree) -> Path:
     """Rewrite CST sidecar after each mutation (final or pending path)."""
     if not tree.file_path:
@@ -233,16 +181,13 @@ def persist_tree_sidecar_after_edit(tree: CSTTree) -> Path:
 
 
 def write_sidecar_atomic(py_path: Path, tree: CSTTree) -> Path:
-    """Write ``.cst/<stem>.tree`` or pending temp sidecar (atomic replace)."""
+    """Write sibling ``.tree`` sidecar next to source (atomic replace)."""
     py_path = py_path.resolve()
-    final_path = sidecar_path_for_py(py_path)
-    pending_path = pending_sidecar_path_for_py(py_path)
-    target_path = final_path if py_path.is_file() else pending_path
+    target_path = sibling_tree_path(py_path)
     payload = tree_to_sidecar_payload(tree)
-    cst_dir = target_path.parent
-    cst_dir.mkdir(parents=True, exist_ok=True)
+    parent_dir = target_path.parent
     text = render_sidecar_file(payload)
-    fd, tmp_name = tempfile.mkstemp(suffix=".tree.tmp", dir=str(cst_dir))
+    fd, tmp_name = tempfile.mkstemp(suffix=".tree.tmp", dir=str(parent_dir))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -253,9 +198,6 @@ def write_sidecar_atomic(py_path: Path, tree: CSTTree) -> Path:
         except OSError:
             pass
         raise
-    if py_path.is_file() and pending_path.is_file() and pending_path != target_path:
-        pending_path.unlink(missing_ok=True)
-        _cleanup_empty_pending_dir(pending_path)
     return target_path
 
 

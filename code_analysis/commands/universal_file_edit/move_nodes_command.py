@@ -25,7 +25,18 @@ from code_analysis.commands.universal_file_edit.errors import (
     make_error,
 )
 from code_analysis.commands.universal_file_edit.format_group import FORMAT_SIDECAR
-from code_analysis.commands.universal_file_edit.session import EditSession, get_session
+from code_analysis.commands.universal_file_edit.session import (
+    EditSession,
+    apply_tree_operation,
+    get_session,
+)
+from code_analysis.core.edit_session.edit_operations_adapter import (
+    command_op_to_edit_operation,
+    resolve_node_ref_to_short_id,
+    session_has_valid_tree,
+)
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+from code_analysis.tree.edit_operations import EditOperationError
 from code_analysis.commands.universal_file_edit.sidecar_cst_apply import (
     run_sidecar_cst_edit_batch,
 )
@@ -35,12 +46,10 @@ from code_analysis.commands.universal_file_edit.move_nodes_command_metadata impo
 from code_analysis.core.cst_tree.models import CSTTree, ROOT_NODE_ID_SENTINEL
 from code_analysis.core.cst_tree.node_stable_id import logical_source_from_module
 from code_analysis.core.cst_tree.tree_builder import get_tree, load_file_to_tree
-from code_analysis.core.cst_tree.tree_sidecar import sidecar_path_for_py
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
-def _sorted_node_ids_by_tree_order(
-    tree: CSTTree, node_ids: List[str]
-) -> List[str]:
+def _sorted_node_ids_by_tree_order(tree: CSTTree, node_ids: List[str]) -> List[str]:
     """Return node_ids sorted by start_line in the tree (source order)."""
 
     def _line(nid: str) -> int:
@@ -48,6 +57,100 @@ def _sorted_node_ids_by_tree_order(
         return meta.start_line if meta else 0
 
     return sorted(node_ids, key=_line)
+
+
+def _ordered_short_ids(session: EditSession, node_refs: List[str]) -> List[int]:
+    """Return short_ids sorted by source line order using session MAP + source parse."""
+    sections = parse_tree_file(
+        session.core.session_tree_path.read_text(encoding="utf-8")
+    )
+    short_ids = [resolve_node_ref_to_short_id(ref, sections) for ref in node_refs]
+    from code_analysis.tree.handler_registry import HandlerRegistry
+
+    handler = HandlerRegistry.default_registry().resolve(session.abs_path)
+    source = session.core.session_source_path.read_text(encoding="utf-8")
+    nodes = handler.parse_content(Path(session.file_path), source)
+    line_by_sid = {int(node.short_id): idx for idx, node in enumerate(nodes)}
+    return sorted(short_ids, key=lambda sid: line_by_sid.get(sid, sid))
+
+
+def _run_valid_session_move_batch(
+    session: EditSession,
+    source_node_ids: List[str],
+    target_node_id: Optional[str],
+    parent_node_id: Optional[str],
+    position: str,
+) -> SuccessResult | ErrorResult:
+    """Move sibling blocks via MOVE EditOperation on the in-session unified tree."""
+    from code_analysis.core.backup_manager import BackupManager
+
+    try:
+        bm = BackupManager(root_dir=session.core.project_root)
+        bm.create_backup(
+            session.core.session_source_path, command="universal_file_move_nodes"
+        )
+    except Exception as exc:
+        return error_result_for_edit(
+            f"Backup before move failed: {exc}",
+            WRITE_FAILED,
+            {"path": str(session.core.session_source_path)},
+        )
+
+    tree_snapshot = session.core.session_tree_path.read_text(encoding="utf-8")
+    source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
+
+    def _rollback() -> None:
+        session.core.session_tree_path.write_text(tree_snapshot, encoding="utf-8")
+        session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
+
+    try:
+        ordered_sids = _ordered_short_ids(session, source_node_ids)
+        if target_node_id is not None:
+            anchor_ref: str | int = target_node_id
+            move_pos = position
+        else:
+            anchor_ref = parent_node_id or ROOT_NODE_ID_SENTINEL
+            move_pos = position
+
+        anchor_sid: Optional[int] = None
+        for sid in ordered_sids:
+            sections = parse_tree_file(
+                session.core.session_tree_path.read_text(encoding="utf-8")
+            )
+            if anchor_sid is None:
+                op_dict: Dict[str, Any] = {
+                    "type": "move",
+                    "node_id": str(sid),
+                    "target_node_id": target_node_id,
+                    "parent_node_id": parent_node_id,
+                    "position": move_pos,
+                }
+            else:
+                op_dict = {
+                    "type": "move",
+                    "node_id": str(sid),
+                    "target_node_id": str(anchor_sid),
+                    "position": "after",
+                }
+            edit_op = command_op_to_edit_operation(op_dict, sections)
+            apply_tree_operation(session, edit_op)
+            anchor_sid = sid
+    except (EditOperationError, ValueError) as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc),
+            "INVALID_OPERATION",
+            {"source_node_ids": source_node_ids},
+        )
+    except Exception as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc), WRITE_FAILED, {"path": str(session.abs_path)}
+        )
+
+    return SuccessResult(
+        data={"success": True, "updated": True, "moved": len(source_node_ids)}
+    )
 
 
 def _run_sidecar_move_batch(
@@ -63,6 +166,15 @@ def _run_sidecar_move_batch(
     replaced after successful validation via compile(). On failure the
     temp files are deleted and the original session is untouched.
     """
+    if session_has_valid_tree(session.core):
+        return _run_valid_session_move_batch(
+            session,
+            source_node_ids,
+            target_node_id,
+            parent_node_id,
+            position,
+        )
+
     # --- Resolve original tree ---
     tid = session.tree_id
     tree = get_tree(tid) if tid else None
@@ -85,7 +197,10 @@ def _run_sidecar_move_batch(
             return error_result_for_edit(
                 f"Node not found: {nid}",
                 "STALE_NODE_ID",
-                {"stable_id": nid, "hint": "Re-call universal_file_preview with session_id."},
+                {
+                    "stable_id": nid,
+                    "hint": "Re-call universal_file_preview with session_id.",
+                },
             )
 
     # --- Step 1: remember source text for each node (before any mutation) ---
@@ -106,8 +221,8 @@ def _run_sidecar_move_batch(
     # --- Step 2: copy the source file to .py.tmp ---
     orig_path = session.abs_path
     tmp_path = orig_path.with_suffix(".py.tmp")
-    tmp_sidecar = sidecar_path_for_py(tmp_path)
-    orig_sidecar = sidecar_path_for_py(orig_path)
+    tmp_sidecar = sibling_tree_path(tmp_path.resolve())
+    orig_sidecar = sibling_tree_path(orig_path.resolve())
 
     def _cleanup_tmp() -> None:
         try:
@@ -121,20 +236,17 @@ def _run_sidecar_move_batch(
 
     try:
         import shutil
+
         shutil.copy2(str(orig_path), str(tmp_path))
     except Exception as exc:
-        return error_result_for_edit(
-            str(exc), WRITE_FAILED, {"path": str(tmp_path)}
-        )
+        return error_result_for_edit(str(exc), WRITE_FAILED, {"path": str(tmp_path)})
 
     # --- Step 3: load tree from the copy ---
     try:
         tmp_tree = load_file_to_tree(str(tmp_path))
     except Exception as exc:
         _cleanup_tmp()
-        return error_result_for_edit(
-            str(exc), PARSE_ERROR, {"path": str(tmp_path)}
-        )
+        return error_result_for_edit(str(exc), PARSE_ERROR, {"path": str(tmp_path)})
 
     # --- Step 4: build a temporary session pointing at the copy ---
     # replace() is dataclasses.replace — creates a copy with abs_path = tmp_path.
@@ -197,9 +309,7 @@ def _run_sidecar_move_batch(
             os.replace(str(tmp_sidecar), str(orig_sidecar))
     except Exception as exc:
         _cleanup_tmp()
-        return error_result_for_edit(
-            str(exc), WRITE_FAILED, {"path": str(orig_path)}
-        )
+        return error_result_for_edit(str(exc), WRITE_FAILED, {"path": str(orig_path)})
 
     # --- Step 8: reload original session tree from updated file ---
     try:
@@ -208,7 +318,9 @@ def _run_sidecar_move_batch(
     except Exception:
         pass  # session will reload on next access
 
-    return SuccessResult(data={"success": True, "updated": True, "moved": len(ordered_ids)})
+    return SuccessResult(
+        data={"success": True, "updated": True, "moved": len(ordered_ids)}
+    )
 
 
 class UniversalFileMoveNodesCommand(BaseMCPCommand):
@@ -223,7 +335,9 @@ class UniversalFileMoveNodesCommand(BaseMCPCommand):
 
     version = "1.0.0"
 
-    descr = "Move a block of sibling CST nodes to a new position in the same file session."
+    descr = (
+        "Move a block of sibling CST nodes to a new position in the same file session."
+    )
 
     category = "file_management"
 

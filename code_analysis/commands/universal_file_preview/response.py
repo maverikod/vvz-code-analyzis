@@ -44,9 +44,12 @@ def build_envelope(
     """
     focus = navigation_result.focus_node
     focus_text = focus.attributes.get("text") if focus.attributes else None
+    node_ref_out: str | int = focus.node_ref
+    if navigation_result.short_id_refs and focus.node_ref.isdigit():
+        node_ref_out = int(focus.node_ref)
     focus_dict = {
         "node_kind": focus.node_kind.value,
-        "node_ref": focus.node_ref,
+        "node_ref": node_ref_out,
         "type": focus.type_label,
         "name": focus.name,
         "attributes": {
@@ -64,9 +67,12 @@ def build_envelope(
 
     blocks_list = []
     for b in navigation_result.selected_blocks:
+        block_ref: str | int = b.node_ref
+        if navigation_result.short_id_refs and b.node_ref.isdigit():
+            block_ref = int(b.node_ref)
         block_dict: dict[str, Any] = {
             "node_kind": b.node_kind.value,
-            "node_ref": b.node_ref,
+            "node_ref": block_ref,
             "summary": b.summary,
         }
         if b.text is not None:

@@ -112,6 +112,7 @@ class BlockAssembler:
                         "block_size_bytes": block.serialized_size_bytes,
                     }
                 )
+                self._buffer.remove_findings(finding_paths[:assembled_count])
                 blocks_published += 1
 
                 if search_completed and self._buffer.total_bytes() == 0:
@@ -187,9 +188,8 @@ class BlockAssembler:
         def _sort_key(f: dict) -> tuple:
             score = f.get("score")
             score_val = -float(score) if score is not None else 0.0
-            mtime = float(f.get("mtime") or 0.0)
             result_id = str(f.get("result_id") or "")
-            return (score_val, mtime, result_id)
+            return (score_val, result_id)
 
         findings.sort(key=_sort_key)
 

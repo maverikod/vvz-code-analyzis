@@ -19,10 +19,19 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 def _session_and_layout(tmp_path: Path):
-    from code_analysis.core.search_session.directory import provision_search_session_directory
+    from code_analysis.core.search_session.directory import (
+        provision_search_session_directory,
+    )
+
     search_id = str(uuid.uuid4())
-    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
-    session = SearchSession(search_id=search_id, state=SearchSessionState.running, directory_path=layout.root)
+    layout = provision_search_session_directory(
+        config_dir=tmp_path, search_id=search_id
+    )
+    session = SearchSession(
+        search_id=search_id,
+        state=SearchSessionState.running,
+        directory_path=layout.root,
+    )
     return session, layout
 
 
@@ -39,11 +48,17 @@ def _fake_assembler_factory(layout, raw_config):
 
 
 def test_normalize_ggrep_match() -> None:
-    raw = {"file_path": "d.py", "line_number": 5, "match_text": "grep hit"}
+    raw = {
+        "file_path": "d.py",
+        "line_number": 5,
+        "match_text": "grep hit",
+        "node_ref": "node-1",
+    }
     finding = normalize_ggrep_match(raw, index=2)
-    assert finding["result_id"] == "grep-000002"
-    assert finding["source"] == "grep"
-    assert finding["file_path"] == "d.py"
+    assert finding is not None
+    assert finding.result_id == "grep-000002"
+    assert finding.source == "grep"
+    assert finding.file_path == "d.py"
 
 
 def test_build_ggrep_backend_params_structural_default() -> None:
@@ -60,7 +75,9 @@ async def test_run_paginated_ggrep_returns_1_on_matches(tmp_path: Path) -> None:
     session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command.execute = AsyncMock(
-        return_value=SuccessResult(data={"matches": [{"file_path": "d.py", "line_number": 1}]})
+        return_value=SuccessResult(
+            data={"matches": [{"file_path": "d.py", "line_number": 1}]}
+        )
     )
     pos = await run_paginated_ggrep(
         command=command,

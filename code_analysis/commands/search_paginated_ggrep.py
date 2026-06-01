@@ -77,7 +77,6 @@ def normalize_ggrep_match(raw: dict[str, Any], *, index: int) -> Optional[Findin
         file_path=file_path,
         stable_id=str(node_ref),
         score=score_for_source(FindingSource.grep, raw),
-        mtime=0.0,
     )
 
 

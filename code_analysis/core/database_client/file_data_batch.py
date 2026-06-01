@@ -17,6 +17,10 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..database.logical_write_submit import (
+    execute_all_batches_in_transaction,
+    submit_logical_write_or_fallback,
+)
 from .objects.class_function import Class, Function
 from .objects.method_import import Import, Method
 
@@ -433,34 +437,6 @@ def build_file_data_atomic_batches(
     return (batches, meta)
 
 
-def execute_all_batches_in_transaction(
-    database: Any,
-    batches: List[List[Tuple[str, Any]]],
-    transaction_id: str,
-    *,
-    file_path: str,
-    file_id: Any,
-) -> Optional[Dict[str, Any]]:
-    """
-    Run logical-write batch groups on an existing transaction connection.
-
-    Returns:
-        None on success, or an error-shaped dict on the first batch failure.
-    """
-    try:
-        for batch_ops in batches:
-            database.execute_batch(batch_ops, transaction_id=transaction_id)
-    except Exception as e:
-        logger.exception("execute_batch failed for %s", file_path)
-        return {
-            "success": False,
-            "error": str(e),
-            "file_path": file_path,
-            "file_id": file_id,
-        }
-    return None
-
-
 def update_file_data_atomic_batch(
     database: Any,
     file_id: str,
@@ -521,77 +497,42 @@ def update_file_data_atomic_batch(
         return {**meta, "success": True}
 
     lock_held = False
-    own_tid: Optional[str] = None
-    own_tid = database.begin_transaction()
-    if not own_tid:
-        return {
-            "success": False,
-            "error": "Database transaction could not be started",
-            "error_code": "TRANSACTION_ERROR",
-            "file_path": file_path,
-            "file_id": file_id,
-        }
+    try:
+        if not skip_file_edit_lock:
+            if not acquire_file_edit_lock_with_retry(
+                database, file_id, transaction_id=None
+            ):
+                return {
+                    "success": False,
+                    "error": (
+                        "File is being edited by another live process (file edit lock). "
+                        "Try again shortly."
+                    ),
+                    "error_code": "FILE_EDIT_LOCKED",
+                    "file_path": file_path,
+                    "file_id": file_id,
+                }
+            lock_held = True
 
-    if not skip_file_edit_lock:
-        if not acquire_file_edit_lock_with_retry(
-            database, file_id, transaction_id=own_tid
-        ):
-            try:
-                database.rollback_transaction(own_tid)
-            except Exception:
-                pass
-            own_tid = None
+        try:
+            submit_logical_write_or_fallback(database, batches)
+        except Exception as e:
+            logger.exception("logical write failed for %s", file_path)
             return {
                 "success": False,
-                "error": (
-                    "File is being edited by another live process (file edit lock). "
-                    "Try again shortly."
-                ),
-                "error_code": "FILE_EDIT_LOCKED",
+                "error": str(e),
                 "file_path": file_path,
                 "file_id": file_id,
             }
-        lock_held = True
-
-    err = execute_all_batches_in_transaction(
-        database,
-        batches,
-        own_tid,
-        file_path=file_path,
-        file_id=file_id,
-    )
-    if err is not None:
-        try:
-            database.rollback_transaction(own_tid)
-        except Exception:
-            pass
-        own_tid = None
-        return err
-
-    # Clear editing_pid on the same backend connection before commit so we never
-    # rely on a second pool connection after commit (PostgreSQL deadlock / crash).
-    if lock_held:
-        try:
-            release_file_edit_lock(database, file_id, transaction_id=own_tid)
-        except Exception:
-            logger.warning(
-                "release_file_edit_lock before commit failed for file_id=%s",
-                file_id,
-                exc_info=True,
-            )
+    finally:
+        if lock_held:
             try:
-                database.rollback_transaction(own_tid)
+                release_file_edit_lock(database, file_id, transaction_id=None)
             except Exception:
-                pass
-            own_tid = None
-            return {
-                "success": False,
-                "error": "Failed to release file edit lock before commit",
-                "error_code": "FILE_EDIT_LOCK_RELEASE_ERROR",
-                "file_path": file_path,
-                "file_id": file_id,
-            }
+                logger.warning(
+                    "release_file_edit_lock failed for file_id=%s",
+                    file_id,
+                    exc_info=True,
+                )
 
-    database.commit_transaction(own_tid)
-    own_tid = None
     return {**meta, "success": True}

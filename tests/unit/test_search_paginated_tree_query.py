@@ -17,10 +17,19 @@ from code_analysis.core.search_session.session import SearchSession, SearchSessi
 
 
 def _session_and_layout(tmp_path: Path):
-    from code_analysis.core.search_session.directory import provision_search_session_directory
+    from code_analysis.core.search_session.directory import (
+        provision_search_session_directory,
+    )
+
     search_id = str(uuid.uuid4())
-    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
-    session = SearchSession(search_id=search_id, state=SearchSessionState.running, directory_path=layout.root)
+    layout = provision_search_session_directory(
+        config_dir=tmp_path, search_id=search_id
+    )
+    session = SearchSession(
+        search_id=search_id,
+        state=SearchSessionState.running,
+        directory_path=layout.root,
+    )
     return session, layout
 
 
@@ -45,11 +54,11 @@ def test_normalize_tree_query_finding() -> None:
         "xpath": "//FunctionDef",
     }
     finding = normalize_tree_query_finding(raw, index=5)
-    assert finding["result_id"] == "tree_query-000005"
-    assert finding["source"] == "tree_query"
-    assert finding["file_path"] == "e.py"
-    assert finding["node_ref"] == "node-1"
-    assert finding["selector"] == "//FunctionDef"
+    assert finding is not None
+    assert finding.result_id == "tree_query-000005"
+    assert finding.source == "tree_query"
+    assert finding.file_path == "e.py"
+    assert finding.stable_id == "node-1"
 
 
 @pytest.mark.asyncio
@@ -57,7 +66,9 @@ async def test_run_paginated_tree_query_returns_1_on_matches(tmp_path: Path) -> 
     session, layout = _session_and_layout(tmp_path)
 
     def scanner(xpath, file_pattern, project_id):
-        return [{"file_path": "e.py", "start_line": 1, "end_line": 5, "stable_id": "n1"}]
+        return [
+            {"file_path": "e.py", "start_line": 1, "end_line": 5, "stable_id": "n1"}
+        ]
 
     pos = await run_paginated_tree_query(
         params={"project_id": "pid", "xpath": "//FunctionDef", "paginated": True},

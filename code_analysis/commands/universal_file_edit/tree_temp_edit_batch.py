@@ -23,15 +23,337 @@ from code_analysis.commands.universal_file_edit.errors import (
     make_error,
 )
 from code_analysis.commands.universal_file_edit.format_group import FORMAT_TREE_TEMP
-from code_analysis.commands.universal_file_edit.session import EditSession
+from code_analysis.commands.universal_file_edit.session import (
+    EditSession,
+    apply_source_mutation,
+    apply_tree_operation,
+)
 from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
     apply_single_tree_temp_mutation,
     serialize_tree_temp_roots,
 )
+from code_analysis.commands.universal_file_edit.insert_position import (
+    coalesce_tree_temp_insert_position,
+)
+from code_analysis.core.edit_session import SessionTreeValidity
 from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.edit_session.edit_operations_adapter import (
+    _node_at_json_pointer,
+    _parse_marked_tree_root,
+    _resolve_pointer_to_short_id,
+    _wrapper_short_id,
+    resolve_node_ref_to_short_id,
+)
+from code_analysis.core.json_tree.json_pointer import set_value_at
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+from code_analysis.tree.contracts import NodeId
+from code_analysis.tree.edit_operations import EditOperation, EditOperationKind
 from code_analysis.core.json_tree.tree_builder import get_tree as json_get_registered
 from code_analysis.core.json_tree.tree_modifier import modify_tree as json_modify_tree
 from code_analysis.core.yaml_tree.tree_builder import get_tree as yaml_get_tree
+
+_JSON_ID_KEY = "___id___"
+_JSON_VAL_KEY = "v"
+
+
+def _require_integer_short_id(raw: Any, field_name: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
+    return raw
+
+
+def _optional_integer_short_id(raw: Any, field_name: str) -> int | None:
+    if raw is None or raw == "":
+        return None
+    return _require_integer_short_id(raw, field_name)
+
+
+def _session_tree_sections(session: EditSession) -> Any:
+    tree_text = session.core.session_tree_path.read_text(encoding="utf-8")
+    return parse_tree_file(tree_text)
+
+
+def _session_marked_root(session: EditSession) -> Any:
+    sections = _session_tree_sections(session)
+    return _parse_marked_tree_root(sections, session.handler_id)
+
+
+def _json_object_entry_short_id(obj_node: dict[str, Any], key: str) -> int:
+    if _JSON_VAL_KEY in obj_node:
+        inner = obj_node[_JSON_VAL_KEY]
+        if not isinstance(inner, dict) or key not in inner:
+            raise ValueError(f"object has no key {key!r}")
+        return _wrapper_short_id(inner[key])
+    if key not in obj_node:
+        raise ValueError(f"object has no key {key!r}")
+    return _wrapper_short_id(obj_node[key])
+
+
+def _resolve_json_target_short_id(session: EditSession, mop: Dict[str, Any]) -> int:
+    sections = _session_tree_sections(session)
+    for field in ("node_ref", "node_id", "target_node_id"):
+        raw = mop.get(field)
+        if raw is None or raw == "":
+            continue
+        sid = _optional_integer_short_id(raw, field)
+        if sid is not None:
+            return sid
+        return resolve_node_ref_to_short_id(
+            raw,
+            sections,
+            source_abs=session.core.source_abs,
+            unmarked_source=session.core.session_source_path.read_text(
+                encoding="utf-8"
+            ),
+            handler_id=session.handler_id,
+        )
+    if "json_pointer" in mop:
+        return _resolve_pointer_to_short_id(
+            str(mop["json_pointer"]), sections, session.handler_id
+        )
+    raise ValueError(
+        "valid-mode edit requires integer node_ref short_id or json_pointer target"
+    )
+
+
+def _serialize_insert_value(handler_id: str, value: Any) -> str:
+    if handler_id == "json":
+        return json.dumps(value, ensure_ascii=False)
+    if handler_id == "yaml":
+        return yaml.safe_dump(
+            value,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    raise ValueError(f"Unsupported handler for tree-temp: {handler_id!r}")
+
+
+def _resolve_optional_anchor_short_id(
+    session: EditSession, raw: Any, field_name: str
+) -> int | None:
+    if raw is None or raw == "":
+        return None
+    sid = _optional_integer_short_id(raw, field_name)
+    if sid is not None:
+        return sid
+    sections = _session_tree_sections(session)
+    return resolve_node_ref_to_short_id(
+        raw,
+        sections,
+        source_abs=session.core.source_abs,
+        unmarked_source=session.core.session_source_path.read_text(encoding="utf-8"),
+        handler_id=session.handler_id,
+    )
+
+
+def _resolve_json_insert_anchor_and_position(
+    session: EditSession,
+    mop: Dict[str, Any],
+) -> tuple[int, str]:
+    sections = _session_tree_sections(session)
+    before_ptr = mop.get("before_json_pointer")
+    after_ptr = mop.get("after_json_pointer")
+    if before_ptr is not None and after_ptr is not None:
+        raise ValueError(
+            "before_json_pointer and after_json_pointer are mutually exclusive"
+        )
+    if before_ptr is not None:
+        return (
+            _resolve_pointer_to_short_id(str(before_ptr), sections, session.handler_id),
+            "before",
+        )
+    if after_ptr is not None:
+        return (
+            _resolve_pointer_to_short_id(str(after_ptr), sections, session.handler_id),
+            "after",
+        )
+
+    before_sid = _resolve_optional_anchor_short_id(
+        session, mop.get("before_node_id"), "before_node_id"
+    )
+    after_sid = _resolve_optional_anchor_short_id(
+        session, mop.get("after_node_id"), "after_node_id"
+    )
+    if before_sid is not None and after_sid is not None:
+        raise ValueError("before_node_id and after_node_id are mutually exclusive")
+    if before_sid is not None:
+        return before_sid, "before"
+    if after_sid is not None:
+        return after_sid, "after"
+
+    parent_ptr = str(mop.get("parent_json_pointer", ""))
+    root = _session_marked_root(session)
+    parent_node = _node_at_json_pointer(root, parent_ptr) if parent_ptr else root
+
+    before_key = mop.get("before_key")
+    after_key = mop.get("after_key")
+    if before_key is not None and after_key is not None:
+        raise ValueError("before_key and after_key are mutually exclusive")
+    if isinstance(before_key, str):
+        return _json_object_entry_short_id(parent_node, before_key), "before"
+    if isinstance(after_key, str):
+        return _json_object_entry_short_id(parent_node, after_key), "after"
+
+    idx_raw = mop.get("index")
+    if idx_raw is not None:
+        try:
+            idx = int(idx_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("index must be integer") from exc
+        arr: list[Any] | None = None
+        if isinstance(parent_node, list):
+            arr = parent_node
+        elif isinstance(parent_node, dict) and _JSON_VAL_KEY in parent_node:
+            inner = parent_node[_JSON_VAL_KEY]
+            if isinstance(inner, list):
+                arr = inner
+        if arr is None:
+            raise ValueError("index requires array parent_json_pointer")
+        if not arr:
+            raise ValueError("cannot insert at index into empty array")
+        if idx <= 0:
+            return _wrapper_short_id(arr[0]), "before"
+        if idx >= len(arr):
+            return _wrapper_short_id(arr[-1]), "after"
+        return _wrapper_short_id(arr[idx]), "before"
+
+    position = mop.get("position")
+    if position in (None, "last"):
+        if isinstance(parent_node, list):
+            if not parent_node:
+                raise ValueError("cannot append to empty array without index")
+            return _wrapper_short_id(parent_node[-1]), "after"
+        inner = parent_node.get(_JSON_VAL_KEY)
+        if isinstance(inner, list):
+            if not inner:
+                raise ValueError("cannot append to empty array without index")
+            return _wrapper_short_id(inner[-1]), "after"
+        return _wrapper_short_id(parent_node), "last_child"
+    if position == "first":
+        if isinstance(parent_node, list):
+            if not parent_node:
+                raise ValueError("cannot prepend to empty array without index")
+            return _wrapper_short_id(parent_node[0]), "before"
+        inner = parent_node.get(_JSON_VAL_KEY)
+        if isinstance(inner, list):
+            if not inner:
+                raise ValueError("cannot prepend to empty array without index")
+            return _wrapper_short_id(inner[0]), "before"
+        return _wrapper_short_id(parent_node), "first_child"
+    raise ValueError(
+        "insert requires integer anchor short_id, json_pointer parent, or sibling keys"
+    )
+
+
+def _tree_temp_op_to_edit_operation(
+    session: EditSession,
+    mop: Dict[str, Any],
+    handler_id: str,
+) -> EditOperation:
+    action = str(mop.get("action") or mop.get("type") or "").lower()
+    if action == "replace":
+        if "value" not in mop and "content" not in mop:
+            raise ValueError("replace requires value")
+        value = mop["value"] if "value" in mop else mop["content"]
+        return EditOperation(
+            kind=EditOperationKind.REPLACE,
+            short_id=NodeId(_resolve_json_target_short_id(session, mop)),
+            new_content=_serialize_insert_value(handler_id, value),
+        )
+    if action == "delete":
+        return EditOperation(
+            kind=EditOperationKind.DELETE,
+            short_id=NodeId(_resolve_json_target_short_id(session, mop)),
+        )
+    if action == "insert":
+        if "value" not in mop:
+            raise ValueError("insert requires value")
+        anchor_sid, position = _resolve_json_insert_anchor_and_position(session, mop)
+        insert_value: Any = mop["value"]
+        key = mop.get("key")
+        if isinstance(key, str) and key:
+            insert_value = {key: insert_value}
+        return EditOperation(
+            kind=EditOperationKind.INSERT,
+            anchor_short_id=NodeId(anchor_sid),
+            position=position,
+            new_content=_serialize_insert_value(handler_id, insert_value),
+        )
+    raise ValueError(f"Unknown tree-temp action: {action!r}")
+
+
+def _apply_source_pointer_set(session: EditSession, pointer: str, value: Any) -> None:
+    """Set a JSON-pointer path on unmarked draft source and rebuild the session tree."""
+    path = session.core.session_source_path
+    text = path.read_text(encoding="utf-8")
+    if session.handler_id == "yaml":
+        data = yaml.safe_load(text)
+        if data is None:
+            data = {}
+        set_value_at(data, pointer, value)
+        new_text = yaml.safe_dump(
+            data,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    else:
+        data = json.loads(text)
+        set_value_at(data, pointer, value)
+        new_text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    apply_source_mutation(session, new_text)
+
+
+def _expand_list_pointer_replace(
+    session: EditSession, mop: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Route replace-at-list-pointer through unmarked source when marked target is a bare list."""
+    action = str(mop.get("action") or mop.get("type") or "").lower()
+    if action != "replace" or "json_pointer" not in mop:
+        return [mop]
+    ptr = str(mop["json_pointer"])
+    root = _session_marked_root(session)
+    try:
+        target = _node_at_json_pointer(root, ptr)
+    except ValueError:
+        return [mop]
+    if not isinstance(target, list):
+        return [mop]
+    return [
+        {
+            "__source_pointer_set__": ptr,
+            "value": mop.get("value"),
+        }
+    ]
+
+
+def _apply_valid_tree_temp_mutations(
+    session: EditSession,
+    operations: List[Dict[str, Any]],
+) -> SuccessResult | ErrorResult:
+    try:
+        for op in operations:
+            for sub in _expand_list_pointer_replace(
+                session, _normalized_json_modify_operation(op)
+            ):
+                ptr_set = sub.get("__source_pointer_set__")
+                if isinstance(ptr_set, str):
+                    _apply_source_pointer_set(session, ptr_set, sub.get("value"))
+                    continue
+                edit_op = _tree_temp_op_to_edit_operation(
+                    session,
+                    sub,
+                    session.handler_id,
+                )
+                apply_tree_operation(session, edit_op)
+    except ValueError as exc:
+        return error_result_for_edit(
+            str(exc),
+            "INVALID_OPERATION",
+            {"operations": operations},
+        )
+    return SuccessResult(data={"success": True, "updated": True})
 
 
 def _project_root_near(path: Path) -> Path:
@@ -49,6 +371,7 @@ def _project_root_near(path: Path) -> Path:
 def _normalized_json_modify_operation(op: Dict[str, Any]) -> Dict[str, Any]:
     """Map universal-edit op keys into ``core.json_tree.tree_modifier`` shape."""
     m = dict(op)
+    coalesce_tree_temp_insert_position(m)
     if "json_pointer" not in m and "node_ref" in m:
         ref = m.get("node_ref")
         if ref == "" or (isinstance(ref, str) and ref.startswith("/")):
@@ -204,6 +527,23 @@ def apply_tree_temp_mutations(
     if session.tree_temp_roots is None:
         return _run_legacy_tree_temp_apply(session, operations)
 
+    if session.core.tree_validity == SessionTreeValidity.VALID:
+        try:
+            root_dir = _project_root_near(session.draft_path)
+            bm = BackupManager(root_dir=root_dir)
+            if session.draft_path.exists():
+                bm.create_backup(
+                    session.draft_path,
+                    command="universal_file_edit",
+                )
+        except Exception as exc:
+            return error_result_for_edit(
+                f"Backup before edit failed: {exc}",
+                WRITE_FAILED,
+                {"path": str(session.draft_path)},
+            )
+        return _apply_valid_tree_temp_mutations(session, operations)
+
     roots_snap = deepcopy(session.tree_temp_roots)
 
     try:
@@ -225,9 +565,9 @@ def apply_tree_temp_mutations(
 
     def rollback() -> None:
         session.tree_temp_roots = deepcopy(roots_snap)
-        session.draft_path.write_text(
+        apply_source_mutation(
+            session,
             serialize_tree_temp_roots(session.handler_id, session.tree_temp_roots),
-            encoding="utf-8",
         )
 
     try:
@@ -242,11 +582,10 @@ def apply_tree_temp_mutations(
                     "INVALID_OPERATION",
                     {"operations": operations},
                 )
-        session.draft_path.write_text(
+        apply_source_mutation(
+            session,
             serialize_tree_temp_roots(session.handler_id, roots),
-            encoding="utf-8",
         )
-        session.dirty = True
         return SuccessResult(data={"success": True, "updated": True})
     except ValueError as exc:
         rollback()

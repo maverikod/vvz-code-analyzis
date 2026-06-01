@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -25,12 +24,23 @@ from code_analysis.commands.universal_file_edit.write_command import (
     UniversalFileWriteCommand,
 )
 from code_analysis.commands.universal_file_preview import UniversalFilePreviewCommand
+from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
+    TreeTempOpenAcquisition,
+    acquire_tree_temp_for_open,
+)
 from code_analysis.core.json_tree import tree_builder as jtb
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+from code_analysis.core.tree_temp.tree_node import TreeNode
+from code_analysis.tree.handler_registry import HandlerRegistry
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 BLOCK_ID_KEY = "node_ref"
 _PID = "baddbadd-badd-4badd-badd-baddbaddbadd"
 _REL = "cfg/detail.json"
 _DOC = '{"svc":{"env":"prod"},"tag":"go"}\n'
+_PREVIEW_ACQUIRE_PATCH = (
+    "code_analysis.commands.universal_file_preview_command.acquire_tree_temp_for_open"
+)
 
 
 def _ensure_project_root(tmp: Path) -> None:
@@ -57,26 +67,66 @@ def _reset() -> None:
     jtb._trees.clear()
 
 
-def _find_stable_by_path(payload: dict[str, Any], json_pointer: str) -> str:
-    roots = cast(list[dict[str, Any]], payload["root"])
-    if json_pointer in ("", "/"):
+def _sidecar_path(tmp: Path, rel: str) -> Path:
+    return sibling_tree_path((tmp / rel).resolve())
+
+
+def _normalize_pointer(pointer: str) -> str:
+    if pointer in ("", "/"):
+        return "/"
+    return pointer if pointer.startswith("/") else f"/{pointer}"
+
+
+def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) -> str:
+    sections = parse_tree_file(sidecar_path.read_text(encoding="utf-8"))
+    handler = HandlerRegistry.default_registry().resolve(source_path)
+    source_text = source_path.read_text(encoding="utf-8")
+    nodes = handler.parse_content(source_path, source_text)
+    want = _normalize_pointer(pointer)
+    target_short_id: int | None = None
+    for node in nodes:
+        jp = str(node.attributes.get("json_pointer", ""))
+        if jp == want or (want == "/" and jp in ("", "/")):
+            target_short_id = int(node.short_id)
+            break
+    if target_short_id is None:
+        raise KeyError(want)
+    for entry in sections.map.entries:
+        if entry.short_id == target_short_id:
+            return entry.uuid
+    raise KeyError(want)
+
+
+def _stable_id_in_forest(roots: list[TreeNode], pointer: str) -> str:
+    norm = _normalize_pointer(pointer)
+    if norm == "/":
         assert len(roots) == 1
-        return str(roots[0]["stable_id"])
-    node: dict[str, Any] = roots[0]
-    for raw in json_pointer.strip("/").split("/"):
+        return str(roots[0].stable_id)
+    node = roots[0]
+    for raw in norm.strip("/").split("/"):
         part = raw.replace("~1", "/").replace("~0", "~")
-        if node.get("type") == "object":
-            children = cast(list[dict[str, Any]], node.get("children") or [])
-            match = next((c for c in children if c.get("key") == part), None)
+        if node.type == "object":
+            children = node.children or []
+            match = next((c for c in children if c.key == part), None)
             if match is None:
                 raise KeyError(part)
             node = match
-        elif node.get("type") == "array":
-            children = cast(list[dict[str, Any]], node.get("children") or [])
+        elif node.type == "array":
+            children = node.children or []
             node = children[int(part)]
         else:
-            raise AssertionError("cannot descend")
-    return str(node["stable_id"])
+            raise KeyError(pointer)
+    return str(node.stable_id)
+
+
+def _preview_acquisition(tmp: Path, rel: str) -> TreeTempOpenAcquisition:
+    source = (tmp / rel).resolve()
+    return acquire_tree_temp_for_open(
+        project_root=tmp.resolve(),
+        source_abs=source,
+        handler_id="json",
+        raw_source_bytes=source.read_bytes(),
+    )
 
 
 def _ids(blocks: list[dict[str, Any]]) -> set[str]:
@@ -131,13 +181,15 @@ async def test_scalar_stable_id_resolves_container_children_matching_parent_prev
     tmp_path: Path,
 ) -> None:
     await _hydrate(tmp_path)
-    sc = tmp_path / ".trees" / f"{_REL}.tree"
-    payload = json.loads(sc.read_text(encoding="utf-8"))
-    svc_uuid = _find_stable_by_path(payload, "/svc")
-    scalar_uuid = _find_stable_by_path(payload, "/svc/env")
+    acq = _preview_acquisition(tmp_path, _REL)
+    svc_uuid = _stable_id_in_forest(acq.roots, "/svc")
+    scalar_uuid = _stable_id_in_forest(acq.roots, "/svc/env")
 
-    with patch.object(
-        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+        ),
+        patch(_PREVIEW_ACQUIRE_PATCH, return_value=acq),
     ):
         pr_par = await _preview(tmp_path, svc_uuid)
         pr_sc = await _preview(tmp_path, scalar_uuid)
@@ -176,12 +228,16 @@ async def test_root_scalar_json_preview_equivalent_without_ref(tmp_path: Path) -
             )
         )
         await cl.execute(**cl.validate_params({"project_id": _PID, "session_id": sid}))
-    sc = tmp_path / ".trees" / f"{rel}.tree"
-    payload = json.loads(sc.read_text(encoding="utf-8"))
-    root_uuid = _find_stable_by_path(payload, "")
+    sc = _sidecar_path(tmp_path, rel)
+    assert sc.is_file()
+    acq = _preview_acquisition(tmp_path, rel)
+    root_uuid = _stable_id_in_forest(acq.roots, "/")
     cmd = UniversalFilePreviewCommand()
-    with patch.object(
-        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
+        ),
+        patch(_PREVIEW_ACQUIRE_PATCH, return_value=acq),
     ):
         a = await cmd.execute(
             **cmd.validate_params({"project_id": _PID, "file_path": rel})
@@ -204,17 +260,16 @@ async def test_rescan_after_external_edit_and_removed_sidecar_generates_new_uuid
     tmp_path: Path,
 ) -> None:
     await _hydrate(tmp_path)
-    sc = tmp_path / ".trees" / f"{_REL}.tree"
-    payload = json.loads(sc.read_text(encoding="utf-8"))
-    old = _find_stable_by_path(payload, "/svc/env")
-    (tmp_path / _REL).write_text(
+    sc = _sidecar_path(tmp_path, _REL)
+    source = tmp_path / _REL
+    old = _uuid_for_pointer(source_path=source, sidecar_path=sc, pointer="/svc/env")
+    source.write_text(
         _DOC.replace("prod", "staging"),
         encoding="utf-8",
     )
     sc.unlink(missing_ok=True)
     await _open_write_commit_close(tmp_path, _REL)
-    payload2 = json.loads(sc.read_text(encoding="utf-8"))
-    new_u = _find_stable_by_path(payload2, "/svc/env")
+    new_u = _uuid_for_pointer(source_path=source, sidecar_path=sc, pointer="/svc/env")
     assert new_u != old
 
 
@@ -223,7 +278,8 @@ async def test_stable_id_persists_across_sessions_without_disk_change(
     tmp_path: Path,
 ) -> None:
     await _hydrate(tmp_path)
-    sc = tmp_path / ".trees" / f"{_REL}.tree"
+    sc = _sidecar_path(tmp_path, _REL)
+    source = tmp_path / _REL
 
     async def cycle() -> str:
         op = UniversalFileOpenCommand()
@@ -238,8 +294,9 @@ async def test_stable_id_persists_across_sessions_without_disk_change(
             await cl.execute(
                 **cl.validate_params({"project_id": _PID, "session_id": sid})
             )
-        payload = json.loads(sc.read_text(encoding="utf-8"))
-        return _find_stable_by_path(payload, "/svc/env")
+        return _uuid_for_pointer(
+            source_path=source, sidecar_path=sc, pointer="/svc/env"
+        )
 
     u1 = await cycle()
     u2 = await cycle()

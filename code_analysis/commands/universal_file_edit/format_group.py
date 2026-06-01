@@ -18,6 +18,9 @@ FORMAT_SIDECAR = "sidecar"
 FORMAT_TREE_TEMP = "tree-temp"
 FORMAT_TEXT = "text"
 
+# Third lockfile line: universal_file_write preview completed (sidecar two-phase).
+LOCKFILE_WRITE_PREVIEW_READY = "write_preview"
+
 _HANDLER_TO_FORMAT = {
     "python": FORMAT_SIDECAR,
     "json": FORMAT_TREE_TEMP,
@@ -25,10 +28,19 @@ _HANDLER_TO_FORMAT = {
     "text": FORMAT_TEXT,
 }
 
+_SIX_EDIT_OPERATIONS = [
+    "insert",
+    "delete",
+    "replace",
+    "move",
+    "edit_attributes",
+    "edit_content",
+]
+
 _FORMAT_AVAILABLE_OPERATIONS = {
-    FORMAT_SIDECAR: ["insert", "delete", "replace"],
-    FORMAT_TREE_TEMP: ["insert", "delete", "replace"],
-    FORMAT_TEXT: ["insert", "delete", "replace"],
+    FORMAT_SIDECAR: list(_SIX_EDIT_OPERATIONS),
+    FORMAT_TREE_TEMP: list(_SIX_EDIT_OPERATIONS),
+    FORMAT_TEXT: list(_SIX_EDIT_OPERATIONS),
 }
 
 
@@ -126,14 +138,38 @@ def read_lockfile_pid(abs_path: Path) -> Optional[Tuple[int, str]]:
         return None
 
 
-def write_lockfile_pid(abs_path: Path, pid: int, session_id: str) -> None:
+def lockfile_write_preview_ready(abs_path: Path) -> bool:
+    """Return True when the lockfile marks a completed universal_file_write preview.
+
+    Open writes only PID and session_id (session lock). The first sidecar write
+    preview adds a third line ``write_preview``; the second write call commits.
+    """
+    lf = lockfile_path_for(abs_path)
+    try:
+        parts = lf.read_text().strip().splitlines()
+        return len(parts) >= 3 and parts[2].strip() == LOCKFILE_WRITE_PREVIEW_READY
+    except OSError:
+        return False
+
+
+def write_lockfile_pid(
+    abs_path: Path,
+    pid: int,
+    session_id: str,
+    *,
+    write_preview_ready: bool = False,
+) -> None:
     """Write PID and session_id to the write lockfile atomically.
 
     Format: first line is the integer PID, second line is the session UUID.
+    Optional third line ``write_preview`` after the first sidecar write preview.
     """
     lf = lockfile_path_for(abs_path)
     tmp = lf.with_suffix(".write.tmp")
-    tmp.write_text(f"{pid}\n{session_id}")
+    body = f"{pid}\n{session_id}"
+    if write_preview_ready:
+        body = f"{body}\n{LOCKFILE_WRITE_PREVIEW_READY}"
+    tmp.write_text(body)
     tmp.rename(lf)
 
 
@@ -172,8 +208,9 @@ def check_lock(abs_path: Path, caller_session_id: str) -> Optional[str]:
         # treat conservatively as alive only when errno is EPERM.
         import errno as _errno
         import sys
+
         exc = sys.exc_info()[1]
-        if getattr(exc, 'errno', None) == _errno.ESRCH:
+        if getattr(exc, "errno", None) == _errno.ESRCH:
             return None  # process dead — lock is stale
         # EPERM or anything else: process alive, file locked
         return lock_session_id

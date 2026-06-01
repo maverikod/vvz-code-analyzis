@@ -105,3 +105,4 @@ class NavigationResult:
     total_blocks: int
     selected_blocks: list[Block]
     tree_id: str | None = None
+    short_id_refs: bool = False

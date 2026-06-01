@@ -51,7 +51,6 @@ from .tree_modifier_ops_parse import (
 
 from .tree_modifier_validate import _validate_operation
 
-
 try:
     from code_analysis.core.mutable_cst import (
         apply_operations,
@@ -324,7 +323,7 @@ def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
         Parent node_id of nearest insertable container, or None if not found
     """
     # Statement-body container types — valid parent_node_id values (not IndentedBlock)
-    INSERTABLE_TYPES = {"Module", "ClassDef", "FunctionDef", "IndentedBlock"}
+    INSERTABLE_TYPES = {"Module", "ClassDef", "FunctionDef"}
 
     # Resolve alias: after insert the target node may have a new UUID
     resolved = tree.node_id_aliases.get(node_id, node_id)

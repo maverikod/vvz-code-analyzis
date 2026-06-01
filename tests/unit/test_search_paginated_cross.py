@@ -18,10 +18,19 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 def _session_and_layout(tmp_path: Path):
-    from code_analysis.core.search_session.directory import provision_search_session_directory
+    from code_analysis.core.search_session.directory import (
+        provision_search_session_directory,
+    )
+
     search_id = str(uuid.uuid4())
-    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
-    session = SearchSession(search_id=search_id, state=SearchSessionState.running, directory_path=layout.root)
+    layout = provision_search_session_directory(
+        config_dir=tmp_path, search_id=search_id
+    )
+    session = SearchSession(
+        search_id=search_id,
+        state=SearchSessionState.running,
+        directory_path=layout.root,
+    )
     return session, layout
 
 
@@ -41,12 +50,12 @@ def test_normalize_cross_finding_structural() -> None:
     raw = {
         "file_path": "c.py",
         "confidence": "high",
-        "evidence": {"source_mode": "structural"},
+        "evidence": {"source_mode": "structural", "node_ref": "node-1"},
     }
     finding = normalize_cross_finding(raw, index=0, require_structural_grep=True)
     assert finding is not None
-    assert finding["result_id"] == "cross-000000"
-    assert finding["source"] == "cross"
+    assert finding.result_id == "cross-000000"
+    assert finding.source == "cross"
 
 
 def test_normalize_cross_finding_excludes_line_only_when_structural_required() -> None:
@@ -56,7 +65,10 @@ def test_normalize_cross_finding_excludes_line_only_when_structural_required() -
 
 
 def test_normalize_cross_finding_includes_line_only_when_not_required() -> None:
-    raw = {"file_path": "c.py", "evidence": {"source_mode": "classic_line"}}
+    raw = {
+        "file_path": "c.py",
+        "evidence": {"source_mode": "classic_line", "node_ref": "node-1"},
+    }
     finding = normalize_cross_finding(raw, index=0, require_structural_grep=False)
     assert finding is not None
 
@@ -66,9 +78,17 @@ async def test_run_paginated_cross_publishes_block(tmp_path: Path) -> None:
     session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command.execute = AsyncMock(
-        return_value=SuccessResult(data={"results": [
-            {"file_path": "c.py", "evidence": {"source_mode": "structural"}, "confidence": "high"}
-        ]})
+        return_value=SuccessResult(
+            data={
+                "results": [
+                    {
+                        "file_path": "c.py",
+                        "evidence": {"source_mode": "structural"},
+                        "confidence": "high",
+                    }
+                ]
+            }
+        )
     )
     pos = await run_paginated_cross(
         command=command,

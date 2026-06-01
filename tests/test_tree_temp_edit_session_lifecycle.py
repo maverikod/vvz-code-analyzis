@@ -28,7 +28,8 @@ from code_analysis.commands.universal_file_edit.write_command import (
     UniversalFileWriteCommand,
 )
 from code_analysis.core.json_tree import tree_builder as jtb
-from code_analysis.core.tree_temp.sidecar_paths import resolve_trees_sidecar_path
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 _PROJECT_UUID = "baadf00d-baad-4bad-b00d-baaaaaaaaaaa"
 
@@ -147,9 +148,11 @@ async def test_roundtrip_commit_refreshes_sidecar_digest_matches_source(
     assert isinstance(cr, SuccessResult)
 
     final_sha = _sha_hex(target.read_bytes())
-    sidecar_path = resolve_trees_sidecar_path(tmp_path.resolve(), Path(rel))
-    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    assert payload["source_sha256"] == final_sha
+    source_path = (tmp_path / rel).resolve()
+    sidecar_path = sibling_tree_path(source_path)
+    assert sidecar_path.is_file()
+    sections = parse_tree_file(sidecar_path.read_text(encoding="utf-8"))
+    assert sections.checksums["source_sha256"] == final_sha
 
 
 @pytest.mark.asyncio

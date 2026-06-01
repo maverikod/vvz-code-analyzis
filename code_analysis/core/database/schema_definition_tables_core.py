@@ -182,6 +182,7 @@ def get_tables_core() -> Dict[str, Any]:
                 {"name": "lines", "type": "INTEGER", "not_null": False},
                 {"name": "last_modified", "type": "REAL", "not_null": False},
                 {"name": "has_docstring", "type": "BOOLEAN", "not_null": False},
+                {"name": "tree_checksum", "type": "TEXT", "not_null": False},
                 {
                     "name": "deleted",
                     "type": "BOOLEAN",

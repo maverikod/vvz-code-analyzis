@@ -24,6 +24,19 @@ from .search_timeouts import (
 
 INTERNAL_QUEUE_METADATA_KEY = "_search_auto_queue_metadata"
 
+_pending_enqueue_start_tasks: set[asyncio.Task[None]] = set()
+
+
+async def cancel_pending_enqueue_start_tasks() -> None:
+    """Cancel and await fire-and-forget queue start tasks (test/shutdown hygiene)."""
+    pending = list(_pending_enqueue_start_tasks)
+    for task in pending:
+        if not task.done():
+            task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    _pending_enqueue_start_tasks.clear()
+
 
 def is_queued_search_execution(
     *,
@@ -130,7 +143,9 @@ async def enqueue_search_command(
         except Exception:
             pass
 
-    asyncio.create_task(_start_job_background())
+    start_task = asyncio.create_task(_start_job_background())
+    _pending_enqueue_start_tasks.add(start_task)
+    start_task.add_done_callback(_pending_enqueue_start_tasks.discard)
     return queued_inline_timeout_response(
         job_id=job_id,
         inline_timeout_seconds=inline_timeout_seconds,

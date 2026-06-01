@@ -30,6 +30,72 @@ from code_analysis.core.database_client.protocol import RPCResponse
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
 
 
+class _StoppableUnixServer:
+    """Unix socket listener for tests; accept loop is bounded and stoppable."""
+
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = socket_path
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._listen_sock: socket.socket | None = None
+
+    def start(self, on_connection) -> None:
+        """Run on_connection(conn) in a per-connection daemon thread."""
+
+        def serve() -> None:
+            listen = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._listen_sock = listen
+            try:
+                Path(self.socket_path).unlink(missing_ok=True)
+                listen.bind(self.socket_path)
+                listen.listen(8)
+                listen.settimeout(0.25)
+                while not self._stop.is_set():
+                    try:
+                        conn, _ = listen.accept()
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        if self._stop.is_set():
+                            break
+                        raise
+                    threading.Thread(
+                        target=self._run_handler,
+                        args=(on_connection, conn),
+                        daemon=True,
+                    ).start()
+            finally:
+                try:
+                    listen.close()
+                except OSError:
+                    pass
+                Path(self.socket_path).unlink(missing_ok=True)
+                self._listen_sock = None
+
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+
+    @staticmethod
+    def _run_handler(handler, conn: socket.socket) -> None:
+        try:
+            handler(conn)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def stop(self, join_timeout: float = 2.0) -> None:
+        self._stop.set()
+        if self._listen_sock is not None:
+            try:
+                self._listen_sock.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=join_timeout)
+
+
 class TestRPCClient:
     """Test RPC client functionality."""
 
@@ -138,24 +204,21 @@ class TestRPCClient:
         """Test timeout handling."""
         socket_path = str(tmp_path / "test.sock")
 
-        # Create a slow server that doesn't respond
-        def slow_server():
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                sock.bind(socket_path)
-                sock.listen(1)
-                conn, _ = sock.accept()
-                # Don't respond, just wait
-                time.sleep(10)
-                conn.close()
-            finally:
-                sock.close()
+        def on_connection(conn: socket.socket) -> None:
+            conn.settimeout(0.25)
+            # Do not read request; block long enough for client timeout to fire.
+            time.sleep(2.0)
 
-        server_thread = threading.Thread(target=slow_server, daemon=True)
-        server_thread.start()
+        server = _StoppableUnixServer(socket_path)
+        server.start(on_connection)
         time.sleep(0.1)
 
-        client = RPCClient(socket_path, timeout=0.5)
+        client = RPCClient(
+            socket_path,
+            timeout=0.5,
+            pool_size=1,
+            startup_connect_timeout=1.0,
+        )
         client.connect()
 
         try:
@@ -164,57 +227,45 @@ class TestRPCClient:
                 client.call("test_method", {})
         finally:
             client.disconnect()
+            server.stop()
 
     def test_retry_logic(self, tmp_path):
         """Test retry logic on connection failures."""
         socket_path = str(tmp_path / "test.sock")
 
-        # Server that fails first time, then succeeds
         attempt_count = [0]
 
-        def flaky_server():
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                sock.bind(socket_path)
-                sock.listen(1)
-                while True:
-                    conn, _ = sock.accept()
-                    attempt_count[0] += 1
-                    if attempt_count[0] < 2:
-                        # Close connection immediately (simulate failure)
-                        conn.close()
-                    else:
-                        # Process request normally
-                        try:
-                            # Read request
-                            length_data = conn.recv(4)
-                            if len(length_data) == 4:
-                                length = struct.unpack("!I", length_data)[0]
-                                data = b""
-                                while len(data) < length:
-                                    chunk = conn.recv(length - len(data))
-                                    if not chunk:
-                                        break
-                                    data += chunk
+        def on_connection(conn: socket.socket) -> None:
+            attempt_count[0] += 1
+            if attempt_count[0] < 2:
+                return
+            conn.settimeout(2.0)
+            length_data = conn.recv(4)
+            if len(length_data) == 4:
+                length = struct.unpack("!I", length_data)[0]
+                data = b""
+                while len(data) < length:
+                    chunk = conn.recv(length - len(data))
+                    if not chunk:
+                        break
+                    data += chunk
+                response = RPCResponse(result={"success": True}, request_id="test")
+                response_json = json.dumps(response.to_dict())
+                response_bytes = response_json.encode("utf-8")
+                conn.sendall(struct.pack("!I", len(response_bytes)))
+                conn.sendall(response_bytes)
 
-                                # Send success response
-                                response = RPCResponse(
-                                    result={"success": True}, request_id="test"
-                                )
-                                response_json = json.dumps(response.to_dict())
-                                response_bytes = response_json.encode("utf-8")
-                                conn.sendall(struct.pack("!I", len(response_bytes)))
-                                conn.sendall(response_bytes)
-                        finally:
-                            conn.close()
-            finally:
-                sock.close()
+        server = _StoppableUnixServer(socket_path)
+        server.start(on_connection)
+        time.sleep(0.1)
 
-        server_thread = threading.Thread(target=flaky_server, daemon=True)
-        server_thread.start()
-        time.sleep(0.2)
-
-        client = RPCClient(socket_path, max_retries=3, retry_delay=0.1)
+        client = RPCClient(
+            socket_path,
+            max_retries=3,
+            retry_delay=0.1,
+            pool_size=1,
+            startup_connect_timeout=1.0,
+        )
         client.connect()
 
         try:
@@ -223,6 +274,7 @@ class TestRPCClient:
             assert attempt_count[0] >= 2  # Should have retried
         finally:
             client.disconnect()
+            server.stop()
 
     def test_health_check(self, rpc_server):
         """Test health check."""

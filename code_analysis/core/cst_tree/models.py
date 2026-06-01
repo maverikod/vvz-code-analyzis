@@ -66,7 +66,15 @@ class DocstringMeta:
         Returns:
             True when all fields are empty or default.
         """
-        return not any([self.summary, self.args, self.returns, self.attributes, self.docstring_body])
+        return not any(
+            [
+                self.summary,
+                self.args,
+                self.returns,
+                self.attributes,
+                self.docstring_body,
+            ]
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a JSON-safe dict for sidecar storage.
@@ -153,7 +161,9 @@ class DocstringMeta:
             elif current_section == "attributes" and current_param and stripped:
                 attributes[current_param] += " " + stripped
         if args or returns or attributes:
-            return cls(summary=summary, args=args, returns=returns, attributes=attributes)
+            return cls(
+                summary=summary, args=args, returns=returns, attributes=attributes
+            )
         return cls(summary=summary, docstring_body=raw.strip())
 
 
@@ -205,10 +215,10 @@ class TreeNodeMetadata:
         """Convert to dictionary.
 
         Returns:
-            Dict with node fields. node_id is intentionally excluded from the
-            public API; use stable_id as the durable node handle.
+            Dict with node fields including node_id and stable_id.
         """
         result: Dict[str, Any] = {
+            "node_id": self.node_id,
             "stable_id": self.stable_id,
             "type": self.type,
             "kind": self.kind,
@@ -373,9 +383,7 @@ class CSTTree:
             "Decorator",
         )
         candidates = [
-            meta
-            for meta in self.metadata_map.values()
-            if meta.stable_id == stable_id
+            meta for meta in self.metadata_map.values() if meta.stable_id == stable_id
         ]
         if not candidates:
             return None

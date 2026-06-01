@@ -16,10 +16,8 @@ import uuid
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..database_client.file_data_batch import (
-    build_file_data_atomic_batches,
-    execute_all_batches_in_transaction,
-)
+from ..database_client.file_data_batch import build_file_data_atomic_batches
+from .logical_write_submit import submit_logical_write_or_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +153,6 @@ def sync_file_to_db_atomic(
         result["file_id"] = file_id
 
         lock_held = False
-        own_tid: Optional[str] = None
         try:
             from ..cst_tree.tree_builder import create_tree_from_code
         except Exception as e:
@@ -245,50 +242,36 @@ def sync_file_to_db_atomic(
             result["error"] = "No SQL batches to execute"
             return result
 
-        own_tid = database.begin_transaction()
-        if not own_tid:
-            result["error"] = "Database transaction could not be started"
-            result["error_code"] = "TRANSACTION_ERROR"
-            return result
-
-        if not skip_file_edit_lock:
-            if not acquire_file_edit_lock_with_retry(
-                database, file_id, transaction_id=own_tid
-            ):
-                try:
-                    database.rollback_transaction(own_tid)
-                except Exception:
-                    pass
-                own_tid = None
-                result["error"] = (
-                    "File is being edited by another live process (file edit lock). "
-                    "Try again shortly."
-                )
-                result["error_code"] = "FILE_EDIT_LOCKED"
-                return result
-            lock_held = True
-
-        batch_err = execute_all_batches_in_transaction(
-            database,
-            all_batches,
-            own_tid,
-            file_path=str(absolute_path),
-            file_id=file_id,
-        )
-        if batch_err is not None:
-            try:
-                database.rollback_transaction(own_tid)
-            except Exception:
-                pass
-            own_tid = None
-            result["error"] = batch_err.get("error", "batch failed")
-            return result
-
-        if lock_held:
-            release_file_edit_lock(database, file_id, transaction_id=own_tid)
-        database.commit_transaction(own_tid)
-        own_tid = None
         lock_held = False
+        try:
+            if not skip_file_edit_lock:
+                if not acquire_file_edit_lock_with_retry(
+                    database, file_id, transaction_id=None
+                ):
+                    result["error"] = (
+                        "File is being edited by another live process (file edit lock). "
+                        "Try again shortly."
+                    )
+                    result["error_code"] = "FILE_EDIT_LOCKED"
+                    return result
+                lock_held = True
+
+            try:
+                submit_logical_write_or_fallback(database, all_batches)
+            except Exception as e:
+                logger.exception("logical write failed for %s", absolute_path)
+                result["error"] = str(e)
+                return result
+        finally:
+            if lock_held:
+                try:
+                    release_file_edit_lock(database, file_id, transaction_id=None)
+                except Exception:
+                    logger.warning(
+                        "release_file_edit_lock failed for file_id=%s",
+                        file_id,
+                        exc_info=True,
+                    )
 
         result["success"] = True
         result["snapshot"] = 1

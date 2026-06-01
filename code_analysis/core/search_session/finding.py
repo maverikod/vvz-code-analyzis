@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-
 EXACT_STRUCTURAL_SCORE: float = 1.0
 
 
@@ -59,7 +58,6 @@ class Finding:
             Finding (it stays a line-only hit upstream).
         score: Relevance in [0.0, 1.0], assigned by the shared scoring layer.
             Higher is more relevant.
-        mtime: Modification time used as the relevance tie-break (older first).
     """
 
     result_id: str
@@ -67,7 +65,6 @@ class Finding:
     file_path: str
     stable_id: str
     score: float
-    mtime: float
 
     def __post_init__(self) -> None:
         if not self.file_path:
@@ -88,7 +85,6 @@ class Finding:
             "file_path": self.file_path,
             "stable_id": self.stable_id,
             "score": self.score,
-            "mtime": self.mtime,
         }
 
     @classmethod
@@ -100,7 +96,6 @@ class Finding:
             file_path=str(data["file_path"]),
             stable_id=str(data["stable_id"]),
             score=float(data["score"]),
-            mtime=float(data["mtime"]),
         )
 
 

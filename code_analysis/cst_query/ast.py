@@ -7,7 +7,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -18,12 +17,13 @@ from enum import Enum
 from typing import Optional
 
 
-
 class Combinator(str, Enum):
     """Selector step relation."""
 
     DESCENDANT = " "
     CHILD = ">"
+    RECURSIVE_DESCENDANT = "//"
+
 
 class PredicateOp(str, Enum):
     """Predicate operator for attribute tests."""
@@ -39,7 +39,6 @@ class PredicateOp(str, Enum):
     LTE = "<="
 
 
-
 @dataclass(frozen=True)
 class Predicate:
     """Attribute predicate like [name="foo"] or [qualname^="A.B"]."""
@@ -47,6 +46,7 @@ class Predicate:
     attr: str
     op: PredicateOp
     value: str
+
 
 class PseudoKind(str, Enum):
     """Pseudo-class / functional pseudo."""
@@ -57,13 +57,13 @@ class PseudoKind(str, Enum):
     NOT = "not"
 
 
-
 @dataclass(frozen=True)
 class Pseudo:
     """Pseudo like :first, :last, :nth(0)."""
 
     kind: PseudoKind
     index: Optional[int] = None
+
 
 @dataclass(frozen=True)
 class SelectorStep:
@@ -81,7 +81,6 @@ class SelectorStep:
     predicates: tuple[Predicate, ...] = ()
     pseudos: tuple[Pseudo, ...] = ()
     not_selector: Optional["Query"] = None
-
 
 
 @dataclass(frozen=True)

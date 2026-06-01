@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import copy
+import io
 from pathlib import Path
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -126,18 +127,19 @@ def _collect_pointer_spans(
 
 def _parse_yaml_text(source: str) -> Tuple[Any, PointerSpans]:
     """Parse YAML text via compose graph; return data and pointer line spans."""
-    loader = SafeLoader(source)
+    loaded = yaml.safe_load(source)
+    if loaded is None:
+        loaded = {}
+
+    loader = SafeLoader(io.StringIO(source))
     try:
         root_node = loader.get_single_node()
         if root_node is None:
-            return {}, {}
+            return loaded, {}
         spans: PointerSpans = {}
         _collect_pointer_spans(root_node, ROOT_POINTER, spans)
-        loaded = loader.construct_object(root_node)
     finally:
         loader.dispose()
-    if loaded is None:
-        loaded = {}
     return loaded, spans
 
 
@@ -210,9 +212,7 @@ def load_file_to_tree(file_path: str) -> YamlTree:
 
     raw = path.read_text(encoding="utf-8")
     try:
-        return build_yaml_tree_from_text(
-            str(path.resolve()), raw, register=True
-        )
+        return build_yaml_tree_from_text(str(path.resolve()), raw, register=True)
     except yaml.YAMLError as e:
         raise ValueError(f"Invalid YAML: {e}") from e
 

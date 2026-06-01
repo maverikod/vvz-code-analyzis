@@ -17,7 +17,7 @@ meta:
       search_get_status, search_cancel, search_close) accept job_id as their 
       session identifier.
 commands:
-- name: fs_ggrep
+- name: fs_grep
   existing:
   - direct inline payload with match list
   - inline timeout (auto_queue_on_inline_timeout flag)
@@ -99,7 +99,7 @@ infrastructure:
   - search_timeouts
   - queue_get_job_status
   new:
-  - search_session package (manifest, directory layout, block assembly)
+  - search_session package
   - HTTP block access via index_url (HTTPResultAccess C-005)
   - background cleaner with TTL policy (C-007, C-011)
   - RawFindingBuffer for finding normalization (C-028)

@@ -43,7 +43,6 @@ CST_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
         "cst_convert_and_save",
         "list_cst_blocks",
         "query_cst",
-        "get_file_lines",
     }
 )
 

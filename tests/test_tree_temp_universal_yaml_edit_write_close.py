@@ -27,8 +27,9 @@ from code_analysis.commands.universal_file_edit.open_command import (
 from code_analysis.commands.universal_file_edit.write_command import (
     UniversalFileWriteCommand,
 )
-from code_analysis.core.tree_temp.sidecar_paths import resolve_trees_sidecar_path
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
 from code_analysis.core.yaml_tree import tree_builder as ytb
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 _YAML_PROJECT_UUID = "d00dfeed-d00d-4d00-d00d-feedd00dfe1"
 _REL = "records/stack.yml"
@@ -116,8 +117,8 @@ async def _two_phase_write(tmp: Path, sid: str) -> None:
     assert isinstance(p2, SuccessResult) and p2.data.get("phase") == "committed"
 
 
-def _sidecar(tmp: Path) -> Path:
-    return resolve_trees_sidecar_path(tmp.resolve(), Path(_REL))
+def _sidecar(tmp: Path, rel: str = _REL) -> Path:
+    return sibling_tree_path((tmp / rel).resolve())
 
 
 @pytest.mark.asyncio
@@ -157,7 +158,10 @@ async def test_yaml_replace_via_json_pointer_updates_then_commits(
     assert data["items"][0]["active"] is True
     sc = _sidecar(tmp_path)
     assert sc.exists()
-    assert _sha((tmp_path / _REL).read_bytes())
+    sections = parse_tree_file(sc.read_text(encoding="utf-8"))
+    assert sections.checksums["source_sha256"] == _sha((tmp_path / _REL).read_bytes())
+    assert sections.tree.strip() != ""
+    assert sections.map.next_free >= 1
 
 
 @pytest.mark.asyncio

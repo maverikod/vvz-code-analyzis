@@ -9,6 +9,9 @@ import pytest
 
 from code_analysis.core.exceptions import QueryParseError
 from code_analysis.cst_query import parse_selector
+from code_analysis.cst_query.ast import Combinator
+
+_HRS_J003_SELECTOR = "//ClassDef//FunctionDef[@name='execute'][start_line>=100]"
 
 
 class TestParserBasic:
@@ -166,3 +169,21 @@ class TestParserComplexQueries:
         )
         assert query is not None
         assert len(query.rest) == 1  # One additional step after first
+
+
+class TestParserChainedDslash:
+    """HRS {j003}: chained // descendant steps after a prior step."""
+
+    def test_parse_chained_dslash_j003_selector(self):
+        """parse_selector accepts the exact HRS {j003} selector string."""
+        query = parse_selector(_HRS_J003_SELECTOR)
+        assert query.first.node_type == "ClassDef"
+        assert len(query.rest) == 1
+        comb, step = query.rest[0]
+        assert comb == Combinator.RECURSIVE_DESCENDANT
+        assert step.node_type == "FunctionDef"
+        assert len(step.predicates) == 2
+        assert step.predicates[0].attr == "name"
+        assert step.predicates[0].value == "execute"
+        assert step.predicates[1].attr == "start_line"
+        assert step.predicates[1].op.value == ">="

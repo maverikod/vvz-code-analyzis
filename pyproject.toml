@@ -26,6 +26,7 @@ dependencies = [
     "queuemgr>=1.0.19",
     "psycopg[binary]>=3.1",
     "pgvector>=0.2.5",
+    "dulwich>=1.2.4",
 ]
 # PostgreSQL logical backup (backup_database / restore_database) also needs OS binaries
 # pg_dump and pg_restore (e.g. Debian/Ubuntu: apt install postgresql-client). Pip cannot
@@ -37,6 +38,7 @@ postgres-backup = []
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.25.0",
+    "pytest-timeout>=2.4",
     "pytest-cov>=7.0",
     "anyio>=4.0",
     "black>=24.0",

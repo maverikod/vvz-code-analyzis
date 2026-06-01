@@ -19,9 +19,9 @@ from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
 from code_analysis.core.cst_tree.tree_sidecar import (
     read_sidecar_payload,
-    sidecar_path_for_py,
     verify_sidecar_against_source,
 )
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
 def _make_db_mock() -> MagicMock:
@@ -100,7 +100,7 @@ def test_save_tree_to_file_creates_target_and_removes_tmp(
     )
     assert logical_source.strip() == '"""Doc."""\n\nx = 1'
     assert not persisted_node_ids
-    sc = sidecar_path_for_py(target)
+    sc = sibling_tree_path(target.resolve())
     assert sc.is_file()
     payload = read_sidecar_payload(target)
     assert payload is not None

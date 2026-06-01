@@ -79,6 +79,17 @@ def _extract_command_result(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]
     return None
 
 
+def _is_already_reconciled_failed(state: Dict[str, Any]) -> bool:
+    """True when reconcile already promoted this job to terminal failed."""
+    outer = str(state.get("status", "")).strip().lower()
+    if outer not in {"failed", "error"}:
+        return False
+    payload = _extract_mcp_payload_from_state(state)
+    if not isinstance(payload, dict):
+        return False
+    return str(payload.get("status", "")).strip().lower() == "failed"
+
+
 def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
     """
     If the stored MCP payload reports failure, set queue job status to ``failed``.
@@ -101,6 +112,8 @@ def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
         )
         return
     if not isinstance(state, dict):
+        return
+    if _is_already_reconciled_failed(state):
         return
     payload = _extract_mcp_payload_from_state(state)
     if not isinstance(payload, dict):
@@ -149,6 +162,36 @@ def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
         pass
 
 
+def _patch_command_execution_set_mcp_result(CommandExecutionJob: Any) -> None:
+    """
+    Reconcile inner command failure after every ``set_mcp_result`` call.
+
+    In spawn-mode workers, ``command_execution_job_patch`` is auto-imported from
+    inside ``CommandExecutionJob.run()`` *after* that run has already started on
+    the unpatched method. Wrapping ``set_mcp_result`` ensures reconcile still runs
+    when the adapter stores the completed envelope with ``success: false`` inside.
+    """
+    if hasattr(CommandExecutionJob.set_mcp_result, "_reconcile_after_mcp_result"):
+        return
+
+    original_set_mcp_result = CommandExecutionJob.set_mcp_result
+
+    def patched_set_mcp_result(
+        self: Any, result: Dict[str, Any], status: Optional[str] = None
+    ) -> None:
+        original_set_mcp_result(self, result, status)
+        if getattr(self, "_reconcile_after_mcp_result", False):
+            return
+        self._reconcile_after_mcp_result = True
+        try:
+            reconcile_command_execution_job_status_after_mcp_result(self)
+        finally:
+            self._reconcile_after_mcp_result = False
+
+    patched_set_mcp_result._reconcile_after_mcp_result = True
+    CommandExecutionJob.set_mcp_result = patched_set_mcp_result
+
+
 def patch_command_execution_job():
     """
     Patch CommandExecutionJob to support progress tracking.
@@ -158,20 +201,21 @@ def patch_command_execution_job():
     """
     global _patch_applied
 
-    # Only apply patch once
-    if _patch_applied:
+    try:
+        from mcp_proxy_adapter.commands.queue.jobs import CommandExecutionJob
+    except ImportError as e:
+        logger.warning(f"Failed to patch CommandExecutionJob: {e}")
+        return
+
+    _patch_command_execution_set_mcp_result(CommandExecutionJob)
+
+    if hasattr(CommandExecutionJob.run, "_progress_tracker_patched"):
+        _patch_applied = True
         return
 
     try:
-        from mcp_proxy_adapter.commands.queue.jobs import CommandExecutionJob
         from ..core.progress_tracker import ProgressTracker
 
-        # Check if already patched (has our attribute)
-        if hasattr(CommandExecutionJob.run, "_progress_tracker_patched"):
-            _patch_applied = True
-            return
-
-        # Store original run method
         original_run = CommandExecutionJob.run
 
         def patched_run(self):
@@ -205,16 +249,11 @@ def patch_command_execution_job():
             original_run(self)
             reconcile_command_execution_job_status_after_mcp_result(self)
 
-        # Mark as patched
         patched_run._progress_tracker_patched = True
-
-        # Apply patch
         CommandExecutionJob.run = patched_run
         _patch_applied = True
         logger.debug("Successfully patched CommandExecutionJob for progress tracking")
 
-    except ImportError as e:
-        logger.warning(f"Failed to patch CommandExecutionJob: {e}")
     except Exception as e:
         logger.error(f"Error patching CommandExecutionJob: {e}", exc_info=True)
 

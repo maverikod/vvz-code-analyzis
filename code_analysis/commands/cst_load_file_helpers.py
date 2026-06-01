@@ -17,7 +17,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import libcst as cst
 
 from ..core.cst_tree.models import CSTTree
-from ..core.cst_tree.skeleton import build_declarative_overview, build_node_declarative_overview
+from ..core.cst_tree.skeleton import (
+    build_declarative_overview,
+    build_node_declarative_overview,
+)
 from ..core.cst_tree.tree_finder import find_nodes
 from ..core.cst_tree.tree_metadata import get_node_metadata
 
@@ -343,6 +346,11 @@ def build_load_response(
                 )
                 entry["declarative"] = overview_text
                 entry["outline_nodes"] = outline
+                with_code = get_node_metadata(
+                    tree.tree_id, meta.node_id, include_code=True
+                )
+                if with_code and with_code.code is not None:
+                    entry["code"] = with_code.code
             else:
                 with_code = get_node_metadata(
                     tree.tree_id, meta.node_id, include_code=True

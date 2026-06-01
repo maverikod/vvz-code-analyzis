@@ -29,6 +29,12 @@ from .models import Block, NavigationResult, Node, NodeKind
 from .selector import apply_selector
 from .session import resolve_session
 from .node_ref_params import normalize_optional_node_ref
+from .marked_tree_navigation import (
+    marked_tree_node_ref_is_ready,
+    navigate_marked_tree,
+    resolve_session_pointer_node_ref,
+    should_use_marked_tree_navigation,
+)
 from .tree_temp_preview_focus import (
     TreeTempPreviewResolveError,
     looks_like_sidecar_stable_id,
@@ -70,6 +76,18 @@ def navigate(
     Returns:
         NavigationResult on success, or PreviewError on failure.
     """
+    marked_params = dict(params)
+    resolve_session_pointer_node_ref(marked_params)
+    use_marked_tree = should_use_marked_tree_navigation(handler, marked_params)
+    if isinstance(handler, YamlFileHandler) and marked_params.get("session_id"):
+        # YAML session trees use inline ___id___ marks; legacy draft navigation
+        # matches tree-temp JSON Pointer previews and block summaries.
+        use_marked_tree = False
+    elif use_marked_tree and not marked_tree_node_ref_is_ready(marked_params):
+        use_marked_tree = False
+    if use_marked_tree:
+        return navigate_marked_tree(marked_params, budget)
+
     session_result = resolve_session(handler, params)
     if isinstance(session_result, PreviewError):
         return session_result

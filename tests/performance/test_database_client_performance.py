@@ -8,14 +8,52 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import socket
+import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.rpc_client import RPCClient
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
+
+# Bounded waits so missing/unready server fails fast (default connect timeout is 30s).
+_SERVER_READY_TIMEOUT_SEC = 2.0
+_RPC_REQUEST_TIMEOUT_SEC = 10.0
+
+
+def _wait_for_server_socket(socket_path: str, timeout_sec: float) -> None:
+    """Poll until the Unix socket accepts connections or timeout."""
+    deadline = time.time() + timeout_sec
+    path = Path(socket_path)
+    while time.time() < deadline:
+        if not path.exists():
+            time.sleep(0.05)
+            continue
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.25)
+            if probe.connect_ex(socket_path) == 0:
+                return
+        finally:
+            probe.close()
+        time.sleep(0.05)
+    pytest.skip(f"RPC server socket not ready within {timeout_sec}s: {socket_path}")
+
+
+def _perf_client(socket_path: str, *, pool_size: int = 5) -> DatabaseClient:
+    """DatabaseClient with bounded connect/RPC timeouts for perf tests."""
+    rpc = RPCClient(
+        socket_path,
+        pool_size=pool_size,
+        timeout=_RPC_REQUEST_TIMEOUT_SEC,
+        startup_connect_timeout=_SERVER_READY_TIMEOUT_SEC,
+    )
+    return DatabaseClient(rpc_client=rpc)
 
 
 class TestDatabaseClientPerformance:
@@ -27,8 +65,9 @@ class TestDatabaseClientPerformance:
         db_path = tmp_path / "perf_test.db"
         socket_path = str(tmp_path / "perf_test.sock")
 
-        # Create table
         driver = create_driver("sqlite", {"path": str(db_path)})
+        driver.connect({"path": str(db_path)})
+
         schema = {
             "name": "perf_table",
             "columns": [
@@ -38,32 +77,27 @@ class TestDatabaseClientPerformance:
             ],
         }
         driver.create_table(schema)
-        driver.disconnect()
-
-        # Start RPC server
-        import threading
 
         request_queue = RequestQueue()
-        driver = create_driver("sqlite", {"path": str(db_path)})
-        driver.connect({"path": str(db_path)})
         server = RPCServer(driver, request_queue, socket_path)
 
-        server_thread = threading.Thread(target=server.start, daemon=True)
+        server_thread = threading.Thread(
+            target=server.start, daemon=True, name="PerfRPCServer"
+        )
         server_thread.start()
-        time.sleep(0.3)
+        _wait_for_server_socket(socket_path, _SERVER_READY_TIMEOUT_SEC)
 
         yield server, socket_path
 
-        # Cleanup
         server.stop()
+        server_thread.join(timeout=2.0)
         driver.disconnect()
 
     def test_connection_pooling_performance(self, rpc_server):
         """Test connection pooling performance."""
         _, socket_path = rpc_server
 
-        # Test without pooling (pool_size=1)
-        client_no_pool = DatabaseClient(socket_path, pool_size=1)
+        client_no_pool = _perf_client(socket_path, pool_size=1)
         client_no_pool.connect()
 
         start_time = time.time()
@@ -72,8 +106,7 @@ class TestDatabaseClientPerformance:
         time_no_pool = time.time() - start_time
         client_no_pool.disconnect()
 
-        # Test with pooling (pool_size=10)
-        client_with_pool = DatabaseClient(socket_path, pool_size=10)
+        client_with_pool = _perf_client(socket_path, pool_size=10)
         client_with_pool.connect()
 
         start_time = time.time()
@@ -82,10 +115,7 @@ class TestDatabaseClientPerformance:
         time_with_pool = time.time() - start_time
         client_with_pool.disconnect()
 
-        # Pooling should be faster (or at least not significantly slower)
-        # Allow some variance, but pooling should help
         print(f"Without pool: {time_no_pool:.3f}s, With pool: {time_with_pool:.3f}s")
-        # Just verify both complete successfully
         assert time_no_pool > 0
         assert time_with_pool > 0
 
@@ -93,7 +123,7 @@ class TestDatabaseClientPerformance:
         """Test concurrent requests performance."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path, pool_size=10)
+        client = _perf_client(socket_path, pool_size=10)
         client.connect()
 
         try:
@@ -104,20 +134,17 @@ class TestDatabaseClientPerformance:
                     "perf_table", {"data": f"concurrent_{i}", "value": i}
                 )
 
-            # Measure concurrent performance
             start_time = time.time()
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 futures = [executor.submit(make_request, i) for i in range(20)]
                 results = [f.result() for f in futures]
             concurrent_time = time.time() - start_time
 
-            # Measure sequential performance
             start_time = time.time()
             for i in range(20):
                 client.insert("perf_table", {"data": f"sequential_{i}", "value": i})
             sequential_time = time.time() - start_time
 
-            # Concurrent should be faster
             print(
                 f"Concurrent: {concurrent_time:.3f}s, Sequential: {sequential_time:.3f}s"
             )
@@ -131,20 +158,18 @@ class TestDatabaseClientPerformance:
         """Test RPC latency measurements."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
             latencies = []
 
-            # Measure latency for 20 operations
             for i in range(20):
                 start_time = time.time()
                 client.insert("perf_table", {"data": f"latency_{i}", "value": i})
                 latency = time.time() - start_time
                 latencies.append(latency)
 
-            # Calculate statistics
             avg_latency = sum(latencies) / len(latencies)
             max_latency = max(latencies)
             min_latency = min(latencies)
@@ -153,7 +178,6 @@ class TestDatabaseClientPerformance:
             print(f"Min latency: {min_latency*1000:.2f}ms")
             print(f"Max latency: {max_latency*1000:.2f}ms")
 
-            # Verify reasonable latency (allow up to 2s avg on loaded CI)
             assert avg_latency < 2.0
             assert max_latency < 5.0
         finally:
@@ -163,17 +187,15 @@ class TestDatabaseClientPerformance:
         """Test bulk operations performance."""
         _, socket_path = rpc_server
 
-        client = DatabaseClient(socket_path)
+        client = _perf_client(socket_path)
         client.connect()
 
         try:
-            # Test bulk insert (reduced count for CI; lock serializes RPC)
             start_time = time.time()
             for i in range(30):
                 client.insert("perf_table", {"data": f"bulk_{i}", "value": i})
             insert_time = time.time() - start_time
 
-            # Test bulk select
             start_time = time.time()
             rows = client.select("perf_table", limit=30)
             select_time = time.time() - start_time

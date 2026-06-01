@@ -24,6 +24,7 @@ from code_analysis.core.search_session.directory import (
     BUFFER_DIRNAME,
     INDEX_FILENAME,
     MANIFEST_FILENAME,
+    RELEVANCE_BLOCKS_DIRNAME,
     SERVICE_METADATA_FILENAME,
     SearchSessionDirectoryLayout,
     resolve_search_sessions_root,
@@ -72,6 +73,7 @@ def layout_from_directory(session_dir: Path) -> SearchSessionDirectoryLayout:
         index_path=session_dir / INDEX_FILENAME,
         service_metadata_path=session_dir / SERVICE_METADATA_FILENAME,
         blocks_dir=session_dir / BLOCKS_DIRNAME,
+        relevance_blocks_dir=session_dir / RELEVANCE_BLOCKS_DIRNAME,
         buffer_dir=session_dir / BUFFER_DIRNAME,
     )
 

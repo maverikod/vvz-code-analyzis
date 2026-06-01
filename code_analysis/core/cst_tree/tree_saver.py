@@ -26,7 +26,7 @@ from .tree_builder import (
     remove_tree,
 )
 from .node_stable_id import strip_inline_node_id_lines_from_source
-from .tree_sidecar import promote_pending_sidecar_to_final, write_sidecar_atomic
+from .tree_sidecar import write_sidecar_atomic
 from .tree_save_verification import (
     FILE_CHANGED_SINCE_LOAD,
     WRITE_VERIFY_FAILED,
@@ -58,8 +58,8 @@ def save_tree_to_file(
     Process:
     1. Validate entire file through compile() (before any changes)
     2. Create backup via BackupManager (mandatory if file exists)
-    3. Generate source code from CST tree (clean ``.py``; sidecar ``.cst/<name>.tree``
-       holds node ids.)
+    3. Generate source code from CST tree (clean ``.py``; sidecar ``<source>.py.tree``
+       next to the source holds node ids.)
     4. Write to temporary file
     5. Validate temporary file (compile, linter, type checker)
     6. Atomically replace file via os.replace()
@@ -341,7 +341,6 @@ def save_tree_to_file(
 
             if sync_result.get("success") and prebuilt_cst_tree_for_sync is not None:
                 try:
-                    promote_pending_sidecar_to_final(target_path)
                     write_sidecar_atomic(target_path, tree)
                 except OSError as exc:
                     logger.warning(

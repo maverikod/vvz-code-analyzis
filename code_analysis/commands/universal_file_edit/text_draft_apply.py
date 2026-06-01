@@ -26,11 +26,23 @@ from code_analysis.commands.universal_file_replace_command import (
     TextReplacementTriple,
     _sort_text_replacements_bottom_up,
 )
-from code_analysis.commands.universal_file_edit.session import EditSession
+from code_analysis.commands.universal_file_edit.session import (
+    EditSession,
+    apply_source_mutation,
+    apply_tree_operation,
+)
+from code_analysis.core.edit_session.edit_operations_adapter import (
+    command_op_to_edit_operation,
+    expand_markdown_section_ops,
+    session_has_valid_tree,
+    text_ops_use_unified_tree,
+)
 from code_analysis.commands.universal_file_edit.text_node_ref import (
     resolve_text_operation_line_range,
 )
 from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+from code_analysis.tree.edit_operations import EditOperationError
 
 
 def _line_count(buffer: List[str]) -> int:
@@ -156,6 +168,59 @@ def _validate_text_line_operation(
     return None
 
 
+def _run_valid_text_tree_apply(
+    session: EditSession,
+    operations: List[Dict[str, Any]],
+) -> SuccessResult | ErrorResult:
+    """Apply text-format edits via short_id EditOperation dispatch when tree is valid."""
+    try:
+        bm = BackupManager(root_dir=session.core.project_root)
+        bm.create_backup(
+            session.core.session_source_path, command="universal_file_edit"
+        )
+    except Exception as exc:
+        return error_result_for_edit(
+            f"Backup before edit failed: {exc}",
+            WRITE_FAILED,
+            {"path": str(session.core.session_source_path)},
+        )
+
+    tree_snapshot = session.core.session_tree_path.read_text(encoding="utf-8")
+    source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
+
+    def _rollback() -> None:
+        session.core.session_tree_path.write_text(tree_snapshot, encoding="utf-8")
+        session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
+
+    try:
+        for op in operations:
+            sections = parse_tree_file(
+                session.core.session_tree_path.read_text(encoding="utf-8")
+            )
+            for expanded in expand_markdown_section_ops(op, sections, session.core):
+                edit_op = command_op_to_edit_operation(expanded, sections, session.core)
+                apply_tree_operation(session, edit_op)
+    except (EditOperationError, ValueError) as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc),
+            INVALID_OPERATION,
+            {"operations": operations},
+        )
+    except Exception as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc),
+            WRITE_FAILED,
+            {"path": str(session.core.session_tree_path)},
+        )
+
+    line_count = len(
+        session.core.session_source_path.read_text(encoding="utf-8").splitlines()
+    )
+    return SuccessResult(data={"success": True, "line_count": line_count})
+
+
 def run_text_draft_apply(
     session: EditSession,
     operations: List[Dict[str, Any]],
@@ -178,6 +243,9 @@ def run_text_draft_apply(
     - ``position``: ``'last'`` — append to end of file.
       When ``position='last'``, ``start_line``/``end_line`` are ignored.
     """
+
+    if session_has_valid_tree(session.core) and text_ops_use_unified_tree(operations):
+        return _run_valid_text_tree_apply(session, operations)
 
     try:
         root_dir = project_root_near(session.draft_path)
@@ -211,7 +279,7 @@ def run_text_draft_apply(
         content_raw = op.get("content", op.get("code", ""))
         content_str = content_raw if isinstance(content_raw, str) else str(content_raw)
         block = content_str if content_str.endswith("\n") else content_str + "\n"
-        session.draft_path.write_text(block, encoding="utf-8")
+        apply_source_mutation(session, block)
         return SuccessResult(
             data={"success": True, "line_count": len(block.splitlines())},
         )
@@ -276,7 +344,8 @@ def run_text_draft_apply(
             appended = content_str if content_str.endswith("\n") else content_str + "\n"
             buffer.append(appended)
 
-    session.draft_path.write_text("".join(buffer), encoding="utf-8")
+    new_text = "".join(buffer)
+    apply_source_mutation(session, new_text)
 
     return SuccessResult(
         data={"success": True, "line_count": len(buffer)},

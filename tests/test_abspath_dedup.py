@@ -1,5 +1,9 @@
 """
-Tests for absolute-path deduplication in files table and indexer/vectorizer guards.
+Tests for absolute-path deduplication in files table and worker path convention.
+
+Duplicate relative/absolute rows are merged by the file watcher (_deduplicate_absolute_paths).
+The indexer and vectorizer process canonical rows (including normalized absolute paths in
+files.path); they do not hard-skip absolute paths.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -51,7 +55,9 @@ def _insert_project(db: SqliteLegacyRpcFacade, root: Path, project_id: str) -> N
     )
 
 
-def test_dedup_pair_keeps_earlier(dedup_db: SqliteLegacyRpcFacade, tmp_path: Path) -> None:
+def test_dedup_pair_keeps_earlier(
+    dedup_db: SqliteLegacyRpcFacade, tmp_path: Path
+) -> None:
     """Relative row has earlier updated_at; absolute duplicate is removed."""
     watch = tmp_path / "watch"
     root = watch / "proj"
@@ -231,15 +237,15 @@ def _make_indexer_mock_for_abspath(
 
 
 @pytest.mark.asyncio
-async def test_indexer_skips_abspath(tmp_path: Path) -> None:
-    """Absolute DB path: abspath_skipped error, heartbeat, no index_file."""
+async def test_indexer_processes_abspath(tmp_path: Path) -> None:
+    """Normalized absolute path in files.path: indexer calls index_file (no hard-skip)."""
     batch_size = 5
     projects = [{"project_id": "proj-x"}]
-    bad_path = "//home/example/abs_only.py"
+    abs_path = "/tmp/proj-root/src/abs_only.py"
     files = [
         {
             "id": 99,
-            "path": bad_path,
+            "path": abs_path,
             "project_id": "proj-x",
             "updated_at": 2.0,
             "editing_pid": None,
@@ -254,20 +260,9 @@ async def test_indexer_skips_abspath(tmp_path: Path) -> None:
     )
     worker._stop_event = multiprocessing.Event()
 
-    hb_calls: list = []
-
-    def _capture_hb(*args, **kwargs):
-        hb_calls.append((args, kwargs))
-
-    with (
-        patch(
-            "code_analysis.core.database_client.factory.create_worker_database_client",
-            return_value=mock_db,
-        ),
-        patch(
-            "code_analysis.core.indexing_worker_pkg.processing.heartbeat_project_activity",
-            side_effect=_capture_hb,
-        ),
+    with patch(
+        "code_analysis.core.database_client.factory.create_worker_database_client",
+        return_value=mock_db,
     ):
 
         async def run_then_stop():
@@ -278,31 +273,15 @@ async def test_indexer_skips_abspath(tmp_path: Path) -> None:
         await process_cycle(worker, poll_interval=1)
         await stop_task
 
-    mock_db.index_file.assert_not_called()
-    assert _batch_has_abspath_skipped(mock_db.execute_batch)
-    assert hb_calls, "heartbeat_project_activity should run before continue"
-
-
-def _batch_has_abspath_skipped(mock_batch: MagicMock) -> bool:
-    if not mock_batch.called:
-        return False
-    for call in mock_batch.call_args_list:
-        ops = call[0][0] if call[0] else []
-        for op in ops:
-            if not isinstance(op, tuple) or len(op) < 2:
-                continue
-            params = op[1]
-            if (
-                params
-                and len(params) >= 4
-                and params[3] == "abspath_skipped"
-            ):
-                return True
-    return False
+    mock_db.index_file.assert_called_once()
+    call_args = mock_db.index_file.call_args
+    assert call_args[0][0] == abs_path
+    assert call_args[0][1] == "proj-x"
 
 
 @pytest.mark.asyncio
-async def test_vectorizer_skips_abspath(dedup_db: SqliteLegacyRpcFacade) -> None:
+async def test_vectorizer_resolves_abspath(dedup_db: SqliteLegacyRpcFacade) -> None:
+    """Absolute path in files.path: vectorizer resolves path (no hard-skip)."""
     self = MagicMock()
     self._stop_event = MagicMock()
     self._stop_event.is_set.return_value = False
@@ -313,17 +292,17 @@ async def test_vectorizer_skips_abspath(dedup_db: SqliteLegacyRpcFacade) -> None
     self.docs_markdown_embeddings_enabled = True
     self.chunk_set_overrides = None
 
-    files = [
-        {
-            "id": "f1",
-            "project_id": "p1",
-            "path": "/home/abs/c.py",
-        }
-    ]
+    file_row = {
+        "id": "f1",
+        "project_id": "p1",
+        "path": "/home/abs/c.py",
+    }
     with patch(
-        "code_analysis.core.vectorization_worker_pkg.chunking.resolve_indexed_file_path"
+        "code_analysis.core.vectorization_worker_pkg.chunking.resolve_indexed_file_path",
+        return_value=None,
     ) as res_mock:
-        res_mock.side_effect = AssertionError("resolve_indexed_file_path must not run")
-        n = await _request_chunking_for_files(self, cast(DatabaseClient, dedup_db), files)
+        n = await _request_chunking_for_files(
+            self, cast(DatabaseClient, dedup_db), [file_row]
+        )
+    res_mock.assert_called_once_with(file_row)
     assert n == 0
-    res_mock.assert_not_called()

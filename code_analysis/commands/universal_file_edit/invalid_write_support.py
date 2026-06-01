@@ -132,6 +132,8 @@ def restore_session_format_after_recovery(
 
     if orig == FORMAT_SIDECAR:
         from code_analysis.core.cst_tree import tree_builder as cst_builder
+
+        # Sidecar persisted at sibling <source>.py.tree via write_sidecar_atomic (C-003).
         from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
 
         tree = cst_builder.load_file_to_tree(str(session.abs_path))

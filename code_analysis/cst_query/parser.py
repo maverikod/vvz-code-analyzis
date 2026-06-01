@@ -30,10 +30,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
-
 from __future__ import annotations
-
 
 
 from dataclasses import dataclass
@@ -42,9 +39,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-
 from lark import Lark, Transformer, Token, UnexpectedInput
-
 
 
 from .ast import (
@@ -60,12 +55,11 @@ from .ast import (
 
 from ..core.exceptions import QueryParseError
 
-
 _GRAMMAR = r"""
 ?start: selector
 
-selector: dslash_step ((CHILD step) | step)*
-        | step ((CHILD step) | step)*
+selector: dslash_step ((CHILD step) | dslash_step | step)*
+        | step ((CHILD step) | dslash_step | step)*
 CHILD: ">"
 DSLASH: "//"
 
@@ -97,15 +91,15 @@ INT: /[0-9]+/
 """
 
 
-
-
 _parser = Lark(_GRAMMAR, parser="lalr", start="start")
+
 
 @dataclass(frozen=True)
 class _ParsedPseudo:
     name: str
     index: Optional[int]
     not_query: Optional["Query"] = None
+
 
 class _ToAst(Transformer):
     """Lark transformer: converts parse tree into CSTQuery AST nodes."""
@@ -156,21 +150,23 @@ class _ToAst(Transformer):
 
     def predicate(self, items: list[Any]) -> Predicate:
         """Build Predicate; strip optional AT token before attr name."""
-        filtered = [it for it in items if not (isinstance(it, Token) and it.type == "AT")]
+        filtered = [
+            it for it in items if not (isinstance(it, Token) and it.type == "AT")
+        ]
         attr, op_str, value = str(filtered[0]), str(filtered[1]), str(filtered[2])
         return Predicate(attr=attr, op=PredicateOp(op_str), value=value)
 
-    def dslash_step(self, items: list[Any]) -> SelectorStep:
-        """Transform //step: return the inner SelectorStep directly.
+    def dslash_step(self, items: list[Any]) -> tuple[Combinator, SelectorStep]:
+        """Transform //step into (RECURSIVE_DESCENDANT, inner step).
 
-        Grammar rule `dslash_step: DSLASH step` gives [DSLASH_token, SelectorStep].
-        The `selector` rule then treats this SelectorStep as the leading step of
-        a descendant search (starting from root wildcard).
+        Leading ``//`` starts a recursive descendant search from the tree root;
+        a chained ``//`` after a prior step applies the same combinator between
+        steps (e.g. ``//ClassDef//FunctionDef``).
         """
         inner = next((it for it in items if isinstance(it, SelectorStep)), None)
         if inner is None:
             raise QueryParseError("dslash_step: expected SelectorStep")
-        return inner
+        return (Combinator.RECURSIVE_DESCENDANT, inner)
 
     def pseudo_args(self, items: list[Any]) -> Any:
         """Return INT for :nth or Query for :not; else first item."""
@@ -227,8 +223,14 @@ class _ToAst(Transformer):
         """Build Query from parsed steps and combinators."""
         if not items:
             raise QueryParseError("Empty selector")
-        first = items[0]
-        if not isinstance(first, SelectorStep):
+        first_item = items[0]
+        if isinstance(first_item, tuple):
+            _leading_comb, first = first_item
+            if not isinstance(first, SelectorStep):
+                raise QueryParseError("Invalid selector start")
+        elif isinstance(first_item, SelectorStep):
+            first = first_item
+        else:
             raise QueryParseError("Invalid selector start")
         rest: list[tuple[Combinator, SelectorStep]] = []
         i = 1
@@ -241,12 +243,21 @@ class _ToAst(Transformer):
                 rest.append((Combinator.CHILD, step))
                 i += 2
                 continue
+            if isinstance(it, tuple):
+                comb, step = it
+                if not isinstance(step, SelectorStep):
+                    raise QueryParseError("Invalid selector sequence")
+                rest.append((comb, step))
+                i += 1
+                continue
             if isinstance(it, SelectorStep):
                 rest.append((Combinator.DESCENDANT, it))
                 i += 1
                 continue
             raise QueryParseError("Invalid selector sequence")
         return Query(first=first, rest=tuple(rest))
+
+
 def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     name = p.name.lower()
     if name == PseudoKind.FIRST.value:
@@ -264,8 +275,6 @@ def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     if name == PseudoKind.NOT.value:
         return Pseudo(kind=PseudoKind.NOT)
     raise QueryParseError(f"Unsupported pseudo: {p.name}")
-
-
 
 
 def parse_selector(selector: str) -> Query:

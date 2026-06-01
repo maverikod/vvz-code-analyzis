@@ -13,7 +13,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -28,7 +27,6 @@ from .ast import Combinator, Predicate, PredicateOp, PseudoKind, Query, Selector
 from .index_builder import Match, NodeInfo, build_index, parse_source_for_query
 
 from .parser import parse_selector
-
 
 
 def query_source(
@@ -84,7 +82,6 @@ def query_source(
     return out
 
 
-
 def _legacy_node_id(info: NodeInfo) -> str:
     """Fallback ID used only for raw source without persisted UUIDs."""
     q = info.qualname or ""
@@ -92,7 +89,6 @@ def _legacy_node_id(info: NodeInfo) -> str:
         f"{info.kind}:{q}:{info.node_type}:"
         f"{info.start_line}:{info.start_col}-{info.end_line}:{info.end_col}"
     )
-
 
 
 def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
@@ -106,7 +102,6 @@ def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
             current, nxt_candidates, comb, parent_map=parent_map
         )
     return current
-
 
 
 def _apply_combinator(
@@ -123,7 +118,9 @@ def _apply_combinator(
     if comb == Combinator.CHILD:
         return [n for n in nxt if n.parent in prev_nodes]
 
-    # Descendant: any ancestor match.
+    # Descendant (space) and recursive descendant (//): any ancestor match.
+    if comb not in (Combinator.DESCENDANT, Combinator.RECURSIVE_DESCENDANT):
+        return []
     prev_set = prev_nodes
     out: list[NodeInfo] = []
     for n in nxt:
@@ -134,7 +131,6 @@ def _apply_combinator(
                 break
             p = parent_map.get(p)
     return out
-
 
 
 def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
@@ -149,6 +145,7 @@ def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
             matched = [matched[idx]] if 0 <= idx < len(matched) else []
     return matched
 
+
 def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
     if not _matches_node_type(node, step.node_type):
         return False
@@ -161,7 +158,6 @@ def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
         if not_matches:
             return False
     return True
-
 
 
 def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
@@ -201,12 +197,12 @@ def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
     return node.node_type.lower() == t.lower()
 
 
-
 def _matches_predicate(node: NodeInfo, pred: Predicate) -> bool:
     val = _get_attr(node, pred.attr)
     if val is None:
         return False
     return _compare(str(val), pred.op, pred.value)
+
 
 def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
     """Return attribute value for predicate matching. Supports module for ImportFrom."""
@@ -228,6 +224,7 @@ def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
     if a == "module" and node.extra_attrs and "module" in node.extra_attrs:
         return node.extra_attrs["module"]
     return None
+
 
 def _compare(left: str, op: PredicateOp, right: str) -> bool:
     if op == PredicateOp.EQ:

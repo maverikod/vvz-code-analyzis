@@ -12,9 +12,12 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
-from typing import Any, List, Sequence, Tuple, cast
+import logging
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 from .logical_write_program import LogicalWriteProgramV1, SqlParamPair
+
+logger = logging.getLogger(__name__)
 
 
 def _non_empty_batches(
@@ -43,6 +46,37 @@ def submit_logical_write_or_fallback(
     for batch_ops in inner:
         last = database.execute_batch(batch_ops)
     return last
+
+
+def execute_all_batches_in_transaction(
+    database: Any,
+    batches: List[List[Tuple[str, Any]]],
+    transaction_id: str,
+    *,
+    file_path: str,
+    file_id: Any,
+) -> Optional[Dict[str, Any]]:
+    """
+    Run batch groups on an existing transaction connection (caller-owned tx).
+
+    Used when an outer scope already called ``begin_transaction`` and holds
+    ``files.editing_pid`` on the same connection (e.g. restore backup, compose CST).
+
+    Returns:
+        None on success, or an error-shaped dict on the first batch failure.
+    """
+    try:
+        for batch_ops in batches:
+            database.execute_batch(batch_ops, transaction_id=transaction_id)
+    except Exception as e:
+        logger.exception("execute_batch failed for %s", file_path)
+        return {
+            "success": False,
+            "error": str(e),
+            "file_path": file_path,
+            "file_id": file_id,
+        }
+    return None
 
 
 async def submit_logical_write_or_fallback_async(

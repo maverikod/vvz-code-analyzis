@@ -221,10 +221,36 @@ def register_commands_part2(reg: registry) -> None:
     try:
         from .commands.universal_file_edit.open_command import UniversalFileOpenCommand
         from .commands.universal_file_edit.edit_command import UniversalFileEditCommand
-        from .commands.universal_file_edit.write_command import UniversalFileWriteCommand
-        from .commands.universal_file_edit.close_command import UniversalFileCloseCommand
-        from .commands.universal_file_edit.move_nodes_command import UniversalFileMoveNodesCommand
-        from .commands.universal_file_edit.search_command import UniversalFileSearchCommand
+        from .commands.universal_file_edit.write_command import (
+            UniversalFileWriteCommand,
+        )
+        from .commands.universal_file_edit.close_command import (
+            UniversalFileCloseCommand,
+        )
+        from .commands.universal_file_edit.move_nodes_command import (
+            UniversalFileMoveNodesCommand,
+        )
+        from .commands.universal_file_edit.search_command import (
+            UniversalFileSearchCommand,
+        )
+        from .commands.universal_file_edit.session_git_log_command import (
+            SessionGitLogCommand,
+        )
+        from .commands.universal_file_edit.session_git_diff_command import (
+            SessionGitDiffCommand,
+        )
+        from .commands.universal_file_edit.session_git_show_command import (
+            SessionGitShowCommand,
+        )
+        from .commands.universal_file_edit.session_git_status_command import (
+            SessionGitStatusCommand,
+        )
+        from .commands.universal_file_edit.session_git_revert_command import (
+            SessionGitRevertCommand,
+        )
+        from .commands.universal_file_edit.session_write_command import (
+            SessionWriteCommand,
+        )
 
         reg.register(UniversalFileOpenCommand, "custom")
         reg.register(UniversalFileEditCommand, "custom")
@@ -232,12 +258,60 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(UniversalFileCloseCommand, "custom")
         reg.register(UniversalFileMoveNodesCommand, "custom")
         reg.register(UniversalFileSearchCommand, "custom")
+        reg.register(SessionGitLogCommand, "custom")
+        reg.register(SessionGitDiffCommand, "custom")
+        reg.register(SessionGitShowCommand, "custom")
+        reg.register(SessionGitStatusCommand, "custom")
+        reg.register(SessionGitRevertCommand, "custom")
+        reg.register(SessionWriteCommand, "custom")
         logger.info("Registered universal_file_edit commands")
     except ImportError as e:
         logger.warning("Failed to import universal_file_edit commands: %s", e)
     except Exception as e:
         logger.error(
             "Failed to register universal_file_edit commands: %s",
+            e,
+            exc_info=True,
+        )
+
+    try:
+        from .commands.sessions.session_create_command import SessionCreateCommand
+        from .commands.sessions.session_delete_command import SessionDeleteCommand
+        from .commands.sessions.session_list_command import SessionListCommand
+        from .commands.sessions.session_view_command import SessionViewCommand
+        from .commands.sessions.session_open_file_command import SessionOpenFileCommand
+        from .commands.sessions.session_close_file_command import (
+            SessionCloseFileCommand,
+        )
+        from .commands.sessions.session_list_file_locks_command import (
+            SessionListFileLocksCommand,
+        )
+        from .commands.sessions.subordinate_session_commands import (
+            SubordinateSessionCreateCommand,
+            SubordinateSessionDeleteCommand,
+            SubordinateSessionGetCommand,
+            SubordinateSessionListCommand,
+            SubordinateSessionUpdateCommand,
+        )
+
+        reg.register(SessionCreateCommand, "custom")
+        reg.register(SessionDeleteCommand, "custom")
+        reg.register(SessionListCommand, "custom")
+        reg.register(SessionViewCommand, "custom")
+        reg.register(SessionOpenFileCommand, "custom")
+        reg.register(SessionCloseFileCommand, "custom")
+        reg.register(SessionListFileLocksCommand, "custom")
+        reg.register(SubordinateSessionCreateCommand, "custom")
+        reg.register(SubordinateSessionGetCommand, "custom")
+        reg.register(SubordinateSessionUpdateCommand, "custom")
+        reg.register(SubordinateSessionDeleteCommand, "custom")
+        reg.register(SubordinateSessionListCommand, "custom")
+        logger.info("Registered session_management commands")
+    except ImportError as e:
+        logger.warning("Failed to import session_management commands: %s", e)
+    except Exception as e:
+        logger.error(
+            "Failed to register session_management commands: %s",
             e,
             exc_info=True,
         )

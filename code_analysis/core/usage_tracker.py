@@ -23,12 +23,16 @@ class UsageTracker(ast.NodeVisitor):
     - Attribute accesses: obj.attribute (for properties)
     """
 
-    def __init__(self, add_usage_callback: Callable[[Dict[str, Any]], None]):
+    def __init__(
+        self,
+        add_usage_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ):
         """
         Initialize usage tracker.
 
         Args:
-            add_usage_callback: Callback function to add usage record.
+            add_usage_callback: Optional callback to add usage record to storage.
+                When omitted, usages are collected only via ``get_usages()``.
                 Called with dict containing:
                 - line: Line number
                 - usage_type: 'call', 'instantiation', 'attribute'
@@ -210,14 +214,14 @@ class UsageTracker(ast.NodeVisitor):
 
         self._usages.append(usage_record)
 
-        # Call callback to add usage to database
-        try:
-            self._add_usage(usage_record)
-        except Exception as e:
-            logger.warning(
-                f"Failed to add usage record for {target_name} at line {line}: {e}",
-                exc_info=True,
-            )
+        if self._add_usage is not None:
+            try:
+                self._add_usage(usage_record)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to add usage record for {target_name} at line {line}: {e}",
+                    exc_info=True,
+                )
 
     def get_usages(self) -> List[Dict[str, Any]]:
         """

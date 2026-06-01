@@ -25,7 +25,6 @@ from code_analysis.core.cst_tree.tree_builder import (
 )
 from code_analysis.core.cst_tree.tree_modifier import modify_tree
 
-
 IMPORT_SOURCE = '''"""Doc."""
 from .task_status import TaskStatus
 
@@ -822,17 +821,15 @@ def test_sequential_class_method_edits_preserve_sibling_stable_id(tmp_path) -> N
 
 
 def test_modify_tree_rewrites_sidecar_after_each_operation(tmp_path) -> None:
-    """Each ``modify_tree`` op must atomically rewrite ``.cst/<stem>.tree``."""
-    from code_analysis.core.cst_tree.tree_sidecar import (
-        read_sidecar_payload,
-        sidecar_path_for_py,
-    )
+    """Each ``modify_tree`` op must atomically rewrite sibling ``<source>.py.tree``."""
+    from code_analysis.core.cst_tree.tree_sidecar import read_sidecar_payload
+    from code_analysis.tree.sibling_convention import sibling_tree_path
 
     path = tmp_path / "widget_methods.py"
     path.write_text(SOURCE_WIDGET_THREE_METHODS.strip(), encoding="utf-8")
     tree = create_tree_from_code(str(path), path.read_text(encoding="utf-8"))
     tree_id = tree.tree_id
-    sidecar = sidecar_path_for_py(path)
+    sidecar = sibling_tree_path(path.resolve())
     try:
         stable_before = _function_stable_ids_by_name(
             tree_id, ("alpha", "beta"), class_name="Widget"

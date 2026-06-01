@@ -1,5 +1,8 @@
 """
-Sidecar-backed CST universal edit validation and synchronous batch apply.
+Apply CST edit batches inside universal_file_edit sidecar sessions.
+
+Persists trees via write_sidecar_atomic at the sibling path <source>.py.tree (C-003).
+Does not resolve .cst/ or pending sidecar paths.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -23,6 +26,12 @@ from code_analysis.commands.universal_file_edit.errors import (
     make_error,
 )
 from code_analysis.commands.universal_file_edit.session import EditSession
+from code_analysis.core.edit_session.edit_operations_adapter import (
+    apply_command_ops_on_session_tree,
+    session_has_valid_tree,
+    sidecar_ops_use_unified_tree,
+    text_ops_use_unified_tree,
+)
 from code_analysis.core.cst_tree.models import CSTTree, ROOT_NODE_ID_SENTINEL
 from code_analysis.core.cst_tree.node_stable_id import logical_source_from_module
 from code_analysis.core.cst_tree.tree_builder import (
@@ -319,11 +328,62 @@ def validate_sidecar_nested_batch(
     return None
 
 
+def _run_valid_session_sidecar_batch(
+    session: EditSession,
+    operations: List[Dict[str, Any]],
+) -> SuccessResult | ErrorResult:
+    """Apply sidecar ops via G-004 EditOperation dispatch on the session tree."""
+    from code_analysis.core.backup_manager import BackupManager
+    from code_analysis.tree.edit_operations import EditOperationError
+
+    try:
+        bm = BackupManager(root_dir=session.core.project_root)
+        bm.create_backup(
+            session.core.session_source_path, command="universal_file_edit"
+        )
+    except Exception as exc:
+        return error_result_for_edit(
+            f"Backup before edit failed: {exc}",
+            "WRITE_FAILED",
+            {"path": str(session.core.session_source_path)},
+        )
+
+    snapshot = session.core.session_tree_path.read_text(encoding="utf-8")
+    source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
+
+    def _rollback() -> None:
+        session.core.session_tree_path.write_text(snapshot, encoding="utf-8")
+        session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
+
+    try:
+        apply_command_ops_on_session_tree(session.core, operations)
+    except EditOperationError as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc),
+            "INVALID_OPERATION",
+            {"operations": operations},
+        )
+    except Exception as exc:
+        _rollback()
+        return error_result_for_edit(
+            str(exc),
+            "WRITE_FAILED",
+            {"path": str(session.core.session_tree_path)},
+        )
+
+    session.draft_path = session.core.session_source_path
+    session.dirty = True
+    return SuccessResult(data={"success": True, "updated": True})
+
+
 def run_sidecar_cst_edit_batch(
     session: EditSession,
     operations: List[Dict[str, Any]],
 ) -> SuccessResult | ErrorResult:
     """Apply sidecar CST operations synchronously (for asyncio.to_thread)."""
+    if sidecar_ops_use_unified_tree(session.core, operations):
+        return _run_valid_session_sidecar_batch(session, operations)
 
     def _rollback_sidecar_session(
         tree_id: str,

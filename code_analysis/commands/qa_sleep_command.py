@@ -55,8 +55,28 @@ class QASleepCommand(Command):
         return qa_sleep_command_metadata(cls)
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Adapter Command validates types and schema bounds; reject OOB instead of clamp."""
-        return super().validate_params(params)
+        """Reject unknown keys (adapter) and out-of-schema types/bounds (semantic)."""
+        params = super().validate_params(params)
+        schema = self.get_schema()
+        props = schema.get("properties") or {}
+        for key in ("seconds", "tick_seconds"):
+            if key not in params:
+                continue
+            value = params[key]
+            prop = props.get(key) or {}
+            if prop.get("type") == "number":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise ValidationError(
+                        f"parameter {key!r} must be number, got {type(value).__name__}",
+                        data={"field": key},
+                    )
+                minimum = prop.get("minimum")
+                if minimum is not None and value < minimum:
+                    raise ValidationError(
+                        f"parameter {key!r} must be >= {minimum}, got {value!r}",
+                        data={"field": key},
+                    )
+        return params
 
     async def execute(
         self, seconds: float = 30.0, tick_seconds: float = 0.5, **kwargs: Any

@@ -200,9 +200,15 @@ def get_cached_runtime_session_id() -> Optional[str]:
 
 def get_session_id_for_current_pid(database: Any, *, role: str = "command") -> str:
     """Resolve or register the runtime session for the current OS process."""
+    global _current_session_id, _current_session_pid
+
     cached = get_cached_runtime_session_id()
     if cached:
-        return cached
+        if runtime_session_exists(database, cached):
+            return cached
+        with _session_lock:
+            _current_session_id = None
+            _current_session_pid = None
     ensure_runtime_lock_tables(database)
     pid = os.getpid()
     row = _select_one(
@@ -212,7 +218,6 @@ def get_session_id_for_current_pid(database: Any, *, role: str = "command") -> s
     )
     if row and row.get("session_id"):
         sid = str(row["session_id"])
-        global _current_session_id, _current_session_pid
         with _session_lock:
             _current_session_id = sid
             _current_session_pid = pid

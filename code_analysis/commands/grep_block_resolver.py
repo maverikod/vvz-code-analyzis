@@ -27,8 +27,8 @@ from code_analysis.core.cst_tree.models import TreeNodeMetadata
 from code_analysis.core.cst_tree.tree_sidecar import (
     metadata_map_from_payload,
     read_sidecar_payload,
-    sidecar_path_for_py,
 )
+from code_analysis.core.tree_lifecycle.checksum import validate_or_recreate_tree_file
 from code_analysis.core.json_tree.tree_builder import build_tree_from_data
 from code_analysis.core.yaml_tree.tree_builder import build_yaml_tree_from_data
 
@@ -85,6 +85,7 @@ class GrepBlockResolver:
                     file_path=str(abs_path),
                     content=content,
                     source="disk",
+                    ensure_persisted_tree=False,
                 )
         document = self._documents.get(cache_key)
         if document is None:
@@ -105,7 +106,7 @@ class _LineBlockIndex:
 
 
 class _SidecarPythonLineBlockIndex(_LineBlockIndex):
-    """Lookup via ``.cst/{stem}.tree`` metadata_map (no in-memory CST session)."""
+    """Lookup via TreeLifecycle-validated sibling ``<source>.py.tree`` metadata_map (no in-memory CST session)."""
 
     def __init__(self, metadata_map: dict[str, TreeNodeMetadata]) -> None:
         self._metadata = list(metadata_map.values())
@@ -227,15 +228,15 @@ def _build_line_to_node_id_map(
 
 
 def _load_python_sidecar_index(abs_path: Path) -> _SidecarPythonLineBlockIndex | None:
-    sidecar_path = sidecar_path_for_py(abs_path)
-    if not sidecar_path.is_file():
-        return None
+    resolved = abs_path.resolve()
     try:
-        py_mtime = abs_path.stat().st_mtime
-        sidecar_mtime = sidecar_path.stat().st_mtime
-    except OSError:
+        tree_ref, _state = validate_or_recreate_tree_file(
+            project_root=resolved.parent,
+            file_path=resolved.name,
+        )
+    except (FileNotFoundError, ValueError, OSError, NotImplementedError):
         return None
-    if py_mtime > sidecar_mtime:
+    if not tree_ref.sidecar_path.is_file():
         return None
     payload = read_sidecar_payload(abs_path)
     if payload is None:

@@ -27,6 +27,7 @@ from code_analysis.commands.universal_file_edit.format_group import (
     FORMAT_TEXT,
     FORMAT_TREE_TEMP,
     delete_lockfile,
+    lockfile_write_preview_ready,
     read_lockfile_pid,
     write_lockfile_pid,
 )
@@ -189,6 +190,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             lock is not None
             and lock[0] == current_pid
             and lock[1] == session.session_id
+            and lockfile_write_preview_ready(session.abs_path)
         )
         if write_mode == "commit":
             return self._second_call(session, project_id)
@@ -419,7 +421,12 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             before_label=str(session.abs_path),
             after_label=str(session.abs_path),
         )
-        write_lockfile_pid(session.abs_path, current_pid, session.session_id)
+        write_lockfile_pid(
+            session.abs_path,
+            current_pid,
+            session.session_id,
+            write_preview_ready=True,
+        )
         return SuccessResult(data={"success": True, "phase": "preview", "diff": diff})
 
     def _second_call(
@@ -474,13 +481,11 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 get_tree as get_cst_tree,
             )
             from code_analysis.core.cst_tree.tree_sidecar import (
-                promote_pending_sidecar_to_final,
                 write_sidecar_atomic,
             )
 
             tree = get_cst_tree(session.tree_id)
             if tree is not None:
-                promote_pending_sidecar_to_final(session.abs_path)
                 write_sidecar_atomic(session.abs_path, tree)
 
         delete_lockfile(session.abs_path)

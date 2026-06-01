@@ -18,10 +18,8 @@ from code_analysis.core.search_session.preview_reference import (
     build_preview_reference,
     preview_reference_to_dict,
 )
-from code_analysis.core.search_session.tree_representation import (
-    TreeRepresentationRef,
-    validate_or_recreate_tree,
-)
+from code_analysis.core.search_session.tree_representation import TreeRepresentationRef
+from code_analysis.core.tree_lifecycle.checksum import validate_or_recreate_tree_file
 
 
 class GrepSearchMode(str, Enum):
@@ -32,6 +30,8 @@ class GrepSearchMode(str, Enum):
 
 
 DEFAULT_GREP_MODE = GrepSearchMode.structural
+
+
 class StructuralEvidenceEligibility(str, Enum):
     """eligible when structural mode produced at least one preview_ref on a validated tree."""
 
@@ -85,7 +85,7 @@ def enrich_line_matches_structural(
         return line_matches
 
     try:
-        tree_ref, _ = validate_or_recreate_tree(
+        tree_ref, _ = validate_or_recreate_tree_file(
             project_root=project_root,
             file_path=file_path,
         )
@@ -115,10 +115,23 @@ def apply_grep_mode(
 ) -> GrepModeApplyResult:
     """classic_line returns matches unchanged ineligible; structural enriches and sets eligible when any preview_ref."""
     if mode == GrepSearchMode.classic_line:
-        return GrepModeApplyResult(matches=list(line_matches), structural_evidence_eligibility=StructuralEvidenceEligibility.ineligible)
-    enriched = enrich_line_matches_structural(project_root=project_root, file_path=file_path, line_matches=line_matches)
-    eligibility = StructuralEvidenceEligibility.eligible if any(m.get("preview_ref") for m in enriched) else StructuralEvidenceEligibility.ineligible
-    return GrepModeApplyResult(matches=enriched, structural_evidence_eligibility=eligibility)
+        return GrepModeApplyResult(
+            matches=list(line_matches),
+            structural_evidence_eligibility=StructuralEvidenceEligibility.ineligible,
+        )
+    enriched = enrich_line_matches_structural(
+        project_root=project_root, file_path=file_path, line_matches=line_matches
+    )
+    eligibility = (
+        StructuralEvidenceEligibility.eligible
+        if any(m.get("preview_ref") for m in enriched)
+        else StructuralEvidenceEligibility.ineligible
+    )
+    return GrepModeApplyResult(
+        matches=enriched, structural_evidence_eligibility=eligibility
+    )
+
+
 def _group_matches_by_file(line_matches: list) -> dict:
     """Group matches by match['file_path']; raise ValueError when any match lacks file_path."""
     groups: dict = {}
@@ -135,17 +148,34 @@ def enrich_matches_per_file(*, project_root: Path, line_matches: list) -> list:
     groups = _group_matches_by_file(line_matches)
     result: list = []
     for fp, matches in groups.items():
-        result.extend(enrich_line_matches_structural(project_root=project_root, file_path=fp, line_matches=matches))
+        result.extend(
+            enrich_line_matches_structural(
+                project_root=project_root, file_path=fp, line_matches=matches
+            )
+        )
     return result
 
 
-def apply_grep_mode_multi_file(*, mode: GrepSearchMode, project_root: Path, line_matches: list) -> GrepModeApplyResult:
+def apply_grep_mode_multi_file(
+    *, mode: GrepSearchMode, project_root: Path, line_matches: list
+) -> GrepModeApplyResult:
     """Paginated path entry — delegates to enrich_matches_per_file for structural; classic_line returns input unchanged."""
     if mode == GrepSearchMode.classic_line:
-        return GrepModeApplyResult(matches=list(line_matches), structural_evidence_eligibility=StructuralEvidenceEligibility.ineligible)
-    enriched = enrich_matches_per_file(project_root=project_root, line_matches=line_matches)
-    eligibility = StructuralEvidenceEligibility.eligible if any(m.get("preview_ref") for m in enriched) else StructuralEvidenceEligibility.ineligible
-    return GrepModeApplyResult(matches=enriched, structural_evidence_eligibility=eligibility)
+        return GrepModeApplyResult(
+            matches=list(line_matches),
+            structural_evidence_eligibility=StructuralEvidenceEligibility.ineligible,
+        )
+    enriched = enrich_matches_per_file(
+        project_root=project_root, line_matches=line_matches
+    )
+    eligibility = (
+        StructuralEvidenceEligibility.eligible
+        if any(m.get("preview_ref") for m in enriched)
+        else StructuralEvidenceEligibility.ineligible
+    )
+    return GrepModeApplyResult(
+        matches=enriched, structural_evidence_eligibility=eligibility
+    )
 
 
 __all__ = [

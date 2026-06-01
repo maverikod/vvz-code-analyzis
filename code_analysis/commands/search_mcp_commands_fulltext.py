@@ -142,6 +142,7 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
             "entity_type": entity_type,
             "limit": limit,
         }
+        params.update(kwargs)
         try:
             params = self.validate_params(params)
         except ValidationError as e:

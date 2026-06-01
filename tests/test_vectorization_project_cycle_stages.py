@@ -7,6 +7,7 @@ per-project isolation; ordered processing across projects.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import uuid
 from pathlib import Path
@@ -23,6 +24,11 @@ from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 from code_analysis.core.vectorization_worker_pkg import VectorizationWorker
 from code_analysis.core.vectorization_worker_pkg.processing_cycle_projects import (
     process_projects_in_cycle,
+)
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("faiss") is None,
+    reason="faiss-cpu or faiss-gpu is required",
 )
 
 _CYCLE_DB_NAME = "cycle.db"

@@ -42,6 +42,16 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
+        from .commands.get_file_lines_command import GetFileLinesCommand
+
+        reg.register(GetFileLinesCommand, "custom")
+        logger.info("✅ Registered get_file_lines")
+    except ImportError as e:
+        logger.warning("Failed to import get_file_lines command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register get_file_lines: %s", e, exc_info=True)
+
+    try:
         from .commands.fs_grep_command import FsGrepCommand
         from .commands.fs_copy_move_remove_commands import (
             FsCopyCommand,

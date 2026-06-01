@@ -12,13 +12,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from code_analysis.core.cst_tree.models import TreeNodeMetadata
-from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_tree
 from code_analysis.core.cst_tree.tree_sidecar import (
     metadata_map_from_payload,
     read_sidecar_payload,
-    sidecar_path_for_py,
 )
 from code_analysis.core.structure_extraction.models import StructureWarning
+from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
 @dataclass
@@ -47,24 +46,69 @@ def _metadata_from_sidecar_payload(
     return metadata_map or None
 
 
-def _load_current_sidecar_metadata(
+def _project_root_and_file_path(abs_path: Path) -> tuple[Path, str]:
+    resolved = abs_path.resolve()
+    return resolved.parent, resolved.name
+
+
+def _read_sidecar_metadata_map(
+    abs_path: Path,
+    *,
+    allow_cst_index_fallback: bool,
+) -> Optional[Dict[str, TreeNodeMetadata]]:
+    payload = read_sidecar_payload(abs_path)
+    if payload is not None:
+        meta = _metadata_from_sidecar_payload(payload)
+        if meta:
+            return meta
+    if not allow_cst_index_fallback:
+        return None
+    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_tree
+
+    try:
+        tree = load_file_to_tree(str(abs_path))
+        meta = dict(tree.metadata_map)
+        remove_tree(tree.tree_id)
+    except Exception:
+        return None
+    return meta or None
+
+
+def _load_sidecar_metadata_readonly(
     abs_path: Path,
 ) -> Optional[Dict[str, TreeNodeMetadata]]:
-    """Reuse sidecar when on-disk file is not newer than the sidecar (preview policy)."""
-    sidecar_path = sidecar_path_for_py(abs_path)
-    if not sidecar_path.is_file():
-        return None
+    """Return metadata when sidecar checksum matches source; never rebuild."""
+    project_root, file_path = _project_root_and_file_path(abs_path)
     try:
-        py_mtime = abs_path.stat().st_mtime
-        sidecar_mtime = sidecar_path.stat().st_mtime
-    except OSError:
+        from code_analysis.core.search_session.tree_representation import (
+            _read_sidecar_state,
+            classify_tree_format,
+            sidecar_path_for,
+        )
+        from code_analysis.core.tree_lifecycle.checksum import (
+            compute_content_checksum,
+            is_tree_valid,
+        )
+
+        resolved = abs_path.resolve()
+        if not resolved.is_file():
+            return None
+        kind = classify_tree_format(file_path)
+        content = resolved.read_text(encoding="utf-8")
+        content_checksum = compute_content_checksum(content)
+        sidecar_path = sidecar_path_for(file_path, project_root)
+        if not sidecar_path.is_file():
+            return None
+        sidecar_digest, _ = _read_sidecar_state(
+            kind=kind,
+            source_abs=resolved,
+            sidecar_path=sidecar_path,
+        )
+        if not is_tree_valid(content_checksum, sidecar_digest):
+            return None
+    except (FileNotFoundError, ValueError, OSError, NotImplementedError):
         return None
-    if py_mtime > sidecar_mtime + 1e-6:
-        return None
-    payload = read_sidecar_payload(abs_path)
-    if payload is None:
-        return None
-    return _metadata_from_sidecar_payload(payload)
+    return _read_sidecar_metadata_map(abs_path, allow_cst_index_fallback=False)
 
 
 def _metadata_from_edit_session(
@@ -104,7 +148,7 @@ def resolve_python_metadata_stable(
 
     Never returns ids from ``create_tree_from_code(..., persist_sidecar=False)``.
     """
-    _ = content  # disk mtime policy; callers pass grep-read text for API symmetry
+    _ = content  # checksum policy reads source from disk; callers pass grep text for API symmetry
     stats = TreeResolutionStats(files_requiring_tree_check=1)
     warnings: List[StructureWarning] = []
 
@@ -132,12 +176,11 @@ def resolve_python_metadata_stable(
         )
         return None, warnings, stats
 
-    meta = _load_current_sidecar_metadata(abs_path)
-    if meta:
-        stats.valid_trees_reused += 1
-        return meta, warnings, stats
-
     if not ensure_persisted_tree:
+        meta = _load_sidecar_metadata_readonly(abs_path)
+        if meta:
+            stats.valid_trees_reused += 1
+            return meta, warnings, stats
         warnings.append(
             StructureWarning(
                 code="STRUCTURE_TREE_NOT_PERSISTED",
@@ -147,12 +190,18 @@ def resolve_python_metadata_stable(
         )
         return None, warnings, stats
 
-    had_sidecar = sidecar_path_for_py(abs_path).is_file()
+    project_root, file_path = _project_root_and_file_path(abs_path)
+    had_sidecar = sibling_tree_path(abs_path.resolve()).is_file()
+    from code_analysis.core.tree_lifecycle.checksum import (
+        validate_or_recreate_tree_file,
+    )
+
     try:
-        tree = load_file_to_tree(str(abs_path))
-        meta = dict(tree.metadata_map)
-        remove_tree(tree.tree_id)
-    except Exception as exc:
+        _tree_ref, validity_state = validate_or_recreate_tree_file(
+            project_root=project_root,
+            file_path=file_path,
+        )
+    except (FileNotFoundError, ValueError, OSError, NotImplementedError) as exc:
         warnings.append(
             StructureWarning(
                 code="STRUCTURE_TREE_ENRICHMENT_FAILED",
@@ -162,6 +211,7 @@ def resolve_python_metadata_stable(
         )
         return None, warnings, stats
 
+    meta = _read_sidecar_metadata_map(abs_path, allow_cst_index_fallback=True)
     if not meta:
         warnings.append(
             StructureWarning(
@@ -172,7 +222,11 @@ def resolve_python_metadata_stable(
         )
         return None, warnings, stats
 
-    if had_sidecar:
+    from code_analysis.core.search_session.tree_representation import TreeValidityState
+
+    if validity_state == TreeValidityState.reused:
+        stats.valid_trees_reused += 1
+    elif had_sidecar:
         stats.stale_trees_rebuilt += 1
         warnings.append(
             StructureWarning(

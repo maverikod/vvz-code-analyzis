@@ -75,11 +75,10 @@ def test_merge_edit_session_injects_draft_path_for_tree_temp(tmp_path: Path) -> 
     """FORMAT_TREE_TEMP sessions bind preview to draft_path, not stale disk source."""
     src = tmp_path / "cfg.yaml"
     src.write_text("a: 1\n", encoding="utf-8")
-    draft = draft_path_for(src, FORMAT_TREE_TEMP)
     descriptor = FormatDescriptor(
         format_group=FORMAT_TREE_TEMP,
         handler_id="yaml",
-        draft_path=draft,
+        draft_path=draft_path_for(src, FORMAT_TREE_TEMP),
         lockfile_path=src.with_suffix(src.suffix + ".write"),
         available_operations=["insert", "delete", "replace"],
     )
@@ -100,7 +99,7 @@ def test_merge_edit_session_injects_draft_path_for_tree_temp(tmp_path: Path) -> 
                 "session_id": edit_sess.session_id,
             }
         )
-        assert merged["_preview_abs_path"] == str(draft)
+        assert merged["_preview_abs_path"] == str(edit_sess.draft_path)
         assert "tree_id" not in merged
     finally:
         release_session(edit_sess.session_id)

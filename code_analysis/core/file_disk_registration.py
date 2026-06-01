@@ -42,6 +42,7 @@ def ensure_file_row_for_disk_path(
     *,
     last_modified: Optional[float] = None,
     mark_needs_chunking: bool = False,
+    tree_checksum: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Ensure a ``files`` row exists for an on-disk project file.
@@ -55,6 +56,7 @@ def ensure_file_row_for_disk_path(
         absolute_path: Absolute filesystem path to the file.
         last_modified: Optional mtime; when omitted, taken from ``stat``.
         mark_needs_chunking: When True, set ``needs_chunking = 1`` (file watcher).
+        tree_checksum: Optional source content checksum to persist on the row.
     """
     path = Path(absolute_path)
     try:
@@ -93,10 +95,29 @@ def ensure_file_row_for_disk_path(
     if not row or row.get("id") is None:
         return row
 
+    if tree_checksum is not None:
+        _persist_tree_checksum(database, row, tree_checksum)
+
     if mark_needs_chunking:
         _mark_file_needs_chunking(database, pid, path, row)
 
     return row
+
+
+def _persist_tree_checksum(
+    database: Any,
+    row: Optional[Dict[str, Any]],
+    tree_checksum: str,
+) -> None:
+    """Store the source checksum on one ``files`` row by id."""
+    execute = getattr(database, "execute", None)
+    if not callable(execute):
+        return
+    file_id = (row or {}).get("id")
+    if file_id is not None:
+        execute(
+            "UPDATE files SET tree_checksum = ? WHERE id = ?", (tree_checksum, file_id)
+        )
 
 
 def _mark_file_needs_chunking(

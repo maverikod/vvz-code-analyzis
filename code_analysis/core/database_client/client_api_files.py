@@ -180,8 +180,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             file_id_raw = existing.get("id")
             if file_id_raw is None:
                 self.execute(
-                    "DELETE FROM files WHERE project_id = ? AND (path = ? OR relative_path = ?)",
-                    (project_id, relative_path_str, relative_path_str),
+                    "DELETE FROM files WHERE project_id = ? AND (path = ? OR relative_path = ? OR path = ?)",
+                    (project_id, abs_path, relative_path_str, relative_path_str),
                 )
             else:
                 file_id = str(file_id_raw)
@@ -194,7 +194,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
                     """,
                     (
                         watch_dir_id,
-                        relative_path_str,
+                        abs_path,
                         relative_path_str,
                         lines,
                         last_modified,
@@ -211,8 +211,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             file_id_raw = tombstone.get("id")
             if file_id_raw is None:
                 self.execute(
-                    "DELETE FROM files WHERE project_id = ? AND (path = ? OR relative_path = ?)",
-                    (project_id, relative_path_str, relative_path_str),
+                    "DELETE FROM files WHERE project_id = ? AND (path = ? OR relative_path = ? OR path = ?)",
+                    (project_id, abs_path, relative_path_str, relative_path_str),
                 )
             else:
                 file_id = str(file_id_raw)
@@ -226,7 +226,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
                     """,
                     (
                         watch_dir_id,
-                        relative_path_str,
+                        abs_path,
                         relative_path_str,
                         lines,
                         last_modified,
@@ -248,7 +248,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
                 new_id,
                 project_id,
                 watch_dir_id,
-                relative_path_str,
+                abs_path,
                 relative_path_str,
                 lines,
                 last_modified,

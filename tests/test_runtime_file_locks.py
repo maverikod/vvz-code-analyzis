@@ -8,6 +8,7 @@ from typing import Any, cast
 from code_analysis.commands.project_file_advisory_lock_batch_command import (
     ProjectFileAdvisoryLockBatchCommand,
 )
+from code_analysis.core.client_sessions import ensure_client_session_tables
 from code_analysis.core.file_lock import (
     acquire_persistent_file_lock,
     release_persistent_file_lock,
@@ -30,8 +31,7 @@ class FakeDatabase:
         self.execute(
             "CREATE TABLE projects (id TEXT PRIMARY KEY, root_path TEXT NOT NULL)"
         )
-        self.execute(
-            """
+        self.execute("""
             CREATE TABLE files (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -39,8 +39,7 @@ class FakeDatabase:
                 relative_path TEXT,
                 deleted INTEGER DEFAULT 0
             )
-            """
-        )
+            """)
         self.execute(
             "INSERT INTO projects (id, root_path) VALUES (?, ?)",
             ("proj", str(root)),
@@ -131,9 +130,12 @@ def test_get_file_advisory_lock_status_aggregates(tmp_path: Path) -> None:
     db = FakeDatabase(tmp_path)
     ensure_runtime_lock_tables(db)
 
-    assert get_file_advisory_lock_status(db, project_id="proj", file_path="x.py")[
-        "lock_status"
-    ] == "free"
+    assert (
+        get_file_advisory_lock_status(db, project_id="proj", file_path="x.py")[
+            "lock_status"
+        ]
+        == "free"
+    )
 
     session = register_runtime_session(db, role="pytest")
     acquire_file_advisory_lease(
@@ -170,6 +172,7 @@ def test_get_file_advisory_lock_status_aggregates(tmp_path: Path) -> None:
 
 def test_batch_lock_partial_errors_and_idempotent_unlock(tmp_path: Path) -> None:
     db = FakeDatabase(tmp_path)
+    ensure_client_session_tables(db.conn)
     target = tmp_path / "ok.py"
     target.write_text("print('ok')\n", encoding="utf-8")
     db.execute(

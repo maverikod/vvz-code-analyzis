@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from code_analysis.core.search_session.directory import (
+    BLOCKS_DIRNAME,
+    BUFFER_DIRNAME,
     MANIFEST_FILENAME,
+    RELEVANCE_BLOCKS_DIRNAME,
     SearchSessionDirectoryLayout,
 )
 from code_analysis.core.search_session.heartbeat import (
@@ -29,8 +32,9 @@ def _layout(tmp_path: Path) -> SearchSessionDirectoryLayout:
         manifest_path=root / MANIFEST_FILENAME,
         index_path=root / "index.json",
         service_metadata_path=root / "service_metadata.json",
-        blocks_dir=root / "blocks",
-        buffer_dir=root / "buffer",
+        blocks_dir=root / BLOCKS_DIRNAME,
+        relevance_blocks_dir=root / RELEVANCE_BLOCKS_DIRNAME,
+        buffer_dir=root / BUFFER_DIRNAME,
     )
 
 

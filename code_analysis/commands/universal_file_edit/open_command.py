@@ -41,7 +41,13 @@ from code_analysis.commands.universal_file_edit.format_group import (
 from code_analysis.commands.universal_file_edit.open_command_metadata import (
     get_universal_file_open_metadata,
 )
-from code_analysis.commands.universal_file_edit.session import create_session
+from code_analysis.commands.universal_file_edit.session import (
+    apply_source_mutation,
+    create_session,
+)
+from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
+    serialize_tree_temp_roots,
+)
 from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
     acquire_tree_temp_for_open,
 )
@@ -302,19 +308,29 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             session_extra["original_format_group"] = fallback_info[
                 "original_format_group"
             ]
+        project_root = Path(BaseMCPCommand._resolve_project_root(project_id)).resolve()
         if tree_temp_kwargs is not None:
             session = create_session(
                 abs_path=abs_path,
                 descriptor=descriptor,
                 file_path=file_path,
+                project_root=project_root,
                 **tree_temp_kwargs,
                 **session_extra,
             )
+            roots = session.tree_temp_roots
+            if roots is not None:
+                draft_text = serialize_tree_temp_roots(
+                    session.handler_id,
+                    roots,
+                )
+                apply_source_mutation(session, draft_text)
         else:
             session = create_session(
                 abs_path=abs_path,
                 descriptor=descriptor,
                 file_path=file_path,
+                project_root=project_root,
                 tree_id=tree_id,
                 **session_extra,
             )
@@ -486,24 +502,32 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         if fg == FORMAT_TREE_TEMP:
             return self._write_tree_temp_draft(abs_path, descriptor, project_id)
         if fg == FORMAT_TEXT:
-            shutil.copy2(str(abs_path), str(descriptor.draft_path))
             return None
         raise ValueError(f"Unknown format group: {fg!r}")
 
-    def _write_sidecar_draft(self, abs_path: Path) -> str:
-        """Load Python file into CST tree and write sidecar.
+    def _write_sidecar_draft(self, abs_path: Path) -> Optional[str]:
+        """Validate Python source and load in-memory CST without overwriting unified ``.tree``.
+
+        The on-disk unified tree is owned by ``EditSession.open`` /
+        ``validate_or_recreate_tree_file`` (C-003). Do not write ``CST_TREE_V1`` via
+        ``write_sidecar_atomic`` during session open.
 
         Args:
             abs_path: Absolute path to the Python file.
 
         Returns:
-            In-memory CST tree UUID for subsequent edit/write commands.
+            In-memory CST tree UUID for legacy invalid-mode sidecar edits; the sibling
+            unified ``.tree`` file is not modified here.
         """
         from code_analysis.core.cst_tree import tree_builder as cst_builder
-        from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
+        from code_analysis.tree.handler_registry import HandlerRegistry
 
+        source_text = abs_path.read_text(encoding="utf-8")
+        HandlerRegistry.default_registry().resolve(abs_path).parse_content(
+            Path(abs_path.name),
+            source_text,
+        )
         tree = cst_builder.load_file_to_tree(str(abs_path))
-        write_sidecar_atomic(abs_path, tree)
         return str(tree.tree_id)
 
     def _write_tree_temp_draft(
@@ -531,23 +555,10 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             handler_id=descriptor.handler_id,
             raw_source_bytes=raw_bytes,
         )
-        if descriptor.handler_id == "json":
-            from code_analysis.core.tree_temp.json_source_serializer import (
-                serialize_json_source,
-            )
-
-            draft_text = serialize_json_source(acq.roots)
-        elif descriptor.handler_id == "yaml":
-            from code_analysis.core.tree_temp.yaml_source_serializer import (
-                serialize_yaml_source,
-            )
-
-            draft_text = serialize_yaml_source(acq.roots)
-        else:
+        if descriptor.handler_id not in ("json", "yaml"):
             raise ValueError(
                 f"Unsupported handler for tree-temp open: {descriptor.handler_id!r}"
             )
-        descriptor.draft_path.write_text(draft_text, encoding="utf-8")
         descriptor.__dict__["_tree_temp_session_kwargs"] = {
             "tree_id": None,
             "source_sha256_at_open": acq.source_sha256,

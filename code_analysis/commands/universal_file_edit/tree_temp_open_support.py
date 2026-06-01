@@ -24,7 +24,7 @@ from code_analysis.core.tree_temp.sidecar_payload import (
     SidecarParseError,
     parse_sidecar_json_bytes,
 )
-from code_analysis.core.tree_temp.sidecar_paths import resolve_trees_sidecar_path
+from code_analysis.tree.sibling_convention import sibling_tree_path
 from code_analysis.core.tree_temp.tree_node import TreeNode
 
 
@@ -79,9 +79,7 @@ def acquire_tree_temp_for_open(
 ) -> TreeTempOpenAcquisition:
     """Compute SHA, run SHASyncPolicy, return roots + staging intent for session open."""
     current_sha = hashlib.sha256(raw_source_bytes).hexdigest()
-    root_resolved = project_root.resolve()
-    source_rel = source_abs.resolve().relative_to(root_resolved)
-    sidecar_path = resolve_trees_sidecar_path(root_resolved, source_rel)
+    sidecar_path = sibling_tree_path(source_abs.resolve())
     loaded = _read_trees_sidecar_optional(sidecar_path)
     sidecar_exists = loaded is not None
     sidecar_sha = loaded[0] if loaded else None

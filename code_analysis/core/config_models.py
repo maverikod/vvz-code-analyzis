@@ -124,7 +124,17 @@ class SVOServiceConfig(BaseModel):
     @model_validator(mode="after")
     def validate_mtls_config(self) -> "SVOServiceConfig":
         """Validate mTLS configuration after initialization."""
-        if self.host:
+        # ``host`` is an alias for ``url``; both default to localhost. Sync only
+        # explicitly provided fields so ``url`` in config is not overwritten by
+        # the default ``host``.
+        fields_set = self.model_fields_set
+        url_set = "url" in fields_set
+        host_set = "host" in fields_set
+        if host_set and not url_set:
+            object.__setattr__(self, "url", self.host)
+        elif url_set and not host_set:
+            object.__setattr__(self, "host", self.url)
+        elif host_set and url_set and self.url != self.host:
             object.__setattr__(self, "url", self.host)
 
         if self.protocol == "mtls":

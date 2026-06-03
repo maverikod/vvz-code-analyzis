@@ -26,7 +26,38 @@ from code_analysis.core.project_root_path import (
 )
 from code_analysis.core.vector_search_backend import uses_pgvector_ann_for_database
 
+from .watch_dirs_partition import (
+    current_server_instance_id,
+    current_server_instance_params,
+    sql_projects_server_instance_filter,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def insert_project_row(
+    self,
+    project_id: str,
+    root_path_stored: str,
+    name: str,
+    *,
+    comment: Optional[str] = None,
+    watch_dir_id: Optional[str] = None,
+    server_instance_id: Optional[str] = None,
+) -> None:
+    """Insert a ``projects`` row for the current server instance."""
+    sid = server_instance_id or current_server_instance_id()
+    _now = sql_julian_timestamp_now_expr(self)
+    self._execute(
+        f"""
+        INSERT INTO projects (
+            id, server_instance_id, root_path, name, comment, watch_dir_id, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, {_now})
+        """,
+        (project_id, sid, root_path_stored, name, comment, watch_dir_id),
+    )
+    self._commit()
 
 
 def get_or_create_project(
@@ -59,10 +90,16 @@ def get_or_create_project(
         watch_dir_id=None,
         database=self,
     )
+    sid = current_server_instance_id()
     _now = sql_julian_timestamp_now_expr(self)
     self._execute(
-        f"\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, {_now})\n            ",
-        (new_id, stored, project_name, comment),
+        f"""
+                INSERT INTO projects (
+                    id, server_instance_id, root_path, name, comment, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, {_now})
+            """,
+        (new_id, sid, stored, project_name, comment),
     )
     self._commit()
     return new_id
@@ -91,7 +128,11 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         Project record as dictionary or None if not found
     """
-    row = self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+    where_sql, where_params = sql_projects_server_instance_filter("p")
+    row = self._fetchone(
+        f"SELECT * FROM projects p WHERE {where_sql} AND p.id = ?",
+        where_params + (project_id,),
+    )
     if not row:
         return None
     if isinstance(row, dict):
@@ -126,18 +167,20 @@ def relocate_project_root_after_disk_move(
         )
         return False
 
+    sid = current_server_instance_id()
     if old_r == new_r:
         if new_watch_dir_id is not None:
             self._execute(
                 f"UPDATE projects SET watch_dir_id = ?, updated_at = {_now} "
-                "WHERE id = ?",
-                (new_watch_dir_id, project_id),
+                "WHERE server_instance_id = ? AND id = ?",
+                (new_watch_dir_id, sid, project_id),
             )
             self._commit()
         return True
 
     cur = self._fetchone(
-        "SELECT watch_dir_id FROM projects WHERE id = ?", (project_id,)
+        "SELECT watch_dir_id FROM projects WHERE server_instance_id = ? AND id = ?",
+        (sid, project_id),
     )
     effective_wd = (
         str(new_watch_dir_id)
@@ -155,14 +198,16 @@ def relocate_project_root_after_disk_move(
     )
     if effective_wd:
         other = self._fetchone(
-            "SELECT id FROM projects WHERE watch_dir_id IS NOT NULL AND watch_dir_id = ? "
+            "SELECT id FROM projects WHERE server_instance_id = ? "
+            "AND watch_dir_id IS NOT NULL AND watch_dir_id = ? "
             "AND root_path = ? AND id != ? LIMIT 1",
-            (effective_wd, new_stored, project_id),
+            (sid, effective_wd, new_stored, project_id),
         )
     else:
         other = self._fetchone(
-            "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
-            (new_stored, project_id),
+            "SELECT id FROM projects WHERE server_instance_id = ? "
+            "AND root_path = ? AND id != ? LIMIT 1",
+            (sid, new_stored, project_id),
         )
     if other:
         logger.error(
@@ -175,7 +220,10 @@ def relocate_project_root_after_disk_move(
         )
         return False
 
-    if not self._fetchone("SELECT id FROM projects WHERE id = ?", (project_id,)):
+    if not self._fetchone(
+        "SELECT id FROM projects WHERE server_instance_id = ? AND id = ?",
+        (sid, project_id),
+    ):
         logger.warning(
             "relocate_project_root_after_disk_move: project %s not found", project_id
         )
@@ -185,14 +233,14 @@ def relocate_project_root_after_disk_move(
     if new_watch_dir_id is not None:
         self._execute(
             "UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
-            f"updated_at = {_now} WHERE id = ?",
-            (new_stored, new_name, new_watch_dir_id, project_id),
+            f"updated_at = {_now} WHERE server_instance_id = ? AND id = ?",
+            (new_stored, new_name, new_watch_dir_id, sid, project_id),
         )
     else:
         self._execute(
             f"UPDATE projects SET root_path = ?, name = ?, updated_at = {_now} "
-            "WHERE id = ?",
-            (new_stored, new_name, project_id),
+            "WHERE server_instance_id = ? AND id = ?",
+            (new_stored, new_name, sid, project_id),
         )
 
     self._commit()
@@ -215,14 +263,16 @@ def get_all_projects(self) -> List[Dict[str, Any]]:
     Returns:
         List of dicts with id, root_path, name, comment, watch_dir_id, updated_at.
     """
+    proj_where, proj_params = sql_projects_server_instance_filter("p")
     rows = self._fetchall(
         "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, p.updated_at "
         "FROM projects p "
-        "WHERE " + WHERE_FILES_ACTIVE_P + " "
+        f"WHERE {proj_where} AND " + WHERE_FILES_ACTIVE_P + " "
         "AND (NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
         "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
         "              AND " + WHERE_FILES_ACTIVE_F + ")) "
-        "ORDER BY p.name, p.root_path"
+        "ORDER BY p.name, p.root_path",
+        proj_params,
     )
     return rows if rows else []
 
@@ -443,7 +493,8 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
                    AND {ann_pending})
             ) AS pending_count
         FROM projects p
-        WHERE {WHERE_FILES_ACTIVE_P}
+        WHERE p.server_instance_id = ?
+        AND {WHERE_FILES_ACTIVE_P}
         AND {WHERE_PROCESSING_ACTIVE_P}
         AND (
             -- Count files needing chunking
@@ -489,7 +540,7 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
         ) > 0
         ORDER BY pending_count ASC
         """,
-        (),
+        current_server_instance_params(),
     )
     return rows if rows else []
 

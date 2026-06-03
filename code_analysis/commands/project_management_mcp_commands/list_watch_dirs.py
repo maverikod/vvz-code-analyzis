@@ -61,23 +61,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                result = database.execute(
-                    """
-                    SELECT wd.id, wd.name, wdp.absolute_path
-                    FROM watch_dirs wd
-                    LEFT JOIN watch_dir_paths wdp ON wd.id = wdp.watch_dir_id
-                    ORDER BY wd.created_at
-                    """
-                )
-                rows = result.get("data", []) if isinstance(result, dict) else []
-                items = [
-                    {
-                        "id": r.get("id"),
-                        "name": r.get("name"),
-                        "absolute_path": r.get("absolute_path"),
-                    }
-                    for r in rows
-                ]
+                items = database.list_watch_dirs_with_paths()
                 return SuccessResult(
                     data={"watch_dirs": items, "count": len(items)},
                     message=f"Found {len(items)} watch directory(ies)",

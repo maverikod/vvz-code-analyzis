@@ -10,6 +10,7 @@ import pytest
 from code_analysis.commands.read_only_batch_whitelist import (
     ERROR_CODE_NOT_WHITELISTED,
     READ_ONLY_BATCH_WHITELIST,
+    read_only_batch_whitelist_doc,
     validate_command,
 )
 
@@ -21,6 +22,18 @@ class TestReadOnlyBatchWhitelist:
         """Whitelist is a frozenset and must not be extended."""
         assert isinstance(READ_ONLY_BATCH_WHITELIST, frozenset)
         assert len(READ_ONLY_BATCH_WHITELIST) >= 8
+
+    def test_universal_file_preview_whitelisted(self) -> None:
+        """universal_file_preview is allowed in read_only_batch."""
+        ok, err = validate_command("universal_file_preview")
+        assert ok is True
+        assert err is None
+
+    def test_whitelist_doc_matches_frozenset(self) -> None:
+        """Help text lists exactly the whitelist commands."""
+        assert read_only_batch_whitelist_doc() == ", ".join(
+            sorted(READ_ONLY_BATCH_WHITELIST)
+        )
 
     def test_whitelisted_commands_pass(self) -> None:
         """All whitelisted commands validate successfully."""

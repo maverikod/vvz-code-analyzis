@@ -144,3 +144,38 @@ def test_should_use_marked_tree_false_for_jsonl(tmp_path: Path) -> None:
         "selector": None,
     }
     assert should_use_marked_tree_navigation(handler, params) is False
+
+
+def test_navigate_marked_tree_python_root_lists_top_level_blocks(
+    tmp_path: Path,
+) -> None:
+    """Root view on .py must list module-level nodes, not inner expr children."""
+    root = tmp_path
+    rel = "pkg/mod.py"
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '"""Module doc."""\n\nimport os\n\n\nclass Widget:\n    pass\n',
+        encoding="utf-8",
+    )
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=80, full_text_max_lines=200
+    )
+    params = {
+        "project_root": root,
+        "rel_file_path": rel,
+        "file_path": str(path),
+        "node_ref": None,
+        "selector": None,
+        "session_id": None,
+    }
+    with patch(
+        "code_analysis.commands.universal_file_preview.marked_tree_loader.TreeLifecycle.from_path",
+        return_value=(MagicMock(), TreeValidityState.reused),
+    ):
+        result = navigate_marked_tree(params, budget)
+    assert not isinstance(result, PreviewError)
+    assert result.total_blocks >= 3
+    texts = " ".join((b.text or "") for b in result.selected_blocks)
+    assert "Module doc" in texts or "import os" in texts
+    assert "class Widget" in texts

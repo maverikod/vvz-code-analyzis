@@ -28,6 +28,7 @@ from ..core.exceptions import ValidationError
 from .base_mcp_command import BaseMCPCommand
 
 
+from .preview_config_defaults import get_preview_config_defaults
 from .universal_file_preview.budget import PreviewBudget
 
 
@@ -52,6 +53,7 @@ from .universal_file_preview.navigation import navigate
 from .universal_file_preview.node_ref_params import normalize_optional_node_ref
 
 
+from .universal_file_preview.preview_pagination import apply_preview_pagination
 from .universal_file_preview.response import build_envelope
 
 
@@ -196,6 +198,24 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     ),
                     "nullable": True,
                 },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Max characters in the serialized preview response. "
+                        "When exceeded, returns preview_chunk plus pagination metadata."
+                    ),
+                    "nullable": True,
+                },
+                "preview_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": (
+                        "Character offset into the serialized preview for pagination. "
+                        "Use preview_next_offset from a prior page."
+                    ),
+                    "nullable": True,
+                },
             },
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
@@ -259,6 +279,15 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
         tree_id = params.get("tree_id")
         session_id = params.get("session_id")
 
+        preview_defaults = get_preview_config_defaults()
+        max_chars = params.get("max_chars")
+        if max_chars is None:
+            max_chars = int(preview_defaults["preview_max_chars_default"])
+
+        preview_offset = params.get("preview_offset")
+        if preview_offset is None:
+            preview_offset = 0
+
         return {
             "project_id": project_id,
             "file_path": file_path,
@@ -269,6 +298,8 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             "full_text_max_lines": full_text_max_lines,
             "tree_id": tree_id,
             "session_id": session_id,
+            "max_chars": int(max_chars),
+            "preview_offset": int(preview_offset),
         }
 
     @classmethod
@@ -372,6 +403,8 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 preview_lines=int(kwargs["preview_lines"]),
                 value_preview_len=int(kwargs["value_preview_len"]),
                 full_text_max_lines=int(kwargs["full_text_max_lines"]),
+                max_chars=int(kwargs["max_chars"]),
+                preview_offset=int(kwargs["preview_offset"]),
             )
             nav_kwargs["file_path"] = abs_file_path
             nav_kwargs["project_root"] = project_root
@@ -400,7 +433,12 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 kwargs.get("selector"),
                 session_origin,
             )
-            return SuccessResult(data=envelope)
+            paginated = apply_preview_pagination(
+                envelope,
+                offset=budget.preview_offset,
+                max_chars=budget.max_chars,
+            )
+            return SuccessResult(data=paginated)
         except Exception as exc:
             logger.error("universal_file_preview failed: %s", exc, exc_info=True)
             return ErrorResult(

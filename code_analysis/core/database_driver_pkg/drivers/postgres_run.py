@@ -15,6 +15,11 @@ from typing import Any, Dict, List, NoReturn, Optional, Tuple
 from code_analysis.core.database.code_chunk_sql import (
     code_chunk_upsert_norm_for_postgres_adapter,
 )
+from code_analysis.core.database.watch_dir_sql import (
+    watch_dir_paths_upsert_norm_for_postgres_adapter,
+    watch_dir_paths_upsert_null_norm_for_postgres_adapter,
+    watch_dirs_upsert_norm_for_postgres_adapter,
+)
 
 from ..exceptions import (
     DatabaseErrorInfo,
@@ -144,18 +149,15 @@ _INDEXING_ERRORS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
 )
 
 _WATCH_DIRS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
-    "INSERT OR REPLACE INTO watch_dirs (id, name, updated_at) "
-    "VALUES (?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
+    watch_dirs_upsert_norm_for_postgres_adapter()
 )
 
 _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
-    "INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at) "
-    "VALUES (?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
+    watch_dir_paths_upsert_norm_for_postgres_adapter()
 )
 
 _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NULL_PATH_NORM = _norm_sql_one_line(
-    "INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at) "
-    "VALUES (?, NULL, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
+    watch_dir_paths_upsert_null_norm_for_postgres_adapter()
 )
 
 # Portable ``code_chunks`` upsert: lookup norm from ``code_chunk_sql`` only
@@ -240,25 +242,27 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
         )
     if norm == _WATCH_DIRS_INSERT_OR_REPLACE_NORM:
         return (
-            "INSERT INTO watch_dirs (id, name, updated_at) "
-            "VALUES (?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
-            "ON CONFLICT (id) DO UPDATE SET "
+            "INSERT INTO watch_dirs (server_instance_id, id, name, updated_at) "
+            "VALUES (?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
+            "ON CONFLICT (server_instance_id, id) DO UPDATE SET "
             "name = EXCLUDED.name, "
             "updated_at = EXCLUDED.updated_at"
         )
     if norm == _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NORM:
         return (
-            "INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at) "
-            "VALUES (?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
-            "ON CONFLICT (watch_dir_id) DO UPDATE SET "
+            "INSERT INTO watch_dir_paths "
+            "(server_instance_id, watch_dir_id, absolute_path, updated_at) "
+            "VALUES (?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
+            "ON CONFLICT (server_instance_id, watch_dir_id) DO UPDATE SET "
             "absolute_path = EXCLUDED.absolute_path, "
             "updated_at = EXCLUDED.updated_at"
         )
     if norm == _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NULL_PATH_NORM:
         return (
-            "INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at) "
-            "VALUES (?, NULL, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
-            "ON CONFLICT (watch_dir_id) DO UPDATE SET "
+            "INSERT INTO watch_dir_paths "
+            "(server_instance_id, watch_dir_id, absolute_path, updated_at) "
+            "VALUES (?, ?, NULL, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
+            "ON CONFLICT (server_instance_id, watch_dir_id) DO UPDATE SET "
             "absolute_path = EXCLUDED.absolute_path, "
             "updated_at = EXCLUDED.updated_at"
         )

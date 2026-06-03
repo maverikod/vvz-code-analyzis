@@ -117,6 +117,32 @@ def _rebuild_indexes(
     return by_short, by_uuid
 
 
+def _entry_identity_key(
+    *,
+    short_id: int,
+    content_fingerprint: str,
+    attributes: Dict[str, Any],
+) -> str:
+    """Stable node identity for UUID preservation (fingerprint alone is not unique)."""
+    internal_id = attributes.get("internal_node_id")
+    if isinstance(internal_id, str) and internal_id:
+        return f"internal:{internal_id}"
+    return f"short:{short_id}:fp:{content_fingerprint}"
+
+
+def _identity_index_from_entries(entries: List[MapEntry]) -> Dict[str, str]:
+    """Map identity key → uuid for prior MAP entries."""
+    index: Dict[str, str] = {}
+    for entry in entries:
+        key = _entry_identity_key(
+            short_id=entry.short_id,
+            content_fingerprint=entry.content_fingerprint,
+            attributes=entry.attributes,
+        )
+        index[key] = entry.uuid
+    return index
+
+
 def _parse_map_entry(raw: Dict[str, Any]) -> MapEntry:
     if not isinstance(raw, dict):
         raise NodeIdMapError("map entry must be a mapping")
@@ -235,10 +261,9 @@ def _build_entries_from_discovered(
     prior_map: Optional[MapSection],
 ) -> tuple[List[MapEntry], int]:
     next_free = prior_map.next_free if prior_map is not None else DEFAULT_NEXT_FREE
-    fingerprint_to_uuid: Dict[str, str] = {}
+    identity_to_uuid: Dict[str, str] = {}
     if prior_map is not None:
-        for entry in prior_map.entries:
-            fingerprint_to_uuid[entry.content_fingerprint] = entry.uuid
+        identity_to_uuid = _identity_index_from_entries(prior_map.entries)
 
     new_entries: List[MapEntry] = []
     seen_short_ids: set[int] = set()
@@ -249,8 +274,13 @@ def _build_entries_from_discovered(
             raise NodeIdMapError("duplicate marker_short_id in discovered_nodes")
         seen_short_ids.add(node.marker_short_id)
 
-        if node.content_fingerprint in fingerprint_to_uuid:
-            node_uuid = fingerprint_to_uuid[node.content_fingerprint]
+        identity_key = _entry_identity_key(
+            short_id=node.marker_short_id,
+            content_fingerprint=node.content_fingerprint,
+            attributes=node.attributes,
+        )
+        if identity_key in identity_to_uuid:
+            node_uuid = identity_to_uuid[identity_key]
         else:
             node_uuid = str(uuid.uuid4())
             if node.marker_short_id >= next_free:
@@ -326,16 +356,18 @@ class NodeIdMap:
             next_free=self._map.next_free,
             entries=list(self._map.entries),
         )
-        fingerprint_to_uuid = {
-            entry.content_fingerprint: entry.uuid for entry in prior.entries
-        }
+        prior_identity = _identity_index_from_entries(prior.entries)
 
         new_entries, next_free = _build_entries_from_discovered(discovered_nodes, prior)
         for entry in new_entries:
-            if entry.content_fingerprint in fingerprint_to_uuid:
-                prior_uuid = fingerprint_to_uuid[entry.content_fingerprint]
-                if entry.uuid != prior_uuid:
-                    entry.uuid = prior_uuid
+            identity_key = _entry_identity_key(
+                short_id=entry.short_id,
+                content_fingerprint=entry.content_fingerprint,
+                attributes=entry.attributes,
+            )
+            prior_uuid = prior_identity.get(identity_key)
+            if prior_uuid is not None and entry.uuid != prior_uuid:
+                entry.uuid = prior_uuid
 
         next_free = max(
             prior.next_free,

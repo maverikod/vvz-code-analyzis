@@ -499,10 +499,6 @@ async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
     from code_analysis.commands.universal_file_edit.write_command import (
         UniversalFileWriteCommand,
     )
-    from code_analysis.commands.universal_file_preview.budget import PreviewBudget
-    from code_analysis.commands.universal_file_preview.python_visualizer import (
-        _annotated_full_text,
-    )
     from code_analysis.commands.universal_file_preview_command import (
         UniversalFilePreviewCommand,
     )
@@ -515,24 +511,6 @@ async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
     rel = "sandbox_test.py"
     path = tmp_path / rel
     path.write_text(_SANDBOX_MODULE, encoding="utf-8")
-    tree = load_file_to_tree(str(path))
-    budget = PreviewBudget(
-        preview_lines=200,
-        value_preview_len=120,
-        full_text_max_lines=500,
-    )
-    annotated = _annotated_full_text(tree, budget)
-    assert annotated is not None
-    timeout_line = next(
-        line for line in annotated.splitlines() if "DEFAULT_TIMEOUT" in line
-    )
-    stable = re.match(r"\[([0-9a-f-]{36})\]", timeout_line).group(1)
-    stmt_meta = next(
-        m
-        for m in tree.metadata_map.values()
-        if m.type == "SimpleStatementLine" and m.start_line == 6
-    )
-    assert stable == stmt_meta.stable_id
 
     project_id = "00000000-0000-0000-0000-000000000002"
     db = MagicMock()
@@ -560,23 +538,12 @@ async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
                 }
             )
         )
+    assert isinstance(preview_res, SuccessResult)
+    focus_text = preview_res.data["focus"].get("text") or ""
     focus_line = next(
-        line
-        for line in preview_res.data["focus"]["text"].splitlines()
-        if "DEFAULT_TIMEOUT" in line
+        line for line in focus_text.splitlines() if "DEFAULT_TIMEOUT" in line
     )
-    preview_stable = re.match(r"\[([0-9a-f-]{36})\]", focus_line).group(1)
-
-    from code_analysis.commands.universal_file_edit.session import get_session
-
-    sess_tree = get_tree(get_session(sid).tree_id or "")
-    assert sess_tree is not None
-    session_stmt = next(
-        m
-        for m in sess_tree.metadata_map.values()
-        if m.type == "SimpleStatementLine" and m.start_line == 6
-    )
-    assert preview_stable == session_stmt.stable_id
+    preview_short_id = int(re.match(r"\[(\d+)\]", focus_line).group(1))
 
     cmd = UniversalFileEditCommand()
     with patch.object(BaseMCPCommand, "_open_database_from_config", return_value=db):
@@ -586,7 +553,7 @@ async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
             operations=[
                 {
                     "type": "replace",
-                    "node_ref": preview_stable,
+                    "node_ref": preview_short_id,
                     "code_lines": ["DEFAULT_TIMEOUT = 60\n"],
                 }
             ],
@@ -601,4 +568,3 @@ async def test_edit_replace_via_annotated_text_node_ref(tmp_path) -> None:
         assert "DEFAULT_TIMEOUT = 60" in path.read_text(encoding="utf-8")
 
     release_session(sid)
-    remove_tree(tree.tree_id)

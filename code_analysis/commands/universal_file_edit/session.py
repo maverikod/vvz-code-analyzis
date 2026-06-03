@@ -154,3 +154,18 @@ def apply_source_mutation(session: EditSession, new_source_text: str) -> None:
         session.core.apply_valid_tree_mutation(lambda _: new_source_text)
     session.draft_path = session.core.session_source_path
     session.dirty = True
+
+
+def apply_cst_sidecar_mutation(
+    session: EditSession,
+    new_source_text: str,
+    *,
+    sidecar_abs: Path,
+) -> None:
+    """Persist legacy CST sidecar edit into the session repo and undo history."""
+    session.core.apply_cst_sidecar_mutation(
+        new_source_text,
+        sidecar_abs=sidecar_abs,
+    )
+    session.draft_path = session.core.session_source_path
+    session.dirty = True

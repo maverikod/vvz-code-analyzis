@@ -17,8 +17,7 @@ def run_migrate_schema(db: Any) -> None:
     Called on every database initialization to ensure schema is up to date.
     """
     try:
-        db._execute(
-            """
+        db._execute("""
             CREATE TABLE IF NOT EXISTS runtime_lock_sessions (
                 session_id TEXT PRIMARY KEY,
                 pid INTEGER NOT NULL UNIQUE,
@@ -28,16 +27,12 @@ def run_migrate_schema(db: Any) -> None:
                 started_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now'))
             )
-            """
-        )
-        db._execute(
-            """
+            """)
+        db._execute("""
             CREATE INDEX IF NOT EXISTS idx_runtime_lock_sessions_pid
             ON runtime_lock_sessions(pid)
-            """
-        )
-        db._execute(
-            """
+            """)
+        db._execute("""
             CREATE TABLE IF NOT EXISTS file_advisory_lock_leases (
                 session_id TEXT NOT NULL,
                 project_id TEXT NOT NULL,
@@ -52,20 +47,15 @@ def run_migrate_schema(db: Any) -> None:
                 CHECK (lock_mode IN ('exclusive', 'shared')),
                 CHECK (refcount > 0)
             )
-            """
-        )
-        db._execute(
-            """
+            """)
+        db._execute("""
             CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_file
             ON file_advisory_lock_leases(project_id, file_path)
-            """
-        )
-        db._execute(
-            """
+            """)
+        db._execute("""
             CREATE INDEX IF NOT EXISTS idx_file_advisory_lock_leases_session
             ON file_advisory_lock_leases(session_id)
-            """
-        )
+            """)
         db._commit()
     except Exception as e:
         logger.warning("Could not create runtime lock tables/indexes: %s", e)
@@ -77,8 +67,7 @@ def run_migrate_schema(db: Any) -> None:
         try:
             logger.info("Migrating issues table: adding project_id column")
             db._execute("ALTER TABLE issues ADD COLUMN project_id TEXT")
-            db._execute(
-                """
+            db._execute("""
                 UPDATE issues
                 SET project_id = (
                     SELECT f.project_id
@@ -86,8 +75,7 @@ def run_migrate_schema(db: Any) -> None:
                     WHERE f.id = issues.file_id
                 )
                 WHERE file_id IS NOT NULL
-            """
-            )
+            """)
             db._commit()
             logger.info("Migration completed: issues table now has project_id")
         except Exception as e:
@@ -216,12 +204,10 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not add deleted column to projects: {e}")
     try:
-        db._execute(
-            """
+        db._execute("""
             CREATE INDEX IF NOT EXISTS idx_projects_deleted
             ON projects(deleted) WHERE deleted = 1
-            """
-        )
+            """)
         db._commit()
     except Exception as e:
         logger.warning(f"Could not create index idx_projects_deleted: {e}")
@@ -259,12 +245,10 @@ def run_migrate_schema(db: Any) -> None:
     # Create index after adding deleted column
     if "deleted" in files_columns or "deleted" not in files_columns:
         try:
-            db._execute(
-                """
+            db._execute("""
                 CREATE INDEX IF NOT EXISTS idx_files_deleted 
                 ON files(deleted) WHERE deleted = 1
-                """
-            )
+                """)
             db._commit()
             logger.info("Created index idx_files_deleted")
         except Exception as e:
@@ -347,8 +331,7 @@ def run_migrate_schema(db: Any) -> None:
     if not entity_cross_ref_check:
         try:
             logger.info("Migrating: creating entity_cross_ref table")
-            db._execute(
-                """
+            db._execute("""
                 CREATE TABLE IF NOT EXISTS entity_cross_ref (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     caller_class_id INTEGER NULL,
@@ -379,8 +362,7 @@ def run_migrate_schema(db: Any) -> None:
                         OR (callee_class_id IS NULL AND callee_method_id IS NULL AND callee_function_id IS NOT NULL)
                     )
                 )
-                """
-            )
+                """)
             for idx_sql in [
                 "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_class ON entity_cross_ref(caller_class_id) WHERE caller_class_id IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_method ON entity_cross_ref(caller_method_id) WHERE caller_method_id IS NOT NULL",
@@ -409,6 +391,15 @@ def run_migrate_schema(db: Any) -> None:
             logger.warning(f"Could not add editing_pid column to files: {e}")
 
     try:
+        from code_analysis.core.database.migrations.watch_dirs_server_instance import (
+            migrate_watch_dirs_server_instance,
+        )
+
+        migrate_watch_dirs_server_instance(db)
+    except Exception as e:
+        logger.warning("watch_dirs_server_instance migration failed: %s", e)
+
+    try:
         from code_analysis.core.database.migrations.projects_root_segment_postgres import (
             migrate_projects_root_segment_postgres,
         )
@@ -419,12 +410,10 @@ def run_migrate_schema(db: Any) -> None:
 
     if getattr(db, "_driver_type", None) != "postgres":
         try:
-            db._execute(
-                """
+            db._execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_watch_dir_id_root_path
                 ON projects(watch_dir_id, root_path)
-                """
-            )
+                """)
             db._commit()
         except Exception as e:
             logger.debug(

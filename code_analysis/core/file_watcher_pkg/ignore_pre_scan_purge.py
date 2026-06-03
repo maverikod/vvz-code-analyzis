@@ -57,8 +57,15 @@ def _query_file_rows(
 
 
 def _project_root_for_id(database: Any, project_id: str) -> Optional[Path]:
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
+    sid = current_server_instance_id()
     rows = _query_file_rows(
-        database, "SELECT root_path FROM projects WHERE id = ? LIMIT 1", (project_id,)
+        database,
+        "SELECT root_path FROM projects WHERE server_instance_id = ? AND id = ? LIMIT 1",
+        (sid, project_id),
     )
     if not rows:
         return None

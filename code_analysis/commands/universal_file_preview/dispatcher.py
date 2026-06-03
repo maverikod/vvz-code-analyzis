@@ -19,7 +19,7 @@ from .errors import PreviewError, input_error, INPUT_ERROR_UNKNOWN_EXTENSION
 from .handlers.json_handler import JsonFileHandler
 from .handlers.jsonl_handler import JsonLinesFileHandler
 from .handlers.markdown_handler import MarkdownFileHandler
-from .handlers.python_handler import PythonFileHandler
+from .handlers.python_marked_handler import PythonMarkedTreeHandler
 from .handlers.text_handler import TextFileHandler
 from .handlers.yaml_handler import YamlFileHandler
 
@@ -43,9 +43,9 @@ class HandlerDispatcher:
     def __init__(self) -> None:
         """Initialise dispatcher with the default extension-to-handler registry."""
         self._registry: dict[str, FileHandler] = {
-            ".py": PythonFileHandler(),
-            ".pyi": PythonFileHandler(),
-            ".pyw": PythonFileHandler(),
+            ".py": PythonMarkedTreeHandler(),
+            ".pyi": PythonMarkedTreeHandler(),
+            ".pyw": PythonMarkedTreeHandler(),
             ".md": MarkdownFileHandler(),
             ".txt": TextFileHandler(),
             ".rst": TextFileHandler(),

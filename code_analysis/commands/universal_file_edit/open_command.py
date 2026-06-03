@@ -363,8 +363,16 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             Absolute Path if resolution succeeds, None otherwise.
         """
         try:
-            root = BaseMCPCommand._resolve_project_root(project_id)
-            return (Path(root) / file_path).resolve()
+            db = BaseMCPCommand._open_database_from_config()
+            try:
+                return BaseMCPCommand._resolve_file_path_from_project(
+                    db,
+                    project_id,
+                    file_path,
+                    require_exists=False,
+                )
+            finally:
+                db.disconnect()
         except Exception:
             return None
 

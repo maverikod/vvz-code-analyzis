@@ -30,6 +30,11 @@ READ_ONLY_BATCH_WHITELIST: frozenset[str] = frozenset(
 ERROR_CODE_NOT_WHITELISTED = "BATCH_COMMAND_NOT_WHITELISTED"
 
 
+def read_only_batch_whitelist_doc() -> str:
+    """Comma-separated sorted whitelist for help text and error messages."""
+    return ", ".join(sorted(READ_ONLY_BATCH_WHITELIST))
+
+
 def validate_command(command_name: str) -> tuple[bool, Optional[dict]]:
     """
     Validate a command name against the read-only batch whitelist.

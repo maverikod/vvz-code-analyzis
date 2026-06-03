@@ -104,6 +104,57 @@ def test_build_rebuild_preserves_uuid_by_fingerprint() -> None:
     assert sections.map.entries[0].uuid == u1
 
 
+def test_build_preserves_distinct_uuids_for_duplicate_fingerprints() -> None:
+    """Python CST can yield multiple nodes with identical line-span content."""
+    fp_shared = compute_content_fingerprint('"""doc"""')
+    u1 = str(uuid.uuid4())
+    u2 = str(uuid.uuid4())
+    assert u1 != u2
+    prior = MapSection(
+        next_free=3,
+        entries=[
+            MapEntry(
+                short_id=1,
+                uuid=u1,
+                content_fingerprint=fp_shared,
+                kind="smallstmt",
+                attributes={"internal_node_id": "aaa"},
+            ),
+            MapEntry(
+                short_id=2,
+                uuid=u2,
+                content_fingerprint=fp_shared,
+                kind="stmt",
+                attributes={"internal_node_id": "bbb"},
+            ),
+        ],
+    )
+    nodes = [
+        DiscoveredNode(
+            content_fingerprint=fp_shared,
+            kind="smallstmt",
+            marker_short_id=1,
+            attributes={"internal_node_id": "aaa"},
+        ),
+        DiscoveredNode(
+            content_fingerprint=fp_shared,
+            kind="stmt",
+            marker_short_id=2,
+            attributes={"internal_node_id": "bbb"},
+        ),
+    ]
+    sections, _ = NodeIdMap.build(
+        tree_marked_text="marked",
+        discovered_nodes=nodes,
+        source_sha256=SOURCE_SHA256,
+        prior_map=prior,
+    )
+    uuids = [e.uuid for e in sections.map.entries]
+    assert len(set(uuids)) == 2
+    assert sections.map.entries[0].uuid == u1
+    assert sections.map.entries[1].uuid == u2
+
+
 def test_validate_and_repair_preserves_uuid() -> None:
     fp1 = compute_content_fingerprint("content")
     correct_uuid = str(uuid.uuid4())

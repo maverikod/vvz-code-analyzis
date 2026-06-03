@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, List
 
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+from code_analysis.core.server_instance import get_server_instance_id
 
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
@@ -173,6 +174,10 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
         database: Legacy SQL facade instance.
         watch_dirs: List of watch directory specs.
     """
+    from ..database.watch_dirs_partition import (
+        watch_dir_paths_upsert_conflict_target,
+        watch_dirs_upsert_conflict_target,
+    )
     from ..path_normalization import normalize_path_simple
     from ..project_discovery import discover_projects_in_directory
     from .watcher_soft_deleted_projects import (
@@ -180,6 +185,8 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
     )
 
     logger.info("Initializing watch directories...")
+
+    server_instance_id = get_server_instance_id()
 
     if not watch_dirs:
         logger.warning(
@@ -189,6 +196,8 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
         return
 
     now_sql = sql_julian_timestamp_now_expr(database)
+    watch_dirs_conflict = watch_dirs_upsert_conflict_target(database)
+    watch_dir_paths_conflict = watch_dir_paths_upsert_conflict_target(database)
     config_watch_dir_ids: set[str] = set()
     # Map watch_dir_id -> resolved Path for use in phase 3
     config_watch_dir_paths: dict[str, Path] = {}
@@ -200,13 +209,14 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
 
         database.execute(
             f"""
-            INSERT INTO watch_dirs (id, name, updated_at)
-            VALUES (?, ?, {now_sql})
-            ON CONFLICT (id) DO UPDATE SET
+            INSERT INTO watch_dirs (server_instance_id, id, name, updated_at)
+            VALUES (?, ?, ?, {now_sql})
+            ON CONFLICT {watch_dirs_conflict} DO UPDATE SET
+                server_instance_id = EXCLUDED.server_instance_id,
                 name = EXCLUDED.name,
                 updated_at = EXCLUDED.updated_at
             """,
-            (wid, watch_dir_path.name),
+            (server_instance_id, wid, watch_dir_path.name),
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
@@ -214,13 +224,16 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
             normalized_path = normalize_path_simple(str(watch_dir_path))
             database.execute(
                 f"""
-                INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
-                VALUES (?, ?, {now_sql})
-                ON CONFLICT (watch_dir_id) DO UPDATE SET
+                INSERT INTO watch_dir_paths (
+                    server_instance_id, watch_dir_id, absolute_path, updated_at
+                )
+                VALUES (?, ?, ?, {now_sql})
+                ON CONFLICT {watch_dir_paths_conflict} DO UPDATE SET
+                    server_instance_id = EXCLUDED.server_instance_id,
                     absolute_path = EXCLUDED.absolute_path,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (wid, normalized_path),
+                (server_instance_id, wid, normalized_path),
                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Updated watch_dir_path: {wid} -> {normalized_path}")
@@ -276,10 +289,17 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             database.execute(
                                 f"""
                                 UPDATE projects
-                                SET watch_dir_id = ?, updated_at = {now_sql}
+                                SET watch_dir_id = ?, server_instance_id = ?, updated_at = {now_sql}
                                 WHERE id = ?
+                                  AND (server_instance_id IS NULL
+                                       OR server_instance_id = ?)
                                 """,
-                                (wid, project_root_obj.project_id),
+                                (
+                                    wid,
+                                    server_instance_id,
+                                    project_root_obj.project_id,
+                                    server_instance_id,
+                                ),
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                             logger.debug(
@@ -293,20 +313,34 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             watch_dir_id=wid or None,
                             database=database,
                         )
-                        database.execute(
-                            f"""
-                            INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
-                            VALUES (?, ?, ?, ?, ?, {now_sql})
-                            """,
-                            (
+                        if hasattr(database, "insert_project_row"):
+                            database.insert_project_row(
                                 project_root_obj.project_id,
                                 root_stored,
                                 project_name,
-                                project_root_obj.description,
-                                wid,
-                            ),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-                        )
+                                comment=project_root_obj.description,
+                                watch_dir_id=wid,
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
+                        else:
+                            database.execute(
+                                f"""
+                                INSERT INTO projects (
+                                    id, server_instance_id, root_path, name, comment,
+                                    watch_dir_id, updated_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, {now_sql})
+                                """,
+                                (
+                                    project_root_obj.project_id,
+                                    server_instance_id,
+                                    root_stored,
+                                    project_name,
+                                    project_root_obj.description,
+                                    wid,
+                                ),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
                         logger.info(
                             f"Created project {project_root_obj.project_id} "
                             f"at {project_root_obj.root_path} "
@@ -320,13 +354,16 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
         else:
             database.execute(
                 f"""
-                INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
-                VALUES (?, NULL, {now_sql})
-                ON CONFLICT (watch_dir_id) DO UPDATE SET
+                INSERT INTO watch_dir_paths (
+                    server_instance_id, watch_dir_id, absolute_path, updated_at
+                )
+                VALUES (?, ?, NULL, {now_sql})
+                ON CONFLICT {watch_dir_paths_conflict} DO UPDATE SET
+                    server_instance_id = EXCLUDED.server_instance_id,
                     absolute_path = EXCLUDED.absolute_path,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (wid,),
+                (server_instance_id, wid),
                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.warning(
@@ -334,9 +371,22 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                 f"setting NULL for watch_dir_id: {wid}"
             )
 
+    if config_watch_dir_ids:
+        placeholders = ",".join("?" * len(config_watch_dir_ids))
+        database.execute(
+            f"""
+            UPDATE projects
+            SET server_instance_id = ?, updated_at = {now_sql}
+            WHERE server_instance_id IS NULL
+              AND watch_dir_id IN ({placeholders})
+            """,
+            (server_instance_id, *sorted(config_watch_dir_ids)),
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+        )
+
     all_watch_dirs_result = database.execute(
-        "SELECT id FROM watch_dirs",
-        None,
+        "SELECT id FROM watch_dirs WHERE server_instance_id = ?",
+        (server_instance_id,),
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     all_watch_dirs_rows = (
@@ -349,13 +399,16 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
         if db_wid not in config_watch_dir_ids:
             database.execute(
                 f"""
-                INSERT INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
-                VALUES (?, NULL, {now_sql})
-                ON CONFLICT (watch_dir_id) DO UPDATE SET
+                INSERT INTO watch_dir_paths (
+                    server_instance_id, watch_dir_id, absolute_path, updated_at
+                )
+                VALUES (?, ?, NULL, {now_sql})
+                ON CONFLICT {watch_dir_paths_conflict} DO UPDATE SET
+                    server_instance_id = EXCLUDED.server_instance_id,
                     absolute_path = EXCLUDED.absolute_path,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (db_wid,),
+                (server_instance_id, db_wid),
                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Watch dir {db_wid} not in config, setting path to NULL")

@@ -482,7 +482,7 @@ def run_sidecar_cst_edit_batch(
             )
         session.tree_id = tree.tree_id
         try:
-            write_sidecar_atomic(session.abs_path, tree)
+            sidecar_path = write_sidecar_atomic(session.abs_path, tree)
         except Exception as exc:
             return _rollback_and_fail(
                 error_result_for_edit(
@@ -491,5 +491,13 @@ def run_sidecar_cst_edit_batch(
                     {"path": str(session.abs_path)},
                 )
             )
+
+    from code_analysis.commands.universal_file_edit.session import (
+        apply_cst_sidecar_mutation,
+    )
+
+    code = logical_source_from_module(tree.module)
+    apply_cst_sidecar_mutation(session, code, sidecar_abs=sidecar_path)
+    session.tree_id = tree.tree_id
 
     return SuccessResult(data={"success": True, "updated": True})

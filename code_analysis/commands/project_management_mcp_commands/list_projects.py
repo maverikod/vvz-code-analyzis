@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import asyncio
+from pathlib import Path
 
 from ...core.sql_portable import WHERE_FILES_ACTIVE, WHERE_PROJECTS_ACTIVE_P
 from ._shared import (
@@ -344,8 +345,15 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         (LEFT JOIN) in one round-trip to minimize DB lock time.
         """
         try:
+            from code_analysis.core.database.watch_dirs_partition import (
+                current_server_instance_id,
+                sql_watch_dir_paths_join,
+            )
+
             database = self._open_database_from_config(auto_analyze=False)
             try:
+                sid = current_server_instance_id()
+                wdp_join = sql_watch_dir_paths_join("p", "w")
                 # When include_deleted: all rows from ``projects`` (soft-deleted projects
                 # often have only trashed file rows — they must not be dropped by the
                 # active-files INNER JOIN used for the default list).
@@ -355,7 +363,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "p.processing_paused, p.created_at, p.updated_at, p.deleted, "
                         "w.absolute_path AS watch_dir_path "
                         "FROM projects p "
-                        "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
+                        f"{wdp_join} "
+                        "WHERE p.server_instance_id = ? "
                         "ORDER BY p.created_at"
                     )
                 else:
@@ -366,18 +375,21 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "w.absolute_path AS watch_dir_path "
                         "FROM ("
                         "  SELECT p.* FROM projects p "
-                        "  INNER JOIN ("
+                        "  WHERE p.server_instance_id = ? "
+                        "  AND p.id IN ("
                         "    SELECT project_id FROM files "
                         "    WHERE " + WHERE_FILES_ACTIVE + " GROUP BY project_id"
-                        "  ) a ON p.id = a.project_id" + _proj_del + "  UNION "
+                        "  )" + _proj_del + "  UNION "
                         "  SELECT p.* FROM projects p "
-                        "  WHERE p.id NOT IN (SELECT project_id FROM files)"
+                        "  WHERE p.server_instance_id = ? "
+                        "  AND p.id NOT IN (SELECT project_id FROM files)"
                         + _proj_del
                         + ") p "
-                        "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
+                        f"{wdp_join} "
                         "ORDER BY p.created_at"
                     )
-                result = database.execute(_list_sql, ())
+                list_params = (sid,) if include_deleted else (sid, sid)
+                result = database.execute(_list_sql, list_params)
                 raw_rows = (
                     result.get("data", [])
                     if isinstance(result, dict)
@@ -396,12 +408,65 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     deleted_flag = (
                         bool(deleted_raw) if deleted_raw is not None else False
                     )
+                    from ...core.project_root_path import (
+                        is_legacy_projects_root_path_absolute_storage,
+                        resolve_project_root_absolute_str,
+                        resolve_watch_dir_absolute_for_project_row,
+                    )
+
+                    stored_root = str(row.get("root_path") or "")
+                    watch_dir_id_val = row.get("watch_dir_id")
+                    project_name = str(row.get("name") or "").strip() or None
+                    project_id_val = str(row.get("id") or "").strip() or None
+                    resolved_root = resolve_project_root_absolute_str(
+                        project_id=project_id_val,
+                        root_path_stored=stored_root,
+                        watch_dir_id=(
+                            str(watch_dir_id_val)
+                            if watch_dir_id_val is not None
+                            else None
+                        ),
+                        project_name=project_name,
+                        database=database,
+                        require_exists=True,
+                    )
+                    resolved_watch = resolve_watch_dir_absolute_for_project_row(
+                        project_id=project_id_val,
+                        root_path_stored=stored_root,
+                        watch_dir_id=(
+                            str(watch_dir_id_val)
+                            if watch_dir_id_val is not None
+                            else None
+                        ),
+                        project_name=project_name,
+                        database=database,
+                    )
+                    display_root = stored_root
+                    if resolved_root:
+                        try:
+                            watch_for_segment = resolved_watch or row.get(
+                                "watch_dir_path"
+                            )
+                            if watch_for_segment and not (
+                                is_legacy_projects_root_path_absolute_storage(
+                                    stored_root
+                                )
+                            ):
+                                rel = (
+                                    Path(resolved_root)
+                                    .resolve()
+                                    .relative_to(Path(str(watch_for_segment)).resolve())
+                                )
+                                if len(rel.parts) == 1:
+                                    display_root = rel.parts[0]
+                        except (OSError, ValueError):
+                            pass
                     projects.append(
                         {
                             "id": row.get("id"),
-                            "watch_dir": row.get("watch_dir_path"),
+                            "watch_dir": resolved_watch or row.get("watch_dir_path"),
                             "name": row.get("name"),
-                            "root_path": row.get("root_path"),
+                            "root_path": display_root,
                             "comment": row.get("comment"),
                             "watch_dir_id": row.get("watch_dir_id"),
                             "processing_paused": (
@@ -416,7 +481,12 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
                 if watched_dir_id:
                     watch_dir = database.select(
-                        "watch_dirs", where={"id": watched_dir_id}, limit=1
+                        "watch_dirs",
+                        where={
+                            "server_instance_id": sid,
+                            "id": watched_dir_id,
+                        },
+                        limit=1,
                     )
                     if not watch_dir:
                         from ...core.exceptions import ValidationError

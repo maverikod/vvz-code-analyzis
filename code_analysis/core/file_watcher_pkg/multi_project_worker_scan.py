@@ -453,9 +453,15 @@ def scan_watch_dir(
                             f"watch_dir_id={current_watch_dir_id} -> {watch_dir_id}"
                         )
                 else:
+                    from code_analysis.core.database.watch_dirs_partition import (
+                        current_server_instance_id,
+                    )
+
+                    sid = current_server_instance_id()
                     existing_result = database.execute(
-                        "SELECT id FROM projects WHERE root_path = ? LIMIT 1",
-                        (str(project_root_obj.root_path),),
+                        "SELECT id FROM projects WHERE server_instance_id = ? "
+                        "AND root_path = ? LIMIT 1",
+                        (sid, str(project_root_obj.root_path)),
                         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     existing_rows = (
@@ -522,20 +528,43 @@ def scan_watch_dir(
                             ),
                             database=database,
                         )
-                        database.execute(
-                            f"""
-                            INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
-                            VALUES (?, ?, ?, ?, ?, {_now_sql})
-                            """,
-                            (
+                        if hasattr(database, "insert_project_row"):
+                            database.insert_project_row(
                                 project_root_obj.project_id,
                                 root_stored,
                                 project_name,
-                                project_description,
-                                watch_dir_id,
-                            ),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-                        )
+                                comment=project_description,
+                                watch_dir_id=(
+                                    str(watch_dir_id)
+                                    if watch_dir_id is not None
+                                    else None
+                                ),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
+                        else:
+                            from code_analysis.core.server_instance import (
+                                get_server_instance_id,
+                            )
+
+                            sid = get_server_instance_id()
+                            database.execute(
+                                f"""
+                                INSERT INTO projects (
+                                    id, server_instance_id, root_path, name, comment,
+                                    watch_dir_id, updated_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, {_now_sql})
+                                """,
+                                (
+                                    project_root_obj.project_id,
+                                    sid,
+                                    root_stored,
+                                    project_name,
+                                    project_description,
+                                    watch_dir_id,
+                                ),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
                         logger.info(
                             f"Auto-created project {project_root_obj.project_id} "
                             f"at {project_root_obj.root_path} "

@@ -146,14 +146,52 @@ class SessionRepo:
                 return False
         return True
 
+    def revision_includes_tree(self, *, rev: str) -> bool:
+        """Return True when ``rev`` tracks the marked tree blob."""
+        commit = cast(Commit, self._repo[rev.encode("ascii")])
+        tree = cast(Tree, self._repo[commit.tree])
+        for entry in tree.items():
+            if entry.path.decode("utf-8") == self._tree_name:
+                return True
+        return False
+
+    def _try_blob_bytes_at_commit(self, *, rev: str, name: str) -> bytes | None:
+        try:
+            return self._blob_bytes_at_commit(rev=rev, name=name)
+        except KeyError:
+            return None
+
+    def checkout_revision(self, *, rev: str) -> str:
+        """Restore working files to ``rev`` without creating a commit.
+
+        Returns:
+            ``"full"`` when source and tree were restored; ``"degraded"`` when
+            only source was restored (invalid-tree history entry).
+        """
+        source_path = self._repo_dir / self._source_name
+        tree_path = self._repo_dir / self._tree_name
+        tree_bytes = self._try_blob_bytes_at_commit(rev=rev, name=self._tree_name)
+        if tree_bytes is not None:
+            tree_path.write_bytes(tree_bytes)
+            tree_text = tree_bytes.decode("utf-8")
+            if SECTION_CHECKSUMS_START in tree_text:
+                self._sync_source_from_tree()
+            else:
+                source_blob = self._try_blob_bytes_at_commit(
+                    rev=rev, name=self._source_name
+                )
+                if source_blob is not None:
+                    source_path.write_bytes(source_blob)
+            return "full"
+        source_blob = self._blob_bytes_at_commit(rev=rev, name=self._source_name)
+        source_path.write_bytes(source_blob)
+        if tree_path.is_file():
+            tree_path.unlink()
+        return "degraded"
+
     def revert(self, *, rev: str) -> str:
         """Restore tree file at rev; unmark-export source; commit_full revert message."""
-        tree_bytes = self._blob_bytes_at_commit(rev=rev, name=self._tree_name)
-        tree_path = self._repo_dir / self._tree_name
-        tree_path.write_bytes(tree_bytes)
-        tree_text = tree_bytes.decode("utf-8")
-        if SECTION_CHECKSUMS_START in tree_text:
-            self._sync_source_from_tree()
+        self.checkout_revision(rev=rev)
         return self.commit_full(message=f"session: revert to {rev}")
 
     def _sync_source_from_tree(self) -> None:
@@ -169,10 +207,13 @@ class SessionRepo:
     def _blob_bytes_at_commit(self, *, rev: str, name: str) -> bytes:
         commit = cast(Commit, self._repo[rev.encode("ascii")])
         tree = cast(Tree, self._repo[commit.tree])
-        _, blob_sha = tree_lookup_path(
-            self._repo.get_object,
-            tree.id,
-            name.encode("utf-8"),
-        )
+        try:
+            _, blob_sha = tree_lookup_path(
+                self._repo.get_object,
+                tree.id,
+                name.encode("utf-8"),
+            )
+        except KeyError as exc:
+            raise KeyError(name) from exc
         blob = cast(Blob, self._repo.get_object(blob_sha))
         return blob.data

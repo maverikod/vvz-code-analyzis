@@ -123,36 +123,13 @@ class BaseMCPCommand(Command):
         from code_analysis.core.project_root_path import (
             persist_projects_root_path_stored_value,
         )
-        from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
-
-        _now_sql = sql_julian_timestamp_now_expr(db)
 
         def _resolve_watch_dir_id(abs_root: Path) -> Optional[str]:
             """Return watch_dir_id whose absolute_path is the direct parent of abs_root."""
             try:
-                rows_result = db.execute(
-                    "SELECT w.watch_dir_id, p.absolute_path FROM watch_dirs w"
-                    " JOIN watch_dir_paths p ON p.watch_dir_id = w.watch_dir_id"
-                    " WHERE p.absolute_path IS NOT NULL",
-                    (),
-                )
-                rows = []
-                if isinstance(rows_result, dict):
-                    rows = rows_result.get("data") or []
-                elif isinstance(rows_result, list):
-                    rows = rows_result
-                for row in rows:
-                    watch_abs = (row.get("absolute_path") or "").strip()
-                    if not watch_abs:
-                        continue
-                    try:
-                        if abs_root.parent.resolve() == Path(watch_abs).resolve():
-                            return str(row["watch_dir_id"])
-                    except (OSError, ValueError):
-                        continue
+                return db.resolve_watch_dir_id_for_project_root(abs_root)
             except Exception:
-                pass
-            return None
+                return None
 
         if project_id:
             project = db.get_project(project_id)
@@ -176,20 +153,12 @@ class BaseMCPCommand(Command):
                 watch_dir_id=watch_dir_id,
                 database=db,
             )
-            result = db.execute(
-                f"INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, {_now_sql})",
-                (project_id, root_stored, project_name),
+            db.insert_project_row(
+                project_id,
+                root_stored,
+                project_name,
+                watch_dir_id=watch_dir_id,
             )
-            affected = 0
-            if isinstance(result, dict):
-                data = result.get("data", result)
-                affected = data.get("affected_rows", 0) if isinstance(data, dict) else 0
-            if affected == 0:
-                raise DatabaseError(
-                    "Failed to create project",
-                    operation="create_project",
-                    details={"project_id": project_id, "root_path": str(root_path)},
-                )
             return project_id
         existing_id = BaseMCPCommand._get_project_id_by_root_path(db, str(root_path))
         if existing_id:
@@ -201,20 +170,12 @@ class BaseMCPCommand(Command):
             watch_dir_id=watch_dir_id,
             database=db,
         )
-        result = db.execute(
-            f"INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, {_now_sql})",
-            (new_id, root_stored, root_path.name),
+        db.insert_project_row(
+            new_id,
+            root_stored,
+            root_path.name,
+            watch_dir_id=watch_dir_id,
         )
-        affected = 0
-        if isinstance(result, dict):
-            data = result.get("data", result)
-            affected = data.get("affected_rows", 0) if isinstance(data, dict) else 0
-        if affected == 0:
-            raise DatabaseError(
-                "Failed to create project",
-                operation="create_project",
-                details={"root_path": str(root_path)},
-            )
         return new_id
 
     @staticmethod
@@ -360,7 +321,10 @@ class BaseMCPCommand(Command):
             )
         db = BaseMCPCommand._open_database_from_config()
         try:
-            rows = db.select("watch_dirs", where={"id": watch_dir_id}, columns=["id"])
+            if not db.watch_dir_exists(watch_dir_id):
+                rows = []
+            else:
+                rows = [{"id": watch_dir_id}]
             if not rows:
                 hint = " Use list_watch_dirs to get watch directory IDs."
                 raise ValidationError(
@@ -376,6 +340,10 @@ class BaseMCPCommand(Command):
         """
         Resolve project root directory from project_id (database only).
 
+        Uses ``projects.root_path`` (watch-relative segment or legacy absolute) plus
+        ``watch_dir_paths.absolute_path``. Falls back to ``watch_dir / projects.name``.
+        Never treats an empty or relative path as the server working directory.
+
         Args:
             project_id: Project ID (UUID4). Root path is resolved from projects table.
 
@@ -386,6 +354,7 @@ class BaseMCPCommand(Command):
             ValidationError: If project_id not provided or project not found.
         """
         from ..core.exceptions import ValidationError
+        from ..core.project_root_path import resolve_project_root_absolute_str
 
         if not project_id:
             raise ValidationError(
@@ -395,8 +364,8 @@ class BaseMCPCommand(Command):
             )
         db = BaseMCPCommand._open_database_from_config()
         try:
-            project = db.get_project(project_id)
-            if not project:
+            rows = db.select("projects", where={"id": project_id})
+            if not rows:
                 hint = ""
                 if "-" not in project_id or len(project_id) < 36:
                     hint = " Use list_projects to get the project id (UUID), or read projectid in the project root."
@@ -405,14 +374,38 @@ class BaseMCPCommand(Command):
                     field="project_id",
                     details={"project_id": project_id},
                 )
-            root_path = Path(project.root_path)
-            if not root_path.exists():
+            row = dict(rows[0])
+            abs_str = resolve_project_root_absolute_str(
+                project_id=project_id,
+                root_path_stored=str(row.get("root_path") or ""),
+                watch_dir_id=(
+                    str(row["watch_dir_id"])
+                    if row.get("watch_dir_id") is not None
+                    else None
+                ),
+                project_name=str(row.get("name") or "").strip() or None,
+                database=db,
+                require_exists=True,
+            ).strip()
+            if not abs_str or not Path(abs_str).is_absolute():
                 raise ValidationError(
-                    f"Project root path does not exist: {root_path}",
+                    f"Cannot resolve absolute project root for project_id {project_id!r}",
                     field="project_id",
-                    details={"project_id": project_id, "root_path": str(root_path)},
+                    details={
+                        "project_id": project_id,
+                        "stored_root_path": row.get("root_path"),
+                        "watch_dir_id": row.get("watch_dir_id"),
+                        "name": row.get("name"),
+                    },
                 )
-            return root_path
+            root = Path(abs_str).resolve()
+            if not root.is_dir():
+                raise ValidationError(
+                    f"Project root path does not exist: {root}",
+                    field="project_id",
+                    details={"project_id": project_id, "root_path": str(root)},
+                )
+            return root
         finally:
             db.disconnect()
 

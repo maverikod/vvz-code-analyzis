@@ -35,9 +35,13 @@ from code_analysis.commands.universal_file_preview.handlers.jsonl_handler import
 from code_analysis.commands.universal_file_preview.handlers.markdown_handler import (
     MarkdownFileHandler,
 )
-from code_analysis.commands.universal_file_preview.handlers.python_handler import (
-    PythonFileHandler,
+from code_analysis.commands.universal_file_preview.handlers.python_marked_handler import (
+    PythonMarkedTreeHandler,
 )
+from code_analysis.commands.universal_file_preview.marked_tree_navigation import (
+    navigate_marked_tree,
+)
+from code_analysis.core.search_session.tree_representation import TreeValidityState
 from code_analysis.commands.universal_file_preview.handlers.text_handler import (
     TextFileHandler,
 )
@@ -45,11 +49,6 @@ from code_analysis.commands.universal_file_preview.handlers.yaml_handler import 
     YamlFileHandler,
 )
 from code_analysis.commands.universal_file_preview.models import NodeKind
-from code_analysis.commands.universal_file_preview.python_visualizer import (
-    _annotated_full_text,
-    render_module,
-    render_node,
-)
 from code_analysis.commands.universal_file_preview.session import (
     merge_edit_session_into_preview_params,
     resolve_session,
@@ -168,20 +167,12 @@ def test_merge_edit_session_injects_tree_id_for_sidecar(tmp_path) -> None:
             assert not isinstance(merged, PreviewError)
             assert merged["tree_id"] == tree.tree_id
 
-            handler = PythonFileHandler()
+            handler = PythonMarkedTreeHandler()
             session_result = resolve_session(handler, merged)
             assert not isinstance(session_result, PreviewError)
-            cst_session, origin, _ = session_result
-            assert origin == "caller_owned"
-            bar_stable_after_edit = next(
-                m.stable_id
-                for m in cst_session.metadata_map.values()
-                if m.type == "FunctionDef" and m.name == "bar"
-            )
-            assert bar_stable_after_edit == bar_meta.stable_id
-            bar_resolved = handler.resolve_node_ref(bar_stable_after_edit, cst_session)
-            assert not isinstance(bar_resolved, PreviewError)
-            assert bar_resolved.name == "bar"
+            session, origin, _ = session_result
+            assert session is None
+            assert origin == "none"
         finally:
             release_session(edit_sess.session_id)
     finally:
@@ -201,7 +192,7 @@ def test_handler_dispatcher_known_and_unknown_extensions() -> None:
     """Dispatch maps extensions to handlers; unknown extension is PreviewError."""
     d = HandlerDispatcher()
     py_h = d.dispatch("a.py")
-    assert isinstance(py_h, PythonFileHandler)
+    assert isinstance(py_h, PythonMarkedTreeHandler)
     md_h = d.dispatch("notes.md")
     assert isinstance(md_h, MarkdownFileHandler)
     json_h = d.dispatch("cfg.json")
@@ -240,18 +231,33 @@ def test_resolve_session_md_ignores_stale_tree_id(tmp_path) -> None:
     assert tree_id is None
 
 
-def test_python_handler_open_root_valid_syntax(tmp_path) -> None:
+def test_python_marked_tree_preview_valid_syntax(tmp_path) -> None:
     path = tmp_path / "t.py"
     path.write_text("x = 1\n", encoding="utf-8")
-    result = PythonFileHandler().open_root(str(path), None)
+    budget = PreviewBudget(
+        preview_lines=10, value_preview_len=80, full_text_max_lines=200
+    )
+    with patch(
+        "code_analysis.commands.universal_file_preview.marked_tree_loader.TreeLifecycle.from_path",
+        return_value=(MagicMock(), TreeValidityState.reused),
+    ):
+        result = navigate_marked_tree(
+            {
+                "project_root": tmp_path,
+                "rel_file_path": "t.py",
+                "file_path": str(path),
+                "node_ref": None,
+                "selector": None,
+                "session_id": None,
+            },
+            budget,
+        )
     assert not isinstance(result, PreviewError)
-    assert result.node_kind == NodeKind.TREE_NODE
+    assert result.short_id_refs is True
+    assert result.selected_blocks
 
 
-def test_python_resolve_node_ref_drilldown_children_nonempty(tmp_path) -> None:
-    """Resolved class node must expose CST children so preview can slice."""
-    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
-
+def test_python_marked_tree_class_methods_in_blocks(tmp_path) -> None:
     src = '''\
 class Outer:
     def one(self) -> None:
@@ -264,22 +270,28 @@ class Outer:
 '''
     path = tmp_path / "mod.py"
     path.write_text(src, encoding="utf-8")
-    tree = load_file_to_tree(str(path))
-    class_stable = None
-    for m in tree.metadata_map.values():
-        if m.name == "Outer" and getattr(m, "kind", "") == "class":
-            class_stable = m.stable_id
-            break
-    assert class_stable is not None
-    h = PythonFileHandler()
-    root = h.open_root(str(path), tree)
-    assert not isinstance(root, PreviewError)
-    cls_node = h.resolve_node_ref(class_stable, tree)
-    assert not isinstance(cls_node, PreviewError)
-    kids = cls_node.children
-    assert len(kids) == 2
-    names = sorted(k.name or "" for k in kids)
-    assert names == ["one", "two"]
+    budget = PreviewBudget(
+        preview_lines=10, value_preview_len=80, full_text_max_lines=500
+    )
+    with patch(
+        "code_analysis.commands.universal_file_preview.marked_tree_loader.TreeLifecycle.from_path",
+        return_value=(MagicMock(), TreeValidityState.reused),
+    ):
+        result = navigate_marked_tree(
+            {
+                "project_root": tmp_path,
+                "rel_file_path": "mod.py",
+                "file_path": str(path),
+                "node_ref": None,
+                "selector": "0:10",
+                "session_id": None,
+            },
+            budget,
+        )
+    assert not isinstance(result, PreviewError)
+    texts = " ".join((b.text or "") for b in result.selected_blocks)
+    assert "def one" in texts
+    assert "def two" in texts
 
 
 def test_text_handler_open_root_lines_kind(tmp_path) -> None:
@@ -637,126 +649,6 @@ def test_jsonl_handler_resolve_non_integer_node_ref_unknown(tmp_path) -> None:
     assert err.details == {"node_ref": "abc"}
 
 
-def test_python_visualizer_budget_py_nonempty() -> None:
-    """Real CST tree: budget.py renders without TreeNodeMetadata field errors."""
-    budget_path = _universal_preview_pkg_dir() / "budget.py"
-    tree = load_file_to_tree(str(budget_path))
-    text = render_module(
-        tree,
-        PreviewBudget(preview_lines=20, value_preview_len=120, full_text_max_lines=200),
-    )
-    assert text.strip()
-
-
-def test_python_visualizer_large_file_overview_nonempty() -> None:
-    """python_visualizer.py is large enough for structured overview, not FILE_STRUCTURE."""
-    viz_path = _universal_preview_pkg_dir() / "python_visualizer.py"
-    tree = load_file_to_tree(str(viz_path))
-    budget = PreviewBudget(
-        preview_lines=20,
-        value_preview_len=120,
-        full_text_max_lines=200,
-    )
-    text = render_module(tree, budget)
-    assert len(text) > 80
-    assert "[" in text
-
-
-def test_python_visualizer_module_level_function_focus_nonempty() -> None:
-    """Focus on one top-level FunctionDef yields non-empty render_node."""
-    viz_path = _universal_preview_pkg_dir() / "python_visualizer.py"
-    tree = load_file_to_tree(str(viz_path))
-    rid = getattr(tree, "root_node_id", None)
-    assert rid is not None
-    fn_stable = next(
-        (
-            m.stable_id
-            for m in tree.metadata_map.values()
-            if m.parent_id == rid and m.type == "FunctionDef"
-        ),
-        None,
-    )
-    assert fn_stable is not None
-    assert render_node(tree, fn_stable).strip()
-
-
-_IF_ELIF_SAMPLE = """def foo():
-    suffix = "x"
-    if suffix == ".py":
-        a = 1
-    elif suffix == ".json":
-        b = 2
-    elif suffix in (".yaml", ".yml"):
-        c = 3
-    else:
-        d = 4
-"""
-
-
-def test_python_visualizer_drill_down_if_annotated_full_text(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Drill-down on If/elif returns node-scoped full-text with leaf stable_ids."""
-    import re
-
-    py_path = tmp_path / "sample.py"
-    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
-    tree = load_file_to_tree(str(py_path))
-    budget = PreviewBudget(
-        preview_lines=200, value_preview_len=120, full_text_max_lines=200
-    )
-    outer_if = next(
-        m for m in tree.metadata_map.values() if m.type == "If" and m.start_line == 3
-    )
-    text = render_node(tree, outer_if.stable_id, budget)
-    lines = text.splitlines()
-    assert len(lines) == outer_if.end_line - outer_if.start_line + 1
-    ssl_c = next(
-        m
-        for m in tree.metadata_map.values()
-        if m.type == "SimpleStatementLine" and m.start_line == 8
-    )
-    c_line = next(line for line in lines if "c = 3" in line)
-    assert re.match(r"\[([0-9a-f-]{36})\]", c_line).group(1) == ssl_c.stable_id
-
-
-def test_python_visualizer_drill_down_large_span_stays_structural(
-    tmp_path: pathlib.Path,
-) -> None:
-    """FunctionDef body span > full_text_max_lines keeps collapsed structural view."""
-    py_path = tmp_path / "sample.py"
-    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
-    tree = load_file_to_tree(str(py_path))
-    fn = next(m for m in tree.metadata_map.values() if m.type == "FunctionDef")
-    budget = PreviewBudget(
-        preview_lines=200, value_preview_len=120, full_text_max_lines=3
-    )
-    text = render_node(tree, fn.stable_id, budget)
-    assert "def foo" in text
-    assert "..." in text
-    assert "c = 3" not in text
-
-
-def test_python_visualizer_module_level_full_text_priority_unchanged(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Module-level full_text still prefers outermost stmt per line."""
-    py_path = tmp_path / "sample.py"
-    py_path.write_text(_IF_ELIF_SAMPLE, encoding="utf-8")
-    tree = load_file_to_tree(str(py_path))
-    budget = PreviewBudget(
-        preview_lines=200, value_preview_len=120, full_text_max_lines=200
-    )
-    annotated = _annotated_full_text(tree, budget)
-    assert annotated is not None
-    assert annotated == render_module(tree, budget)
-    outer_if = next(
-        m for m in tree.metadata_map.values() if m.type == "If" and m.start_line == 3
-    )
-    if_header = next(line for line in annotated.splitlines() if "if suffix ==" in line)
-    assert if_header.startswith(f"[{outer_if.stable_id}]")
-
-
 def test_universal_file_preview_whitelisted_for_read_only_batch() -> None:
     """Read-only batch allows universal_file_preview."""
     assert "universal_file_preview" in READ_ONLY_BATCH_WHITELIST
@@ -852,9 +744,7 @@ async def test_universal_file_preview_md_empty_node_ref_same_as_omit(
             "full_text_max_lines": 9999,
         }
         omitted = await cmd.execute(**cmd.validate_params(base))
-        empty_ref = await cmd.execute(
-            **cmd.validate_params({**base, "node_ref": ""})
-        )
+        empty_ref = await cmd.execute(**cmd.validate_params({**base, "node_ref": ""}))
         whitespace = await cmd.execute(
             **cmd.validate_params({**base, "node_ref": "   "})
         )

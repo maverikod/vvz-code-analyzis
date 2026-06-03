@@ -143,26 +143,9 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         details={"project_id": project_id},
                     )
 
-                watch_dir_path_result = database.execute(
-                    "SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?",
-                    (project.watch_dir_id,),
+                watch_dir_path = database.get_watch_dir_absolute_path(
+                    str(project.watch_dir_id or "")
                 )
-                if isinstance(watch_dir_path_result, list):
-                    watch_dir_paths = watch_dir_path_result
-                else:
-                    watch_dir_paths = watch_dir_path_result.get("data", [])
-
-                if not watch_dir_paths:
-                    return ErrorResult(
-                        message=f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
-                        code="WATCH_DIR_NOT_FOUND",
-                        details={
-                            "project_id": project_id,
-                            "watch_dir_id": project.watch_dir_id,
-                        },
-                    )
-
-                watch_dir_path = watch_dir_paths[0].get("absolute_path")
                 if not watch_dir_path:
                     return ErrorResult(
                         message=f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",

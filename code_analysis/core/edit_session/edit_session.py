@@ -24,6 +24,7 @@ from code_analysis.core.edit_session.marker_cycle import (
     denude_marked_tree,
     restore_marked_tree,
 )
+from code_analysis.core.edit_session.session_history import SessionHistory
 from code_analysis.core.edit_session.session_repo import SessionRepo
 from code_analysis.core.search_session.tree_representation import sidecar_path_for
 from code_analysis.core.tree_lifecycle import (
@@ -112,6 +113,7 @@ class EditSession:
     source_checksum: str
     tree_checksum: Optional[str]
     is_open: bool = field(default=False)
+    history: SessionHistory = field(default_factory=SessionHistory)
 
     @classmethod
     def open(
@@ -198,6 +200,8 @@ class EditSession:
             include_tree=include_tree,
             source_abs=source_abs,
         )
+        history = SessionHistory()
+        history.reset(session_repo.log()[-1].hash)
 
         session = cls(
             session_id=session_id,
@@ -214,6 +218,7 @@ class EditSession:
             source_checksum=source_checksum,
             tree_checksum=tree_checksum,
             is_open=True,
+            history=history,
         )
         _active_sessions[session_id] = session
         return session
@@ -258,6 +263,25 @@ class EditSession:
         self._post_mutation_degraded()
         self._try_revalidate()
 
+    def apply_cst_sidecar_mutation(
+        self,
+        new_source_text: str,
+        *,
+        sidecar_abs: Path,
+    ) -> None:
+        """Sync session workspace after legacy CST ``write_sidecar_atomic`` edit."""
+        if not self.is_open:
+            raise RuntimeError("EditSession is not open")
+        self.session_source_path.write_text(new_source_text, encoding="utf-8")
+        shutil.copy2(sidecar_abs, self.session_tree_path)
+        self.source_checksum = compute_content_checksum(new_source_text)
+        self.tree_checksum = compute_content_checksum(
+            self.session_tree_path.read_text(encoding="utf-8")
+        )
+        self.tree_validity = SessionTreeValidity.VALID
+        self.session_repo.commit_full(message="session: mutation")
+        self._record_history_commit(self.session_repo.log()[0].hash)
+
     def _post_mutation_full(self) -> None:
         self._export_source_via_unmark()
         self.source_checksum = compute_content_checksum(
@@ -268,6 +292,7 @@ class EditSession:
             self.session_tree_path.read_text(encoding="utf-8")
         )
         self.session_repo.commit_full(message="session: mutation")
+        self._record_history_commit(self.session_repo.log()[0].hash)
 
     def _post_mutation_degraded(self) -> None:
         self.source_checksum = compute_content_checksum(
@@ -275,6 +300,68 @@ class EditSession:
         )
         self.tree_checksum = None
         self.session_repo.commit_degraded(message="session: plaintext mutation")
+        self._record_history_commit(self.session_repo.log()[0].hash)
+
+    def _record_history_commit(self, commit_hash: str) -> None:
+        self.history.record(commit_hash)
+
+    def _sync_state_after_checkout(self, *, mode: str) -> None:
+        source_text = self.session_source_path.read_text(encoding="utf-8")
+        self.source_checksum = compute_content_checksum(source_text)
+        if mode == "full":
+            self.tree_validity = SessionTreeValidity.VALID
+            self.tree_checksum = (
+                compute_content_checksum(
+                    self.session_tree_path.read_text(encoding="utf-8")
+                )
+                if self.session_tree_path.is_file()
+                else None
+            )
+            return
+        self.tree_validity = SessionTreeValidity.INVALID
+        self.tree_checksum = None
+
+    def checkout_history_index(self, index: int) -> None:
+        """Restore working artefacts to ``timeline[index]`` without a new commit."""
+        if not self.is_open:
+            raise RuntimeError("EditSession is not open")
+        commit_hash = self.history.timeline[index]
+        mode = self.session_repo.checkout_revision(rev=commit_hash)
+        self._sync_state_after_checkout(mode=mode)
+        self.history.move_to(index)
+
+    def undo(self) -> dict[str, object]:
+        """Step back one edit; classic undo without creating a commit."""
+        if not self.is_open:
+            raise RuntimeError("EditSession is not open")
+        if not self.history.can_undo():
+            raise RuntimeError("nothing to undo")
+        target = self.history.undo_index()
+        self.checkout_history_index(target)
+        return self.history.snapshot()
+
+    def redo(self) -> dict[str, object]:
+        """Step forward one edit; classic redo without creating a commit."""
+        if not self.is_open:
+            raise RuntimeError("EditSession is not open")
+        if not self.history.can_redo():
+            raise RuntimeError("nothing to redo")
+        target = self.history.redo_index()
+        self.checkout_history_index(target)
+        return self.history.snapshot()
+
+    def record_revert_commit(self, *, rev: str) -> str:
+        """Git-style revert: checkout ``rev`` and append a new tracked commit."""
+        new_commit = self.session_repo.revert(rev=rev)
+        self._sync_state_after_checkout(
+            mode=(
+                "full"
+                if self.session_repo.revision_includes_tree(rev=new_commit)
+                else "degraded"
+            )
+        )
+        self._record_history_commit(new_commit)
+        return new_commit
 
     def _export_source_via_unmark(self) -> None:
         handler = HandlerRegistry.default_registry().resolve(self.source_abs)
@@ -358,6 +445,7 @@ class EditSession:
             self.session_tree_path.read_text(encoding="utf-8")
         )
         self.session_repo.commit_full(message="session: revalidation")
+        self._record_history_commit(self.session_repo.log()[0].hash)
 
     def preview_external_write(self) -> dict[str, Any]:
         """Compute unified diffs of in-session artefacts vs live external files; no external writes."""

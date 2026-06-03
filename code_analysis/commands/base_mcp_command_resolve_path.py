@@ -10,6 +10,7 @@ from typing import Optional
 
 from ..core.database_client.client import DatabaseClient
 from ..core.exceptions import ValidationError
+from ..core.project_root_path import resolve_project_root_absolute_str
 
 
 def resolve_under_project_root(
@@ -131,54 +132,33 @@ def resolve_file_path_from_project(
             details={"project_id": project_id},
         )
 
-    if not project.watch_dir_id:
+    rows = database.select("projects", where={"id": project_id})
+    row = dict(rows[0]) if rows else {}
+    root_str = resolve_project_root_absolute_str(
+        project_id=project_id,
+        root_path_stored=str(row.get("root_path") or project.root_path or ""),
+        watch_dir_id=(
+            str(row["watch_dir_id"])
+            if row.get("watch_dir_id") is not None
+            else project.watch_dir_id
+        ),
+        project_name=str(row.get("name") or project.name or "").strip() or None,
+        database=database,
+        require_exists=True,
+    ).strip()
+    if not root_str or not Path(root_str).is_absolute():
         raise ValidationError(
-            f"Project {project_id} is not linked to a watch directory",
+            f"Cannot resolve absolute project root for project_id {project_id}",
             field="project_id",
             details={
                 "project_id": project_id,
-                "project_name": project.name,
+                "stored_root_path": row.get("root_path"),
+                "watch_dir_id": row.get("watch_dir_id"),
+                "name": row.get("name"),
             },
         )
 
-    if not project.name:
-        raise ValidationError(
-            f"Project {project_id} does not have a name",
-            field="project_id",
-            details={"project_id": project_id},
-        )
-
-    watch_dir_path_result = database.execute(
-        "SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?",
-        (project.watch_dir_id,),
-    )
-    if isinstance(watch_dir_path_result, list):
-        watch_dir_paths = watch_dir_path_result
-    else:
-        watch_dir_paths = watch_dir_path_result.get("data", [])
-
-    if not watch_dir_paths:
-        raise ValidationError(
-            f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
-            field="project_id",
-            details={
-                "project_id": project_id,
-                "watch_dir_id": project.watch_dir_id,
-            },
-        )
-
-    watch_dir_path = watch_dir_paths[0].get("absolute_path")
-    if not watch_dir_path:
-        raise ValidationError(
-            f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",
-            field="project_id",
-            details={
-                "project_id": project_id,
-                "watch_dir_id": project.watch_dir_id,
-            },
-        )
-
-    absolute_path = Path(watch_dir_path) / project.name / relative_file_path
+    absolute_path = Path(root_str) / relative_file_path
     resolved_path = absolute_path.resolve()
 
     if require_exists and not resolved_path.exists():
@@ -188,7 +168,7 @@ def resolve_file_path_from_project(
             details={
                 "relative_file_path": relative_file_path,
                 "absolute_path": str(resolved_path),
-                "watch_dir_path": watch_dir_path,
+                "project_root": root_str,
                 "project_name": project.name,
             },
         )

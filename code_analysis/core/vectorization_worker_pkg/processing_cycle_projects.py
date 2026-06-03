@@ -205,6 +205,11 @@ async def process_projects_in_cycle(
                         project_id,
                     )
                 try:
+                    from code_analysis.core.database.watch_dirs_partition import (
+                        current_server_instance_id,
+                    )
+
+                    sid = current_server_instance_id()
                     t0_step1 = time.time()
                     files_result = database.execute(
                         f"""
@@ -212,11 +217,15 @@ async def process_projects_in_cycle(
                                p.root_path AS project_root_path,
                                p.name AS project_name,
                                (SELECT wdp.absolute_path FROM watch_dir_paths wdp
-                                WHERE wdp.watch_dir_id = COALESCE(f.watch_dir_id, p.watch_dir_id)
+                                WHERE wdp.server_instance_id = p.server_instance_id
+                                  AND wdp.watch_dir_id = COALESCE(
+                                      f.watch_dir_id, p.watch_dir_id
+                                  )
                                 LIMIT 1) AS watch_absolute_path
                         FROM files f
                         INNER JOIN projects p ON p.id = f.project_id
-                        WHERE f.project_id = ?
+                        WHERE p.server_instance_id = ?
+                          AND f.project_id = ?
                           AND {WHERE_FILES_ACTIVE_F}
                           AND (
                               {WHERE_HAS_DOCSTRING_F}
@@ -248,6 +257,7 @@ async def process_projects_in_cycle(
                         LIMIT ?
                         """,
                         (
+                            sid,
                             project_id,
                             worker.max_files_per_pass,
                         ),

@@ -248,6 +248,12 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.universal_file_edit.session_git_revert_command import (
             SessionGitRevertCommand,
         )
+        from .commands.universal_file_edit.session_redo_command import (
+            SessionRedoCommand,
+        )
+        from .commands.universal_file_edit.session_undo_command import (
+            SessionUndoCommand,
+        )
         from .commands.universal_file_edit.session_write_command import (
             SessionWriteCommand,
         )
@@ -263,6 +269,8 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(SessionGitShowCommand, "custom")
         reg.register(SessionGitStatusCommand, "custom")
         reg.register(SessionGitRevertCommand, "custom")
+        reg.register(SessionUndoCommand, "custom")
+        reg.register(SessionRedoCommand, "custom")
         reg.register(SessionWriteCommand, "custom")
         logger.info("Registered universal_file_edit commands")
     except ImportError as e:

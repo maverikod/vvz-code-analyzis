@@ -197,10 +197,16 @@ def compute_delta(
             )
 
     try:
+        from code_analysis.core.database.watch_dirs_partition import (
+            current_server_instance_id,
+        )
+
+        sid = current_server_instance_id()
         if hasattr(database, "select"):
             all_projects = (
                 database.select(
                     "projects",
+                    where={"server_instance_id": sid},
                     columns=["id", "root_path", "watch_dir_id"],
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
@@ -209,8 +215,9 @@ def compute_delta(
         else:
             all_projects = (
                 database.execute(
-                    "SELECT id, root_path, watch_dir_id FROM projects",
-                    None,
+                    "SELECT id, root_path, watch_dir_id FROM projects "
+                    "WHERE server_instance_id = ?",
+                    (sid,),
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 ).get("data")
                 or []

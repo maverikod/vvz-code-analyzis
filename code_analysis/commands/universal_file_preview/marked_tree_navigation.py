@@ -47,8 +47,11 @@ from .marked_tree_loader import (
 )
 from .models import Block, NavigationResult, Node, NodeKind
 from .node_ref_params import normalize_optional_node_ref
+from .invalid_preview import invalid_source_node
+
 from .tree_temp_preview_focus import looks_like_sidecar_stable_id
 
+_PYTHON_EXTENSIONS = frozenset({".py", ".pyi", ".pyw"})
 _SCALAR_KINDS = frozenset({"scalar", "string", "number", "boolean", "null"})
 
 
@@ -67,6 +70,15 @@ def _preview_source_is_parseable(params: dict[str, Any]) -> bool:
     content = _read_source_text(preview_abs_path=preview_path)
     if not content.strip():
         return True
+    ext = preview_path.suffix.lower()
+    if ext in _PYTHON_EXTENSIONS:
+        try:
+            import libcst as cst
+
+            cst.parse_module(content)
+            return True
+        except Exception:
+            return False
     try:
         resolve_format_handler(preview_path).parse_content(preview_path, content)
         return True
@@ -119,6 +131,17 @@ def should_use_marked_tree_navigation(
     params: dict[str, Any],
 ) -> bool:
     """Return True when PreviewNavigation + TreeLifecycle should handle the request."""
+    file_path = Path(str(params.get("file_path", "")))
+    ext = file_path.suffix.lower()
+    if ext in _PYTHON_EXTENSIONS:
+        if not params.get("project_root") or not params.get("rel_file_path"):
+            return False
+        try:
+            resolve_format_handler(file_path)
+        except Exception:
+            return False
+        return True
+
     if isinstance(handler, JsonLinesFileHandler):
         return False
     if params.get("tree_temp_roots") is not None:
@@ -136,7 +159,6 @@ def should_use_marked_tree_navigation(
             return False
     if not params.get("project_root") or not params.get("rel_file_path"):
         return False
-    file_path = Path(str(params.get("file_path", "")))
     try:
         resolve_format_handler(file_path)
     except Exception:
@@ -255,23 +277,21 @@ def _root_view_block_set(
     navigation: PreviewNavigation,
     focus_short_id: NodeId,
 ) -> list[Any]:
-    """Blocks for omitted node_ref: container children, else flat document roots."""
+    """Blocks for omitted node_ref.
+
+    Single-container trees (JSON/YAML object root): children of that root.
+    Multi-root trees (Python module statements): all top-level document nodes.
+    """
+    doc_blocks = _document_level_blocks(tree)
+    if len(doc_blocks) > 1:
+        return doc_blocks
     try:
         children = navigation._enumerate_children(tree, focus_short_id)
     except PreviewNavigationError:
         children = []
     if children:
         return children
-    return _document_level_blocks(tree)
-
-
-def _render_python_module_text(preview_abs_path: Path, budget: PreviewBudget) -> str:
-    from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
-
-    from .python_tree_diff_preview import render_preview_with_optional_diff
-
-    tree = load_file_to_tree(str(preview_abs_path))
-    return render_preview_with_optional_diff(tree, str(preview_abs_path), budget)
+    return doc_blocks
 
 
 def _enrich_focus_for_root_view(
@@ -285,15 +305,8 @@ def _enrich_focus_for_root_view(
     preview_abs_path: Path,
     max_short_id: int,
 ) -> None:
-    """Populate legacy ``focus.text`` / ``attributes.full_text`` for root_view."""
+    """Populate ``focus.text`` / ``attributes.full_text`` for root_view."""
     attrs = dict(focus_node.attributes or {})
-    if format_key == "python":
-        text = _render_python_module_text(preview_abs_path, budget)
-        if text:
-            attrs["text"] = text
-        focus_node.attributes = attrs
-        return
-
     threshold = config.full_text_max_lines.get(format_key, DEFAULT_FULL_TEXT_MAX_LINES)
     if threshold <= 0 or not source_text.strip():
         return
@@ -329,7 +342,17 @@ def navigate_marked_tree(
         preview_abs_path=preview_abs_path,
         bound_session_id=session_id,
     )
-    tree = loader(preview_abs_path, session_id)
+    try:
+        tree = loader(preview_abs_path, session_id)
+    except Exception as exc:
+        invalid = invalid_source_node(str(preview_abs_path), exc)
+        return NavigationResult(
+            focus_node=invalid,
+            total_blocks=0,
+            selected_blocks=[],
+            tree_id=None,
+            short_id_refs=True,
+        )
     root_view = normalize_optional_node_ref(params.get("node_ref")) is None
     try:
         focus_short_id = parse_focus_short_id(params.get("node_ref"), tree.nodes)

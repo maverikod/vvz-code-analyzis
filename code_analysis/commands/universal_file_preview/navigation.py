@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Sequence, cast
 
 from code_analysis.core.tree_temp.tree_node import TreeNode
@@ -19,6 +20,7 @@ from .base_handler import FileHandler
 from .block_handlers import render_block
 from .budget import PreviewBudget
 from .errors import (
+    INPUT_ERROR_CONFLICTING_PARAMETERS,
     INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
     input_error,
@@ -87,6 +89,14 @@ def navigate(
         use_marked_tree = False
     if use_marked_tree:
         return navigate_marked_tree(marked_params, budget)
+
+    ext = Path(str(params.get("file_path", ""))).suffix.lower()
+    if ext in (".py", ".pyi", ".pyw"):
+        return input_error(
+            INPUT_ERROR_CONFLICTING_PARAMETERS,
+            "Python preview requires project_id (marked-tree navigation only).",
+            details={"file_path": params.get("file_path")},
+        )
 
     session_result = resolve_session(handler, params)
     if isinstance(session_result, PreviewError):

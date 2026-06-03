@@ -38,10 +38,12 @@ from code_analysis.commands.universal_file_edit.insert_position import (
 from code_analysis.core.edit_session import SessionTreeValidity
 from code_analysis.core.backup_manager import BackupManager
 from code_analysis.core.edit_session.edit_operations_adapter import (
+    _coalesce_node_ref_keys,
     _node_at_json_pointer,
     _parse_marked_tree_root,
     _resolve_pointer_to_short_id,
     _wrapper_short_id,
+    command_op_to_edit_operation,
     resolve_node_ref_to_short_id,
 )
 from code_analysis.core.json_tree.json_pointer import set_value_at
@@ -280,6 +282,18 @@ def _tree_temp_op_to_edit_operation(
             position=position,
             new_content=_serialize_insert_value(handler_id, insert_value),
         )
+    if action == "move":
+        sections = _session_tree_sections(session)
+        m = _coalesce_node_ref_keys(dict(mop))
+        if m.get("json_pointer") and not m.get("node_id") and not m.get("node_ref"):
+            m["node_id"] = str(
+                _resolve_pointer_to_short_id(
+                    str(m["json_pointer"]), sections, session.handler_id
+                )
+            )
+        elif not m.get("node_id") and not m.get("node_ref"):
+            m["node_id"] = str(_resolve_json_target_short_id(session, m))
+        return command_op_to_edit_operation(m, sections, session.core)
     raise ValueError(f"Unknown tree-temp action: {action!r}")
 
 

@@ -3,37 +3,35 @@
 from __future__ import annotations
 
 from code_analysis.commands.cst_modify_tree_ops_build import build_tree_operations
-from code_analysis.commands.universal_file_preview.handlers.python_handler import (
-    _cst_preview_child_nodes,
-)
-from code_analysis.commands.universal_file_preview.models import NodeKind
 from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
 from code_analysis.core.cst_tree.tree_builder import create_tree_from_code, remove_tree
 from code_analysis.core.cst_tree.tree_modifier import modify_tree
 
 
-def test_preview_lists_decorators_under_function() -> None:
+def test_preview_lists_decorators_under_function(tmp_path) -> None:
+    from code_analysis.tree.handlers.python_handler import PythonHandler
+
     src = (
         "class C:\n"
         "    @classmethod\n"
         "    def foo(cls) -> int:\n"
         "        return 1\n"
     )
-    tree = create_tree_from_code("/tmp/_decor_preview.py", src)
-    try:
-        cls_id = next(
-            nid
-            for nid, m in tree.metadata_map.items()
-            if m.type == "ClassDef" and m.name == "C"
-        )
-        children = _cst_preview_child_nodes(tree, cls_id)
-        foo = next(c for c in children if c.name == "foo")
-        dec_children = foo._children_loader() if foo._children_loader else []
-        dec = next(c for c in dec_children if c.type_label == "Decorator")
-        assert dec.node_kind == NodeKind.SCALAR
-        assert dec.attributes.get("expression") == "@classmethod"
-    finally:
-        remove_tree(tree.tree_id)
+    path = tmp_path / "c.py"
+    path.write_text(src, encoding="utf-8")
+    nodes = PythonHandler().parse_content(path, src)
+    foo_sid = next(
+        int(n.short_id)
+        for n in nodes
+        if n.kind == "function" and "def foo" in n.content
+    )
+    dec_nodes = [
+        n
+        for n in nodes
+        if n.parent_short_id == foo_sid and n.kind.lower() == "decorator"
+    ]
+    assert len(dec_nodes) == 1
+    assert "@classmethod" in dec_nodes[0].content
 
 
 def test_replace_functiondef_preserves_decorators_without_at_in_code() -> None:

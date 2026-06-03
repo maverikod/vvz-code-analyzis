@@ -25,8 +25,11 @@ from code_analysis.commands.universal_file_preview.handlers.json_handler import 
     JsonFileHandler,
 )
 from code_analysis.commands.universal_file_preview.errors import PreviewError
-from code_analysis.commands.universal_file_preview.handlers.python_handler import (
-    PythonFileHandler,
+from code_analysis.commands.universal_file_preview.handlers.python_marked_handler import (
+    PythonMarkedTreeHandler,
+)
+from code_analysis.commands.universal_file_preview.marked_tree_navigation import (
+    navigate_marked_tree,
 )
 from code_analysis.core.cst_tree.tree_builder import get_tree, remove_tree
 
@@ -63,14 +66,27 @@ def test_json_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
     assert "parse_error" in node.attributes
 
 
-def test_python_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
+def test_python_invalid_returns_raw_source_via_marked_tree(tmp_path: Path) -> None:
+    _ensure_project_root(tmp_path)
     bad = tmp_path / "broken.py"
     bad.write_text("def f(\n", encoding="utf-8")
-    node = PythonFileHandler().open_root(
-        str(bad), None, PreviewBudget(preview_lines=20, value_preview_len=120)
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=200
     )
-    assert node.is_invalid is True
-    assert "def f(" in node.attributes["text"]
+    result = navigate_marked_tree(
+        {
+            "project_root": tmp_path,
+            "rel_file_path": "broken.py",
+            "file_path": str(bad),
+            "node_ref": None,
+            "selector": None,
+            "session_id": None,
+        },
+        budget,
+    )
+    assert not isinstance(result, PreviewError)
+    assert result.focus_node.is_invalid is True
+    assert "def f(" in result.focus_node.attributes["text"]
 
 
 @pytest.mark.asyncio

@@ -123,18 +123,42 @@ def _read_tree_temp_digest(sidecar_path: Path) -> Optional[str]:
     return cast(str, doc.source_sha256)
 
 
+def _read_three_section_digest_and_root(
+    sidecar_path: Path,
+) -> tuple[Optional[str], Optional[str]]:
+    """Read CHECKSUMS/MAP from unified three-section ``.tree`` sidecar."""
+    try:
+        from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
+
+        text = sidecar_path.read_text(encoding="utf-8")
+        sections = parse_tree_file(text)
+    except OSError:
+        return None, None
+    except Exception:
+        return None, None
+    digest = sections.checksums.get("source_sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        return None, None
+    root_stable_id: Optional[str] = None
+    if sections.map.entries:
+        root_stable_id = str(sections.map.entries[0].short_id)
+    return digest.lower(), root_stable_id
+
+
 def _read_cst_digest_and_root(
     source_abs: Path, sidecar_path: Path
 ) -> tuple[Optional[str], Optional[str]]:
     payload = read_sidecar_payload(source_abs)
-    if payload is None:
-        return None, None
-    digest = payload.get("source_sha256")
-    if not isinstance(digest, str) or len(digest) != 64:
-        return None, None
-    root_id = payload.get("root_node_id")
-    root_stable_id = root_id if isinstance(root_id, str) and root_id else None
-    return digest.lower(), root_stable_id
+    if payload is not None:
+        digest = payload.get("source_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            return None, None
+        root_id = payload.get("root_node_id")
+        root_stable_id = root_id if isinstance(root_id, str) and root_id else None
+        return digest.lower(), root_stable_id
+    if sidecar_path.is_file():
+        return _read_three_section_digest_and_root(sidecar_path)
+    return None, None
 
 
 def _read_adjacent_sidecar_digest(sidecar_path: Path) -> Optional[str]:

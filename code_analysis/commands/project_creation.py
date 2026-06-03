@@ -22,7 +22,6 @@ else:
     DatabaseClient = Any
 
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
-from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
 logger = logging.getLogger(__name__)
 
@@ -89,30 +88,14 @@ class CreateProjectCommand:
             Path to watch directory or None if not found.
         """
         try:
-            result = self.database.execute(
-                """
-                SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?
-                """,
-                (self.watch_dir_id,),
-            )
-            rows = []
-            if isinstance(result, dict):
-                if "data" in result and isinstance(result["data"], list):
-                    rows = result["data"]
-                elif isinstance(result, list):
-                    rows = result
-            elif isinstance(result, list):
-                rows = result
-            if not rows:
-                logger.error(
-                    f"Watch directory {self.watch_dir_id} not found in database"
-                )
-                return None
-            path_str = (
-                rows[0].get("absolute_path") if isinstance(rows[0], dict) else rows[0]
+            path_str = self.database.get_watch_dir_absolute_path(
+                str(self.watch_dir_id or "")
             )
             if not path_str:
-                logger.error(f"Watch directory {self.watch_dir_id} has no path set")
+                logger.error(
+                    f"Watch directory {self.watch_dir_id} not found in database "
+                    "or has no path set"
+                )
                 return None
             watch_path = Path(path_str)
             if not watch_path.exists():
@@ -403,16 +386,12 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
-                _now = sql_julian_timestamp_now_expr(self.database)
-                self.database.execute(
-                    f"INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, {_now})",
-                    (
-                        project_id,
-                        root_stored,
-                        project_path.name,
-                        self.description,
-                        self.watch_dir_id,
-                    ),
+                self.database.insert_project_row(
+                    project_id,
+                    root_stored,
+                    project_path.name,
+                    comment=self.description,
+                    watch_dir_id=self.watch_dir_id,
                 )
                 logger.info(f"Registered project in database: {project_id}")
                 bootstrap_report = await self._run_bootstrap(project_path, slug)
@@ -449,16 +428,12 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
-                _now = sql_julian_timestamp_now_expr(self.database)
-                self.database.execute(
-                    f"INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at) VALUES (?, ?, ?, ?, ?, {_now})",
-                    (
-                        project_id,
-                        root_stored,
-                        project_path.name,
-                        self.description,
-                        self.watch_dir_id,
-                    ),
+                self.database.insert_project_row(
+                    project_id,
+                    root_stored,
+                    project_path.name,
+                    comment=self.description,
+                    watch_dir_id=self.watch_dir_id,
                     transaction_id=transaction_id,
                 )
                 logger.info(f"Registered project in database: {project_id}")

@@ -120,12 +120,23 @@ class SessionGitRevertCommand(BaseMCPCommand):
         _ = project_id  # registry is authoritative; project_id is schema-required
         _ = kwargs
         try:
-            session = get_active_session(session_id)
+            core = get_active_session(session_id)
         except KeyError:
             return error_result_from_make_error(
                 make_error(SESSION_NOT_FOUND, f"No active session: {session_id}")
             )
-        new_commit = session.session_repo.revert(rev=rev)
+        from code_analysis.commands.universal_file_edit.session import get_session
+        from code_analysis.commands.universal_file_edit.session_history_sync import (
+            sync_command_session_after_history,
+        )
+
+        try:
+            facade = get_session(session_id)
+        except ValueError:
+            facade = None
+        new_commit = core.record_revert_commit(rev=rev)
+        if facade is not None:
+            sync_command_session_after_history(facade)
         payload: Dict[str, Any] = {
             "success": True,
             "reverted_to": rev,

@@ -69,6 +69,11 @@ def get_files_needing_chunking(
     Returns:
         List of file records that need chunking
     """
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
+    sid = current_server_instance_id()
     return cast(
         List[Dict[str, Any]],
         self._fetchall(
@@ -82,11 +87,13 @@ def get_files_needing_chunking(
                     p.root_path AS project_root_path,
                     p.name AS project_name,
                     (SELECT wdp.absolute_path FROM watch_dir_paths wdp
-                     WHERE wdp.watch_dir_id = COALESCE(f.watch_dir_id, p.watch_dir_id)
+                     WHERE wdp.server_instance_id = p.server_instance_id
+                       AND wdp.watch_dir_id = COALESCE(f.watch_dir_id, p.watch_dir_id)
                      LIMIT 1) AS watch_absolute_path
                 FROM files f
                 JOIN projects p ON p.id = f.project_id
-                WHERE f.project_id = ?
+                WHERE p.server_instance_id = ?
+                AND f.project_id = ?
                 AND {WHERE_FILES_ACTIVE_F}
                 AND (
                     {WHERE_HAS_DOCSTRING_F}
@@ -111,7 +118,7 @@ def get_files_needing_chunking(
                 ORDER BY f.updated_at DESC
                 LIMIT ?
                 """,
-            (project_id, limit),
+            (sid, project_id, limit),
         ),
     )
 

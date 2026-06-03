@@ -80,14 +80,28 @@ class _RPCHandlersIndexFileMixin:
         )
         try:
             # Resolve project root via canonical 3-component scheme.
-            _proj_sql = (
-                "SELECT p.root_path, p.watch_dir_id, p.name,"
-                " w.absolute_path AS watch_absolute_path"
-                " FROM projects p"
-                " LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id"
-                " WHERE p.id = ?"
+            from code_analysis.core.database.watch_dirs_partition import (
+                current_server_instance_id,
             )
-            exec_result = self.driver.execute(_proj_sql, (project_id,), None)
+            from code_analysis.core.database.watch_dirs_query import (
+                _database_query_rows,
+            )
+
+            sid = current_server_instance_id()
+            rows = _database_query_rows(
+                self.driver,
+                """
+                SELECT p.root_path, p.watch_dir_id, p.name,
+                       w.absolute_path AS watch_absolute_path
+                FROM projects p
+                LEFT JOIN watch_dir_paths w
+                  ON w.server_instance_id = p.server_instance_id
+                 AND w.watch_dir_id = p.watch_dir_id
+                WHERE p.server_instance_id = ? AND p.id = ?
+                """,
+                (sid, project_id),
+            )
+            exec_result = {"data": rows}
             data = exec_result.get("data") if isinstance(exec_result, dict) else None
             if not data or len(data) == 0:
                 return ErrorResult(

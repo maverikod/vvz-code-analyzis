@@ -86,9 +86,15 @@ def partition_discovered_projects_by_db_soft_delete(
             excluded_resolved.add(root_resolved)
             continue
 
+        from code_analysis.core.database.watch_dirs_partition import (
+            current_server_instance_id,
+        )
+
+        sid = current_server_instance_id()
         res = database.execute(
-            "SELECT id, deleted FROM projects WHERE root_path = ? LIMIT 1",
-            (root_s,),
+            "SELECT id, deleted FROM projects "
+            "WHERE server_instance_id = ? AND root_path = ? LIMIT 1",
+            (sid, root_s),
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         rows = _execute_data_rows(res)

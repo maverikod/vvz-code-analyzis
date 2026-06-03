@@ -22,6 +22,28 @@ from code_analysis.core.path_normalization import normalize_path_simple
 logger = logging.getLogger(__name__)
 
 
+def _is_existing_directory(path: str | Path) -> bool:
+    """True when ``path`` resolves to an existing directory on this host."""
+    try:
+        return Path(path).resolve().is_dir()
+    except OSError:
+        return False
+
+
+def _normalize_existing_watch_dir_path(path: str) -> Optional[str]:
+    """Return normalized watch path when it exists as a directory, else None."""
+    raw = (path or "").strip()
+    if not raw:
+        return None
+    try:
+        normalized = normalize_path_simple(str(Path(raw).resolve()))
+    except OSError:
+        return None
+    if not normalized or not _is_existing_directory(normalized):
+        return None
+    return normalized
+
+
 def is_legacy_projects_root_path_absolute_storage(stored: str) -> bool:
     """True if ``stored`` is a legacy absolute filesystem path (not a watch-relative segment)."""
     s = (stored or "").strip().replace("\\", "/")
@@ -32,17 +54,25 @@ def is_legacy_projects_root_path_absolute_storage(stored: str) -> bool:
 
 def fetch_watch_dir_absolute_path(database: Any, watch_dir_id: str) -> Optional[str]:
     """Return ``watch_dir_paths.absolute_path`` for ``watch_dir_id``, or None."""
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
     wid = (watch_dir_id or "").strip()
     if not wid:
         return None
-    sql = "SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ? LIMIT 1"
-    params: tuple[Any, ...] = (wid,)
+    sid = current_server_instance_id()
+    sql = (
+        "SELECT absolute_path FROM watch_dir_paths "
+        "WHERE server_instance_id = ? AND watch_dir_id = ? LIMIT 1"
+    )
+    params: tuple[Any, ...] = (sid, wid)
 
     gf = getattr(database, "_fetchone", None)
     if callable(gf):
         row = gf(sql, params)
         if isinstance(row, dict) and row.get("absolute_path"):
-            return str(row["absolute_path"]).strip() or None
+            return _normalize_existing_watch_dir_path(str(row["absolute_path"]))
         return None
 
     ex = getattr(database, "execute", None)
@@ -55,14 +85,89 @@ def fetch_watch_dir_absolute_path(database: Any, watch_dir_id: str) -> Optional[
     if isinstance(result, list) and result:
         row0 = result[0]
         if isinstance(row0, dict) and row0.get("absolute_path"):
-            return str(row0["absolute_path"]).strip() or None
+            return _normalize_existing_watch_dir_path(str(row0["absolute_path"]))
     if isinstance(result, dict):
         data = result.get("data")
         if isinstance(data, list) and data:
             row0 = data[0]
             if isinstance(row0, dict) and row0.get("absolute_path"):
-                return str(row0["absolute_path"]).strip() or None
+                return _normalize_existing_watch_dir_path(str(row0["absolute_path"]))
     return None
+
+
+def fetch_all_watch_dir_absolute_paths(database: Any) -> List[tuple[str, str]]:
+    """Return ``(watch_dir_id, absolute_path)`` for rows whose path exists on disk."""
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
+    sid = current_server_instance_id()
+    sql = (
+        "SELECT watch_dir_id, absolute_path FROM watch_dir_paths "
+        "WHERE server_instance_id = ? "
+        "AND absolute_path IS NOT NULL AND TRIM(absolute_path) != '' "
+        "ORDER BY watch_dir_id"
+    )
+    params: tuple[Any, ...] = (sid,)
+
+    def _rows_from_result(result: Any) -> List[Dict[str, Any]]:
+        if isinstance(result, list):
+            return [r for r in result if isinstance(r, dict)]
+        if isinstance(result, dict):
+            data = result.get("data")
+            if isinstance(data, list):
+                return [r for r in data if isinstance(r, dict)]
+        return []
+
+    gf = getattr(database, "_fetchall", None)
+    if callable(gf):
+        raw_rows = gf(sql, params)
+    else:
+        ex = getattr(database, "execute", None)
+        if not callable(ex):
+            return []
+        try:
+            raw_rows = _rows_from_result(ex(sql, params))
+        except Exception:
+            return []
+
+    out: List[tuple[str, str]] = []
+    for row in raw_rows if isinstance(raw_rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        wid = str(row.get("watch_dir_id") or "").strip()
+        path = _normalize_existing_watch_dir_path(str(row.get("absolute_path") or ""))
+        if wid and path:
+            out.append((wid, path))
+    return out
+
+
+def _folder_name_candidates(
+    root_path_stored: Optional[str], project_name: Optional[str]
+) -> List[str]:
+    """Watch-relative folder names to probe under each known watch root."""
+    raw = (root_path_stored or "").strip()
+    out: List[str] = []
+    if raw and not is_legacy_projects_root_path_absolute_storage(raw):
+        out.append(raw)
+    name = (project_name or "").strip()
+    if name and name not in out:
+        out.append(name)
+    return out
+
+
+def _projectid_matches(project_root: Path, project_id: str) -> bool:
+    """True when ``project_root/projectid`` exists and its id equals ``project_id``."""
+    pid = (project_id or "").strip()
+    if not pid:
+        return True
+    try:
+        from code_analysis.core.project_resolution import load_project_info
+
+        info = load_project_info(project_root)
+        return info.project_id == pid
+    except Exception:
+        return False
 
 
 def resolve_projects_root_path_row_to_absolute_str(
@@ -93,6 +198,119 @@ def resolve_projects_root_path_row_to_absolute_str(
         )
         return normalize_path_simple(raw) if Path(raw).is_absolute() else ""
     return normalize_path_simple(Path(watch) / raw)
+
+
+def resolve_project_root_absolute_str(
+    *,
+    project_id: Optional[str] = None,
+    root_path_stored: Optional[str],
+    watch_dir_id: Optional[str],
+    project_name: Optional[str] = None,
+    database: Any,
+    require_exists: bool = True,
+) -> str:
+    """
+    Resolve a project row to an absolute root path string.
+
+    Primary: ``watch_dir_id`` linked in ``projects`` + ``root_path`` segment (or legacy
+    absolute ``root_path``). Fallback: scan **all** ``watch_dir_paths`` rows whose path
+    exists on this host. Shared DB + per-server watch UUIDs are supported.
+
+    When ``require_exists`` is True (default), both the watch directory and the resolved
+    project root directory must exist on disk on this server instance.
+    """
+    raw = (root_path_stored or "").strip()
+
+    if raw and is_legacy_projects_root_path_absolute_storage(raw):
+        legacy = normalize_path_simple(raw)
+        if legacy and Path(legacy).is_absolute():
+            if not require_exists or _is_existing_directory(legacy):
+                if _projectid_matches(Path(legacy), project_id or ""):
+                    return legacy
+
+    primary = resolve_projects_root_path_row_to_absolute_str(
+        root_path_stored=raw,
+        watch_dir_id=watch_dir_id,
+        database=database,
+    ).strip()
+    if primary and Path(primary).is_absolute():
+        if not require_exists or _is_existing_directory(primary):
+            if _projectid_matches(Path(primary), project_id or ""):
+                return primary
+
+    folders = _folder_name_candidates(raw, project_name)
+    if not folders:
+        return ""
+
+    matches: List[str] = []
+    for _wid, watch in fetch_all_watch_dir_absolute_paths(database):
+        for folder in folders:
+            try:
+                candidate = normalize_path_simple(str((Path(watch) / folder).resolve()))
+            except OSError:
+                continue
+            if not candidate or not Path(candidate).is_absolute():
+                continue
+            if require_exists and not _is_existing_directory(candidate):
+                continue
+            root = Path(candidate)
+            pid_file = root / "projectid"
+            if pid_file.is_file() and project_id:
+                if not _projectid_matches(root, project_id):
+                    continue
+            matches.append(candidate)
+
+    if not matches:
+        return ""
+
+    unique = list(dict.fromkeys(matches))
+    if len(unique) == 1:
+        return unique[0]
+
+    if project_id:
+        for candidate in unique:
+            if _projectid_matches(Path(candidate), project_id):
+                return candidate
+
+    logger.warning(
+        "resolve_project_root_absolute_str: ambiguous roots for project_id=%s: %s",
+        project_id,
+        unique,
+    )
+    return unique[0]
+
+
+def resolve_watch_dir_absolute_for_project_row(
+    *,
+    project_id: Optional[str],
+    root_path_stored: Optional[str],
+    watch_dir_id: Optional[str],
+    project_name: Optional[str],
+    database: Any,
+) -> Optional[str]:
+    """Watch directory path that resolves ``project_id`` on this server, if any."""
+    resolved_root = resolve_project_root_absolute_str(
+        project_id=project_id,
+        root_path_stored=root_path_stored,
+        watch_dir_id=watch_dir_id,
+        project_name=project_name,
+        database=database,
+        require_exists=True,
+    )
+    if not resolved_root:
+        return None
+    try:
+        project_root = Path(resolved_root).resolve()
+    except OSError:
+        return None
+    for _wid, watch in fetch_all_watch_dir_absolute_paths(database):
+        try:
+            watch_root = Path(watch).resolve()
+            project_root.relative_to(watch_root)
+        except (OSError, ValueError):
+            continue
+        return normalize_path_simple(watch)
+    return None
 
 
 def persist_projects_root_path_stored_value(
@@ -131,12 +349,15 @@ def enrich_project_dict_resolve_root_path(
 ) -> Dict[str, Any]:
     """Copy ``row`` and set ``root_path`` to the resolved absolute path string."""
     out = dict(cast(Dict[str, Any], row))
-    out["root_path"] = resolve_projects_root_path_row_to_absolute_str(
+    out["root_path"] = resolve_project_root_absolute_str(
+        project_id=str(out.get("id") or "").strip() or None,
         root_path_stored=str(out.get("root_path") or ""),
-        watch_dir_id=str(out["watch_dir_id"])
-        if out.get("watch_dir_id") is not None
-        else None,
+        watch_dir_id=(
+            str(out["watch_dir_id"]) if out.get("watch_dir_id") is not None else None
+        ),
+        project_name=str(out.get("name") or "").strip() or None,
         database=database,
+        require_exists=True,
     )
     return out
 
@@ -203,20 +424,33 @@ def find_project_id_by_resolved_absolute_root(
                 return [r for r in data if isinstance(r, dict)]
         return []
 
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
+    sid = current_server_instance_id()
     hit = _fetchone(
-        "SELECT id FROM projects WHERE root_path = ? LIMIT 1", (want,)
+        "SELECT id FROM projects WHERE server_instance_id = ? AND root_path = ? LIMIT 1",
+        (sid, want),
     )
     if hit and hit.get("id") is not None:
         return str(hit["id"])
 
-    rows = _fetchall("SELECT id, root_path, watch_dir_id FROM projects", ())
+    rows = _fetchall(
+        "SELECT id, root_path, watch_dir_id, name FROM projects "
+        "WHERE server_instance_id = ?",
+        (sid,),
+    )
     for r in rows:
-        resolved = resolve_projects_root_path_row_to_absolute_str(
+        resolved = resolve_project_root_absolute_str(
+            project_id=str(r.get("id") or "").strip() or None,
             root_path_stored=str(r.get("root_path") or ""),
-            watch_dir_id=str(r["watch_dir_id"])
-            if r.get("watch_dir_id") is not None
-            else None,
+            watch_dir_id=(
+                str(r["watch_dir_id"]) if r.get("watch_dir_id") is not None else None
+            ),
+            project_name=str(r.get("name") or "").strip() or None,
             database=database,
+            require_exists=True,
         )
         if resolved and normalize_path_simple(resolved) == want:
             return str(r["id"])

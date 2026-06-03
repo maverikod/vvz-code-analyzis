@@ -37,25 +37,32 @@ def test_adapt_julianday_only() -> None:
 
 
 def test_adapt_watch_dirs_insert_or_replace_to_upsert() -> None:
-    raw = (
-        "INSERT OR REPLACE INTO watch_dirs (id, name, updated_at) "
-        "VALUES (?, ?, julianday('now'))"
+    from code_analysis.core.database.watch_dir_sql import (
+        watch_dirs_upsert_norm_for_postgres_adapter,
+    )
+
+    raw = watch_dirs_upsert_norm_for_postgres_adapter().replace(
+        "(EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))",
+        "julianday('now')",
     )
     out = _adapt_sqlite_dml_for_postgres(raw)
     assert "INSERT OR REPLACE" not in out
-    assert "ON CONFLICT (id) DO UPDATE SET" in out
+    assert "ON CONFLICT (server_instance_id, id) DO UPDATE SET" in out
     assert "name = EXCLUDED.name" in out
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_to_upsert() -> None:
-    raw = (
-        "INSERT OR REPLACE INTO watch_dir_paths "
-        "(watch_dir_id, absolute_path, updated_at) "
-        "VALUES (?, ?, julianday('now'))"
+    from code_analysis.core.database.watch_dir_sql import (
+        watch_dir_paths_upsert_norm_for_postgres_adapter,
+    )
+
+    raw = watch_dir_paths_upsert_norm_for_postgres_adapter().replace(
+        "(EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))",
+        "julianday('now')",
     )
     out = _adapt_sqlite_dml_for_postgres(raw)
     assert "INSERT OR REPLACE" not in out
-    assert "ON CONFLICT (watch_dir_id) DO UPDATE SET" in out
+    assert "ON CONFLICT (server_instance_id, watch_dir_id) DO UPDATE SET" in out
 
 
 def test_adapt_bool_int_assignments_for_boolean_columns() -> None:
@@ -79,15 +86,18 @@ def test_adapt_dml_combined_julianday_and_deleted_assignment() -> None:
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_null_path_to_upsert() -> None:
-    raw = (
-        "INSERT OR REPLACE INTO watch_dir_paths "
-        "(watch_dir_id, absolute_path, updated_at) "
-        "VALUES (?, NULL, julianday('now'))"
+    from code_analysis.core.database.watch_dir_sql import (
+        watch_dir_paths_upsert_null_norm_for_postgres_adapter,
+    )
+
+    raw = watch_dir_paths_upsert_null_norm_for_postgres_adapter().replace(
+        "(EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))",
+        "julianday('now')",
     )
     out = _adapt_sqlite_dml_for_postgres(raw)
     assert "INSERT OR REPLACE" not in out
-    assert "ON CONFLICT (watch_dir_id) DO UPDATE SET" in out
-    assert "VALUES (?, NULL," in out
+    assert "ON CONFLICT (server_instance_id, watch_dir_id) DO UPDATE SET" in out
+    assert "VALUES (?, ?, NULL," in out
 
 
 def test_adapt_code_chunks_insert_or_replace_to_upsert() -> None:

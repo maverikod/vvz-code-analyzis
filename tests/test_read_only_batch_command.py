@@ -266,6 +266,9 @@ def test_whitelist_contains_expected_read_only_commands() -> None:
         "find_usages",
         "get_entity_dependencies",
         "get_entity_dependents",
+        "universal_file_preview",
+        "fulltext_search",
+        "get_ast",
     }
     assert expected <= READ_ONLY_BATCH_WHITELIST
     mutating = {"cst_save_tree", "cst_apply_buffer", "cst_modify_tree"}

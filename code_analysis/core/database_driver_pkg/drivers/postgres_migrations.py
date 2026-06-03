@@ -8,9 +8,12 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, cast
 
 from code_analysis.core.database.schema_sync_models import IndexDef
+from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
+    _sqlite_qmarks_to_psycopg,
+)
 from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_index_sql_postgres,
     generate_create_table_sql_postgres,
@@ -26,6 +29,13 @@ _SCHEMA_ENSURE_LOCK_KEY1 = 425_001_707
 _SCHEMA_ENSURE_LOCK_KEY2 = 91_735
 
 
+def _rollback_conn(conn: Any) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
 def _ensure_missing_column(
     conn: Any,
     *,
@@ -34,22 +44,33 @@ def _ensure_missing_column(
     add_sql: str,
 ) -> None:
     """ALTER TABLE ADD COLUMN when missing (CREATE TABLE IF NOT EXISTS does not upgrade)."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = %s
-              AND column_name = %s
-            LIMIT 1
-            """,
-            (table_name, column_name),
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = %s
+                  AND column_name = %s
+                LIMIT 1
+                """,
+                (table_name, column_name),
+            )
+            if cur.fetchone() is not None:
+                return
+            logger.info(
+                "PostgreSQL migrate: adding column %s.%s", table_name, column_name
+            )
+            cur.execute(add_sql)
+        conn.commit()
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL migrate: could not add column %s.%s: %s",
+            table_name,
+            column_name,
+            exc,
         )
-        if cur.fetchone() is not None:
-            return
-        logger.info("PostgreSQL migrate: adding column %s.%s", table_name, column_name)
-        cur.execute(add_sql)
-    conn.commit()
 
 
 def idempotent_ensure_runtime_lock_tables(
@@ -137,6 +158,84 @@ def idempotent_ensure_client_session_tables(
     conn.commit()
 
 
+class _PostgresConnMigrateAdapter:
+    """Minimal db-like surface for schema_creation_migrate (PostgreSQL connect path)."""
+
+    _driver_type = "postgres"
+
+    def __init__(self, conn: Any, schema_manager: Any) -> None:
+        self._conn = conn
+        self._schema_manager = schema_manager
+
+    def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        return cast(
+            List[Dict[str, Any]], self._schema_manager.get_table_info(table_name)
+        )
+
+    def _execute(self, sql: str, params: Any = None) -> None:
+        pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(pg_sql, pg_params)
+            self._conn.commit()
+        except Exception:
+            _rollback_conn(self._conn)
+            raise
+
+    def _fetchone(self, sql: str, params: Any = None) -> Optional[Dict[str, Any]]:
+        pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(pg_sql, pg_params)
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                cols = [d[0] for d in cur.description or []]
+                return dict(zip(cols, row))
+        except Exception:
+            _rollback_conn(self._conn)
+            raise
+
+    def _fetchall(self, sql: str, params: Any = None) -> List[Dict[str, Any]]:
+        pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(pg_sql, pg_params)
+                rows = cur.fetchall()
+                if not rows:
+                    return []
+                cols = [d[0] for d in cur.description or []]
+                return [dict(zip(cols, row)) for row in rows]
+        except Exception:
+            _rollback_conn(self._conn)
+            raise
+
+    def _commit(self) -> None:
+        self._conn.commit()
+
+
+def _ensure_watch_dirs_server_instance_partition(
+    conn: Any, schema_manager: Any
+) -> None:
+    """Add server_instance_id columns and indexes (shared PG; not in CREATE IF NOT EXISTS)."""
+    from code_analysis.core.database.migrations.watch_dirs_server_instance import (
+        migrate_watch_dirs_server_instance,
+    )
+
+    _rollback_conn(conn)
+    try:
+        migrate_watch_dirs_server_instance(
+            _PostgresConnMigrateAdapter(conn, schema_manager)
+        )
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL watch_dirs server_instance partition migration failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
 def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
     """Create pgvector extension (if permitted), ``embedding_vec``, and HNSW index."""
     try:
@@ -163,13 +262,11 @@ def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
     )
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding_vec_hnsw
                 ON code_chunks
                 USING hnsw (embedding_vec vector_cosine_ops)
-                """
-            )
+                """)
         conn.commit()
     except Exception as exc:
         logger.warning(
@@ -219,6 +316,11 @@ def ensure_postgres_schema(
             add_sql="ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL",
         )
         _ensure_pgvector_embedding_column(conn, vector_dim)
+        from .postgres_schema import PostgreSQLSchemaManager
+
+        _ensure_watch_dirs_server_instance_partition(
+            conn, PostgreSQLSchemaManager(conn)
+        )
     finally:
         if locked:
             try:

@@ -182,3 +182,5 @@ backups/
 .terminals/
 
 *.tree
+
+projectid

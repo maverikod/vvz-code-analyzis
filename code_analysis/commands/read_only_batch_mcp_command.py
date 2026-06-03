@@ -19,6 +19,10 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .read_only_batch_command import _Invocation as _BatchInvocation
 from .read_only_batch_command import run_read_only_batch
+from .read_only_batch_whitelist import (
+    READ_ONLY_BATCH_WHITELIST,
+    read_only_batch_whitelist_doc,
+)
 from ..core.constants import (
     DEFAULT_BATCH_MAX_RESPONSE_BYTES,
     DEFAULT_BATCH_OUTPUT_DIR,
@@ -52,6 +56,7 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Input schema: invocations list and optional overrides."""
+        whitelist = sorted(READ_ONLY_BATCH_WHITELIST)
         return {
             "type": "object",
             "properties": {
@@ -68,7 +73,12 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "Command name (e.g. get_class_hierarchy, list_code_entities).",
+                                "enum": whitelist,
+                                "description": (
+                                    "Whitelisted read-only command name "
+                                    f"(e.g. universal_file_preview, get_class_hierarchy). "
+                                    f"Allowed: {read_only_batch_whitelist_doc()}."
+                                ),
                             },
                             "params": {
                                 "type": "object",
@@ -128,6 +138,7 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
     @classmethod
     def metadata(cls: type["ReadOnlyBatchMCPCommand"]) -> Dict[str, Any]:
         """Detailed metadata for MCP help and discovery (man-page style)."""
+        whitelist_doc = read_only_batch_whitelist_doc()
         return {
             "name": cls.name,
             "version": cls.version,
@@ -138,9 +149,8 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
             "detailed_description": (
                 "The read_only_batch command runs multiple read-only commands in a single request. "
                 "Each invocation must specify a command name and params. Only commands in the "
-                "hardcoded whitelist are allowed (e.g. get_class_hierarchy, list_code_entities, "
-                "find_dependencies, find_usages, get_entity_dependencies, get_entity_dependents, "
-                "export_graph, get_code_entity_info). Mutating commands are never exposed.\n\n"
+                f"hardcoded whitelist are allowed: {whitelist_doc}. "
+                "Mutating commands are never exposed.\n\n"
                 "Operation flow:\n"
                 "1. Validates invocations list is non-empty\n"
                 "2. For each invocation, validates command name against whitelist (fail-fast on first rejection)\n"
@@ -172,7 +182,10 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "Command name (e.g. get_class_hierarchy, list_code_entities).",
+                                "description": (
+                                    "Whitelisted read-only command name "
+                                    f"(e.g. universal_file_preview). Allowed: {whitelist_doc}."
+                                ),
                             },
                             "params": {
                                 "type": "object",
@@ -194,6 +207,31 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                 },
             },
             "usage_examples": [
+                {
+                    "description": "Preview + entity lookup in one batch",
+                    "command": {
+                        "invocations": [
+                            {
+                                "command": "universal_file_preview",
+                                "params": {
+                                    "project_id": "proj-uuid",
+                                    "file_path": "src/example.py",
+                                },
+                            },
+                            {
+                                "command": "get_code_entity_info",
+                                "params": {
+                                    "project_id": "proj-uuid",
+                                    "entity_name": "ExampleClass",
+                                },
+                            },
+                        ],
+                    },
+                    "explanation": (
+                        "Runs file preview and entity info in one round-trip; "
+                        "both commands are read-only and whitelisted."
+                    ),
+                },
                 {
                     "description": "Small batch inline",
                     "command": {
@@ -231,7 +269,7 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                 "BATCH_COMMAND_NOT_WHITELISTED": {
                     "description": "A command in invocations is not in the read-only whitelist",
                     "example": "invocations include cst_save_tree or update_indexes",
-                    "solution": "Use only whitelisted commands: get_class_hierarchy, list_code_entities, get_code_entity_info, find_dependencies, find_usages, get_entity_dependencies, get_entity_dependents, export_graph.",
+                    "solution": f"Use only whitelisted commands: {whitelist_doc}.",
                 },
                 "BATCH_COMMAND_NOT_FOUND": {
                     "description": "Command is whitelisted but not registered in the server registry",

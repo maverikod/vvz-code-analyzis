@@ -30,12 +30,14 @@ def generate_create_table_sql(
     """Generate CREATE TABLE SQL for a table from schema definition."""
     table_def = schema_definition["tables"][table_name]
     columns = table_def["columns"]
+    pk_cols = [col["name"] for col in columns if col.get("primary_key")]
+    composite_pk = len(pk_cols) > 1
 
     col_defs = []
     for col in columns:
         sqlite_type = _logical_type_to_sqlite_storage(col["type"])
         col_sql = f"{col['name']} {sqlite_type}"
-        if col.get("primary_key"):
+        if col.get("primary_key") and not composite_pk:
             col_sql += " PRIMARY KEY"
         if col.get("autoincrement"):
             col_sql += " AUTOINCREMENT"
@@ -55,6 +57,9 @@ def generate_create_table_sql(
                     default_val = f"({default_val})"
             col_sql += f" DEFAULT {default_val}"
         col_defs.append(col_sql)
+
+    if composite_pk:
+        col_defs.append(f"PRIMARY KEY ({', '.join(pk_cols)})")
 
     for fk in table_def.get("foreign_keys", []):
         fk_cols = ", ".join(fk["columns"])

@@ -21,6 +21,7 @@ from typing import Any
 from .base_handler import FileHandler
 from .errors import PreviewError, INPUT_ERROR_CONFLICTING_PARAMETERS, input_error
 from .handlers.markdown_handler import MarkdownFileHandler
+from .handlers.python_marked_handler import PythonMarkedTreeHandler
 from .handlers.text_handler import TextFileHandler
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 def _handler_uses_tree_session(handler: FileHandler) -> bool:
     """Return True when *handler* reads an in-memory CST/JSON/YAML tree session."""
-    return not isinstance(handler, (MarkdownFileHandler, TextFileHandler))
+    if isinstance(
+        handler, (MarkdownFileHandler, TextFileHandler, PythonMarkedTreeHandler)
+    ):
+        return False
+    return True
 
 
 def merge_edit_session_into_preview_params(
@@ -52,6 +57,7 @@ def merge_edit_session_into_preview_params(
         return params
 
     from code_analysis.commands.universal_file_edit.format_group import (
+        FORMAT_SIDECAR,
         FORMAT_TEXT,
         FORMAT_TREE_TEMP,
     )
@@ -90,7 +96,10 @@ def merge_edit_session_into_preview_params(
                     "session_tree_id": edit_sess.tree_id,
                 },
             )
-        return {**params, "tree_id": edit_sess.tree_id}
+        merged: dict[str, Any] = {**params, "tree_id": edit_sess.tree_id}
+        if edit_sess.format_group == FORMAT_SIDECAR:
+            merged["_preview_abs_path"] = str(edit_sess.draft_path)
+        return merged
 
     if explicit_tree_id is not None:
         return input_error(

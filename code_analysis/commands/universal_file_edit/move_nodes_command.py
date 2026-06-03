@@ -380,8 +380,9 @@ class UniversalFileMoveNodesCommand(BaseMCPCommand):
                     "items": {"type": "string"},
                     "minItems": 1,
                     "description": (
-                        "Stable UUIDs of nodes to move (node_ref from universal_file_preview). "
-                        "Caller-supplied order is ignored; nodes are moved in source order (by start_line)."
+                        "node_ref values from universal_file_preview (short_id string, "
+                        "JSON Pointer, or MAP UUID). All formats with a valid marked-tree "
+                        "session. Caller order is ignored; nodes move in source line order."
                     ),
                 },
                 "target_node_id": {
@@ -478,11 +479,21 @@ class UniversalFileMoveNodesCommand(BaseMCPCommand):
             )
 
         if session.format_group != FORMAT_SIDECAR:
-            return error_result_from_make_error(
-                make_error(
-                    "INVALID_OPERATION",
-                    "universal_file_move_nodes only supports Python (.py) sidecar sessions.",
+            if not session_has_valid_tree(session.core):
+                return error_result_from_make_error(
+                    make_error(
+                        "INVALID_OPERATION",
+                        "universal_file_move_nodes requires a valid marked-tree session "
+                        "(re-open the file or fix parse errors before moving nodes).",
+                    )
                 )
+            return await asyncio.to_thread(
+                _run_valid_session_move_batch,
+                session,
+                source_node_ids,
+                target_node_id,
+                parent_node_id,
+                position,
             )
 
         return await asyncio.to_thread(

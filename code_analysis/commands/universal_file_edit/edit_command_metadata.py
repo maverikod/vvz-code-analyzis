@@ -38,7 +38,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Python (.py, .pyi, .pyw):\n"
             "  Operations target CST nodes by stable UUID (node_ref from universal_file_preview).\n"
             "  Fields: type, node_id, code_lines (recommended) or code.\n"
-            "  type is mapped to action automatically: replace | insert | delete.\n"
+            "  type is mapped to action automatically: replace | insert | delete | move.\n"
             "  For insert (container): parent_node_id (__root__ for module level), position first|last.\n"
             "  For insert (sibling-relative): target_node_id, position before|after "
             "(parent_node_id omitted or __root__).\n"

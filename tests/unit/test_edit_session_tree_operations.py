@@ -144,6 +144,32 @@ def test_apply_tree_operation_delete_by_short_id(tmp_path: Path) -> None:
         session.close()
 
 
+def test_apply_tree_operation_move_reorders_object_keys(tmp_path: Path) -> None:
+    root, source_abs, rel = _setup_valid_json(tmp_path)
+    session = EditSession.open(
+        source_abs=source_abs,
+        project_root=root,
+        file_path=rel,
+    )
+    try:
+        counter_sid = _scalar_short_id(source_abs, rel, "counter")
+        tail_sid = _scalar_short_id(source_abs, rel, "tail")
+        session.apply_tree_operation(
+            EditOperation(
+                kind=EditOperationKind.MOVE,
+                short_id=tail_sid,
+                anchor_short_id=counter_sid,
+                position="before",
+            )
+        )
+        payload = json.loads(session.session_source_path.read_text(encoding="utf-8"))
+        assert list(payload.keys()) == ["tail", "counter"]
+        assert payload["tail"] == 9
+        assert payload["counter"] == 1
+    finally:
+        session.close()
+
+
 def test_unresolvable_node_ref_raises_in_batch_mapper(tmp_path: Path) -> None:
     from code_analysis.core.edit_session.edit_operations_adapter import (
         resolve_node_ref_to_short_id,

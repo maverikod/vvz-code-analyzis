@@ -63,6 +63,12 @@ def get_tables_core() -> Dict[str, Any]:
         "watch_dirs": {
             "columns": [
                 {
+                    "name": "server_instance_id",
+                    "type": "UUID",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {
                     "name": "id",
                     "type": "UUID",
                     "not_null": True,
@@ -89,6 +95,12 @@ def get_tables_core() -> Dict[str, Any]:
         "watch_dir_paths": {
             "columns": [
                 {
+                    "name": "server_instance_id",
+                    "type": "UUID",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {
                     "name": "watch_dir_id",
                     "type": "UUID",
                     "not_null": True,
@@ -110,9 +122,9 @@ def get_tables_core() -> Dict[str, Any]:
             ],
             "foreign_keys": [
                 {
-                    "columns": ["watch_dir_id"],
+                    "columns": ["server_instance_id", "watch_dir_id"],
                     "references_table": "watch_dirs",
-                    "references_columns": ["id"],
+                    "references_columns": ["server_instance_id", "id"],
                     "on_delete": "CASCADE",
                 }
             ],
@@ -126,6 +138,11 @@ def get_tables_core() -> Dict[str, Any]:
                     "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
+                },
+                {
+                    "name": "server_instance_id",
+                    "type": "UUID",
+                    "not_null": True,
                 },
                 {"name": "root_path", "type": "TEXT", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": False},
@@ -158,13 +175,15 @@ def get_tables_core() -> Dict[str, Any]:
             ],
             "foreign_keys": [
                 {
-                    "columns": ["watch_dir_id"],
+                    "columns": ["server_instance_id", "watch_dir_id"],
                     "references_table": "watch_dirs",
-                    "references_columns": ["id"],
+                    "references_columns": ["server_instance_id", "id"],
                     "on_delete": "SET NULL",
                 }
             ],
-            "unique_constraints": [{"columns": ["watch_dir_id", "root_path"]}],
+            "unique_constraints": [
+                {"columns": ["server_instance_id", "watch_dir_id", "root_path"]}
+            ],
             "check_constraints": [],
         },
         "files": {

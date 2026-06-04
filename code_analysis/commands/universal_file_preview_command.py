@@ -53,6 +53,11 @@ from .universal_file_preview.navigation import navigate
 from .universal_file_preview.node_ref_params import normalize_optional_node_ref
 
 
+from .universal_file_preview.preview_addressing import (
+    check_preview_addressing,
+    parse_error_from_focus,
+    preview_source_is_parseable,
+)
 from .universal_file_preview.preview_pagination import apply_preview_pagination
 from .universal_file_preview.response import build_envelope
 
@@ -60,6 +65,9 @@ from .universal_file_preview.response import build_envelope
 from .universal_file_preview.tree_temp_preview_focus import looks_like_sidecar_stable_id
 
 
+from code_analysis.commands.universal_file_edit.invalid_write_support import (
+    mode_notice_text,
+)
 from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
     acquire_tree_temp_for_open,
 )
@@ -202,8 +210,9 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "type": "integer",
                     "minimum": 1,
                     "description": (
-                        "Max characters in the serialized preview response. "
-                        "When exceeded, returns preview_chunk plus pagination metadata."
+                        "Invalid-source fallback only: max characters per preview_chunk "
+                        "page when the file failed structural parse (is_invalid). Ignored "
+                        "when the file parses normally."
                     ),
                     "nullable": True,
                 },
@@ -211,8 +220,9 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "type": "integer",
                     "minimum": 0,
                     "description": (
-                        "Character offset into the serialized preview for pagination. "
-                        "Use preview_next_offset from a prior page."
+                        "Invalid-source fallback only: character offset into serialized "
+                        "invalid-source preview; use preview_next_offset from prior page. "
+                        "Must be 0 for parseable files (use node_ref / selector instead)."
                     ),
                     "nullable": True,
                 },
@@ -358,6 +368,19 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 )
             handler = handler_result
 
+            parseable = preview_source_is_parseable(Path(abs_file_path))
+            addressing_err = check_preview_addressing(
+                parseable=parseable,
+                params=kwargs,
+                file_path=kwargs["file_path"],
+            )
+            if addressing_err is not None:
+                return ErrorResult(
+                    message=addressing_err.message,
+                    code=cast(Any, addressing_err.code),
+                    details=addressing_err.details or {},
+                )
+
             # Tree-temp Sidecar preview: UUID ``node_ref`` delegates drill-down enumeration
             # to NavigationProcedure after Sidecar roots are injected.
             # JSON Pointer ``node_ref`` uses legacy handler navigation on the draft file.
@@ -433,12 +456,21 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 kwargs.get("selector"),
                 session_origin,
             )
-            paginated = apply_preview_pagination(
-                envelope,
-                offset=budget.preview_offset,
-                max_chars=budget.max_chars,
-            )
-            return SuccessResult(data=paginated)
+            focus_attrs = navigation_result.focus_node.attributes or {}
+            if navigation_result.focus_node.is_invalid:
+                paginated = apply_preview_pagination(
+                    envelope,
+                    offset=budget.preview_offset,
+                    max_chars=budget.max_chars,
+                )
+                paginated["mode_notice"] = mode_notice_text(
+                    True,
+                    parse_error_from_focus(focus_attrs),
+                )
+                return SuccessResult(data=paginated)
+
+            envelope["mode_notice"] = mode_notice_text(False)
+            return SuccessResult(data=envelope)
         except Exception as exc:
             logger.error("universal_file_preview failed: %s", exc, exc_info=True)
             return ErrorResult(

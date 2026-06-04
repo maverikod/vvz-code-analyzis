@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,19 +37,26 @@ from code_analysis.core.cst_tree.tree_builder import get_tree, remove_tree
 _PROJECT_UUID = "cafebabe-cafe-4caf-babe-cafebabecafe"
 
 
-def _db_for(tmp: Path) -> MagicMock:
+def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
     m = MagicMock()
+    row = {
+        "id": project_id,
+        "root_path": str(tmp.resolve()),
+        "watch_dir_id": None,
+        "name": "test-project",
+    }
+    m.select.return_value = [row]
     p = MagicMock()
     p.root_path = str(tmp.resolve())
     m.get_project.return_value = p
     return m
 
 
-def _ensure_project_root(tmp: Path) -> None:
+def _ensure_project_root(tmp: Path, project_id: str = _PROJECT_UUID) -> None:
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
-            '{"id": "00000000-0000-0000-0000-000000000002"}\n',
+            json.dumps({"id": project_id}) + "\n",
             encoding="utf-8",
         )
 
@@ -293,10 +301,13 @@ def test_json_handler_invalid_preserves_broken_trailing_text(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_preview_broken_json_with_uuid_node_ref_returns_raw_text(
+async def test_preview_broken_json_with_uuid_node_ref_requires_line_addressing(
     tmp_path: Path,
 ) -> None:
-    """UUID node_ref must not force tree-temp parse error on invalid JSON."""
+    """UUID node_ref on invalid JSON must not drill; use line pagination instead."""
+    from code_analysis.commands.universal_file_preview.errors import (
+        INPUT_ERROR_REQUIRES_LINE_ADDRESSING,
+    )
     from code_analysis.commands.universal_file_preview_command import (
         UniversalFilePreviewCommand,
     )
@@ -318,11 +329,8 @@ async def test_preview_broken_json_with_uuid_node_ref_returns_raw_text(
                 }
             )
         )
-    assert isinstance(result, SuccessResult)
-    focus = result.data.get("focus", {})
-    assert focus.get("is_invalid") is True
-    assert broken in str(focus.get("text", ""))
-    assert focus.get("text") != "{}"
+    assert isinstance(result, ErrorResult)
+    assert result.code == INPUT_ERROR_REQUIRES_LINE_ADDRESSING
 
 
 @pytest.mark.asyncio

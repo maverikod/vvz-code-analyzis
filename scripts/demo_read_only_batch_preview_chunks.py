@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo: paginated universal_file_preview via read_only_batch on live server."""
+"""Demo: read_only_batch with identifier preview (normal) and line pagination (invalid)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,11 @@ for p in (_CLIENT, _EXAMPLES):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from _common import chdir_repo_root, default_config_path, ensure_client_package_on_path  # noqa: E402
+from _common import (
+    chdir_repo_root,
+    default_config_path,
+    ensure_client_package_on_path,
+)  # noqa: E402
 
 ensure_client_package_on_path()
 chdir_repo_root()
@@ -24,9 +28,8 @@ chdir_repo_root()
 from code_analysis_client import CodeAnalysisAsyncClient  # noqa: E402
 
 PROJECT_ID = json.loads((_REPO / "projectid").read_text(encoding="utf-8"))["id"]
-LARGE_FILE = "code_analysis/core/project_bootstrap/template_data.py"
-PAGE_CHARS = 4_000
-MAX_PAGES = 4
+VALID_FILE = "code_analysis/core/config_models.py"
+INVALID_FILE = "_tmp_demo_broken_preview.json"
 
 
 def _data(resp: dict[str, Any]) -> dict[str, Any]:
@@ -34,78 +37,86 @@ def _data(resp: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(resp)
     payload = resp.get("data")
     if not isinstance(payload, dict):
-        raise RuntimeError(f"unexpected response shape: {resp!r}")
+        raise RuntimeError(resp)
     return payload
 
 
 async def main() -> None:
-    config = default_config_path()
-    async with CodeAnalysisAsyncClient.from_server_config_path(
-        config, timeout=180.0
-    ) as client:
-        probe = _data(
-            await client.call(
-                "universal_file_preview",
-                {
-                    "project_id": PROJECT_ID,
-                    "file_path": LARGE_FILE,
-                    "preview_lines": 5,
-                    "max_chars": PAGE_CHARS,
-                    "preview_offset": 0,
-                },
+    broken = _REPO / INVALID_FILE
+    broken.write_text('{"items": [' + ("1," * 200) + "", encoding="utf-8")
+    try:
+        async with CodeAnalysisAsyncClient.from_server_config_path(
+            default_config_path(), timeout=120.0
+        ) as client:
+            root = _data(
+                await client.call(
+                    "universal_file_preview",
+                    {
+                        "project_id": PROJECT_ID,
+                        "file_path": VALID_FILE,
+                        "preview_lines": 3,
+                    },
+                )
             )
-        )
-        total = int(probe["preview_total_chars"])
-        print(f"file={LARGE_FILE} preview_total_chars={total}")
-
-        offsets = list(range(0, min(total, PAGE_CHARS * MAX_PAGES), PAGE_CHARS)) or [0]
-        invocations = [
-            {
-                "command": "universal_file_preview",
-                "params": {
-                    "project_id": PROJECT_ID,
-                    "file_path": LARGE_FILE,
-                    "preview_lines": 5,
-                    "max_chars": PAGE_CHARS,
-                    "preview_offset": off,
-                },
-            }
-            for off in offsets
-        ]
-        print(f"read_only_batch pages={len(invocations)} offsets={offsets}")
-
-        batch = _data(
-            await client.call(
-                "read_only_batch",
-                {"invocations": invocations, "max_response_bytes": 512_000},
+            blocks = root.get("blocks") or []
+            if not blocks:
+                print("No blocks at root; skipping drill-down demo")
+                return
+            first_ref = blocks[0].get("node_ref")
+            batch = _data(
+                await client.call(
+                    "read_only_batch",
+                    {
+                        "invocations": [
+                            {
+                                "command": "universal_file_preview",
+                                "params": {
+                                    "project_id": PROJECT_ID,
+                                    "file_path": VALID_FILE,
+                                    "preview_lines": 3,
+                                },
+                            },
+                            {
+                                "command": "universal_file_preview",
+                                "params": {
+                                    "project_id": PROJECT_ID,
+                                    "file_path": VALID_FILE,
+                                    "node_ref": str(first_ref),
+                                    "preview_lines": 5,
+                                },
+                            },
+                        ],
+                        "max_response_bytes": 500_000,
+                    },
+                )
             )
-        )
-        if batch.get("inline") is not True:
-            print("batch returned file reference:", batch.get("output_file"))
-            print(f"file_size={batch.get('file_size')}")
-            return
+            print("=== Normal: batch identifier preview ===")
+            print("inline=", batch.get("inline"))
+            for entry in batch.get("results") or []:
+                page = (entry.get("result") or {}).get("data") or {}
+                print(
+                    f"  blocks={len(page.get('blocks') or [])} "
+                    f"preview_chunk={'yes' if page.get('preview_chunk') else 'no'}"
+                )
 
-        stitched: list[str] = []
-        for entry in batch.get("results") or []:
-            result = (entry or {}).get("result") or {}
-            if result.get("success") is not True:
-                raise RuntimeError(entry)
-            page = result.get("data") or {}
-            chunk = page.get("preview_chunk")
-            if not isinstance(chunk, str):
-                raise RuntimeError(f"expected preview_chunk, got keys={list(page)}")
-            stitched.append(chunk)
-            print(
-                f"  offset={offsets[len(stitched)-1]} chunk_len={len(chunk)} "
-                f"has_more={page.get('preview_has_more')} "
-                f"next={page.get('preview_next_offset')}"
+            invalid = _data(
+                await client.call(
+                    "universal_file_preview",
+                    {
+                        "project_id": PROJECT_ID,
+                        "file_path": INVALID_FILE,
+                        "max_chars": 300,
+                        "preview_offset": 0,
+                    },
+                )
             )
-
-        combined = "".join(stitched)
-        print(f"stitched_len={len(combined)} pages={len(stitched)}")
-        if len(combined) > total:
-            raise SystemExit("stitched payload longer than preview_total_chars")
-        print("OK: read_only_batch paginated preview works")
+            print("=== Invalid fallback: line pagination ===")
+            print("is_invalid=", invalid.get("focus", {}).get("is_invalid"))
+            print("chunk_len=", len(str(invalid.get("preview_chunk") or "")))
+            print("next_offset=", invalid.get("preview_next_offset"))
+    finally:
+        if broken.is_file():
+            broken.unlink()
 
 
 if __name__ == "__main__":

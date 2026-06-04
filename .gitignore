@@ -183,5 +183,6 @@ backups/
 
 *.tree
 
+# Machine-local deployment identity (per host; never commit)
 projectid
 config.json

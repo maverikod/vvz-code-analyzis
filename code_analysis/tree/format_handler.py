@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
@@ -174,3 +175,42 @@ class FormatHandler(ABC):
         self, marked_text: str, short_id: NodeId, new_content: str
     ) -> str:
         """Change leaf-block text only; reject non-leaf targets ({h007})."""
+
+    @abstractmethod
+    def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        """Return unmarked block content for delete-then-insert move ({h005})."""
+
+    _SHORT_ID_SCAN_PATTERNS = (
+        re.compile(r'"___id___"\s*:\s*(\d+)'),
+        re.compile(r"<!-- id:(\d+) -->"),
+        re.compile(r"^(\d+):", re.MULTILINE),
+    )
+
+    def peak_short_id_in_marked(self, marked_text: str) -> int:
+        """Return the highest short_id present in marked TREE text."""
+        best = 0
+        for pattern in self._SHORT_ID_SCAN_PATTERNS:
+            for match in pattern.finditer(marked_text):
+                best = max(best, int(match.group(1)))
+        return best
+
+    def op_move_via_delete_insert(
+        self,
+        marked_text: str,
+        short_id: NodeId,
+        anchor_short_id: NodeId,
+        position: str,
+        next_free: int,
+    ) -> str:
+        """Relocate block by extracting payload, deleting source, then inserting."""
+        if int(short_id) == int(anchor_short_id):
+            raise ValueError("cannot move block relative to itself")
+        payload = self.extract_move_payload(marked_text, short_id)
+        marked_after = self.op_delete(marked_text, short_id)
+        return self.op_insert(
+            marked_after,
+            anchor_short_id,
+            position,
+            payload,
+            next_free,
+        )

@@ -25,6 +25,8 @@ _DEFAULT_SUFFIX_MAP: Dict[str, str] = {
     ".txt": HANDLER_TEXT,
     ".rst": HANDLER_TEXT,
     ".adoc": HANDLER_TEXT,
+    ".jsonl": HANDLER_TEXT,
+    ".ndjson": HANDLER_TEXT,
     ".json": HANDLER_JSON,
     ".yaml": HANDLER_YAML,
     ".yml": HANDLER_YAML,

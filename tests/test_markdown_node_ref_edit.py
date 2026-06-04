@@ -84,6 +84,13 @@ def _preview_md(tmp_path: Path, content: str, node_ref: str) -> dict:
 
 def _mock_db_bundle(tmp: Path) -> MagicMock:
     db = MagicMock()
+    row = {
+        "id": _PROJECT_UUID,
+        "root_path": str(tmp.resolve()),
+        "watch_dir_id": None,
+        "name": "test-project",
+    }
+    db.select.return_value = [row]
     proj = MagicMock()
     proj.root_path = str(tmp.resolve())
     db.get_project.return_value = proj
@@ -94,7 +101,7 @@ def _ensure_project_root(tmp: Path) -> None:
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
-            '{"id": "00000000-0000-0000-0000-000000000001"}\n',
+            f'{{"id": "{_PROJECT_UUID}"}}\n',
             encoding="utf-8",
         )
 
@@ -377,6 +384,144 @@ async def test_universal_file_read_line_slice(tmp_path: Path) -> None:
     assert res.data["lines"] == ["b", "c"]
     assert res.data["start_line"] == 2
     assert res.data["end_line"] == 3
+
+
+_MD_MULTI_BLOCK = """\
+# HRS Title
+
+First paragraph with {abc1}.
+
+Second paragraph with {def2}.
+
+Third paragraph with {ghi3}.
+"""
+
+
+@pytest.mark.asyncio
+async def test_edit_md_insert_by_target_node_id_short_id(tmp_path: Path) -> None:
+    """Marked-tree short_id via target_node_id must not fall back to line 1."""
+    rel = "plans/source_spec.md"
+    sid, target = await _open_md(tmp_path, rel, _MD_MULTI_BLOCK)
+
+    edit = UniversalFileEditCommand()
+    write = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        res = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "target_node_id": "4",
+                            "position": "before",
+                            "content": "Inserted between second and third.\n",
+                        }
+                    ],
+                }
+            )
+        )
+        assert isinstance(res, SuccessResult)
+        await write.execute(
+            **write.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "write_mode": "commit",
+                }
+            )
+        )
+    text = target.read_text(encoding="utf-8")
+    assert "Inserted between second and third." in text
+    assert text.index("Second paragraph") < text.index(
+        "Inserted between second and third."
+    )
+    assert text.index("Inserted between second and third.") < text.index(
+        "Third paragraph"
+    )
+    assert not text.lstrip().startswith("Inserted between")
+
+
+@pytest.mark.asyncio
+async def test_edit_md_insert_by_node_ref_short_id(tmp_path: Path) -> None:
+    """Integer node_ref from marked-tree preview inserts relative to that block."""
+    rel = "plans/by_ref.md"
+    sid, target = await _open_md(tmp_path, rel, _MD_MULTI_BLOCK)
+
+    edit = UniversalFileEditCommand()
+    write = UniversalFileWriteCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        res = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "node_ref": "4",
+                            "position": "before",
+                            "content": "Via node_ref short_id.\n",
+                        }
+                    ],
+                }
+            )
+        )
+        assert isinstance(res, SuccessResult)
+        await write.execute(
+            **write.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "write_mode": "commit",
+                }
+            )
+        )
+    text = target.read_text(encoding="utf-8")
+    assert "Via node_ref short_id." in text
+    assert text.index("Second paragraph") < text.index("Via node_ref short_id.")
+    assert text.index("Via node_ref short_id.") < text.index("Third paragraph")
+
+
+@pytest.mark.asyncio
+async def test_edit_md_insert_unknown_slug_returns_error(tmp_path: Path) -> None:
+    """Non-resolving slug node_ref must not silently insert at file head."""
+    rel = "plans/bad_slug.md"
+    sid, _target = await _open_md(tmp_path, rel, _MD_MULTI_BLOCK)
+
+    edit = UniversalFileEditCommand()
+    with patch.object(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        return_value=_mock_db_bundle(tmp_path),
+    ):
+        res = await edit.execute(
+            **edit.validate_params(
+                {
+                    "project_id": _PROJECT_UUID,
+                    "session_id": sid,
+                    "operations": [
+                        {
+                            "type": "insert",
+                            "node_ref": "no-such-section-slug",
+                            "position": "before",
+                            "content": "Should not appear.\n",
+                        }
+                    ],
+                }
+            )
+        )
+    assert isinstance(res, ErrorResult)
+    assert res.code == "UNKNOWN_NODE_REF"
 
 
 def test_preview_parent_section_line_range_through_subsections(tmp_path: Path) -> None:

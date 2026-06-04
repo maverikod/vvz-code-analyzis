@@ -805,6 +805,13 @@ class PythonHandler(FormatHandler):
         )
         return _apply_and_emit(tree, sid_index, op)
 
+    def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        self._enforce_short_id_edit_gate()
+        tree, sid_index = _load_marked_tree(marked_text)
+        node_id = _require_node_id(tree, short_id, sid_index)
+        node = tree.node_map[node_id]
+        return tree.module.code_for_node(node)
+
     def op_move(
         self,
         marked_text: str,
@@ -813,14 +820,14 @@ class PythonHandler(FormatHandler):
         position: str,
     ) -> str:
         self._enforce_short_id_edit_gate()
-        if short_id == anchor_short_id:
-            raise ValueError("cannot move block relative to itself")
-        _check_position(position)
-        tree, sid_index = _load_marked_tree(marked_text)
-        node_id = _require_node_id(tree, short_id, sid_index)
-        anchor_id = _require_node_id(tree, anchor_short_id, sid_index)
-        op = _move_operation(tree, node_id, anchor_id, position)
-        return _apply_and_emit(tree, sid_index, op)
+        next_free = self.peak_short_id_in_marked(marked_text) + 1
+        return self.op_move_via_delete_insert(
+            marked_text,
+            short_id,
+            anchor_short_id,
+            position,
+            next_free,
+        )
 
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]

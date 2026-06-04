@@ -143,9 +143,19 @@ def apply_edit_operation(
             "anchor_short_id",
         )
         pos = _check_position(operation.position, kind)
-        result = handler.op_move(marked_text, sid, anchor, pos)
-        updated_nf = next_free if next_free is not None else (operation.next_free or 1)
-        return result, updated_nf
+        nf_raw = operation.next_free if operation.next_free is not None else next_free
+        if nf_raw is None:
+            nf_raw = handler.peak_short_id_in_marked(marked_text) + 1
+        if nf_raw < 1:
+            raise EditOperationError("next_free must be >= 1")
+        result = handler.op_move_via_delete_insert(
+            marked_text,
+            sid,
+            anchor,
+            pos,
+            nf_raw,
+        )
+        return result, nf_raw + 1
 
     if kind is EditOperationKind.EDIT_ATTRIBUTES:
         sid = _normalize_short_id(

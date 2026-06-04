@@ -132,16 +132,8 @@ class TextHandler(FormatHandler):
         node.content = new_content
         return _serialize_marked(nodes, blank_lines)
 
-    def op_move(
-        self,
-        marked_text: str,
-        short_id: NodeId,
-        anchor_short_id: NodeId,
-        position: str,
-    ) -> str:
-        if position not in ("before", "after", "first_child", "last_child"):
-            raise ValueError(f"invalid position: {position!r}")
-        nodes, blank_lines = _parse_marked(marked_text)
+    def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        nodes, _blank_lines = _parse_marked(marked_text)
         src = _find_node(nodes, short_id)
         src_idx = nodes.index(src)
         block_indices = [src_idx]
@@ -150,20 +142,23 @@ class TextHandler(FormatHandler):
             while j < len(nodes) and nodes[j].kind == "line":
                 block_indices.append(j)
                 j += 1
-        block = [nodes[i] for i in block_indices]
-        for idx in sorted(block_indices, reverse=True):
-            del nodes[idx]
-        anchor = _find_node(nodes, anchor_short_id)
-        anchor_idx = nodes.index(anchor)
-        if position in ("before", "first_child"):
-            insert_at = anchor_idx
-        elif position in ("after", "last_child"):
-            insert_at = anchor_idx + 1
-        else:
-            raise ValueError(f"invalid position: {position!r}")
-        for offset, node in enumerate(block):
-            nodes.insert(insert_at + offset, node)
-        return _serialize_marked(nodes, blank_lines)
+        return "\n".join(nodes[i].content for i in block_indices)
+
+    def op_move(
+        self,
+        marked_text: str,
+        short_id: NodeId,
+        anchor_short_id: NodeId,
+        position: str,
+    ) -> str:
+        next_free = self.peak_short_id_in_marked(marked_text) + 1
+        return self.op_move_via_delete_insert(
+            marked_text,
+            short_id,
+            anchor_short_id,
+            position,
+            next_free,
+        )
 
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]

@@ -237,6 +237,11 @@ class MarkdownHandler(FormatHandler):
         node.attributes = attributes
         return _serialize_blocks(nodes)
 
+    def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        nodes = _parse_blocks(marked_text)
+        node = _find_short_id(nodes, short_id)
+        return node.content.rstrip("\n")
+
     def op_move(
         self,
         marked_text: str,
@@ -244,14 +249,14 @@ class MarkdownHandler(FormatHandler):
         anchor_short_id: NodeId,
         position: str,
     ) -> str:
-        if short_id == anchor_short_id:
-            raise ValueError("cannot move block relative to itself")
-        nodes = _parse_blocks(marked_text)
-        src_idx = _find_index(nodes, short_id)
-        node = nodes.pop(src_idx)
-        insert_idx = _resolve_move_insert_index(nodes, anchor_short_id, position)
-        nodes.insert(insert_idx, node)
-        return _serialize_blocks(nodes)
+        next_free = self.peak_short_id_in_marked(marked_text) + 1
+        return self.op_move_via_delete_insert(
+            marked_text,
+            short_id,
+            anchor_short_id,
+            position,
+            next_free,
+        )
 
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]

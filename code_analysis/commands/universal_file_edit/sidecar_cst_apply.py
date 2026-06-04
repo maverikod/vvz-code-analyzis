@@ -22,15 +22,18 @@ from code_analysis.core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from code_analysis.commands.universal_file_edit.errors import (
     NESTED_BATCH_FORBIDDEN,
     PARSE_ERROR,
+    UNKNOWN_NODE_REF,
     error_result_for_edit,
     make_error,
 )
 from code_analysis.commands.universal_file_edit.session import EditSession
 from code_analysis.core.edit_session.edit_operations_adapter import (
+    _normalize_action,
     apply_command_ops_on_session_tree,
+    _operation_uses_node_address,
+    session_has_map_tree,
     session_has_valid_tree,
     sidecar_ops_use_unified_tree,
-    text_ops_use_unified_tree,
 )
 from code_analysis.core.cst_tree.models import CSTTree, ROOT_NODE_ID_SENTINEL
 from code_analysis.core.cst_tree.node_stable_id import logical_source_from_module
@@ -110,7 +113,168 @@ def _coalesce_node_ref_keys(op: Dict[str, Any]) -> Dict[str, Any]:
     ):
         if ref_key in m and not m.get(id_key):
             m[id_key] = m[ref_key]
+    if m.get("type") == "insert" or str(m.get("action") or "").lower() == "insert":
+        if m.get("before_node_id") and not m.get("target_node_id"):
+            m["target_node_id"] = m["before_node_id"]
+            if m.get("position") in (None, "after"):
+                m["position"] = "before"
+        elif m.get("after_node_id") and not m.get("target_node_id"):
+            m["target_node_id"] = m["after_node_id"]
+            if m.get("position") in (None, "after"):
+                m["position"] = "after"
     return m
+
+
+def _preview_short_id_to_stable_id(
+    session: EditSession, short_id: Any
+) -> Optional[str]:
+    """Map marked-tree preview short_id to CST stable_id for Python sidecar edits."""
+    raw = str(short_id).strip()
+    if not raw.isdigit():
+        return None
+    sid = int(raw)
+    if sid < 1:
+        return None
+    from code_analysis.commands.universal_file_preview.marked_tree_loader import (
+        resolve_format_handler,
+    )
+
+    source_abs = session.core.source_abs
+    if source_abs.suffix.lower() not in (".py", ".pyi", ".pyw"):
+        return None
+    handler = resolve_format_handler(source_abs)
+    content = session.core.session_source_path.read_text(encoding="utf-8")
+    internal_id: Optional[str] = None
+    for node in handler.parse_content(source_abs, content):
+        if int(node.short_id) == sid:
+            raw_internal = node.attributes.get("internal_node_id")
+            if isinstance(raw_internal, str) and raw_internal:
+                internal_id = raw_internal
+            break
+    if internal_id is None:
+        return None
+    tid = session.tree_id
+    tree = get_tree(tid) if tid else None
+    if tree is None:
+        try:
+            tree = load_file_to_tree(str(session.abs_path))
+        except Exception:
+            tree = None
+    if tree is not None:
+        meta = tree.metadata_map.get(internal_id)
+        if meta is not None and meta.stable_id:
+            return meta.stable_id
+    return internal_id
+
+
+def _translate_sidecar_preview_short_ids(
+    session: EditSession,
+    operations: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], bool]:
+    """Rewrite numeric preview short_ids to CST stable_ids when session tree is sidecar."""
+    if session.handler_id != "python":
+        return operations, False
+    translated: List[Dict[str, Any]] = []
+    ref_fields = (
+        "node_id",
+        "node_ref",
+        "parent_node_id",
+        "parent_node_ref",
+        "target_node_id",
+        "target_node_ref",
+        "before_node_id",
+        "after_node_id",
+    )
+    for op in operations:
+        m = _coalesce_node_ref_keys(dict(op))
+        for field in ref_fields:
+            raw = m.get(field)
+            if raw in (None, "", ROOT_NODE_ID_SENTINEL):
+                continue
+            if isinstance(raw, str) and ":" in raw:
+                continue
+            if not str(raw).strip().isdigit():
+                continue
+            stable = _preview_short_id_to_stable_id(session, raw)
+            if stable is None:
+                return operations, False
+            if field in ("node_ref", "before_node_id", "after_node_id"):
+                if field == "node_ref":
+                    m["node_id"] = stable
+                elif field == "before_node_id":
+                    m["target_node_id"] = stable
+                    if m.get("position") in (None, "after"):
+                        m["position"] = "before"
+                else:
+                    m["target_node_id"] = stable
+                    if m.get("position") in (None, "after"):
+                        m["position"] = "after"
+            else:
+                m[field] = stable
+        translated.append(m)
+    return translated, True
+
+
+def _expand_cst_move_operations(
+    session: EditSession,
+    operations: List[Dict[str, Any]],
+) -> SuccessResult | ErrorResult | List[Dict[str, Any]]:
+    """Expand move ops into delete-then-insert using buffered node source."""
+    expanded: List[Dict[str, Any]] = []
+    for op in operations:
+        m = _coalesce_node_ref_keys(dict(op))
+        if _normalize_action(m) != "move":
+            expanded.append(op)
+            continue
+        src = m.get("node_id") or m.get("node_ref")
+        if src in (None, ""):
+            return error_result_for_edit(
+                "move requires node_id or node_ref for the source block.",
+                "INVALID_OPERATION",
+                {"operation": op},
+            )
+        tid = session.tree_id
+        tree = get_tree(tid) if tid else None
+        if tree is None:
+            try:
+                tree = load_file_to_tree(str(session.abs_path))
+            except Exception as exc:
+                return error_result_for_edit(
+                    str(exc),
+                    PARSE_ERROR,
+                    {"path": str(session.abs_path)},
+                )
+            session.tree_id = tree.tree_id
+        try:
+            resolved = _resolve_stable_to_span({"type": "delete", "node_id": src}, tree)
+        except StaleNodeIdError as stale:
+            return error_result_for_edit(
+                str(stale),
+                "STALE_NODE_ID",
+                {"field": stale.field, "stable_id": stale.stable_id},
+            )
+        delete_id = resolved.get("node_id")
+        node = tree.node_map.get(str(delete_id)) if delete_id else None
+        if node is None:
+            return error_result_for_edit(
+                f"Node not found for move source: {src}",
+                "STALE_NODE_ID",
+                {"stable_id": src},
+            )
+        payload = tree.module.code_for_node(node)
+        expanded.append({"type": "delete", "node_id": src})
+        insert_op: Dict[str, Any] = {"type": "insert", "code": payload}
+        target = m.get("target_node_id") or m.get("target_node_ref")
+        parent = m.get("parent_node_id") or m.get("parent_node_ref")
+        position = str(m.get("position") or "after")
+        if target not in (None, ""):
+            insert_op["target_node_id"] = target
+            insert_op["position"] = position
+        else:
+            insert_op["parent_node_id"] = parent or ROOT_NODE_ID_SENTINEL
+            insert_op["position"] = position
+        expanded.append(insert_op)
+    return expanded
 
 
 def _resolve_stable_to_span(op: Dict[str, Any], tree: CSTTree) -> Dict[str, Any]:
@@ -129,6 +293,8 @@ def _resolve_stable_to_span(op: Dict[str, Any], tree: CSTTree) -> Dict[str, Any]
                 m[field] = raw
                 continue
             meta = tree.find_by_stable_id(raw)
+            if meta is None:
+                meta = tree.metadata_map.get(raw)
             if meta is None:
                 raise StaleNodeIdError(
                     f"stable_id '{raw}' not found in current CST tree metadata.",
@@ -382,8 +548,50 @@ def run_sidecar_cst_edit_batch(
     operations: List[Dict[str, Any]],
 ) -> SuccessResult | ErrorResult:
     """Apply sidecar CST operations synchronously (for asyncio.to_thread)."""
-    if sidecar_ops_use_unified_tree(session.core, operations):
+    uses_node = any(
+        _operation_uses_node_address(_coalesce_node_ref_keys(op)) for op in operations
+    )
+    ops_for_cst = operations
+    if session_has_map_tree(session.core) and uses_node:
+        if sidecar_ops_use_unified_tree(session.core, operations):
+            return _run_valid_session_sidecar_batch(session, operations)
+        translated, ok = _translate_sidecar_preview_short_ids(session, operations)
+        if not ok:
+            m = _coalesce_node_ref_keys(operations[0])
+            return error_result_for_edit(
+                "One or more node_ref values could not be resolved in the session tree.",
+                UNKNOWN_NODE_REF,
+                {
+                    "operations": operations,
+                    "node_ref": m.get("node_ref") or m.get("node_id"),
+                    "target_node_id": m.get("target_node_id"),
+                },
+            )
+        ops_for_cst = translated
+    elif session_has_map_tree(session.core) and sidecar_ops_use_unified_tree(
+        session.core, operations
+    ):
         return _run_valid_session_sidecar_batch(session, operations)
+    else:
+        ops_to_expand = operations
+        translated, ok = _translate_sidecar_preview_short_ids(session, operations)
+        if uses_node and not ok:
+            m = _coalesce_node_ref_keys(operations[0])
+            return error_result_for_edit(
+                "One or more node_ref values could not be resolved in the session tree.",
+                UNKNOWN_NODE_REF,
+                {
+                    "operations": operations,
+                    "node_ref": m.get("node_ref") or m.get("node_id"),
+                    "target_node_id": m.get("target_node_id"),
+                },
+            )
+        if ok:
+            ops_to_expand = translated
+        expanded = _expand_cst_move_operations(session, ops_to_expand)
+        if isinstance(expanded, (SuccessResult, ErrorResult)):
+            return expanded
+        ops_for_cst = expanded
 
     def _rollback_sidecar_session(
         tree_id: str,
@@ -431,7 +639,7 @@ def run_sidecar_cst_edit_batch(
         )
         return err
 
-    for op in operations:
+    for op in ops_for_cst:
         try:
             resolved_op = _resolve_stable_to_span(op, tree)
         except StaleNodeIdError as _stale:

@@ -19,6 +19,7 @@ from code_analysis.commands.universal_file_edit.errors import (
     ANCHOR_MISMATCH,
     INVALID_OPERATION,
     LINE_OUT_OF_RANGE,
+    UNKNOWN_NODE_REF,
     WRITE_FAILED,
     error_result_for_edit,
 )
@@ -31,14 +32,21 @@ from code_analysis.commands.universal_file_edit.session import (
     apply_source_mutation,
     apply_tree_operation,
 )
-from code_analysis.core.edit_session.edit_operations_adapter import (
-    command_op_to_edit_operation,
-    expand_markdown_section_ops,
-    session_has_valid_tree,
-    text_ops_use_unified_tree,
+from code_analysis.commands.universal_file_edit.text_move_support import (
+    expand_text_move_operations,
 )
 from code_analysis.commands.universal_file_edit.text_node_ref import (
     resolve_text_operation_line_range,
+)
+from code_analysis.core.edit_session.edit_operations_adapter import (
+    _coalesce_node_ref_keys,
+    _operation_uses_node_address,
+    command_op_to_edit_operation,
+    expand_markdown_section_ops,
+    session_has_map_tree,
+    session_has_valid_tree,
+    sidecar_ops_use_unified_tree,
+    text_ops_use_unified_tree,
 )
 from code_analysis.core.backup_manager import BackupManager
 from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
@@ -168,6 +176,42 @@ def _validate_text_line_operation(
     return None
 
 
+def _insert_op_has_unresolved_node_target(op: Dict[str, Any]) -> bool:
+    """True when insert names a node address but ``start_line`` was not resolved."""
+    if op.get("position") == "last":
+        return False
+    action = op.get("type") or op.get("action") or "replace"
+    if str(action).lower() != "insert":
+        return False
+    if op.get("start_line") is not None:
+        return False
+    return _operation_uses_node_address(_coalesce_node_ref_keys(op))
+
+
+def _validate_unresolved_text_insert_targets(
+    operations: List[Dict[str, Any]],
+) -> Optional[ErrorResult]:
+    """Reject insert ops that named node_ref targets but got no line range."""
+    for op in operations:
+        if not _insert_op_has_unresolved_node_target(op):
+            continue
+        m = _coalesce_node_ref_keys(op)
+        return error_result_for_edit(
+            "insert node_ref could not be resolved to a draft line position.",
+            UNKNOWN_NODE_REF,
+            {
+                "node_ref": m.get("node_ref") or m.get("node_id"),
+                "target_node_id": m.get("target_node_id"),
+                "hint": (
+                    "Use node_ref / target_node_id from universal_file_preview "
+                    "with the same session_id. For .md marked-tree preview, "
+                    "pass integer short_id as node_ref or target_node_id."
+                ),
+            },
+        )
+    return None
+
+
 def _run_valid_text_tree_apply(
     session: EditSession,
     operations: List[Dict[str, Any]],
@@ -244,8 +288,19 @@ def run_text_draft_apply(
       When ``position='last'``, ``start_line``/``end_line`` are ignored.
     """
 
-    if session_has_valid_tree(session.core) and text_ops_use_unified_tree(operations):
-        return _run_valid_text_tree_apply(session, operations)
+    if session_has_map_tree(session.core) and text_ops_use_unified_tree(operations):
+        if sidecar_ops_use_unified_tree(session.core, operations):
+            return _run_valid_text_tree_apply(session, operations)
+        m = _coalesce_node_ref_keys(operations[0])
+        return error_result_for_edit(
+            "One or more node_ref values could not be resolved in the session tree.",
+            UNKNOWN_NODE_REF,
+            {
+                "operations": operations,
+                "node_ref": m.get("node_ref") or m.get("node_id"),
+                "target_node_id": m.get("target_node_id"),
+            },
+        )
 
     try:
         root_dir = project_root_near(session.draft_path)
@@ -264,10 +319,22 @@ def run_text_draft_apply(
 
     buffer = session.draft_path.read_text(encoding="utf-8").splitlines(keepends=True)
 
+    operations, move_err = expand_text_move_operations(session, buffer, operations)
+    if move_err is not None:
+        return move_err
+
     for op in operations:
-        ref_err = resolve_text_operation_line_range(session.draft_path, op)
+        ref_err = resolve_text_operation_line_range(
+            session.draft_path,
+            op,
+            session_is_invalid=session.is_invalid,
+        )
         if ref_err is not None:
             return ref_err
+
+    unresolved = _validate_unresolved_text_insert_targets(operations)
+    if unresolved is not None:
+        return unresolved
 
     for op in operations:
         if not session.is_invalid:

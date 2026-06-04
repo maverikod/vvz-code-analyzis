@@ -29,7 +29,7 @@ from .text_ranges import (
     validate_range_against_length,
 )
 
-TEXT_SUFFIXES = frozenset({".md", ".txt", ".rst", ".adoc"})
+TEXT_SUFFIXES = frozenset({".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"})
 
 
 def ensure_text_suffix(file_path: str) -> None:

@@ -81,11 +81,7 @@ def navigate(
     marked_params = dict(params)
     resolve_session_pointer_node_ref(marked_params)
     use_marked_tree = should_use_marked_tree_navigation(handler, marked_params)
-    if isinstance(handler, YamlFileHandler) and marked_params.get("session_id"):
-        # YAML session trees use inline ___id___ marks; legacy draft navigation
-        # matches tree-temp JSON Pointer previews and block summaries.
-        use_marked_tree = False
-    elif use_marked_tree and not marked_tree_node_ref_is_ready(marked_params):
+    if use_marked_tree and not marked_tree_node_ref_is_ready(marked_params):
         use_marked_tree = False
     if use_marked_tree:
         return navigate_marked_tree(marked_params, budget)

@@ -33,11 +33,13 @@ from code_analysis.commands.universal_file_edit.session import (
 from code_analysis.core.edit_session.edit_operations_adapter import (
     command_op_to_edit_operation,
     resolve_node_ref_to_short_id,
+    session_has_map_tree,
     session_has_valid_tree,
 )
 from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
 from code_analysis.tree.edit_operations import EditOperationError
 from code_analysis.commands.universal_file_edit.sidecar_cst_apply import (
+    _preview_short_id_to_stable_id,
     run_sidecar_cst_edit_batch,
 )
 from code_analysis.commands.universal_file_edit.move_nodes_command_metadata import (
@@ -49,11 +51,22 @@ from code_analysis.core.cst_tree.tree_builder import get_tree, load_file_to_tree
 from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
+def _resolve_cst_node_span_id(tree: CSTTree, node_ref: str) -> Optional[str]:
+    """Map preview stable_id or span node_id to current metadata_map key."""
+    if node_ref in tree.metadata_map:
+        return node_ref
+    meta = tree.find_by_stable_id(node_ref)
+    if meta is not None:
+        return meta.node_id
+    return None
+
+
 def _sorted_node_ids_by_tree_order(tree: CSTTree, node_ids: List[str]) -> List[str]:
     """Return node_ids sorted by start_line in the tree (source order)."""
 
     def _line(nid: str) -> int:
-        meta = tree.metadata_map.get(nid)
+        span_id = _resolve_cst_node_span_id(tree, nid) or nid
+        meta = tree.metadata_map.get(span_id)
         return meta.start_line if meta else 0
 
     return sorted(node_ids, key=_line)
@@ -153,6 +166,14 @@ def _run_valid_session_move_batch(
     )
 
 
+def _resolve_sidecar_stable_id(session: EditSession, node_ref: str) -> Optional[str]:
+    """Map preview short_id to CST stable_id when ref is numeric."""
+    raw = str(node_ref).strip()
+    if not raw.isdigit():
+        return raw
+    return _preview_short_id_to_stable_id(session, raw)
+
+
 def _run_sidecar_move_batch(
     session: EditSession,
     source_node_ids: List[str],
@@ -166,7 +187,7 @@ def _run_sidecar_move_batch(
     replaced after successful validation via compile(). On failure the
     temp files are deleted and the original session is untouched.
     """
-    if session_has_valid_tree(session.core):
+    if session_has_map_tree(session.core):
         return _run_valid_session_move_batch(
             session,
             source_node_ids,
@@ -174,6 +195,36 @@ def _run_sidecar_move_batch(
             parent_node_id,
             position,
         )
+
+    resolved_sources: List[str] = []
+    for ref in source_node_ids:
+        stable = _resolve_sidecar_stable_id(session, ref)
+        if stable is None:
+            return error_result_for_edit(
+                f"Unknown short_id: {ref}",
+                "UNKNOWN_NODE_REF",
+                {"node_ref": ref},
+            )
+        resolved_sources.append(stable)
+    source_node_ids = resolved_sources
+    if target_node_id is not None:
+        stable_target = _resolve_sidecar_stable_id(session, target_node_id)
+        if stable_target is None:
+            return error_result_for_edit(
+                f"Unknown short_id: {target_node_id}",
+                "UNKNOWN_NODE_REF",
+                {"node_ref": target_node_id},
+            )
+        target_node_id = stable_target
+    if parent_node_id is not None and parent_node_id != ROOT_NODE_ID_SENTINEL:
+        stable_parent = _resolve_sidecar_stable_id(session, parent_node_id)
+        if stable_parent is None:
+            return error_result_for_edit(
+                f"Unknown short_id: {parent_node_id}",
+                "UNKNOWN_NODE_REF",
+                {"node_ref": parent_node_id},
+            )
+        parent_node_id = stable_parent
 
     # --- Resolve original tree ---
     tid = session.tree_id
@@ -193,7 +244,7 @@ def _run_sidecar_move_batch(
 
     # --- Predcheck: all source_node_ids exist ---
     for nid in source_node_ids:
-        if nid not in tree.metadata_map:
+        if _resolve_cst_node_span_id(tree, nid) is None:
             return error_result_for_edit(
                 f"Node not found: {nid}",
                 "STALE_NODE_ID",
@@ -207,7 +258,14 @@ def _run_sidecar_move_batch(
     ordered_ids = _sorted_node_ids_by_tree_order(tree, source_node_ids)
     node_codes: List[str] = []
     for nid in ordered_ids:
-        node = tree.node_map.get(nid)
+        span_id = _resolve_cst_node_span_id(tree, nid)
+        if span_id is None:
+            return error_result_for_edit(
+                f"Node not found: {nid}",
+                "STALE_NODE_ID",
+                {"stable_id": nid},
+            )
+        node = tree.node_map.get(span_id)
         if node is None:
             return error_result_for_edit(
                 f"Node object missing for id: {nid}",
@@ -479,7 +537,7 @@ class UniversalFileMoveNodesCommand(BaseMCPCommand):
             )
 
         if session.format_group != FORMAT_SIDECAR:
-            if not session_has_valid_tree(session.core):
+            if not session_has_map_tree(session.core):
                 return error_result_from_make_error(
                     make_error(
                         "INVALID_OPERATION",

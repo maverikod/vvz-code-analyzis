@@ -19,6 +19,9 @@ from code_analysis.commands.universal_file_preview.errors import PreviewError
 from code_analysis.commands.universal_file_preview.handlers.markdown_line_ranges import (
     resolve_markdown_line_range,
 )
+from code_analysis.commands.universal_file_edit.insert_position import (
+    parse_colon_position,
+)
 from code_analysis.core.cst_tree.models import ROOT_NODE_ID_SENTINEL
 from code_analysis.core.json_tree.json_pointer import pointer_to_segments
 from code_analysis.core.cst_tree.tree_modifier_ops_parse import join_code_lines
@@ -59,6 +62,17 @@ def session_has_valid_tree(session: EditSession) -> bool:
         and session.tree_validity == SessionTreeValidity.VALID
         and session.session_tree_path.is_file()
     )
+
+
+def session_has_map_tree(session: EditSession) -> bool:
+    """Return True when the session tree file is a MAP-format unified tree."""
+    if not session_has_valid_tree(session):
+        return False
+    try:
+        parse_tree_file(session.session_tree_path.read_text(encoding="utf-8"))
+    except (NodeIdMapError, OSError, ValueError):
+        return False
+    return True
 
 
 def _read_tree_sections(session: EditSession) -> TreeSections:
@@ -350,6 +364,54 @@ def _resolve_ref(
     )
 
 
+def _explicit_sibling_insert_anchor(m: Dict[str, Any]) -> tuple[Any | None, str]:
+    """Sidecar-style sibling anchor: target/before/after ids or ``before:<addr>`` syntax."""
+    target = m.get("target_node_id")
+    position = str(m.get("position") or "after")
+    if target not in (None, ""):
+        return target, position
+    before = m.get("before_node_id")
+    if before not in (None, ""):
+        return before, "before"
+    after = m.get("after_node_id")
+    if after not in (None, ""):
+        return after, "after"
+    parsed = parse_colon_position(m.get("position"))
+    if parsed is not None:
+        side, addr = parsed
+        return addr, side
+    return None, position
+
+
+def _try_short_id_sibling_insert(
+    node_ref: Any,
+    position: str,
+    sections: TreeSections,
+    session: Optional[EditSession],
+    content: str,
+) -> EditOperation | None:
+    """Insert before/after a MAP short_id when ``node_ref`` is numeric."""
+    pos = position.strip().lower()
+    if pos not in ("before", "after"):
+        return None
+    raw = str(node_ref).strip()
+    if not raw.isdigit():
+        return None
+    try:
+        sid = resolve_node_ref_to_short_id(
+            raw, sections, **_ref_resolution_kwargs(session)
+        )
+    except ValueError:
+        return None
+    return EditOperation(
+        kind=EditOperationKind.INSERT,
+        anchor_short_id=NodeId(sid),
+        position=pos,
+        new_content=content,
+        next_free=sections.map.next_free,
+    )
+
+
 def command_op_to_edit_operation(
     op: Dict[str, Any],
     sections: TreeSections,
@@ -361,25 +423,60 @@ def command_op_to_edit_operation(
     ref_kw = _ref_resolution_kwargs(session)
 
     if action == "insert":
-        target = m.get("target_node_id")
         parent = m.get("parent_node_id")
-        position = str(m.get("position") or "after")
         content = _content_from_op(m)
-        if target:
+        position = str(m.get("position") or "after")
+        explicit_anchor, explicit_position = _explicit_sibling_insert_anchor(m)
+        if explicit_anchor not in (None, ""):
+            pos_norm = explicit_position.strip().lower()
+            short_insert = _try_short_id_sibling_insert(
+                explicit_anchor, explicit_position, sections, session, content
+            )
+            if short_insert is not None:
+                return short_insert
+            if (
+                ref_kw.get("source_abs") is not None
+                and str(ref_kw["source_abs"].suffix).lower() == ".md"
+                and ref_kw.get("unmarked_source") is not None
+                and pos_norm in ("before", "after")
+            ):
+                anchor_sid, mapped_pos = _resolve_markdown_insert_anchor(
+                    str(explicit_anchor),
+                    explicit_position,
+                    sections,
+                    source_abs=ref_kw["source_abs"],
+                    unmarked_source=ref_kw["unmarked_source"],
+                )
+                return EditOperation(
+                    kind=EditOperationKind.INSERT,
+                    anchor_short_id=NodeId(anchor_sid),
+                    position=mapped_pos,
+                    new_content=content,
+                    next_free=sections.map.next_free,
+                )
             return EditOperation(
                 kind=EditOperationKind.INSERT,
-                anchor_short_id=NodeId(_resolve_ref(target, sections, session)),
-                position=_map_insert_position(position, sibling=True),
+                anchor_short_id=NodeId(
+                    _resolve_ref(explicit_anchor, sections, session)
+                ),
+                position=_map_insert_position(explicit_position, sibling=True),
                 new_content=content,
                 next_free=sections.map.next_free,
             )
         node_ref = m.get("node_id") or m.get("node_ref")
+        pos_norm = position.strip().lower()
+        if node_ref not in (None, "") and pos_norm in ("before", "after"):
+            short_insert = _try_short_id_sibling_insert(
+                node_ref, pos_norm, sections, session, content
+            )
+            if short_insert is not None:
+                return short_insert
         if (
             node_ref not in (None, "")
             and ref_kw.get("source_abs") is not None
             and str(ref_kw["source_abs"].suffix).lower() == ".md"
             and ref_kw.get("unmarked_source") is not None
-            and position in ("before", "after")
+            and pos_norm in ("before", "after")
         ):
             anchor_sid, mapped_pos = _resolve_markdown_insert_anchor(
                 str(node_ref),
@@ -556,6 +653,8 @@ def sidecar_ops_use_unified_tree(
         "parent_node_ref",
         "target_node_id",
         "target_node_ref",
+        "before_node_id",
+        "after_node_id",
     )
     for op in operations:
         m = _coalesce_node_ref_keys(op)
@@ -572,19 +671,40 @@ def sidecar_ops_use_unified_tree(
     return True
 
 
+def _operation_uses_node_address(m: Dict[str, Any]) -> bool:
+    """Return True when an op names a node target (preview short_id, slug, etc.)."""
+    for key in (
+        "node_id",
+        "node_ref",
+        "parent_node_id",
+        "parent_node_ref",
+        "target_node_id",
+        "target_node_ref",
+        "before_node_id",
+        "after_node_id",
+    ):
+        val = m.get(key)
+        if val not in (None, "", ROOT_NODE_ID_SENTINEL):
+            return True
+    position = m.get("position")
+    if isinstance(position, str):
+        stripped = position.strip()
+        if stripped.startswith("before:") or stripped.startswith("after:"):
+            return True
+    return False
+
+
 def text_ops_use_unified_tree(operations: List[Dict[str, Any]]) -> bool:
     """Return True when ops target nodes by node_ref rather than line ranges."""
     for op in operations:
         if op.get("position") == "last":
             continue
-        node_ref = op.get("node_ref")
-        if node_ref in (None, ""):
-            if (
-                op.get("start_line") is not None
-                or op.get("type", "replace") == "insert"
-            ):
-                return False
-        if op.get("start_line") is not None and node_ref in (None, ""):
+        m = _coalesce_node_ref_keys(op)
+        has_lines = op.get("start_line") is not None
+        has_node = _operation_uses_node_address(m)
+        if has_lines and not has_node:
+            return False
+        if _normalize_action(m) == "insert" and not has_node and not has_lines:
             return False
     return True
 

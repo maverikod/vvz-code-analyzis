@@ -34,6 +34,7 @@ from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
 )
 from code_analysis.commands.universal_file_edit.insert_position import (
     coalesce_tree_temp_insert_position,
+    parse_colon_position,
 )
 from code_analysis.core.edit_session import SessionTreeValidity
 from code_analysis.core.backup_manager import BackupManager
@@ -59,9 +60,18 @@ _JSON_VAL_KEY = "v"
 
 
 def _require_integer_short_id(raw: Any, field_name: str) -> int:
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+    if isinstance(raw, bool):
         raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
-    return raw
+    if isinstance(raw, int):
+        if raw < 1:
+            raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        sid = int(raw.strip())
+        if sid < 1:
+            raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
+        return sid
+    raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
 
 
 def _optional_integer_short_id(raw: Any, field_name: str) -> int | None:
@@ -154,6 +164,36 @@ def _resolve_json_insert_anchor_and_position(
     mop: Dict[str, Any],
 ) -> tuple[int, str]:
     sections = _session_tree_sections(session)
+    target_raw = mop.get("target_node_id")
+    if target_raw not in (None, ""):
+        position = str(mop.get("position") or "after").strip().lower()
+        parsed = parse_colon_position(mop.get("position"))
+        if parsed is not None:
+            position, target_raw = parsed[0], parsed[1]
+        if position not in ("before", "after"):
+            raise ValueError(
+                "target_node_id insert requires position 'before' or 'after', "
+                f"got {position!r}"
+            )
+        sid = _resolve_optional_anchor_short_id(session, target_raw, "target_node_id")
+        return sid, position
+
+    node_ref = mop.get("node_id") or mop.get("node_ref")
+    position_raw = mop.get("position")
+    parsed = parse_colon_position(position_raw)
+    if parsed is not None and node_ref in (None, ""):
+        side, addr = parsed
+        sid = _resolve_optional_anchor_short_id(session, addr, "node_ref")
+        return sid, side
+    pos_norm = str(position_raw or "").strip().lower()
+    if (
+        node_ref not in (None, "")
+        and pos_norm in ("before", "after")
+        and mop.get("parent_json_pointer") in (None, "")
+    ):
+        sid = _resolve_optional_anchor_short_id(session, node_ref, "node_ref")
+        return sid, pos_norm
+
     before_ptr = mop.get("before_json_pointer")
     after_ptr = mop.get("after_json_pointer")
     if before_ptr is not None and after_ptr is not None:

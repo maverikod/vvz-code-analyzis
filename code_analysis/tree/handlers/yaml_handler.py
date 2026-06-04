@@ -4,7 +4,6 @@ Author Vasiliy Zdanovskiy, vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -477,6 +476,18 @@ class YamlHandler(FormatHandler):
             raise ValueError("unsupported node kind for replace")
         return _yaml_dump(root)
 
+    def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        self._enforce_short_id_edit_gate()
+        root = _load_marked(marked_text)
+        loc = _require_location(root, short_id)
+        node = loc.node
+        if _is_scalar_leaf(node):
+            val = _strip_ids(node)
+            if isinstance(loc.parent, dict) and isinstance(loc.key, str):
+                return _yaml_dump({loc.key: val})
+            return _yaml_dump(val)
+        return _yaml_dump(_strip_ids(node))
+
     def op_move(
         self,
         marked_text: str,
@@ -485,24 +496,14 @@ class YamlHandler(FormatHandler):
         position: str,
     ) -> str:
         self._enforce_short_id_edit_gate()
-        if short_id == anchor_short_id:
-            raise ValueError("cannot move block relative to itself")
-        root = _load_marked(marked_text)
-        src_loc = _require_location(root, short_id)
-        anchor_loc = _require_location(root, anchor_short_id)
-        moved_node = copy.deepcopy(src_loc.node)
-        _delete_at(src_loc)
-        anchor_loc = _require_location(root, anchor_short_id)
-        _insert_relative(
-            root,
-            anchor_loc,
-            None,
+        next_free = self.peak_short_id_in_marked(marked_text) + 1
+        return self.op_move_via_delete_insert(
+            marked_text,
+            short_id,
+            anchor_short_id,
             position,
-            int(short_id),
-            moved_node=moved_node,
-            src_loc=src_loc,
+            next_free,
         )
-        return _yaml_dump(root)
 
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]

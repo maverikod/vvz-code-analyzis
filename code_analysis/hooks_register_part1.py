@@ -58,12 +58,16 @@ def register_commands_part1(reg: registry) -> None:
             FsMoveCommand,
             FsRemoveCommand,
         )
+        from .commands.fs_list_projects_command import FsListProjectsCommand
 
         reg.register(FsGrepCommand, "custom")
         reg.register(FsCopyCommand, "custom")
         reg.register(FsMoveCommand, "custom")
         reg.register(FsRemoveCommand, "custom")
-        logger.info("✅ Registered fs_grep, fs_copy, fs_move, fs_remove")
+        reg.register(FsListProjectsCommand, "custom")
+        logger.info(
+            "✅ Registered fs_grep, fs_copy, fs_move, fs_remove, fs_list_projects"
+        )
     except ImportError as e:
         logger.warning("Failed to import fs_* commands: %s", e)
 

@@ -320,6 +320,25 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         response = self.rpc_client.call("execute_logical_write_operation", rpc_params)
         return cast(dict[str, Any], self._extract_result_data(response))
 
+    def purge_file_ids_cascade(
+        self,
+        project_id: str,
+        file_ids: Sequence[str],
+        *,
+        operation_name: str = "file_cascade_purge",
+    ) -> None:
+        """Hard-delete file rows and all dependent index data (RPC → driver → DB)."""
+        from code_analysis.core.database.file_purge_cascade import (
+            purge_file_ids_cascade_via_client,
+        )
+
+        purge_file_ids_cascade_via_client(
+            self,
+            project_id,
+            file_ids,
+            operation_name=operation_name,
+        )
+
     def clear_file_data(self, file_id: str) -> None:
         """Drop all rows tied to ``file_id`` (chunks, vectors, entities, trees).
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+from typing import Any
+
 import pytest
 
 from code_analysis.core.database.logical_write_submit import (
     submit_logical_write_or_fallback,
     submit_logical_write_or_fallback_async,
+    submit_logical_write_program_or_fallback,
 )
 
 
@@ -61,6 +64,45 @@ async def test_submit_logical_write_async_fallback_execute_batch() -> None:
     b1 = [("SQL1", (1,))]
     await submit_logical_write_or_fallback_async(db, [b1])
     db.execute_batch.assert_called_once_with(b1)
+
+
+def test_submit_logical_write_program_or_fallback_uses_full_program() -> None:
+    calls: list[Any] = []
+
+    class _Db:
+        def execute_logical_write_operation(self, program: dict) -> dict:
+            calls.append(("lw", program))
+            return {"success": True}
+
+        def execute_batch(self, batch: list) -> None:
+            calls.append(("batch", batch))
+
+    db = _Db()
+    program = {
+        "batches": [[("DELETE FROM files WHERE id = ?", ("x",))]],
+        "operation_name": "test_purge",
+        "project_id": "p1",
+        "lock_scope": "project_write",
+    }
+    submit_logical_write_program_or_fallback(db, program)
+    assert len(calls) == 1
+    assert calls[0][0] == "lw"
+    assert calls[0][1]["operation_name"] == "test_purge"
+
+
+def test_submit_logical_write_program_or_fallback_batches_when_no_lw() -> None:
+    calls: list[Any] = []
+
+    class _Db:
+        def execute_batch(self, batch: list) -> None:
+            calls.append(batch)
+
+    program = {
+        "batches": [[("DELETE FROM files WHERE id = ?", ("x",))]],
+        "operation_name": "test_purge",
+    }
+    submit_logical_write_program_or_fallback(_Db(), program)
+    assert len(calls) == 1
 
 
 def test_submit_skips_empty_inner_batches() -> None:

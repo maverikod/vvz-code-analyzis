@@ -25,6 +25,7 @@ from .section_mtls import (
     validate_protocol_consistency_impl,
     validate_uuid_format_impl,
 )
+from .section_tls_material import validate_tls_material_impl
 
 
 class CodeAnalysisConfigValidator:
@@ -131,6 +132,11 @@ class CodeAnalysisConfigValidator:
         validate_search_session_section_impl(self.config_data, self.validation_results)
         validate_database_driver_section_impl(self.config_data, self.validation_results)
         validate_file_existence_impl(
+            self.config_data,
+            self.validation_results,
+            self.config_path,
+        )
+        validate_tls_material_impl(
             self.config_data,
             self.validation_results,
             self.config_path,

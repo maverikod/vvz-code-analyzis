@@ -22,9 +22,9 @@ def validate_file_existence_impl(
 
     config_dir = Path(config_path).parent
 
-    server = config_data.get("server", {})
-    ssl = server.get("ssl")
-    if ssl:
+    def _check_ssl_files(section: str, ssl: Any, label: str) -> None:
+        if not ssl or not isinstance(ssl, dict):
+            return
         for field in ["cert", "key", "ca", "crl"]:
             if field in ssl and ssl[field]:
                 file_path = Path(ssl[field])
@@ -34,32 +34,28 @@ def validate_file_existence_impl(
                     results.append(
                         ValidationResult(
                             level="error",
-                            message=f"SSL file not found: {ssl[field]}",
-                            section="server",
+                            message=f"{label} SSL file not found: {ssl[field]}",
+                            section=section,
                             key=f"ssl.{field}",
                             suggestion=f"Ensure file exists at {file_path}",
                         )
                     )
 
+    server = config_data.get("server", {})
+    _check_ssl_files("server", server.get("ssl"), "Server")
+
+    client = config_data.get("client", {})
+    _check_ssl_files("client", client.get("ssl"), "Client")
+
     registration = config_data.get("registration", {})
-    if registration.get("enabled"):
-        reg_ssl = registration.get("ssl")
-        if reg_ssl:
-            for field in ["cert", "key", "ca", "crl"]:
-                if field in reg_ssl and reg_ssl[field]:
-                    file_path = Path(reg_ssl[field])
-                    if not file_path.is_absolute():
-                        file_path = config_dir / file_path
-                    if not file_path.exists():
-                        results.append(
-                            ValidationResult(
-                                level="error",
-                                message=f"Registration SSL file not found: {reg_ssl[field]}",
-                                section="registration",
-                                key=f"ssl.{field}",
-                                suggestion=f"Ensure file exists at {file_path}",
-                            )
-                        )
+    _check_ssl_files("registration", registration.get("ssl"), "Registration")
+
+    server_validation = config_data.get("server_validation", {})
+    _check_ssl_files(
+        "server_validation",
+        server_validation.get("ssl"),
+        "Server validation",
+    )
 
     code_analysis = config_data.get("code_analysis", {})
     if code_analysis:

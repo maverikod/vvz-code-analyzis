@@ -23,10 +23,7 @@ from code_analysis.core.worker_project_activity import (
 )
 
 from .ignore_pre_scan_purge import (
-    build_ignore_purge_logical_write_program,
     collect_file_ids_for_active_paths,
-    database_has_sqlite_code_content_fts,
-    database_uses_postgres,
     try_unlink_faiss_index_for_project,
 )
 from .processor_delta import FileDelta
@@ -518,24 +515,19 @@ class ProcessorQueueOps:
                     self.database, project_id, abs_ignore_purge
                 )
                 if ids_purge:
-                    lw = getattr(self.database, "execute_logical_write_operation", None)
-                    if lw is None:
-                        logger.warning(
-                            "[QUEUE] ignore purge: no execute_logical_write_operation"
+                    purge = getattr(self.database, "purge_file_ids_cascade", None)
+                    if not callable(purge):
+                        logger.error(
+                            "[QUEUE] ignore purge: database has no purge_file_ids_cascade"
                         )
                         stats["errors"] += len(delta.ignore_purge_paths)
                     else:
-                        program = build_ignore_purge_logical_write_program(
-                            project_id,
-                            ids_purge,
-                            include_code_content_fts=database_has_sqlite_code_content_fts(
-                                self.database
-                            ),
-                            operation_name="watcher_ignore_purge",
-                            use_uuid_temp_table=database_uses_postgres(self.database),
-                        )
                         try:
-                            lw(program)
+                            purge(
+                                project_id,
+                                ids_purge,
+                                operation_name="watcher_ignore_purge",
+                            )
                         except Exception as e:  # noqa: BLE001
                             logger.error(
                                 "ignore purge failed for %s: %s",
@@ -562,58 +554,21 @@ class ProcessorQueueOps:
                         "action: cascade_purge"
                     )
                 if fids:
-                    lw = getattr(self.database, "execute_logical_write_operation", None)
-                    if lw is None:
-                        # Fallback: legacy soft-delete only (no cascade).
-                        logger.warning(
-                            "[QUEUE] deleted_files: no execute_logical_write_operation; "
-                            "falling back to soft-delete only for project=%s",
+                    purge = getattr(self.database, "purge_file_ids_cascade", None)
+                    if not callable(purge):
+                        logger.error(
+                            "[QUEUE] deleted_files: database has no purge_file_ids_cascade "
+                            "for project=%s",
                             project_id,
                         )
-                        ph = ",".join(["?"] * len(fids))
-                        self._db_execute(
-                            f"DELETE FROM code_chunks WHERE file_id IN ({ph})",
-                            tuple(fids),
-                        )
-                        del_sql = (
-                            f"UPDATE files SET deleted = TRUE, updated_at = {_now} "
-                            f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
-                        )
-                        del_ops: List[Tuple[str, Optional[tuple]]] = []
-                        for path in delta.deleted_files:
-                            abs_p = _watcher_path_input_to_absolute(path, project_root)
-                            r1, r2, r3 = file_row_path_match_values(
-                                project_root=project_root, absolute_path=abs_p
-                            )
-                            del_ops.append((del_sql, (project_id, r1, r2, r3)))
-                        try:
-                            self._db_execute_batch(del_ops)
-                            stats["deleted_files"] += len(delta.deleted_files)
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(
-                                "Batch soft-delete failed for project %s: %s",
-                                project_id,
-                                e,
-                                exc_info=True,
-                            )
-                            stats["errors"] += len(delta.deleted_files)
+                        stats["errors"] += len(fids)
                     else:
-                        # Full cascade purge via logical write program:
-                        # removes code_chunks, classes, methods, functions, imports,
-                        # ast_trees, cst_trees, usages, indexing_errors, vector_index,
-                        # comprehensive_analysis_results, file_tree_snapshots and
-                        # finally the files row itself.
-                        program = build_ignore_purge_logical_write_program(
-                            project_id,
-                            fids,
-                            include_code_content_fts=database_has_sqlite_code_content_fts(
-                                self.database
-                            ),
-                            operation_name="watcher_deleted_files_purge",
-                            use_uuid_temp_table=database_uses_postgres(self.database),
-                        )
                         try:
-                            lw(program)
+                            purge(
+                                project_id,
+                                fids,
+                                operation_name="watcher_deleted_files_purge",
+                            )
                             stats["deleted_files"] += len(fids)
                             try_unlink_faiss_index_for_project(project_id, config_path)
                         except Exception as e:  # noqa: BLE001

@@ -236,6 +236,26 @@ def _ensure_watch_dirs_server_instance_partition(
         )
 
 
+def _ensure_projects_root_path_migrations(conn: Any, schema_manager: Any) -> None:
+    """Drop legacy global root_path UNIQUE; scope to server_instance_id (shared PG)."""
+    from code_analysis.core.database.migrations.projects_root_segment_postgres import (
+        migrate_projects_root_segment_postgres,
+    )
+
+    _rollback_conn(conn)
+    try:
+        migrate_projects_root_segment_postgres(
+            _PostgresConnMigrateAdapter(conn, schema_manager)
+        )
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL projects root_path migration failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
 def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
     """Create pgvector extension (if permitted), ``embedding_vec``, and HNSW index."""
     try:
@@ -321,6 +341,7 @@ def ensure_postgres_schema(
         _ensure_watch_dirs_server_instance_partition(
             conn, PostgreSQLSchemaManager(conn)
         )
+        _ensure_projects_root_path_migrations(conn, PostgreSQLSchemaManager(conn))
     finally:
         if locked:
             try:

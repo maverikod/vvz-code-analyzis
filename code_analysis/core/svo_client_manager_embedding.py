@@ -259,42 +259,36 @@ async def init_embedding(manager: Any) -> None:
     """Create and attach embedding client to manager. Raises on failure if enabled."""
     if not manager.embedding_enabled:
         return
+    from .svo_client_manager_ssl import embedding_client_ssl_kwargs, service_use_tls
+
     root = manager._root_path
-    if manager._embedding_protocol in ("mtls", "https"):
-        base_url = f"https://{manager._embedding_url}"
-    else:
-        base_url = f"http://{manager._embedding_url}"
+    ssl_enabled = service_use_tls(
+        manager._embedding_protocol,
+        root=root,
+        cert_file=manager._embedding_cert_file,
+        key_file=manager._embedding_key_file,
+        ca_cert_file=manager._embedding_ca_cert_file,
+        crl_file=manager._embedding_crl_file,
+    )
+    base_url = (
+        f"https://{manager._embedding_url}"
+        if ssl_enabled
+        else f"http://{manager._embedding_url}"
+    )
     client_kwargs: dict[str, Any] = {}
     if manager._embedding_timeout:
         client_kwargs["timeout"] = manager._embedding_timeout
-    ssl_enabled = manager._embedding_protocol in ("mtls", "https")
-    if ssl_enabled and manager._embedding_protocol == "mtls":
-        if manager._embedding_cert_file and manager._embedding_key_file:
-            cert_path = Path(manager._embedding_cert_file)
-            key_path = Path(manager._embedding_key_file)
-            if not cert_path.is_absolute() and root:
-                cert_path = root / cert_path
-            if not key_path.is_absolute() and root:
-                key_path = root / key_path
-            client_kwargs["cert_file"] = str(cert_path.resolve())
-            client_kwargs["key_file"] = str(key_path.resolve())
-        if manager._embedding_ca_cert_file:
-            ca = Path(manager._embedding_ca_cert_file)
-            if not ca.is_absolute() and root:
-                ca = root / ca
-            client_kwargs["ca_cert_file"] = str(ca.resolve())
-        if manager._embedding_crl_file:
-            crl = Path(manager._embedding_crl_file)
-            if not crl.is_absolute() and root:
-                crl = root / crl
-            client_kwargs["crl_file"] = str(crl.resolve())
-    elif ssl_enabled and manager._embedding_ca_cert_file:
-        ca = Path(manager._embedding_ca_cert_file)
-        if not ca.is_absolute() and root:
-            ca = root / ca
-        client_kwargs["ca_cert_file"] = str(ca.resolve())
-    if ssl_enabled:
-        client_kwargs["verify"] = manager._embedding_check_hostname
+    client_kwargs.update(
+        embedding_client_ssl_kwargs(
+            root=root,
+            protocol=manager._embedding_protocol,
+            cert_file=manager._embedding_cert_file,
+            key_file=manager._embedding_key_file,
+            ca_cert_file=manager._embedding_ca_cert_file,
+            crl_file=manager._embedding_crl_file,
+            check_hostname=manager._embedding_check_hostname,
+        )
+    )
     manager._embedding_client = ClientFactory.create_client(
         base_url=base_url,
         port=manager._embedding_port,

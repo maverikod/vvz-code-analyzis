@@ -12,7 +12,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
-from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+from code_analysis.core.project_root_path import (
+    find_project_id_by_resolved_absolute_root,
+    persist_projects_root_path_stored_value,
+)
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 from ..venv_path_policy import (
@@ -453,24 +456,9 @@ def scan_watch_dir(
                             f"watch_dir_id={current_watch_dir_id} -> {watch_dir_id}"
                         )
                 else:
-                    from code_analysis.core.database.watch_dirs_partition import (
-                        current_server_instance_id,
-                    )
-
-                    sid = current_server_instance_id()
-                    existing_result = database.execute(
-                        "SELECT id FROM projects WHERE server_instance_id = ? "
-                        "AND root_path = ? LIMIT 1",
-                        (sid, str(project_root_obj.root_path)),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-                    )
-                    existing_rows = (
-                        existing_result.get("data", [])
-                        if isinstance(existing_result, dict)
-                        else []
-                    )
-                    existing_project_id = (
-                        existing_rows[0].get("id") if existing_rows else None
+                    existing_project_id = find_project_id_by_resolved_absolute_root(
+                        database,
+                        str(project_root_obj.root_path.resolve()),
                     )
                     if existing_project_id:
                         if existing_project_id != project_root_obj.project_id:

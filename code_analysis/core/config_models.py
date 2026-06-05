@@ -18,6 +18,11 @@ from .constants import (
     DEFAULT_RETRY_DELAY,
 )
 from .settings_manager import get_settings
+from .tls_material_validation import (
+    resolve_config_path,
+    validate_cert_key_pairing,
+    validate_crl_against_ca_or_system,
+)
 
 
 class ProjectDir(BaseModel):
@@ -144,4 +149,29 @@ class SVOServiceConfig(BaseModel):
                 raise ValueError("key_file is required when protocol is 'mtls'")
             if not self.ca_cert_file:
                 raise ValueError("ca_cert_file is required when protocol is 'mtls'")
+
+        cert_path = (
+            resolve_config_path(None, self.cert_file) if self.cert_file else None
+        )
+        key_path = resolve_config_path(None, self.key_file) if self.key_file else None
+        for message in validate_cert_key_pairing(
+            cert_path,
+            key_path,
+            "cert_file",
+            "key_file",
+        ):
+            raise ValueError(message)
+
+        if self.crl_file:
+            crl_path = resolve_config_path(None, self.crl_file)
+            ca_path = (
+                resolve_config_path(None, self.ca_cert_file)
+                if self.ca_cert_file
+                else None
+            )
+            if crl_path is not None and crl_path.is_file():
+                crl_ok, crl_error = validate_crl_against_ca_or_system(crl_path, ca_path)
+                if not crl_ok:
+                    raise ValueError(f"crl_file validation failed: {crl_error}")
+
         return self

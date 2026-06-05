@@ -62,6 +62,7 @@ def migrate_projects_root_segment_postgres(database: Any) -> None:
         except Exception as ex:
             logger.debug("DROP CONSTRAINT %s: %s", cname, ex)
 
+    # Replaced by migrate_projects_root_path_per_server_instance (server-scoped).
     try:
         database._execute(
             "ALTER TABLE projects ADD CONSTRAINT projects_watch_dir_id_root_path_uniq "
@@ -71,6 +72,17 @@ def migrate_projects_root_segment_postgres(database: Any) -> None:
     except Exception as e:
         logger.debug(
             "ADD CONSTRAINT projects_watch_dir_id_root_path_uniq (may exist): %s",
+            e,
+        )
+    try:
+        from code_analysis.core.database.migrations.projects_root_path_per_server_instance import (
+            migrate_projects_root_path_per_server_instance,
+        )
+
+        migrate_projects_root_path_per_server_instance(database)
+    except Exception as e:
+        logger.debug(
+            "projects_root_path_per_server_instance after segment migration: %s",
             e,
         )
 

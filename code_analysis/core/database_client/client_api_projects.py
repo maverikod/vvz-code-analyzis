@@ -20,7 +20,9 @@ from code_analysis.core.database.watch_dirs_partition import (
 )
 from code_analysis.core.project_root_path import (
     enrich_project_dict_resolve_root_path,
+    normalize_path_simple,
     persist_projects_root_path_stored_value,
+    resolve_project_root_absolute_str,
 )
 
 from ..sql_portable import (
@@ -40,6 +42,77 @@ from .objects.mappers import (
 from .objects.project import Project
 
 logger = logging.getLogger(__name__)
+
+
+def _execute_select_first_row(
+    database: Any,
+    sql: str,
+    params: tuple[Any, ...],
+    *,
+    priority: int = 0,
+    transaction_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Run SELECT via DatabaseClient.execute and return the first row dict."""
+    result = database.execute(
+        sql,
+        params,
+        transaction_id=transaction_id,
+        priority=priority,
+    )
+    if not isinstance(result, dict):
+        return None
+    rows = result.get("data")
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0]
+    return dict(row) if isinstance(row, dict) else None
+
+
+def _project_row_by_id_global(
+    database: Any,
+    project_id: str,
+    *,
+    priority: int = 0,
+    transaction_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch a ``projects`` row by ``id`` without ``server_instance_id`` filter."""
+    return _execute_select_first_row(
+        database,
+        "SELECT id, server_instance_id, root_path, name, comment, watch_dir_id "
+        "FROM projects WHERE id = ? LIMIT 1",
+        (project_id,),
+        priority=priority,
+        transaction_id=transaction_id,
+    )
+
+
+def _resolved_project_root_norm(
+    database: Any,
+    *,
+    project_id: str,
+    root_path_stored: Optional[str],
+    watch_dir_id: Optional[str],
+    project_name: Optional[str] = None,
+) -> str:
+    """Normalized absolute project root for same-disk comparisons (RPC-only reads)."""
+    try:
+        resolved = resolve_project_root_absolute_str(
+            project_id=project_id or None,
+            root_path_stored=root_path_stored,
+            watch_dir_id=(
+                str(watch_dir_id).strip()
+                if watch_dir_id is not None and str(watch_dir_id).strip()
+                else None
+            ),
+            project_name=project_name,
+            database=database,
+            require_exists=False,
+        )
+    except Exception:
+        return ""
+    if not resolved:
+        return ""
+    return normalize_path_simple(resolved)
 
 
 def _project_row_root_path_for_write(
@@ -75,9 +148,108 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         transaction_id: Optional[str] = None,
         priority: int = 0,
     ) -> None:
-        """Insert a ``projects`` row for the current server instance via RPC."""
+        """Insert or reclaim a ``projects`` row for the current server instance via RPC.
+
+        Lookup and writes go only through ``DatabaseClient.execute`` (RPC → driver → DB).
+        """
         sid = current_server_instance_id()
         _now = sql_julian_timestamp_now_expr(self)
+
+        if self.get_project(project_id) is not None:
+            return
+
+        global_row = _project_row_by_id_global(
+            self,
+            project_id,
+            priority=priority,
+            transaction_id=transaction_id,
+        )
+        if global_row is not None:
+            other_sid = global_row.get("server_instance_id")
+            other_sid_str = str(other_sid).strip() if other_sid is not None else ""
+            if not other_sid_str:
+                self.execute(
+                    f"""
+                    UPDATE projects
+                    SET server_instance_id = ?, root_path = ?, name = ?, comment = ?,
+                        watch_dir_id = ?, updated_at = {_now}
+                    WHERE id = ?
+                      AND (server_instance_id IS NULL OR server_instance_id = '')
+                    """,
+                    (
+                        sid,
+                        root_path_stored,
+                        name,
+                        comment,
+                        watch_dir_id,
+                        project_id,
+                    ),
+                    transaction_id=transaction_id,
+                    priority=priority,
+                )
+                logger.info(
+                    "Reclaimed orphan projects row id=%s for server_instance_id=%s",
+                    project_id,
+                    sid,
+                )
+                return
+            if other_sid_str != sid:
+                incoming_root = _resolved_project_root_norm(
+                    self,
+                    project_id=project_id,
+                    root_path_stored=root_path_stored,
+                    watch_dir_id=watch_dir_id,
+                    project_name=name,
+                )
+                existing_root = _resolved_project_root_norm(
+                    self,
+                    project_id=project_id,
+                    root_path_stored=str(global_row.get("root_path") or ""),
+                    watch_dir_id=(
+                        str(global_row["watch_dir_id"])
+                        if global_row.get("watch_dir_id") is not None
+                        else None
+                    ),
+                    project_name=str(global_row.get("name") or "") or None,
+                )
+                if incoming_root and existing_root and incoming_root == existing_root:
+                    self.execute(
+                        f"""
+                        UPDATE projects
+                        SET server_instance_id = ?, root_path = ?, name = ?, comment = ?,
+                            watch_dir_id = ?, updated_at = {_now}
+                        WHERE id = ?
+                          AND server_instance_id = ?
+                        """,
+                        (
+                            sid,
+                            root_path_stored,
+                            name,
+                            comment,
+                            watch_dir_id,
+                            project_id,
+                            other_sid_str,
+                        ),
+                        transaction_id=transaction_id,
+                        priority=priority,
+                    )
+                    logger.info(
+                        "Reassigned projects row id=%s from server_instance_id=%s "
+                        "to %s (same disk root %s)",
+                        project_id,
+                        other_sid_str,
+                        sid,
+                        incoming_root,
+                    )
+                    return
+                raise ValueError(
+                    f"Project id {project_id} is already registered under "
+                    f"server_instance_id={other_sid_str} (current instance {sid}). "
+                    "Cannot insert the same project UUID for another server instance "
+                    "while projects.id remains a global primary key."
+                )
+            return
+
         self.execute(
             f"""
             INSERT INTO projects (

@@ -11,7 +11,10 @@ import logging
 from pathlib import Path
 from typing import Any, List
 
-from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+from code_analysis.core.project_root_path import (
+    find_project_id_by_resolved_absolute_root,
+    persist_projects_root_path_stored_value,
+)
 from code_analysis.core.server_instance import get_server_instance_id
 
 from ..sql_portable import sql_julian_timestamp_now_expr
@@ -307,6 +310,20 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 f"watch_dir_id to {wid}"
                             )
                     else:
+                        existing_by_root = find_project_id_by_resolved_absolute_root(
+                            database,
+                            str(project_root_obj.root_path.resolve()),
+                        )
+                        if existing_by_root:
+                            if existing_by_root != project_root_obj.project_id:
+                                logger.warning(
+                                    "[WATCHER_INIT] project at %s already registered as %s; "
+                                    "projectid file has %s (same server instance). Skipping insert.",
+                                    project_root_obj.root_path,
+                                    existing_by_root,
+                                    project_root_obj.project_id,
+                                )
+                            continue
                         project_name = project_root_obj.root_path.name
                         root_stored = persist_projects_root_path_stored_value(
                             project_root_absolute=project_root_obj.root_path,

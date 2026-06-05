@@ -76,23 +76,18 @@ async def init_chunker(manager: Any) -> None:
         "check_hostname": manager._chunker_check_hostname,
         "timeout": manager._chunker_timeout,
     }
-    if manager._chunker_protocol in ("mtls", "https"):
-        root = manager._root_path
-        if manager._chunker_cert_file:
-            p = Path(manager._chunker_cert_file)
-            if not p.is_absolute() and root:
-                p = root / p
-            chunker_kwargs["cert"] = str(p.resolve())
-        if manager._chunker_key_file:
-            p = Path(manager._chunker_key_file)
-            if not p.is_absolute() and root:
-                p = root / p
-            chunker_kwargs["key"] = str(p.resolve())
-        if manager._chunker_ca_cert_file:
-            p = Path(manager._chunker_ca_cert_file)
-            if not p.is_absolute() and root:
-                p = root / p
-            chunker_kwargs["ca"] = str(p.resolve())
+    from .svo_client_manager_ssl import chunker_client_tls_paths
+
+    chunker_kwargs.update(
+        chunker_client_tls_paths(
+            root=manager._root_path,
+            protocol=manager._chunker_protocol,
+            cert_file=manager._chunker_cert_file,
+            key_file=manager._chunker_key_file,
+            ca_cert_file=manager._chunker_ca_cert_file,
+            crl_file=manager._chunker_crl_file,
+        )
+    )
     manager._chunker_client = SvoChunkerClient(**chunker_kwargs)
     await manager._chunker_client.__aenter__()
     await fetch_chunk_limits(manager)

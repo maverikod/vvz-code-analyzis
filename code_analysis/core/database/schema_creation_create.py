@@ -82,8 +82,8 @@ def run_create_schema(db: Any) -> None:
     try:
         db._execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_watch_dir_id_root_path
-            ON projects(watch_dir_id, root_path)
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_server_instance_watch_dir_root_path
+            ON projects(server_instance_id, watch_dir_id, root_path)
             """
         )
         db._commit()

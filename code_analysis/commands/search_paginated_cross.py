@@ -17,7 +17,7 @@ import logging
 
 import time
 from dataclasses import replace
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult
 
@@ -51,10 +51,11 @@ from code_analysis.commands.project_cross_search_command import (
     ProjectCrossSearchCommand,
 )
 from code_analysis.commands.project_cross_search_core import (
-    normalize_fulltext_hit,
+    is_structural_grep_evidence,
     normalize_grep_hit,
-    normalize_semantic_hit,
 )
+from code_analysis.commands.search_paginated_fulltext import normalize_fulltext_finding
+from code_analysis.commands.search_paginated_semantic import normalize_semantic_finding
 from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
 from code_analysis.core.index_coverage import IndexCoverageService
 from code_analysis.core.structure_extraction.format_registry import (
@@ -96,6 +97,79 @@ _SUPPORTED_EXTENSIONS = frozenset(
 )
 
 
+_IndexedSource = Literal["fulltext", "semantic"]
+
+
+def indexed_finding_payload(
+    raw: dict[str, Any],
+    *,
+    index: int,
+    source: _IndexedSource,
+) -> dict[str, Any]:
+    """Map phase-1 fulltext/semantic rows to buffer dicts (same shape as paginated FTS/sem)."""
+    if source == "fulltext":
+        payload = normalize_fulltext_finding(raw, index=index)
+        text = raw.get("chunk_text") or raw.get("content")
+        if text and not payload.get("text"):
+            payload = {**payload, "text": str(text)}
+        score = raw.get("bm25_score")
+        if score is not None and payload.get("score") is None:
+            payload = {**payload, "score": score}
+        return payload
+    payload = normalize_semantic_finding(raw, index=index)
+    text = raw.get("chunk_text") or raw.get("text")
+    if text and not payload.get("text"):
+        payload = {**payload, "text": str(text)}
+    return payload
+
+
+def grep_finding_payload(
+    raw: dict[str, Any],
+    *,
+    index: int,
+    pattern: str,
+    project_root: Optional[Any],
+    require_structural_grep: bool,
+) -> Optional[dict[str, Any]]:
+    """Map phase-2 grep match to a buffer dict; structural rows prefer node_ref/block_id."""
+    norm = normalize_grep_hit(raw, pattern, project_root)
+    merged = {**norm, **{k: v for k, v in raw.items() if k not in norm}}
+    if require_structural_grep and not is_structural_grep_evidence(merged):
+        return None
+    cross_row = normalize_cross_finding(
+        {
+            "file_path": norm.get("file_path"),
+            "score": norm.get("score"),
+            "evidence": {
+                "source_mode": merged.get("source_mode")
+                or (merged.get("metadata") or {}).get("grep_source"),
+                "node_ref": (merged.get("metadata") or {}).get("node_ref")
+                or merged.get("node_ref"),
+                "block_id": (merged.get("metadata") or {}).get("block_id")
+                or merged.get("block_id"),
+            },
+        },
+        index=index,
+        require_structural_grep=require_structural_grep,
+    )
+    if cross_row is not None:
+        return cross_row.to_dict()
+    if require_structural_grep:
+        return None
+    line = norm.get("line_start") or 0
+    file_path = str(norm.get("file_path") or "")
+    return {
+        "result_id": f"grep-{index:06d}",
+        "source": FindingSource.grep.value,
+        "file_path": file_path,
+        "stable_id": f"grep:{file_path}:{line}",
+        "score": score_for_source(FindingSource.grep.value, merged),
+        "line": line,
+        "text": norm.get("text"),
+        "entity_type": norm.get("entity_type"),
+    }
+
+
 def normalize_cross_finding(
     raw: dict[str, Any],
     *,
@@ -127,10 +201,8 @@ def normalize_cross_finding(
 
 def _make_block_assembler(
     layout: SearchSessionDirectoryLayout,
-    raw_config: dict[str, Any],
+    max_block_size_bytes: int,
 ) -> BlockAssembler:
-    policy = load_session_ttl_policy(raw_config)
-
     def _append_index(position: int, completeness: str) -> None:
         block_path = layout.blocks_dir / f"block_{position}.json"
         size = block_path.stat().st_size if block_path.is_file() else 0
@@ -162,7 +234,7 @@ def _make_block_assembler(
     return BlockAssembler(
         layout,
         RawFindingBuffer(layout.buffer_dir),
-        policy.max_block_size_bytes,
+        max_block_size_bytes,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
     )
@@ -304,21 +376,50 @@ async def run_paginated_cross(
     def _flush(search_completed: bool = False) -> None:
         assembler.run_until_idle(search_completed=search_completed)
 
-    def _write_findings(raw_list: list[dict[str, Any]], prefix: str) -> int:
+    project_root: Optional[Any] = None
+    try:
+        project_root = command._resolve_project_root(project_id).resolve()
+    except Exception as exc:
+        log.warning("[TIMING] cannot resolve project root for grep normalize: %s", exc)
+
+    def _write_indexed_findings(
+        raw_list: list[dict[str, Any]],
+        prefix: str,
+        source: _IndexedSource,
+    ) -> int:
         nonlocal idx
         written = 0
         for raw in raw_list:
             if not isinstance(raw, dict):
                 continue
-            finding = normalize_cross_finding(
+            payload = indexed_finding_payload(raw, index=idx, source=source)
+            buffer.append_finding(f"{prefix}-{idx:06d}", payload)
+            idx += 1
+            written += 1
+        return written
+
+    def _write_grep_findings(
+        raw_list: list[dict[str, Any]],
+        prefix: str,
+        pattern: str,
+    ) -> int:
+        nonlocal idx
+        written = 0
+        for raw in raw_list:
+            if not isinstance(raw, dict):
+                continue
+            payload = grep_finding_payload(
                 raw,
                 index=idx,
+                pattern=pattern,
+                project_root=project_root,
                 require_structural_grep=require_structural,
             )
-            if finding is not None:
-                buffer.append_finding(f"{prefix}-{idx:06d}", finding.to_dict())
-                idx += 1
-                written += 1
+            if payload is None:
+                continue
+            buffer.append_finding(f"{prefix}-{idx:06d}", payload)
+            idx += 1
+            written += 1
         return written
 
     indexed_paths, index_gap_paths = _prefilter_candidates(command, project_id, log)
@@ -381,8 +482,8 @@ async def run_paginated_cross(
     )
 
     # Write phase-1 findings to buffer and flush immediately.
-    n_sem = _write_findings(sem_rows, "sem")
-    n_ft = _write_findings(ft_rows, "ft")
+    n_sem = _write_indexed_findings(sem_rows, "sem", "semantic")
+    n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
     log.info(
         "[TIMING] phase1_written: sem=%d ft=%d; flushing...",
         n_sem,
@@ -444,7 +545,7 @@ async def run_paginated_cross(
                     str(m["file_path"]).endswith(ext) for ext in _SUPPORTED_EXTENSIONS
                 )
             ]
-            n_grep = _write_findings(filtered, f"grep{i}")
+            n_grep = _write_grep_findings(filtered, f"grep{i}", pattern)
             _flush(search_completed=False)
             log.info(
                 "[TIMING] phase2 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",

@@ -101,3 +101,23 @@ async def submit_logical_write_or_fallback_async(
         else:
             last = await asyncio.to_thread(execute_batch, batch_ops)
     return last
+
+
+def submit_logical_write_program_or_fallback(
+    database: Any,
+    program: LogicalWriteProgramV1,
+) -> Any:
+    """
+    Submit a full logical-write program, or run its batches via ``execute_batch``.
+
+    Preserves ``operation_name``, ``project_id``, and ``lock_scope`` when the client
+    supports ``execute_logical_write_operation``.
+    """
+    batches = program.get("batches") or []
+    inner = _non_empty_batches(batches)
+    if not inner:
+        return None
+    lw = getattr(database, "execute_logical_write_operation", None)
+    if callable(lw):
+        return lw(program)
+    return submit_logical_write_or_fallback(database, inner)

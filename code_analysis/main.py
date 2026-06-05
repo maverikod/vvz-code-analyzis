@@ -27,6 +27,7 @@ from code_analysis.main_config import (
 from code_analysis.main_daemon_logging import setup_daemon_logging
 from code_analysis.main_server_config import build_server_config
 from code_analysis.main_startup_info import print_startup_info
+from code_analysis.main_queue_init import init_queue_manager_before_workers
 from code_analysis.main_workers_run import run_workers_directly_and_start_monitoring
 from code_analysis.core.dependency_compat import assert_queue_dependencies_compatible
 
@@ -98,6 +99,10 @@ def main() -> None:
     apply_global_config(config_path, simple_config, app_config)
 
     worker_manager = get_worker_manager()
+
+    # queuemgr subprocess must start before create_app workers and indexing/
+    # vectorization children (Python 3.14 multiprocessing bootstrap safety).
+    init_queue_manager_before_workers(full_config)
 
     app = create_app_with_events(app_config, config_path, worker_manager)
     main_logger = setup_main_logger_file_handler(app_config)

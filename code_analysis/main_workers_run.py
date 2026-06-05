@@ -21,7 +21,11 @@ from code_analysis.main_workers import (
 
 
 def run_workers_directly_and_start_monitoring(worker_manager: Any) -> None:
-    """Start database driver and all workers synchronously, then start monitoring."""
+    """Start database driver and all workers synchronously, then start monitoring.
+
+    Call ``init_queue_manager_before_workers`` in ``main()`` before this function
+    when ``queue_manager.enabled`` is true (queuemgr is an external package).
+    """
     logger = logging.getLogger(__name__)
     logger.info("🚀 Starting workers directly before server start...")
     print("🚀 Starting workers directly before server start...", flush=True)

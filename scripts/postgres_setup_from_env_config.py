@@ -24,7 +24,10 @@ Subcommands
    image (run ``pull-postgres-docker-image`` first, or ``pull-and-run-postgres-docker``).
    Container name = ``driver.config.host`` (Docker name, not an IP). Binds
    ``<repo>/data/postgres``, publishes ``driver.config.port`` → container 5432,
-   ``--restart=always``, ``--user 1000:1000``. Ensures the user-defined bridge
+   ``--restart=always``. By default uses ``--user 1000:1000`` (development layout).
+   Production installs use ``/usr/lib/casmgr/bin/casmgr-postgres-container`` instead,
+   which runs the official postgres image without ``--user`` and chowns host data to
+   uid 999. Ensures the user-defined bridge
    network ``smart-assistant`` exists (``docker network create`` if missing). New
    containers join it via ``--network smart-assistant``; already existing containers
    get ``docker network connect smart-assistant`` when needed.    On **new** ``docker run``, adds ``--add-host`` for each line from the host's

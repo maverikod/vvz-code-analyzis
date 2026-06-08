@@ -41,6 +41,7 @@ def register_commands_part1(reg: registry) -> None:
     except ImportError:
         pass
 
+    # Read-only file content (no edit workflow): preview, search, raw line ranges.
     try:
         from .commands.get_file_lines_command import GetFileLinesCommand
 
@@ -51,6 +52,7 @@ def register_commands_part1(reg: registry) -> None:
     except Exception as e:
         logger.error("Failed to register get_file_lines: %s", e, exc_info=True)
 
+    # On-disk search (unindexed files) + filesystem ops (not content editing).
     try:
         from .commands.fs_grep_command import FsGrepCommand
         from .commands.fs_copy_move_remove_commands import (
@@ -146,26 +148,11 @@ def register_commands_part1(reg: registry) -> None:
     except Exception as e:
         logger.error("Failed to register semantic_search command: %s", e, exc_info=True)
 
-    try:
-        from .commands.refactor_mcp_commands import (
-            ExtractSuperclassMCPCommand,
-            SplitClassMCPCommand,
-            SplitFileToPackageMCPCommand,
-        )
-
-        reg.register(SplitClassMCPCommand, "custom")
-        reg.register(ExtractSuperclassMCPCommand, "custom")
-        reg.register(SplitFileToPackageMCPCommand, "custom")
-    except ImportError:
-        pass
-
     from .commands.code_quality_commands import (
-        FormatCodeCommand,
         LintCodeCommand,
         TypeCheckCodeCommand,
     )
 
-    reg.register(FormatCodeCommand, "custom")
     reg.register(LintCodeCommand, "custom")
     reg.register(TypeCheckCodeCommand, "custom")
 

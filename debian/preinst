@@ -1,21 +1,13 @@
 #!/bin/bash
-# debian/preinst - pre-installation script
+# debian/preinst — stop services before upgrade/remove.
 
 set -e
 
-SERVICE_NAME="code-analysis-server"
-SERVICE_USER="code-analysis"
-
-# Check if service is running and stop it
-if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo "Stopping $SERVICE_NAME service..."
-    systemctl stop "$SERVICE_NAME" || true
-fi
-
-# Disable service if enabled
-if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-    systemctl disable "$SERVICE_NAME" || true
-fi
+for svc in casmgr-server casmgr-postgres code-analysis-server; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        echo "Stopping ${svc}..."
+        systemctl stop "$svc" || true
+    fi
+done
 
 exit 0
-

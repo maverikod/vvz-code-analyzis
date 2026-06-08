@@ -523,19 +523,61 @@ def get_file_advisory_lock_status(
     }
 
 
-def release_all_leases_for_session(database: Any, session_id: str) -> int:
-    """Remove all advisory lease rows for ``session_id``."""
+def count_advisory_lease_rows_for_session(database: Any, session_id: str) -> int:
+    """Count ``file_advisory_lock_leases`` rows for a client/runtime session id."""
     ensure_runtime_lock_tables(database)
     rows = database.execute(
         "SELECT COUNT(*) AS count FROM file_advisory_lock_leases WHERE session_id = ?",
         (str(session_id).strip(),),
     )
     data = rows.get("data") if isinstance(rows, dict) else []
-    count = int((data or [{"count": 0}])[0].get("count") or 0)
+    return int((data or [{"count": 0}])[0].get("count") or 0)
+
+
+def force_release_session_advisory_locks(database: Any, session_id: str) -> int:
+    """Release disk ``.lock`` sidecars and DB advisory leases for one session."""
+    from code_analysis.core.file_lock import release_persistent_file_lock
+
+    sid = str(session_id).strip()
+    ensure_runtime_lock_tables(database)
+    rows = database.execute(
+        """
+        SELECT DISTINCT project_id, file_path
+        FROM file_advisory_lock_leases
+        WHERE session_id = ?
+        """,
+        (sid,),
+    )
+    distinct_files = list(rows.get("data") or [])
+    for row in distinct_files:
+        if not isinstance(row, dict):
+            continue
+        release_persistent_file_lock(
+            session_id=sid,
+            project_id=str(row["project_id"]),
+            file_path=str(row["file_path"]),
+            database=database,
+            force=True,
+        )
+    deleted_rows = release_all_leases_for_session(database, sid)
+    _execute(
+        database,
+        "DELETE FROM runtime_lock_sessions WHERE session_id = ?",
+        (sid,),
+    )
+    _commit_best_effort(database)
+    return max(deleted_rows, len(distinct_files))
+
+
+def release_all_leases_for_session(database: Any, session_id: str) -> int:
+    """Remove all advisory lease rows for ``session_id`` (DB only)."""
+    ensure_runtime_lock_tables(database)
+    sid = str(session_id).strip()
+    count = count_advisory_lease_rows_for_session(database, sid)
     _execute(
         database,
         "DELETE FROM file_advisory_lock_leases WHERE session_id = ?",
-        (str(session_id).strip(),),
+        (sid,),
     )
     _commit_best_effort(database)
     return count

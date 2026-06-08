@@ -376,4 +376,6 @@ def test_command_registration() -> None:
     reg = _DummyRegistry()
     register_commands_part2(reg)
 
-    assert "create_text_file" in reg.names
+    assert "create_text_file" not in reg.names
+    assert "universal_file_preview" in reg.names
+    assert "universal_file_search" in reg.names

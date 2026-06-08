@@ -1,42 +1,38 @@
-Source: code-analysis-server
-Section: devel
+Source: casmgr-server
+Section: net
 Priority: optional
 Maintainer: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
 Build-Depends: debhelper-compat (= 13),
-               dh-python,
-               python3-all,
-               python3-setuptools,
-               python3-pip,
-               python3-venv
+               python3,
+               texinfo
 Standards-Version: 4.6.2
 Homepage: https://github.com/vasilyvz/code_analysis
 Vcs-Browser: https://github.com/vasilyvz/code_analysis
 Vcs-Git: https://github.com/vasilyvz/code_analysis.git
 
-Package: code-analysis-server
+Package: casmgr-server
 Architecture: all
-Depends: ${python3:Depends},
-         ${misc:Depends},
-         python3 (>= 3.8),
+Provides: code-analysis-server
+Replaces: code-analysis-server
+Conflicts: code-analysis-server
+Depends: ${misc:Depends},
+         python3 (>= 3.10),
          python3-venv,
          python3-pip,
          systemd,
-         rsync
-Recommends: python3-dev
-Description: Code Analysis Server - MCP server for code analysis and refactoring
- A comprehensive Python code analysis and refactoring tool that generates code
- maps, detects issues, and provides automated refactoring capabilities.
+         adduser,
+         rsync,
+         openssl,
+         ca-certificates
+Recommends: docker.io | docker-ce-cli,
+            postgresql-client
+Description: Code Analysis Server (casmgr) — MCP server with PostgreSQL in Docker
+ Installs the code-analysis MCP daemon as a systemd service (casmgr-server)
+ and manages a version-locked PostgreSQL/pgvector container (casmgr-postgres).
  .
- Features:
-  - Code mapping and dependency analysis
-  - Issue detection and code quality checks
-  - Semantic search using FAISS vector index
-  - Automated refactoring (class splitting, superclass extraction)
-  - SQLite database for fast indexed storage
-  - MCP (Model Context Protocol) server interface
-  - File watching and automatic indexing
-  - Vectorization and embedding support
+ Configuration: /etc/casmgr/config.json
+ Data and secrets: /var/casmgr
+ Logs: /var/log/casmgr
  .
- This package installs code-analysis-server as a systemd service with
- configuration in /etc/code-analysis-server/ and data in /var/lib/code-analysis-server/.
-
+ The Debian package version matches the Docker Hub tag for casmgr-postgres
+ (see /usr/share/casmgr/docker-image after install).

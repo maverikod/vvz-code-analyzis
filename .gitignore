@@ -6,26 +6,50 @@ __pycache__/
 # C extensions
 *.so
 
-# Distribution / packaging
+# Distribution / packaging (repo root only — do not ignore e.g. debian staging paths broadly)
 .Python
-build/
+/build/
 develop-eggs/
 dist/
 downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Debian / casmgr-server package build (dpkg-buildpackage)
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log
+debian/casmgr-server/
+debian/casmgr-docker-image
+debian/changelog
+
+# Debian binary outputs (also written to parent dir by dpkg-buildpackage — outside git)
+*.deb
+*.changes
+*.buildinfo
+*.dsc
+
+# Docker local tags / export (not the Dockerfile tree under docker/)
+docker/*.tar
+docker/*.tar.gz
+
+# Cursor IDE — local debug logs only (rules/agents stay tracked)
+.cursor/debug*.log
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -174,15 +198,16 @@ test_*.py
 test_reports/
 backups/
 
-
-.cst//.terminals/
-/.mcp_terminal/
+# CST / editor session trees (local)
 .cst/
 .trees/
 .terminals/
+.mcp_terminal/
 
 *.tree
 
 # Machine-local deployment identity (per host; never commit)
 projectid
 config.json
+
+packaging/

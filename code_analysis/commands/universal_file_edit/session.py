@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -15,14 +16,13 @@ from code_analysis.commands.universal_file_edit.format_group import FormatDescri
 from code_analysis.core.edit_session import (
     EditSession as CoreEditSession,
     SessionTreeValidity,
-    get_active_session,
 )
 from code_analysis.tree.edit_operations import EditOperation
 from code_analysis.core.edit_session.edit_session import _active_sessions
 from code_analysis.core.tree_temp.tree_node import TreeNode
 
-# Command-layer metadata keyed by core session_id (sole process registry is core).
-_session_meta: dict[str, "EditSession"] = {}
+# group session_id -> project-relative file_path -> EditSession facade
+_session_bundles: dict[str, dict[str, "EditSession"]] = {}
 
 
 @dataclass
@@ -45,6 +45,10 @@ class EditSession:
     fallback_reason: Optional[str] = None
     original_format_group: Optional[str] = None
     is_invalid: bool = False
+
+
+def _norm_file_path(file_path: str) -> str:
+    return Path(str(file_path).replace("\\", "/")).as_posix()
 
 
 def _resolve_project_root_near(abs_path: Path) -> Path:
@@ -73,8 +77,27 @@ def create_session(
     original_format_group: Optional[str] = None,
     is_invalid: bool = False,
     initial_source_text: Optional[str] = None,
+    group_session_id: Optional[str] = None,
 ) -> EditSession:
-    """Open a core EditSession and register command-layer metadata."""
+    """Open a core EditSession and register command-layer metadata.
+
+    When ``group_session_id`` is omitted, a new group id is allocated and returned
+    on ``EditSession.session_id``. When provided, the file is attached to that
+    existing group so one session can hold multiple open files.
+    """
+    norm_path = _norm_file_path(file_path)
+    if group_session_id is None:
+        group_id = str(uuid.uuid4())
+        bundle: dict[str, EditSession] = {}
+        _session_bundles[group_id] = bundle
+    else:
+        group_id = str(group_session_id).strip()
+        bundle = _session_bundles.get(group_id)
+        if bundle is None:
+            raise ValueError("SESSION_NOT_FOUND")
+        if norm_path in bundle:
+            raise ValueError("FILE_ALREADY_IN_SESSION")
+
     root = (
         project_root
         if project_root is not None
@@ -90,7 +113,7 @@ def create_session(
         content=content if not abs_path.is_file() else None,
     )
     session = EditSession(
-        session_id=core.session_id,
+        session_id=group_id,
         file_path=file_path,
         abs_path=abs_path,
         draft_path=core.session_source_path,
@@ -107,27 +130,45 @@ def create_session(
         original_format_group=original_format_group,
         is_invalid=is_invalid,
     )
-    _session_meta[core.session_id] = session
+    bundle[norm_path] = session
     return session
 
 
-def get_session(session_id: str) -> EditSession:
-    """Return the command facade for session_id, or raise SESSION_NOT_FOUND."""
-    try:
-        get_active_session(session_id)
-    except KeyError:
-        raise ValueError("SESSION_NOT_FOUND") from None
-    session = _session_meta.get(session_id)
-    if session is None:
+def get_session(session_id: str, file_path: Optional[str] = None) -> EditSession:
+    """Return the command facade for a group session and optional file path."""
+    bundle = _session_bundles.get(session_id)
+    if not bundle:
+        raise ValueError("SESSION_NOT_FOUND")
+    if file_path is None:
+        if len(bundle) == 1:
+            session = next(iter(bundle.values()))
+        else:
+            raise ValueError("SESSION_FILE_PATH_REQUIRED")
+    else:
+        session = bundle.get(_norm_file_path(file_path))
+        if session is None:
+            raise ValueError("SESSION_NOT_FOUND")
+    if not session.core.is_open:
         raise ValueError("SESSION_NOT_FOUND")
     return session
 
 
-def release_session(session_id: str) -> None:
-    """Remove command-layer metadata and close core session if still open."""
-    session = _session_meta.pop(session_id, None)
+def release_session(session_id: str, file_path: Optional[str] = None) -> None:
+    """Remove one file (or the sole file) from a group and close its core session."""
+    bundle = _session_bundles.get(session_id)
+    if bundle is None:
+        return
+    if file_path is None:
+        if len(bundle) != 1:
+            raise ValueError("SESSION_FILE_PATH_REQUIRED")
+        norm_path = next(iter(bundle))
+    else:
+        norm_path = _norm_file_path(file_path)
+    session = bundle.pop(norm_path, None)
     if session is not None and session.core.is_open:
         session.core.close()
+    if not bundle:
+        _session_bundles.pop(session_id, None)
 
 
 def active_session_uses_abs_path(abs_path: Path) -> bool:

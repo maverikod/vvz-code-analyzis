@@ -99,6 +99,40 @@ class SessionHasSubordinatesError(ValueError):
         self.subordinate_count = subordinate_count
 
 
+class SessionHasAdvisoryLocksError(ValueError):
+    """Raised when a session has advisory disk/DB leases and force=False."""
+
+    def __init__(self, session_id: str, advisory_lease_count: int) -> None:
+        msg = (
+            f"Session {session_id} has {advisory_lease_count} advisory file lease(s). "
+            "Unlock via project_file_advisory_lock_batch or use force=True on session_delete."
+        )
+        super().__init__(msg)
+        self.session_id = session_id
+        self.advisory_lease_count = advisory_lease_count
+
+
+class FileLockedByOtherSessionError(ValueError):
+    """Raised when a file is already locked by a different client session."""
+
+    def __init__(
+        self,
+        session_id: str,
+        holder_session_id: str,
+        project_id: str,
+        file_id: str,
+    ) -> None:
+        msg = (
+            f"File {file_id} in project {project_id} is locked by session "
+            f"{holder_session_id!r}; cannot acquire for session {session_id!r}."
+        )
+        super().__init__(msg)
+        self.session_id = session_id
+        self.holder_session_id = holder_session_id
+        self.project_id = project_id
+        self.file_id = file_id
+
+
 def ensure_client_session_tables(conn: Any) -> None:
     """
     Create all client-session-related tables and indexes idempotently.
@@ -229,6 +263,37 @@ def is_session_valid(
     return bool(res.get("data"))
 
 
+def validate_client_session(
+    database: DatabaseClient,
+    session_id: str,
+    *,
+    touch: bool = False,
+) -> dict[str, object]:
+    """
+    Confirm a client session exists; optionally refresh last_active_at.
+
+    Args:
+        database: DatabaseClient instance.
+        session_id: UUID4 string.
+        touch: When True, update last_active_at before returning.
+
+    Returns:
+        dict with valid=True plus session_id, comment, created_at, last_active_at.
+
+    Raises:
+        SessionNotFoundError: if session_id is absent from client_sessions.
+    """
+    row = get_client_session(database, session_id)
+    if row is None:
+        raise SessionNotFoundError(session_id)
+    if touch:
+        touch_client_session(database, session_id)
+        row = get_client_session(database, session_id)
+    if row is None:
+        raise SessionNotFoundError(session_id)
+    return {**row, "valid": True}
+
+
 def touch_client_session(
     database: DatabaseClient,
     session_id: str,
@@ -329,7 +394,12 @@ def delete_client_session(
         SessionNotFoundError: if session_id is not found.
         SessionHasLocksError: if force is False and open locks exist.
         SessionHasSubordinatesError: if force is False and subordinate links exist.
+        SessionHasAdvisoryLocksError: if force is False and advisory leases exist.
     """
+    from code_analysis.core.runtime_lock_sessions import (
+        count_advisory_lease_rows_for_session,
+        force_release_session_advisory_locks,
+    )
     from code_analysis.core.subordinate_sessions import (
         count_subordinate_links_for_parent,
         delete_subordinate_links_for_parent,
@@ -344,11 +414,14 @@ def delete_client_session(
     data = res.get("data") or []
     lock_count: int = data[0]["cnt"] if data else 0
     subordinate_count = count_subordinate_links_for_parent(database, session_id)
+    advisory_count = count_advisory_lease_rows_for_session(database, session_id)
     if not force:
         if lock_count > 0:
             raise SessionHasLocksError(session_id, lock_count)
         if subordinate_count > 0:
             raise SessionHasSubordinatesError(session_id, subordinate_count)
+        if advisory_count > 0:
+            raise SessionHasAdvisoryLocksError(session_id, advisory_count)
 
     released_subordinates = 0
     if force and subordinate_count > 0:
@@ -363,6 +436,11 @@ def delete_client_session(
             (session_id,),
         )
         released = res2.get("affected_rows") or 0
+
+    released_advisory = 0
+    if force and advisory_count > 0:
+        released_advisory = force_release_session_advisory_locks(database, session_id)
+
     database.execute(
         "DELETE FROM client_sessions WHERE session_id = ?",
         (session_id,),
@@ -372,6 +450,7 @@ def delete_client_session(
         "deleted": True,
         "released_lock_count": released,
         "released_subordinate_count": released_subordinates,
+        "released_advisory_lease_count": released_advisory,
     }
 
 
@@ -397,17 +476,21 @@ def open_session_file(
         lock already existed), session_id (str), project_id (str), file_id (str).
     """
     existing = database.execute(
-        "SELECT 1 AS present FROM session_file_locks "
-        "WHERE session_id = ? AND project_id = ? AND file_id = ? LIMIT 1",
-        (session_id, project_id, file_id),
+        "SELECT session_id FROM session_file_locks "
+        "WHERE project_id = ? AND file_id = ? LIMIT 1",
+        (project_id, file_id),
     )
-    if existing.get("data"):
-        return {
-            "acquired": False,
-            "session_id": session_id,
-            "project_id": project_id,
-            "file_id": file_id,
-        }
+    rows = existing.get("data") or []
+    if rows:
+        holder = str(rows[0]["session_id"])
+        if holder == session_id:
+            return {
+                "acquired": False,
+                "session_id": session_id,
+                "project_id": project_id,
+                "file_id": file_id,
+            }
+        raise FileLockedByOtherSessionError(session_id, holder, project_id, file_id)
     res = database.execute(
         "INSERT INTO session_file_locks (session_id, project_id, file_id) VALUES (?, ?, ?)",
         (session_id, project_id, file_id),

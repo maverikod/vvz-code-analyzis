@@ -1,15 +1,33 @@
 #!/bin/bash
-# debian/postrm - post-removal script
+# debian/postrm — purge removes Docker image; optional config cleanup.
 
 set -e
 
-SERVICE_NAME="code-analysis-server"
+IMAGE_FILE="/var/casmgr/docker-image"
+if [[ ! -f "$IMAGE_FILE" && -f /usr/share/casmgr/docker-image ]]; then
+    IMAGE_FILE="/usr/share/casmgr/docker-image"
+fi
 
-# Reload systemd after removal
-if [ "$1" = "purge" ]; then
+purge_docker_image() {
+    if ! command -v docker >/dev/null 2>&1; then
+        return 0
+    fi
+    if [[ ! -f "$IMAGE_FILE" ]]; then
+        return 0
+    fi
+    local image
+    image="$(tr -d '[:space:]' <"$IMAGE_FILE")"
+    if [[ -n "$image" && "$image" != *unknown* ]]; then
+        echo "Removing Docker image ${image} ..."
+        docker rmi "$image" 2>/dev/null || true
+    fi
+}
+
+if [[ "$1" == "purge" ]]; then
+    purge_docker_image
     systemctl daemon-reload
-    systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+    systemctl reset-failed casmgr-server casmgr-postgres 2>/dev/null || true
+    echo "Note: /var/casmgr data retained; remove manually if required."
 fi
 
 exit 0
-

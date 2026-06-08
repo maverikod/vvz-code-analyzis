@@ -1,5 +1,5 @@
 """
-session_open_file MCP command: acquire a file lock for a session.
+session_validate MCP command: confirm a client session exists.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,14 +12,12 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
-from code_analysis.commands.sessions.session_open_file_command_metadata import (
-    get_session_open_file_metadata,
+from code_analysis.commands.sessions.session_validate_command_metadata import (
+    get_session_validate_metadata,
 )
 from code_analysis.core.client_sessions import (
-    FileLockedByOtherSessionError,
     SessionNotFoundError,
-    open_session_file,
-    touch_or_error,
+    validate_client_session,
 )
 from code_analysis.core.security_policy_guard import (
     CommandForbiddenError,
@@ -27,12 +25,12 @@ from code_analysis.core.security_policy_guard import (
 )
 
 
-class SessionOpenFileCommand(BaseMCPCommand):
-    """MCP command: acquire a file lock for a session."""
+class SessionValidateCommand(BaseMCPCommand):
+    """MCP command: verify session_id is registered in client_sessions."""
 
-    name = "session_open_file"
+    name = "session_validate"
     version = "1.0.0"
-    descr = "Acquire a file lock for a session (idempotent)."
+    descr = "Confirm that a client session exists (optional activity touch)."
     category = "session_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -41,7 +39,7 @@ class SessionOpenFileCommand(BaseMCPCommand):
     @staticmethod
     def get_name() -> str:
         """Return the MCP command name."""
-        return "session_open_file"
+        return "session_validate"
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -51,40 +49,27 @@ class SessionOpenFileCommand(BaseMCPCommand):
             "properties": {
                 "session_id": {
                     "type": "string",
-                    "description": "UUID4 of the active session.",
+                    "description": "UUID4 of the client session to validate.",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "UUID of the registered project.",
-                },
-                "file_id": {
-                    "type": "string",
-                    "description": "UUID of the file record.",
+                "touch": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "When true, update last_active_at after confirming the session exists."
+                    ),
                 },
             },
-            "required": ["session_id", "project_id", "file_id"],
+            "required": ["session_id"],
             "additionalProperties": False,
         }
 
     async def execute(  # type: ignore[override]
         self,
         session_id: str,
-        project_id: str,
-        file_id: str,
+        touch: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Execute session_open_file: touch, policy check, then acquire lock.
-
-        Args:
-            session_id: UUID4 of the active session.
-            project_id: UUID of the registered project.
-            file_id: UUID of the file record.
-            **kwargs: Adapter context (ignored).
-
-        Returns:
-            SuccessResult with acquired, session_id, project_id, file_id; or
-            ErrorResult SESSION_NOT_FOUND / COMMAND_FORBIDDEN.
-        """
+        """Execute session_validate."""
         _ = kwargs
         database = self._open_database_from_config()
         raw_config = self._get_raw_config()
@@ -92,31 +77,29 @@ class SessionOpenFileCommand(BaseMCPCommand):
         policy_mode: str = (raw_config.get("security") or {}).get("policy", "disabled")
 
         try:
-            touch_or_error(database, session_id)
+            row = validate_client_session(
+                database, session_id, touch=bool(touch)
+            )
         except SessionNotFoundError:
             return ErrorResult(
-                code="SESSION_NOT_FOUND", message=f"Session {session_id!r} not found."
+                code="SESSION_NOT_FOUND",
+                message=f"Session {session_id!r} not found.",
             )
+
         try:
             enforce_security_policy(
                 database=database,
                 session_id=session_id,
-                command_name="session_open_file",
+                command_name="session_validate",
                 server_uuid=server_uuid,
                 policy_mode=policy_mode,
             )
         except CommandForbiddenError as e:
             return ErrorResult(code="COMMAND_FORBIDDEN", message=str(e))
 
-        try:
-            result = open_session_file(
-                database, session_id=session_id, project_id=project_id, file_id=file_id
-            )
-        except FileLockedByOtherSessionError as exc:
-            return ErrorResult(code="FILE_LOCKED", message=str(exc))
-        return SuccessResult(data=result)
+        return SuccessResult(data=row)
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
         """Return extended command metadata for help and AI tooling."""
-        return get_session_open_file_metadata(cls)
+        return get_session_validate_metadata(cls)

@@ -15,41 +15,21 @@ logger = logging.getLogger(__name__)
 def register_commands_part2(reg: registry) -> None:
     """Register backup, file management, log viewer, workers, DB integrity, restore, projects."""
     from .commands.backup_mcp_commands import (
-        ClearAllBackupsMCPCommand,
-        DeleteBackupMCPCommand,
         ListBackupFilesMCPCommand,
         ListBackupVersionsMCPCommand,
-        RestoreBackupFileMCPCommand,
     )
 
     reg.register(ListBackupFilesMCPCommand, "custom")
     reg.register(ListBackupVersionsMCPCommand, "custom")
-    reg.register(RestoreBackupFileMCPCommand, "custom")
-    reg.register(DeleteBackupMCPCommand, "custom")
-    reg.register(ClearAllBackupsMCPCommand, "custom")
 
     try:
         from .commands.file_management_mcp_commands import (
-            CleanupDeletedFilesMCPCommand,
-            CollapseVersionsMCPCommand,
-            CreateTextFileMCPCommand,
-            DeleteFileMCPCommand,
-            DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
             RepairDatabaseMCPCommand,
             RunUuidIdentityMigrationMCPCommand,
-            RestoreDeletedFilesMCPCommand,
-            UnmarkDeletedFileMCPCommand,
         )
 
-        reg.register(CleanupDeletedFilesMCPCommand, "custom")
-        reg.register(CreateTextFileMCPCommand, "custom")
-        reg.register(DeleteFileMCPCommand, "custom")
-        reg.register(DeleteFilesByMaskMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")
-        reg.register(UnmarkDeletedFileMCPCommand, "custom")
-        reg.register(RestoreDeletedFilesMCPCommand, "custom")
-        reg.register(CollapseVersionsMCPCommand, "custom")
         reg.register(RepairDatabaseMCPCommand, "custom")
         reg.register(RunUuidIdentityMigrationMCPCommand, "custom")
         logger.info("✅ Registered repair_database command")
@@ -203,6 +183,7 @@ def register_commands_part2(reg: registry) -> None:
             "Failed to register project management commands: %s", e, exc_info=True
         )
 
+    # Structured preview/search only — no universal_file_open/edit/write/close.
     try:
         from .commands.universal_file_preview_command import (
             UniversalFilePreviewCommand,
@@ -218,66 +199,19 @@ def register_commands_part2(reg: registry) -> None:
             e,
             exc_info=True,
         )
+
     try:
-        from .commands.universal_file_edit.open_command import UniversalFileOpenCommand
-        from .commands.universal_file_edit.edit_command import UniversalFileEditCommand
-        from .commands.universal_file_edit.write_command import (
-            UniversalFileWriteCommand,
-        )
-        from .commands.universal_file_edit.close_command import (
-            UniversalFileCloseCommand,
-        )
-        from .commands.universal_file_edit.move_nodes_command import (
-            UniversalFileMoveNodesCommand,
-        )
         from .commands.universal_file_edit.search_command import (
             UniversalFileSearchCommand,
         )
-        from .commands.universal_file_edit.session_git_log_command import (
-            SessionGitLogCommand,
-        )
-        from .commands.universal_file_edit.session_git_diff_command import (
-            SessionGitDiffCommand,
-        )
-        from .commands.universal_file_edit.session_git_show_command import (
-            SessionGitShowCommand,
-        )
-        from .commands.universal_file_edit.session_git_status_command import (
-            SessionGitStatusCommand,
-        )
-        from .commands.universal_file_edit.session_git_revert_command import (
-            SessionGitRevertCommand,
-        )
-        from .commands.universal_file_edit.session_redo_command import (
-            SessionRedoCommand,
-        )
-        from .commands.universal_file_edit.session_undo_command import (
-            SessionUndoCommand,
-        )
-        from .commands.universal_file_edit.session_write_command import (
-            SessionWriteCommand,
-        )
 
-        reg.register(UniversalFileOpenCommand, "custom")
-        reg.register(UniversalFileEditCommand, "custom")
-        reg.register(UniversalFileWriteCommand, "custom")
-        reg.register(UniversalFileCloseCommand, "custom")
-        reg.register(UniversalFileMoveNodesCommand, "custom")
         reg.register(UniversalFileSearchCommand, "custom")
-        reg.register(SessionGitLogCommand, "custom")
-        reg.register(SessionGitDiffCommand, "custom")
-        reg.register(SessionGitShowCommand, "custom")
-        reg.register(SessionGitStatusCommand, "custom")
-        reg.register(SessionGitRevertCommand, "custom")
-        reg.register(SessionUndoCommand, "custom")
-        reg.register(SessionRedoCommand, "custom")
-        reg.register(SessionWriteCommand, "custom")
-        logger.info("Registered universal_file_edit commands")
+        logger.info("✅ Registered universal_file_search command")
     except ImportError as e:
-        logger.warning("Failed to import universal_file_edit commands: %s", e)
+        logger.warning("Failed to import universal_file_search command: %s", e)
     except Exception as e:
         logger.error(
-            "Failed to register universal_file_edit commands: %s",
+            "Failed to register universal_file_search command: %s",
             e,
             exc_info=True,
         )
@@ -285,6 +219,7 @@ def register_commands_part2(reg: registry) -> None:
     try:
         from .commands.sessions.session_create_command import SessionCreateCommand
         from .commands.sessions.session_delete_command import SessionDeleteCommand
+        from .commands.sessions.session_validate_command import SessionValidateCommand
         from .commands.sessions.session_list_command import SessionListCommand
         from .commands.sessions.session_view_command import SessionViewCommand
         from .commands.sessions.session_open_file_command import SessionOpenFileCommand
@@ -303,6 +238,7 @@ def register_commands_part2(reg: registry) -> None:
         )
 
         reg.register(SessionCreateCommand, "custom")
+        reg.register(SessionValidateCommand, "custom")
         reg.register(SessionDeleteCommand, "custom")
         reg.register(SessionListCommand, "custom")
         reg.register(SessionViewCommand, "custom")

@@ -21,12 +21,11 @@ _FORCE_SCHEMA_DESCRIPTION = (
     "Destructive override for session teardown. "
     "Default is false: omit this parameter or pass false for the safe path. "
     "When false, deletion succeeds only if the session has zero rows in "
-    "session_file_locks and zero rows in subordinate_sessions where this "
-    "session is parent_session_id; otherwise SESSION_HAS_LOCKS or "
-    "SESSION_HAS_SUBORDINATES is returned and no data is changed. "
-    "When true, deletes subordinate server link rows for this session, "
-    "releases all session_file_locks for this session, then deletes the "
-    "client_sessions row for session_id."
+    "session_file_locks, zero subordinate_sessions links, and zero "
+    "file_advisory_lock_leases; otherwise SESSION_HAS_LOCKS, "
+    "SESSION_HAS_SUBORDINATES, or SESSION_HAS_ADVISORY_LOCKS is returned. "
+    "When true, deletes subordinate links, releases session_file_locks and "
+    "advisory disk/DB locks (``.lock`` sidecars), then deletes client_sessions."
 )
 
 
@@ -58,12 +57,12 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "   a. DELETE all subordinate_sessions rows where parent_session_id "
             "equals session_id.\n"
             "   b. DELETE all session_file_locks rows for session_id.\n"
-            "   c. DELETE the client_sessions row for session_id.\n\n"
+            "   c. Release advisory ``.lock`` sidecars and DELETE "
+            "file_advisory_lock_leases / runtime_lock_sessions for session_id.\n"
+            "   d. DELETE the client_sessions row for session_id.\n\n"
             "Link rows in subordinate_sessions CASCADE when the parent "
             "client_sessions row is deleted. session_roles rows CASCADE on session "
-            "delete.\n\n"
-            "Does not delete runtime_lock_sessions or file_advisory_lock_leases; "
-            "use advisory-lock commands separately if needed."
+            "delete."
         ),
         "parameters": {
             "session_id": session_id_parameter(),
@@ -93,12 +92,19 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "during this call. Always present; 0 when force=false (links must "
                     "already be absent) or when force=true but there were no links."
                 ),
+                "released_advisory_lease_count": (
+                    "Count of advisory disk/DB lock releases for session_id during "
+                    "this call (``.lock`` sidecars + file_advisory_lock_leases). "
+                    "Always present; 0 when force=false (leases must already be absent) "
+                    "or when force=true but there were no leases."
+                ),
             },
             example={
                 "session_id": EXAMPLE_SESSION_ID,
                 "deleted": True,
                 "released_lock_count": 0,
                 "released_subordinate_count": 0,
+                "released_advisory_lease_count": 0,
             },
         ),
         "usage_examples": [
@@ -119,8 +125,9 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Force delete with open locks and subordinate sessions",
                 "command": {"session_id": EXAMPLE_SESSION_ID, "force": True},
                 "explanation": (
-                    "Deletes subordinate_sessions link rows and session_file_locks rows "
-                    "for session_id, then deletes the client_sessions row."
+                    "Deletes subordinate_sessions link rows, session_file_locks rows, "
+                    "and advisory ``.lock`` leases for session_id, then deletes the "
+                    "client_sessions row."
                 ),
             },
         ],
@@ -151,6 +158,21 @@ def get_session_delete_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "solution": (
                     "Remove links with subordinate_session_delete, inspect via "
                     "session_view, or retry with force=true to delete link rows."
+                ),
+            },
+            "SESSION_HAS_ADVISORY_LOCKS": {
+                "description": (
+                    "force is false (explicit or default) and "
+                    "file_advisory_lock_leases contains at least one row for "
+                    "session_id."
+                ),
+                "message": (
+                    "Session '<uuid>' has N advisory file lock lease(s). "
+                    "Use force=True to release them."
+                ),
+                "solution": (
+                    "Release leases via project_file_advisory_lock_batch, inspect "
+                    "via project_file_lock_status, or retry with force=true."
                 ),
             },
             "COMMAND_FORBIDDEN": command_forbidden_error(),

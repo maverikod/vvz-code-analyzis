@@ -133,17 +133,19 @@ class FileSessionClient:
             )
         return sid
 
+    async def validate_session(
+        self, session_id: str, *, touch: bool = False
+    ) -> Dict[str, Any]:
+        """Confirm ``session_id`` exists (``session_validate``)."""
+        sid = _require_non_empty(session_id, field="session_id")
+        params: Dict[str, Any] = {"session_id": sid}
+        if touch:
+            params["touch"] = True
+        return _unwrap(await self._client.call_validated("session_validate", params))
+
     async def assert_session_exists(self, session_id: str) -> None:
-        """Verify ``session_id`` is registered (touch via ``session_list_file_locks``)."""
-        sid = str(session_id).strip()
-        if not sid:
-            raise ClientValidationError("session_id is required", field="session_id")
-        _unwrap(
-            await self._client.call_validated(
-                "session_list_file_locks",
-                {"session_id": sid},
-            )
-        )
+        """Verify ``session_id`` is registered (``session_validate``)."""
+        await self.validate_session(session_id, touch=False)
 
     async def delete_session(
         self, session_id: str, *, force: bool = False
@@ -156,8 +158,8 @@ class FileSessionClient:
         subordinate server link rows and file locks for this session are removed
         before the session row is deleted.
 
-        Returns ``session_id``, ``deleted``, ``released_lock_count``, and
-        ``released_subordinate_count``.
+        Returns ``session_id``, ``deleted``, ``released_lock_count``,
+        ``released_subordinate_count``, and ``released_advisory_lease_count``.
         """
         params: Dict[str, Any] = {"session_id": session_id}
         if force:

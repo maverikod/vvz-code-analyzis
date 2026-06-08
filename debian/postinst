@@ -1,134 +1,135 @@
 #!/bin/bash
-# debian/postinst - post-installation script
+# debian/postinst — casuser, directories, venv, Docker postgres, DB init, systemd.
 
 set -e
 
-SERVICE_NAME="code-analysis-server"
-SERVICE_USER="code-analysis"
-SERVICE_GROUP="code-analysis"
-INSTALL_DIR="/usr/lib/code-analysis-server"
-CONFIG_DIR="/etc/code-analysis-server"
-DATA_DIR="/var/lib/code-analysis-server"
-LOG_DIR="/var/log/code-analysis-server"
-RUN_DIR="/var/run/code-analysis-server"
-VENV_DIR="${INSTALL_DIR}/.venv"
+CASMGR_USER="casuser"
+CASMGR_GROUP="casgrp"
+INSTALL_DIR="/usr/lib/casmgr-server"
+CONFIG_DIR="/etc/casmgr"
+DATA_DIR="/var/casmgr"
+LOG_DIR="/var/log/casmgr"
+SECRETS="${DATA_DIR}/secrets"
+CONFIG="${CONFIG_DIR}/config.json"
+BIN="/usr/lib/casmgr/bin"
 
-# Create system user if it doesn't exist
-if ! id "$SERVICE_USER" &>/dev/null; then
-    echo "Creating system user $SERVICE_USER..."
-    useradd --system --no-create-home --shell /bin/false \
-        --group "$SERVICE_GROUP" "$SERVICE_USER" 2>/dev/null || \
-    useradd --system --no-create-home --shell /bin/false "$SERVICE_USER" 2>/dev/null || true
-fi
-
-# Create directories
-echo "Creating directories..."
-mkdir -p "$DATA_DIR"
-mkdir -p "$LOG_DIR"
-mkdir -p "$RUN_DIR"
-
-# Set ownership
-chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
-chmod 750 "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
-
-# Create virtual environment if it doesn't exist
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating Python virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
-    
-    # Install package
-    echo "Installing code-analysis-server package..."
-    "$VENV_DIR/bin/pip" install "$INSTALL_DIR"
-    
-    # Install additional dependencies
-    if [ -f "$INSTALL_DIR/requirements.txt" ]; then
-        "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+create_user() {
+    if ! getent group "$CASMGR_GROUP" >/dev/null; then
+        addgroup --system "$CASMGR_GROUP"
     fi
-    
-    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$VENV_DIR"
-fi
+    if ! id "$CASMGR_USER" >/dev/null 2>&1; then
+        adduser --system --ingroup "$CASMGR_GROUP" --no-create-home --shell /usr/sbin/nologin "$CASMGR_USER"
+    fi
+}
 
-# Update configuration paths if config exists
-if [ -f "$CONFIG_DIR/config.json" ]; then
-    echo "Updating configuration paths..."
-    python3 <<EOF
-import json
-import os
+create_layout() {
+    install -d -m 0750 -o root -g "$CASMGR_GROUP" "$CONFIG_DIR" "${CONFIG_DIR}/postgres" "${CONFIG_DIR}/mtls"
+    install -d -m 0750 -o "$CASMGR_USER" -g "$CASMGR_GROUP" \
+        "$DATA_DIR" "$LOG_DIR" \
+        "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" \
+        "${LOG_DIR}/postgres" "${DATA_DIR}/versions" "$SECRETS"
+    if [[ ! -f "$CONFIG" && -f /usr/share/doc/casmgr-server/config.json.template ]]; then
+        cp /usr/share/doc/casmgr-server/config.json.template "$CONFIG"
+        chown root:"$CASMGR_GROUP" "$CONFIG"
+        chmod 0640 "$CONFIG"
+    fi
+    if [[ ! -f "${SECRETS}/.env" ]]; then
+        if [[ -f /usr/share/doc/casmgr-server/secrets.env.template ]]; then
+            cp /usr/share/doc/casmgr-server/secrets.env.template "${SECRETS}/.env"
+        fi
+        if grep -q CHANGE_ME "${SECRETS}/.env" 2>/dev/null; then
+            super_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
+            app_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
+            sed -i "s/CHANGE_ME_SUPER/${super_pw}/" "${SECRETS}/.env"
+            sed -i "s/CHANGE_ME_APP/${app_pw}/" "${SECRETS}/.env"
+            echo "Generated PostgreSQL passwords in ${SECRETS}/.env"
+        fi
+        chown "$CASMGR_USER:$CASMGR_GROUP" "${SECRETS}/.env"
+        chmod 0640 "${SECRETS}/.env"
+    fi
+    chown -R 999:999 "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" 2>/dev/null || true
+}
 
-config_path = "$CONFIG_DIR/config.json"
-try:
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-    
-    updated = False
-    
-    # Update database path
-    if 'code_analysis' in config:
-        if config['code_analysis'].get('db_path') != "$DATA_DIR/code_analysis.db":
-            config['code_analysis']['db_path'] = "$DATA_DIR/code_analysis.db"
-            updated = True
-        if 'faiss_index_path' in config['code_analysis']:
-            if config['code_analysis']['faiss_index_path'] != "$DATA_DIR/faiss_index.bin":
-                config['code_analysis']['faiss_index_path'] = "$DATA_DIR/faiss_index.bin"
-                updated = True
-        
-        # Update log paths
-        if 'log' in config['code_analysis']:
-            if config['code_analysis']['log'] != "$LOG_DIR/code_analysis.log":
-                config['code_analysis']['log'] = "$LOG_DIR/code_analysis.log"
-                updated = True
-        
-        # Update server log_dir
-        if 'server' in config:
-            if config['server'].get('log_dir') != "$LOG_DIR":
-                config['server']['log_dir'] = "$LOG_DIR"
-                updated = True
-        
-        # Update worker log paths
-        if 'worker' in config['code_analysis']:
-            if 'log_path' in config['code_analysis']['worker']:
-                if config['code_analysis']['worker']['log_path'] != "$LOG_DIR/vectorization_worker.log":
-                    config['code_analysis']['worker']['log_path'] = "$LOG_DIR/vectorization_worker.log"
-                    updated = True
-        
-        if 'file_watcher' in config['code_analysis']:
-            if 'log_path' in config['code_analysis']['file_watcher']:
-                if config['code_analysis']['file_watcher']['log_path'] != "$LOG_DIR/file_watcher.log":
-                    config['code_analysis']['file_watcher']['log_path'] = "$LOG_DIR/file_watcher.log"
-                    updated = True
-            if 'version_dir' in config['code_analysis']['file_watcher']:
-                if config['code_analysis']['file_watcher']['version_dir'] != "$DATA_DIR/versions":
-                    config['code_analysis']['file_watcher']['version_dir'] = "$DATA_DIR/versions"
-                    updated = True
-        
-        if updated:
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=2)
-            print("Configuration updated")
-except Exception as e:
-    print(f"Warning: Could not update configuration: {e}")
-EOF
-fi
+install_venv() {
+    if [[ ! -d "${INSTALL_DIR}/.venv" ]]; then
+        python3 -m venv "${INSTALL_DIR}/.venv"
+        "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
+    fi
+    if [[ -f "${INSTALL_DIR}/pyproject.toml" ]]; then
+        "${INSTALL_DIR}/.venv/bin/pip" install "${INSTALL_DIR}"
+    else
+        echo "ERROR: ${INSTALL_DIR}/pyproject.toml missing" >&2
+        exit 1
+    fi
+    chown -R "$CASMGR_USER:$CASMGR_GROUP" "${INSTALL_DIR}/.venv"
+}
 
-# Reload systemd and enable service
-systemctl daemon-reload
+setup_postgres() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "WARNING: docker not installed; skip PostgreSQL container setup." >&2
+        return 0
+    fi
+    "${BIN}/casmgr-postgres-container" pull
+    "${BIN}/casmgr-postgres-container" recreate
+    "${BIN}/casmgr-pg-init" || echo "WARNING: casmgr-pg-init failed; configure secrets and re-run." >&2
+}
 
-# Enable service (but don't start it automatically)
-if [ "$1" = "configure" ]; then
+config_ready_for_server() {
+    [[ -f "$CONFIG" ]] || return 1
+    if grep -qE 'CHANGE_ME|MCP_PROXY_HOST' "$CONFIG" 2>/dev/null; then
+        return 1
+    fi
+    local cert
+    for cert in server.crt server.key ca.crt client.crt client.key; do
+        [[ -f "${CONFIG_DIR}/mtls/${cert}" ]] || return 1
+    done
+    return 0
+}
+
+migrate_legacy_service() {
+    if systemctl list-unit-files code-analysis-server.service >/dev/null 2>&1; then
+        systemctl disable code-analysis-server.service 2>/dev/null || true
+        systemctl reset-failed code-analysis-server.service 2>/dev/null || true
+    fi
+    if [[ -d /usr/lib/code-analysis-server && ! -e /usr/lib/casmgr-server/.migrated-from-code-analysis-server ]]; then
+        echo "Note: legacy /usr/lib/code-analysis-server detected; casmgr-server uses /usr/lib/casmgr-server."
+    fi
+}
+
+if [[ "$1" == "configure" ]]; then
+    create_user
+    create_layout
+    install_venv
+    migrate_legacy_service
+    setup_postgres
+    if [[ -f /usr/share/casmgr/docker-image ]]; then
+        cp /usr/share/casmgr/docker-image "${DATA_DIR}/docker-image"
+        chown root:"$CASMGR_GROUP" "${DATA_DIR}/docker-image"
+        chmod 0640 "${DATA_DIR}/docker-image"
+    fi
+    systemctl daemon-reload
+    systemctl enable casmgr-postgres.service casmgr-server.service || true
+    if command -v docker >/dev/null 2>&1; then
+        systemctl start casmgr-postgres.service || true
+        sleep 2
+        "${BIN}/casmgr-pg-init" 2>/dev/null || true
+        if config_ready_for_server; then
+            systemctl start casmgr-server.service || true
+        else
+            echo ""
+            echo "casmgr-server NOT started: edit ${CONFIG}, install mTLS certs under"
+            echo "  ${CONFIG_DIR}/mtls/, then run:"
+            echo "  sudo systemctl start casmgr-server"
+            echo ""
+        fi
+    fi
     echo ""
-    echo "=========================================="
-    echo "code-analysis-server installed successfully!"
-    echo "=========================================="
-    echo ""
-    echo "Next steps:"
-    echo "1. Review configuration: $CONFIG_DIR/config.json"
-    echo "2. Configure watch directories in the config file"
-    echo "3. Copy SSL certificates if using mTLS: $CONFIG_DIR/mtls_certificates/"
-    echo "4. Start service: systemctl start $SERVICE_NAME"
-    echo "5. Enable auto-start: systemctl enable $SERVICE_NAME"
+    echo "casmgr-server installed."
+    echo "  Config:  ${CONFIG}"
+    echo "  Secrets: ${SECRETS}/.env"
+    echo "  Logs:    ${LOG_DIR}"
+    echo "  Docs:    man casmgr-server   info casmgr-server"
     echo ""
 fi
 
 exit 0
-

@@ -22,6 +22,9 @@ from code_analysis.commands.sessions.session_close_file_command import (
     SessionCloseFileCommand,
 )
 from code_analysis.commands.sessions.session_create_command import SessionCreateCommand
+from code_analysis.commands.sessions.session_validate_command import (
+    SessionValidateCommand,
+)
 from code_analysis.commands.sessions.session_delete_command import SessionDeleteCommand
 from code_analysis.commands.sessions.session_list_command import SessionListCommand
 from code_analysis.commands.sessions.session_list_file_locks_command import (
@@ -33,6 +36,7 @@ from code_analysis.commands.sessions.session_open_file_command import (
 
 _SESSION_COMMANDS = (
     ("session_create", SessionCreateCommand),
+    ("session_validate", SessionValidateCommand),
     ("session_delete", SessionDeleteCommand),
     ("session_list", SessionListCommand),
     ("session_open_file", SessionOpenFileCommand),
@@ -120,6 +124,73 @@ async def test_session_list_session_id_required_when_show_ids_true() -> None:
     assert isinstance(result, ErrorResult)
     assert result.code == "SESSION_ID_REQUIRED"
     mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_validate_execute_returns_valid_flag() -> None:
+    row = {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "comment": "test",
+        "created_at": 1.0,
+        "last_active_at": 1.0,
+        "valid": True,
+    }
+    mock_db = MagicMock()
+    config = {
+        "registration": {"instance_uuid": "880e8400-e29b-41d4-a716-446655440003"},
+        "security": {"policy": "disabled"},
+    }
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(BaseMCPCommand, "_get_raw_config", return_value=config),
+        patch(
+            "code_analysis.commands.sessions.session_validate_command.validate_client_session",
+            return_value=row,
+        ) as validate_fn,
+        patch(
+            "code_analysis.commands.sessions.session_validate_command.enforce_security_policy",
+            return_value=None,
+        ),
+    ):
+        cmd = SessionValidateCommand()
+        result = await cmd.execute(session_id=row["session_id"], touch=True)
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["valid"] is True
+    validate_fn.assert_called_once_with(mock_db, row["session_id"], touch=True)
+
+
+@pytest.mark.asyncio
+async def test_session_validate_not_found() -> None:
+    mock_db = MagicMock()
+    config = {
+        "registration": {"instance_uuid": "880e8400-e29b-41d4-a716-446655440003"},
+        "security": {"policy": "disabled"},
+    }
+    sid = "11111111-1111-4111-8111-111111111111"
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(BaseMCPCommand, "_get_raw_config", return_value=config),
+        patch(
+            "code_analysis.commands.sessions.session_validate_command.validate_client_session",
+            side_effect=__import__(
+                "code_analysis.core.client_sessions", fromlist=["SessionNotFoundError"]
+            ).SessionNotFoundError(sid),
+        ),
+    ):
+        cmd = SessionValidateCommand()
+        result = await cmd.execute(session_id=sid)
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "SESSION_NOT_FOUND"
 
 
 def test_session_delete_schema_and_metadata_force_default_aligned() -> None:

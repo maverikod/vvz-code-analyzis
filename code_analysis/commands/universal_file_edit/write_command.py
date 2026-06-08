@@ -101,6 +101,13 @@ class UniversalFileWriteCommand(BaseMCPCommand):
             "properties": {
                 "project_id": {"type": "string"},
                 "session_id": {"type": "string"},
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Project-relative path when the session holds multiple files. "
+                        "Optional when the session has a single open file."
+                    ),
+                },
                 "write_mode": {
                     "type": "string",
                     "enum": ["preview", "commit"],
@@ -149,6 +156,7 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         session_id: str,
         write_mode: str = "preview",
         write_mode_explicit: bool = False,
+        file_path: str = "",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute the write command.
@@ -168,8 +176,16 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         """
         _ = kwargs
         try:
-            session = get_session(session_id)
-        except ValueError:
+            session = get_session(session_id, file_path=file_path or None)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "SESSION_FILE_PATH_REQUIRED":
+                return error_result_from_make_error(
+                    make_error(
+                        SESSION_NOT_FOUND,
+                        "file_path is required when the session has multiple open files",
+                    )
+                )
             return error_result_from_make_error(
                 make_error(SESSION_NOT_FOUND, f"Unknown session: {session_id}")
             )

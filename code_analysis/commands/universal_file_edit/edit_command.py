@@ -89,6 +89,13 @@ class UniversalFileEditCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Active session UUID returned by universal_file_open.",
                 },
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Project-relative path when the session holds multiple files. "
+                        "Optional when the session has a single open file."
+                    ),
+                },
                 "operations": {
                     "type": "array",
                     "description": (
@@ -121,6 +128,7 @@ class UniversalFileEditCommand(BaseMCPCommand):
         project_id: str,
         session_id: str,
         operations: List[Dict[str, Any]],
+        file_path: str = "",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute the edit command.
@@ -136,8 +144,16 @@ class UniversalFileEditCommand(BaseMCPCommand):
         """
         del project_id, kwargs
         try:
-            session = get_session(session_id)
-        except ValueError:
+            session = get_session(session_id, file_path=file_path or None)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "SESSION_FILE_PATH_REQUIRED":
+                return error_result_from_make_error(
+                    make_error(
+                        SESSION_NOT_FOUND,
+                        "file_path is required when the session has multiple open files",
+                    )
+                )
             return error_result_from_make_error(
                 make_error(SESSION_NOT_FOUND, f"Unknown session: {session_id}")
             )

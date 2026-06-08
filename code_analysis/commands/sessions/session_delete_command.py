@@ -17,6 +17,7 @@ from code_analysis.commands.sessions.session_delete_command_metadata import (
     get_session_delete_metadata,
 )
 from code_analysis.core.client_sessions import (
+    SessionHasAdvisoryLocksError,
     SessionHasLocksError,
     SessionHasSubordinatesError,
     SessionNotFoundError,
@@ -128,6 +129,8 @@ class SessionDeleteCommand(BaseMCPCommand):
             return ErrorResult(code="SESSION_HAS_LOCKS", message=str(e))
         except SessionHasSubordinatesError as e:
             return ErrorResult(code="SESSION_HAS_SUBORDINATES", message=str(e))
+        except SessionHasAdvisoryLocksError as e:
+            return ErrorResult(code="SESSION_HAS_ADVISORY_LOCKS", message=str(e))
         return SuccessResult(data=result)
 
     @classmethod

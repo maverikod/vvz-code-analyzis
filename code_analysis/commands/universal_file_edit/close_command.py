@@ -79,6 +79,13 @@ class UniversalFileCloseCommand(BaseMCPCommand):
             "properties": {
                 "project_id": {"type": "string"},
                 "session_id": {"type": "string"},
+                "file_path": {
+                    "type": "string",
+                    "description": (
+                        "Project-relative path when the session holds multiple files. "
+                        "Optional when the session has a single open file."
+                    ),
+                },
             },
             "required": ["project_id", "session_id"],
             "additionalProperties": False,
@@ -97,6 +104,7 @@ class UniversalFileCloseCommand(BaseMCPCommand):
         self,
         project_id: str,
         session_id: str,
+        file_path: str = "",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute the close command.
@@ -112,8 +120,19 @@ class UniversalFileCloseCommand(BaseMCPCommand):
         _ = project_id  # required by schema; session record is authoritative for paths
         _ = kwargs
         try:
-            session = get_session(session_id)
-        except ValueError:
+            session = get_session(
+                session_id,
+                file_path=file_path or None,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "SESSION_FILE_PATH_REQUIRED":
+                return error_result_from_make_error(
+                    make_error(
+                        SESSION_NOT_FOUND,
+                        "file_path is required when the session has multiple open files",
+                    )
+                )
             return error_result_from_make_error(
                 make_error(SESSION_NOT_FOUND, f"Unknown session: {session_id}")
             )
@@ -128,7 +147,7 @@ class UniversalFileCloseCommand(BaseMCPCommand):
         if lock is None or lock[1] == session.session_id:
             delete_lockfile(session.abs_path)
         session.core.close()
-        release_session(session_id)
+        release_session(session_id, session.file_path)
         return SuccessResult(data=payload)
 
     def _close_sidecar(self, session: EditSession) -> Dict[str, Any]:

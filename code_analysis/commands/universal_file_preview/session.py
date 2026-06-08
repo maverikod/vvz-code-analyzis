@@ -63,8 +63,12 @@ def merge_edit_session_into_preview_params(
     )
     from code_analysis.commands.universal_file_edit.session import get_session
 
+    rel_path = params.get("file_path")
     try:
-        edit_sess = get_session(session_id)
+        edit_sess = get_session(
+            session_id,
+            file_path=str(rel_path) if rel_path is not None else None,
+        )
     except ValueError:
         return input_error(
             INPUT_ERROR_CONFLICTING_PARAMETERS,
@@ -72,7 +76,6 @@ def merge_edit_session_into_preview_params(
             details={"session_id": session_id},
         )
 
-    rel_path = params.get("file_path")
     if rel_path is not None and Path(edit_sess.file_path) != Path(rel_path):
         return input_error(
             INPUT_ERROR_CONFLICTING_PARAMETERS,

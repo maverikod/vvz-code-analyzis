@@ -18,6 +18,7 @@ from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.exceptions import ValidationError
 from code_analysis.commands.universal_file_edit.errors import (
     PARSE_ERROR,
+    SESSION_NOT_FOUND,
     UNKNOWN_FORMAT,
     error_result_from_make_error,
     make_error,
@@ -187,6 +188,14 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                         "For other text formats: written as-is when non-empty, else empty."
                     ),
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional existing universal_file_open group session id. "
+                        "When set, opens an additional file in the same session "
+                        "(multiple files per session). Omit on the first open."
+                    ),
+                },
             },
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
@@ -224,6 +233,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
         file_path: str,
         create: bool = False,
         initial_content: str = "",
+        session_id: str = "",
         **kwargs: Any,
     ) -> Union[SuccessResult, ErrorResult]:
         """Execute the open command.
@@ -234,6 +244,7 @@ class UniversalFileOpenCommand(BaseMCPCommand):
             create: When True, create the file if it does not exist.
             initial_content: Initial source when create=True (.py required; also used
                 for .json/.yaml and other text extensions per suffix rules).
+            session_id: Optional group session id from a prior universal_file_open.
             **kwargs: Unused; accepted for adapter compatibility.
 
         Returns:
@@ -249,9 +260,10 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 make_error(UNKNOWN_FORMAT, f"Cannot resolve path: {file_path}")
             )
 
+        caller_session_id = str(session_id or "").strip()
         # Check lock before any file operations.
         if abs_path.exists():
-            lock_owner = check_lock(abs_path, "")
+            lock_owner = check_lock(abs_path, caller_session_id)
             if lock_owner:
                 return error_result_from_make_error(
                     make_error(PARSE_ERROR, f"File is locked by session {lock_owner}")
@@ -309,31 +321,52 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 "original_format_group"
             ]
         project_root = Path(BaseMCPCommand._resolve_project_root(project_id)).resolve()
-        if tree_temp_kwargs is not None:
-            session = create_session(
-                abs_path=abs_path,
-                descriptor=descriptor,
-                file_path=file_path,
-                project_root=project_root,
-                **tree_temp_kwargs,
-                **session_extra,
-            )
-            roots = session.tree_temp_roots
-            if roots is not None:
-                draft_text = serialize_tree_temp_roots(
-                    session.handler_id,
-                    roots,
+        group_kw = {"group_session_id": caller_session_id} if caller_session_id else {}
+        try:
+            if tree_temp_kwargs is not None:
+                session = create_session(
+                    abs_path=abs_path,
+                    descriptor=descriptor,
+                    file_path=file_path,
+                    project_root=project_root,
+                    **tree_temp_kwargs,
+                    **session_extra,
+                    **group_kw,
                 )
-                apply_source_mutation(session, draft_text)
-        else:
-            session = create_session(
-                abs_path=abs_path,
-                descriptor=descriptor,
-                file_path=file_path,
-                project_root=project_root,
-                tree_id=tree_id,
-                **session_extra,
-            )
+                roots = session.tree_temp_roots
+                if roots is not None:
+                    draft_text = serialize_tree_temp_roots(
+                        session.handler_id,
+                        roots,
+                    )
+                    apply_source_mutation(session, draft_text)
+            else:
+                session = create_session(
+                    abs_path=abs_path,
+                    descriptor=descriptor,
+                    file_path=file_path,
+                    project_root=project_root,
+                    tree_id=tree_id,
+                    **session_extra,
+                    **group_kw,
+                )
+        except ValueError as exc:
+            code = str(exc)
+            if code == "SESSION_NOT_FOUND":
+                return error_result_from_make_error(
+                    make_error(
+                        SESSION_NOT_FOUND,
+                        f"Unknown session: {caller_session_id}",
+                    )
+                )
+            if code == "FILE_ALREADY_IN_SESSION":
+                return error_result_from_make_error(
+                    make_error(
+                        PARSE_ERROR,
+                        f"File already open in session {caller_session_id}: {file_path}",
+                    )
+                )
+            raise
         write_lockfile_pid(abs_path, os.getpid(), session.session_id)
         data: Dict[str, Any] = {
             "success": True,

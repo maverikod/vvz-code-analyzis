@@ -1,10 +1,20 @@
 """
 Canonical command names for the high-level client API vs the live server registry.
 
-The generic client (:class:`CodeAnalysisAsyncClient.call`) can invoke any command
-returned by server ``help``. Facade modules (:mod:`file_session`, :mod:`universal_file`)
-must only reference commands listed here — and every name in
-:data:`CLIENT_FACADE_COMMANDS` must be registered on the server.
+**code-analysis-server** owns project trees, the index database, sessions, locks,
+and editor ingress (chunked transfer). It does **not** expose in-server content
+editing (``universal_file_open/edit/write/close``, CST/JSON tree modify/save,
+``format_code``, legacy line writers).
+
+**File content on CA** — read-only surface only:
+
+- :data:`FILE_CONTENT_READ_COMMANDS` — preview and search (including on-disk
+  grep for files not yet indexed).
+- :data:`FS_COMMANDS` — filesystem operations (copy/move/remove/list/grep); not
+  the structured edit workflow.
+
+Editor clients use :data:`CLIENT_FACADE_COMMANDS` (sessions, transfer, locks,
+``universal_file_preview`` / ``universal_file_search``).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -28,7 +38,7 @@ LEGACY_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
     }
 )
 
-# CST tree MCP workflow — modules may exist in the repo but commands are not registered.
+# CST / JSON tree MCP workflow — modules may exist in the repo but are not registered.
 CST_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
     {
         "cst_load_file",
@@ -41,16 +51,88 @@ CST_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
         "cst_get_node_at_line",
         "cst_reload_tree",
         "cst_convert_and_save",
+        "cst_apply_buffer",
+        "cst_list_trees",
+        "cst_unload_tree",
         "list_cst_blocks",
         "query_cst",
+        "json_load_file",
+        "json_find_node",
+        "json_get_node_info",
+        "json_modify_tree",
+        "json_save_tree",
+        "json_reload_tree",
     }
 )
 
-REMOVED_COMMANDS: FrozenSet[str] = LEGACY_REMOVED_COMMANDS | CST_REMOVED_COMMANDS
+# Content editing on ai-editor-server only (not on code-analysis-server).
+EDITING_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
+    {
+        "universal_file_open",
+        "universal_file_edit",
+        "universal_file_write",
+        "universal_file_close",
+        "universal_file_move_nodes",
+        "session_git_log",
+        "session_git_diff",
+        "session_git_show",
+        "session_git_status",
+        "session_git_revert",
+        "session_undo",
+        "session_redo",
+        "session_write",
+        "delete_file",
+        "delete_files_by_mask",
+        "restore_deleted_files",
+        "unmark_deleted_file",
+        "cleanup_deleted_files",
+        "collapse_versions",
+        "restore_backup_file",
+        "delete_backup",
+        "clear_all_backups",
+        "split_class",
+        "extract_superclass",
+        "split_file_to_package",
+        "format_code",
+    }
+)
 
+REMOVED_COMMANDS: FrozenSet[str] = (
+    LEGACY_REMOVED_COMMANDS | CST_REMOVED_COMMANDS | EDITING_REMOVED_COMMANDS
+)
+
+# Read-only file **content** on CA (no mutate/edit workflow). Includes on-disk search
+# (``fs_grep``, paginated ``search_*``) for paths not yet in the index.
+FILE_CONTENT_READ_COMMANDS: FrozenSet[str] = frozenset(
+    {
+        "universal_file_preview",
+        "universal_file_search",
+        "get_file_lines",
+        "fs_grep",
+        "search_start",
+        "search_get_page",
+        "search_get_status",
+        "search_cancel",
+        "search_close",
+    }
+)
+
+# Filesystem helpers — separate from structured content editing; may touch paths/bytes
+# via copy/move/remove but are not universal_file_edit / CST / format_code.
+FS_COMMANDS: FrozenSet[str] = frozenset(
+    {
+        "fs_copy",
+        "fs_move",
+        "fs_remove",
+        "fs_list_projects",
+    }
+)
+
+# Client sessions + DB file locks — persisted on this server for editor/terminal clients.
 FILE_SESSION_COMMANDS: FrozenSet[str] = frozenset(
     {
         "session_create",
+        "session_validate",
         "session_delete",
         "session_list",
         "session_view",
@@ -75,11 +157,8 @@ TRANSFER_AND_LOCK_COMMANDS: FrozenSet[str] = frozenset(
 
 UNIVERSAL_FILE_COMMANDS: FrozenSet[str] = frozenset(
     {
-        "universal_file_open",
-        "universal_file_edit",
-        "universal_file_write",
-        "universal_file_close",
         "universal_file_preview",
+        "universal_file_search",
     }
 )
 
@@ -91,6 +170,7 @@ CLIENT_FACADE_COMMANDS: FrozenSet[str] = (
 # ``session_list_file_locks`` is also used by ``assert_session_exists``.
 FILE_SESSION_FACADE_METHODS: Dict[str, str] = {
     "session_create": "create_session",
+    "session_validate": "validate_session",
     "session_delete": "delete_session",
     "session_list": "list_sessions",
     "session_view": "view_session",
@@ -181,3 +261,27 @@ def assert_removed_commands_absent(get_command: Callable[[str], object]) -> None
     ]
     if present:
         raise AssertionError(f"Removed commands still registered: {present}")
+
+
+def assert_file_content_read_commands_registered(
+    get_command: Callable[[str], object],
+) -> None:
+    """Raise ``KeyError`` if a read-only content command is missing from the registry."""
+    missing = [
+        name
+        for name in sorted(FILE_CONTENT_READ_COMMANDS)
+        if not _command_registered(get_command, name)
+    ]
+    if missing:
+        raise KeyError(f"File content read commands not registered: {missing}")
+
+
+def assert_fs_commands_registered(get_command: Callable[[str], object]) -> None:
+    """Raise ``KeyError`` if a filesystem helper command is missing from the registry."""
+    missing = [
+        name
+        for name in sorted(FS_COMMANDS)
+        if not _command_registered(get_command, name)
+    ]
+    if missing:
+        raise KeyError(f"Filesystem commands not registered: {missing}")

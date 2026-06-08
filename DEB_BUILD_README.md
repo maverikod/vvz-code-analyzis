@@ -1,49 +1,71 @@
-# Building and Installing Debian Package
+# Building and Installing casmgr-server (Debian + Docker)
 
-## Quick Start
-
-### Build Package
+## One command after git clone
 
 ```bash
-./scripts/build_deb.sh
+git clone https://github.com/vasilyvz/code_analysis.git
+cd code_analysis
+./build.sh
 ```
 
-### Install Package
+The script installs missing build packages via `sudo apt-get`, reads the version from
+`pyproject.toml`, and writes `../casmgr-server_<version>-1_all.deb`.
+
+Install the package:
 
 ```bash
-sudo dpkg -i ../code-analysis-server_*.deb
-sudo apt-get install -f  # Fix dependencies if needed
+sudo dpkg -i ../casmgr-server_*.deb
+sudo apt-get install -f
 ```
 
-## Prerequisites
+## Full release (Docker + deb)
+
+Builds Docker image, pushes to Hub, and creates a Debian package with the **same version tag**:
 
 ```bash
-sudo apt-get install -y devscripts debhelper dh-python python3-all python3-setuptools
+./scripts/release_build.sh
+# explicit version:
+./scripts/release_build.sh 1.0.7
 ```
 
-## Package Structure
+Environment:
 
-- **debian/control** - Package metadata
-- **debian/rules** - Build rules
-- **debian/preinst** - Pre-installation script
-- **debian/postinst** - Post-installation script (creates user, directories, venv)
-- **debian/prerm** - Pre-removal script (stops service)
-- **debian/postrm** - Post-removal script
-- **debian/changelog** - Version history
-- **debian/copyright** - License information
+- `CASMGR_DOCKER_REGISTRY` — default `vasilyvz`
+- `CASMGR_DOCKER_IMAGE_NAME` — default `casmgr-postgres`
 
-## What Gets Installed
+## Options
 
-- Application: `/usr/lib/code-analysis-server/`
-- Config: `/etc/code-analysis-server/`
-- Data: `/var/lib/code-analysis-server/`
-- Logs: `/var/log/code-analysis-server/`
-- Service: `code-analysis-server.service`
+| Command | Effect |
+|---------|--------|
+| `./build.sh` | deb only, version from `pyproject.toml` |
+| `./scripts/release_build.sh --deb-only` | same as `./build.sh` |
+| `./scripts/release_build.sh` | Docker build/push + deb |
+| `./scripts/release_build.sh --skip-deps` | do not run `apt-get` (CI) |
 
-## After Installation
+Disable auto-install:
 
-1. Configure: `sudo nano /etc/code-analysis-server/config.json`
-2. Start: `sudo systemctl start code-analysis-server`
-3. Enable: `sudo systemctl enable code-analysis-server`
+```bash
+CASMGR_SKIP_BUILD_DEPS=1 ./build.sh
+```
 
-See `docs/DEB_PACKAGE.md` for detailed documentation.
+Packages installed when needed:
+
+- **Python:** `python3`, `python3-venv`, `python3-pip` (functional venv/pip test)
+- **Runtime:** `openssl`, `ca-certificates`, `adduser`, `rsync`, `postgresql-client`
+- **Deb build:** `devscripts`, `debhelper`, `texinfo`
+- **Docker release:** `docker.io`
+
+Pip dependencies from `pyproject.toml` are installed into the app venv at `postinst`, not at build time.
+
+## Documentation
+
+- `docs/CASMGR_DEPLOYMENT.md`
+- `man casmgr-server`
+- `info casmgr-server`
+
+## Package contents
+
+- **casmgr-server.service** — MCP daemon (`casuser`)
+- **casmgr-postgres.service** — PostgreSQL Docker container
+- **Admin scripts** in `/usr/lib/casmgr/bin/`
+- **Pinned image** in `/usr/share/casmgr/docker-image`

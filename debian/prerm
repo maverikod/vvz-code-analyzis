@@ -1,20 +1,28 @@
 #!/bin/bash
-# debian/prerm - pre-removal script
+# debian/prerm — stop services; remove PostgreSQL container on package remove.
 
 set -e
 
-SERVICE_NAME="code-analysis-server"
+BIN="/usr/lib/casmgr/bin"
 
-# Stop service before removal
-if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo "Stopping $SERVICE_NAME service..."
-    systemctl stop "$SERVICE_NAME" || true
-fi
+stop_unit() {
+    local svc="$1"
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        systemctl stop "$svc" || true
+    fi
+    if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+        systemctl disable "$svc" || true
+    fi
+}
 
-# Disable service
-if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-    systemctl disable "$SERVICE_NAME" || true
-fi
+case "$1" in
+    remove|upgrade|deconfigure)
+        stop_unit casmgr-server
+        stop_unit casmgr-postgres
+        if [[ -x "${BIN}/casmgr-postgres-container" ]]; then
+            "${BIN}/casmgr-postgres-container" remove || true
+        fi
+        ;;
+esac
 
 exit 0
-

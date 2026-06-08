@@ -8,6 +8,8 @@ import pytest_asyncio
 import code_analysis.hooks  # noqa: F401
 from code_analysis_client.server_api import (
     assert_facade_commands_registered,
+    assert_file_content_read_commands_registered,
+    assert_fs_commands_registered,
     assert_removed_commands_absent,
 )
 from mcp_proxy_adapter.commands.command_registry import registry
@@ -25,3 +27,11 @@ def test_client_facade_commands_registered_on_server() -> None:
 
 def test_removed_commands_absent_from_server() -> None:
     assert_removed_commands_absent(registry.get_command)
+
+
+def test_file_content_read_commands_registered_on_server() -> None:
+    assert_file_content_read_commands_registered(registry.get_command)
+
+
+def test_fs_commands_registered_on_server() -> None:
+    assert_fs_commands_registered(registry.get_command)

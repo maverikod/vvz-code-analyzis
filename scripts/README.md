@@ -6,14 +6,14 @@
 ## Project root and `casmgr`
 
 Run project scripts from the repository root (where `config.json` lives).
-The `casmgr` launcher (`scripts/casmgr`, installed into `.venv/bin` on `pip install -e .`)
-sets `cwd` to that root and uses project-relative paths (`config.json`, `./logs`, …).
+Launchers under `scripts/` (`casmgr`, `casmgr-config`, …) resolve the repo root,
+create `.venv` on first run if needed, and install dependencies from `pyproject.toml`
+automatically.
 
 ```bash
 cd /path/to/code_analysis
 ./scripts/casmgr status
-# or after pip install -e .
-casmgr --config config.json start
+./scripts/casmgr-config-validate --file config.json
 ```
 
 ## Quick Start

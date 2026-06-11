@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
+from .config_json import ConfigJSONDecodeError, load_config_json
+
 from .config_models import ProjectDir, SVOServiceConfig
 from .config_server import ServerConfig
 from .constants import (
@@ -149,8 +151,7 @@ def validate_config(
         if not config_path.exists():
             return False, f"Configuration file not found: {config_path}", None
 
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = json.load(f)
+        config_data = load_config_json(config_path)
 
         config = ServerConfig(**config_data)
 
@@ -175,7 +176,7 @@ def validate_config(
 
         return True, None, config
 
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, ConfigJSONDecodeError) as e:
         return False, f"Invalid JSON: {str(e)}", None
     except ValueError as e:
         return False, f"Validation error: {str(e)}", None

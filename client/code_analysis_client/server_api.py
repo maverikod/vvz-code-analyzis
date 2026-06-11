@@ -124,7 +124,6 @@ FS_COMMANDS: FrozenSet[str] = frozenset(
         "fs_copy",
         "fs_move",
         "fs_remove",
-        "fs_list_projects",
     }
 )
 

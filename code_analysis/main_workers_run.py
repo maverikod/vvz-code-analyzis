@@ -12,6 +12,7 @@ import sys
 from typing import Any
 
 from code_analysis.core.constants import DEFAULT_WORKER_MONITOR_INTERVAL
+from code_analysis.core.config_state import is_config_valid
 from code_analysis.main_workers import (
     startup_database_driver,
     startup_file_watcher_worker,
@@ -29,6 +30,23 @@ def run_workers_directly_and_start_monitoring(worker_manager: Any) -> None:
     logger = logging.getLogger(__name__)
     logger.info("🚀 Starting workers directly before server start...")
     print("🚀 Starting workers directly before server start...", flush=True)
+
+    if not is_config_valid():
+        logger.error(
+            "Skipping worker startup: configuration is invalid "
+            "(fix config.json; only help and health are available)"
+        )
+        print(
+            "⚠️  Workers not started: configuration is invalid. "
+            "Fix config.json and restart, or wait for file watcher reload after fix.",
+            flush=True,
+        )
+        try:
+            worker_manager.start_monitoring(interval=DEFAULT_WORKER_MONITOR_INTERVAL)
+            logger.info("✅ Worker monitoring started (after workers)")
+        except Exception as e:
+            logger.error(f"❌ Failed to start worker monitoring: {e}", exc_info=True)
+        return
 
     try:
         try:
@@ -82,8 +100,12 @@ def run_workers_directly_and_start_monitoring(worker_manager: Any) -> None:
 
         try:
             logger.info("🚀 Starting file watcher worker...")
-            startup_file_watcher_worker()
-            logger.info("✅ File watcher worker started successfully")
+            if startup_file_watcher_worker():
+                logger.info("✅ File watcher worker started successfully")
+            else:
+                logger.warning(
+                    "⚠️  File watcher worker was not started (disabled, missing config, or already running)"
+                )
         except Exception as e:
             logger.error(
                 f"❌ Failed to start file watcher worker: {e}",

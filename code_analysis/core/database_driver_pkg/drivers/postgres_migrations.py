@@ -36,6 +36,85 @@ def _rollback_conn(conn: Any) -> None:
         pass
 
 
+def _postgres_table_exists(conn: Any, table_name: str) -> bool:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = %s
+                LIMIT 1
+                """,
+                (table_name,),
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        _rollback_conn(conn)
+        return False
+
+
+def _postgres_primary_key_column_names(conn: Any, table_name: str) -> List[str]:
+    """Return ordered PK column names for a PostgreSQL table, or [] if none."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT a.attname
+                FROM pg_constraint c
+                JOIN pg_class t ON c.conrelid = t.oid
+                JOIN pg_namespace n ON t.relnamespace = n.oid
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+                WHERE c.contype = 'p'
+                  AND t.relname = %s
+                  AND n.nspname = current_schema()
+                ORDER BY array_position(c.conkey, a.attnum)
+                """,
+                (table_name,),
+            )
+            return [str(row[0]) for row in cur.fetchall()]
+    except Exception:
+        _rollback_conn(conn)
+        return []
+
+
+def _watch_dirs_has_composite_pk(conn: Any) -> bool:
+    return _postgres_primary_key_column_names(conn, "watch_dirs") == [
+        "server_instance_id",
+        "id",
+    ]
+
+
+def _drop_empty_broken_watch_dirs_if_needed(conn: Any) -> None:
+    """
+    Drop empty legacy ``watch_dirs`` when PK does not match current schema.
+
+    Handles a failed in-place PK migration (DROP committed, ADD not). Safe only
+    when ``watch_dirs`` has no rows.
+    """
+    if not _postgres_table_exists(conn, "watch_dirs"):
+        return
+    if _watch_dirs_has_composite_pk(conn):
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*)::bigint FROM watch_dirs")
+            row_count = int(cur.fetchone()[0])
+        if row_count != 0:
+            return
+        logger.warning(
+            "watch_dirs PK=%s with 0 rows; dropping for schema recreate",
+            _postgres_primary_key_column_names(conn, "watch_dirs") or None,
+        )
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS watch_dir_paths CASCADE")
+            cur.execute("DROP TABLE IF EXISTS watch_dirs CASCADE")
+        conn.commit()
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning("watch_dirs cleanup skipped: %s", exc)
+
+
 def _ensure_missing_column(
     conn: Any,
     *,
@@ -314,6 +393,8 @@ def ensure_postgres_schema(
                 (_SCHEMA_ENSURE_LOCK_KEY1, _SCHEMA_ENSURE_LOCK_KEY2),
             )
         locked = True
+        _rollback_conn(conn)
+        _drop_empty_broken_watch_dirs_if_needed(conn)
         create_postgresql_schema(conn, schema_definition)
         # Explicit idempotent pass for runtime lock tables and indexes.
         idempotent_ensure_runtime_lock_tables(conn, schema_definition)
@@ -342,13 +423,21 @@ def ensure_postgres_schema(
             conn, PostgreSQLSchemaManager(conn)
         )
         _ensure_projects_root_path_migrations(conn, PostgreSQLSchemaManager(conn))
+        conn.commit()
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning("PostgreSQL schema ensure failed: %s", exc, exc_info=True)
+        raise
     finally:
         if locked:
             try:
+                _rollback_conn(conn)
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT pg_advisory_unlock(%s, %s)",
                         (_SCHEMA_ENSURE_LOCK_KEY1, _SCHEMA_ENSURE_LOCK_KEY2),
                     )
+                conn.commit()
             except Exception as exc:
+                _rollback_conn(conn)
                 logger.warning("pg_advisory_unlock failed (non-fatal): %s", exc)

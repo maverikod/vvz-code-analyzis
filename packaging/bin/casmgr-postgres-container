@@ -1,0 +1,113 @@
+#!/bin/bash
+# Manage the casmgr-postgres Docker container (pull, recreate, start, stop, remove).
+#
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+
+set -euo pipefail
+
+_script="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    _script="$(readlink -f "$_script" 2>/dev/null || readlink "$_script" 2>/dev/null || echo "$_script")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$_script")" && pwd)"
+# shellcheck source=casmgr-pg-common.sh
+source "${SCRIPT_DIR}/casmgr-pg-common.sh"
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") <command>
+
+Commands:
+  pull       Download the Docker image recorded in ${CASMGR_DOCKER_IMAGE_FILE}
+  recreate   Remove any existing container and create a new one with host mounts
+  start      Start the container (create via recreate if missing)
+  stop       Stop the container
+  remove     Stop and remove the container (keeps the image)
+  status     Print container state
+
+Host mounts:
+  ${CASMGR_PG_DATA} -> /var/lib/postgresql/data
+  ${CASMGR_PG_CACHE} -> /var/lib/postgresql/cache
+  ${CASMGR_PG_LOG} -> /var/log/postgresql
+  ${CASMGR_PG_ETC} -> /etc/casmgr/postgres (read-only)
+  ${CASMGR_ETC} -> /etc/casmgr (read-only)
+
+EOF
+}
+
+casmgr_pg_uid_gid() {
+    # Official postgres image runs as uid 999 inside the container.
+    echo "999:999"
+}
+
+cmd_pull() {
+    local image
+    image="$(casmgr_docker_image_ref)"
+    echo "Pulling ${image} ..."
+    docker pull "$image"
+}
+
+cmd_recreate() {
+    local image port uid_gid
+    image="$(casmgr_docker_image_ref)"
+    port="$(casmgr_pg_host_port)"
+    uid_gid="$(casmgr_pg_uid_gid)"
+    casmgr_ensure_pg_directories
+    if [[ "$(id -un)" == "root" ]]; then
+        chown -R "$uid_gid" "$CASMGR_PG_DATA" "$CASMGR_PG_CACHE"
+    fi
+    docker rm -f "$CASMGR_PG_CONTAINER" 2>/dev/null || true
+    casmgr_load_secrets_env
+    docker run -d \
+        --name "$CASMGR_PG_CONTAINER" \
+        --restart unless-stopped \
+        -p "127.0.0.1:${port}:5432" \
+        -v "${CASMGR_PG_DATA}:/var/lib/postgresql/data" \
+        -v "${CASMGR_PG_CACHE}:/var/lib/postgresql/cache" \
+        -v "${CASMGR_PG_LOG}:/var/log/postgresql" \
+        -v "${CASMGR_PG_ETC}:/etc/casmgr/postgres:ro" \
+        -v "${CASMGR_ETC}:/etc/casmgr:ro" \
+        -e POSTGRES_PASSWORD="${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in ${CASMGR_SECRETS}/.env}" \
+        -e POSTGRES_DB="${POSTGRES_DB:-code_analysis}" \
+        "$image"
+    echo "Created container ${CASMGR_PG_CONTAINER} from ${image}"
+}
+
+cmd_start() {
+    if docker inspect "$CASMGR_PG_CONTAINER" >/dev/null 2>&1; then
+        docker start "$CASMGR_PG_CONTAINER"
+    else
+        cmd_recreate
+    fi
+}
+
+cmd_stop() {
+    docker stop "$CASMGR_PG_CONTAINER" 2>/dev/null || true
+}
+
+cmd_remove() {
+    docker rm -f "$CASMGR_PG_CONTAINER" 2>/dev/null || true
+}
+
+cmd_status() {
+    docker inspect -f '{{.Name}} status={{.State.Status}} image={{.Config.Image}}' \
+        "$CASMGR_PG_CONTAINER" 2>/dev/null || echo "${CASMGR_PG_CONTAINER}: not present"
+}
+
+main() {
+    casmgr_require_root_or_casuser
+    local cmd="${1:-}"
+    case "$cmd" in
+        pull) cmd_pull ;;
+        recreate) cmd_recreate ;;
+        start) cmd_start ;;
+        stop) cmd_stop ;;
+        remove) cmd_remove ;;
+        status) cmd_status ;;
+        -h|--help|help|"") usage ;;
+        *) echo "Unknown command: $cmd" >&2; usage >&2; exit 1 ;;
+    esac
+}
+
+main "$@"

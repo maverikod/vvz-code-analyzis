@@ -1,0 +1,151 @@
+# casmgr-server configuration (/etc/casmgr/config.json)
+# Lines starting with # or // are allowed (JSONC via commentjson).
+#
+# Port and registration defaults (same host as dev checkout):
+#   Production (this file):  server.port = 15010, registration.server_id = code-analysis-server
+#   Development (repo root): server.port = 15000, registration.server_id = code-analysis-server-dev
+#   PostgreSQL (Docker):     127.0.0.1:5432 — may be shared; each server needs its own instance_uuid
+#   Vectorization requires code_analysis.chunker and code_analysis.embedding (SVO chunker + embedding API).
+#   Replace CHUNKER_HOST / EMBEDDING_HOST with reachable hostnames or IPs (defaults: port 8009 / 8001, HTTPS + mTLS).
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 15010,
+    "protocol": "https",
+    "servername": "code-analysis-server",
+    "advertised_host": "CHANGE_ME",
+    "debug": false,
+    "log_level": "INFO",
+    "log_dir": "/var/log/casmgr",
+    "ssl": {
+      "cert": "/etc/casmgr/mtls/server.crt",
+      "key": "/etc/casmgr/mtls/server.key",
+      "ca": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    }
+  },
+  "client": {
+    "enabled": false,
+    "protocol": "https"
+  },
+  "registration": {
+    "enabled": true,
+    "protocol": "https",
+    "register_url": "https://MCP_PROXY_HOST:3004/register",
+    "unregister_url": "https://MCP_PROXY_HOST:3004/unregister",
+    "server_id": "code-analysis-server",
+    "server_name": "Code Analysis Server",
+    "instance_uuid": "REPLACE_ON_INSTALL",
+    "auto_on_startup": true,
+    "auto_on_shutdown": true,
+    "heartbeat": {
+      "url": "https://MCP_PROXY_HOST:3004/proxy/heartbeat",
+      "interval": 30
+    },
+    "ssl": {
+      "cert": "/etc/casmgr/mtls/client.crt",
+      "key": "/etc/casmgr/mtls/client.key",
+      "ca": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    }
+  },
+  "server_validation": {
+    "enabled": false,
+    "protocol": "https"
+  },
+  "auth": {
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {}
+  },
+  "queue_manager": {
+    "enabled": true,
+    "in_memory": true,
+    "registry_path": null,
+    "shutdown_timeout": 30.0,
+    "max_concurrent_jobs": 5,
+    "max_queue_size": null,
+    "per_job_type_limits": null,
+    "completed_job_retention_seconds": 21600
+  },
+  "process_management": {
+    "shutdown_grace_seconds": 10.0
+  },
+  "code_analysis": {
+    "host": "0.0.0.0",
+    "port": 15010,
+    "log": "/var/log/casmgr/code_analysis.log",
+    "vector_search_backend": "auto",
+    "batch_output_dir": "/var/casmgr/data/batch_output",
+    "storage": {
+      "db_path": "/var/casmgr/data/code_analysis.db",
+      "faiss_dir": "/var/casmgr/faiss",
+      "locks_dir": "/var/casmgr/locks",
+      "backup_dir": "/var/casmgr/backups",
+      "trash_dir": "/var/casmgr/trash"
+    },
+    "database": {
+      "driver": {
+        "type": "postgres",
+        "config": {
+          "host": "127.0.0.1",
+          "port": 5432,
+          "dbname": "code_analysis",
+          "user": "code_analysis",
+          "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
+        }
+      }
+    },
+    "vector_dim": 384,
+    "min_chunk_length": 30,
+    "vectorization_retry_attempts": 3,
+    "vectorization_retry_delay": 10.0,
+    "chunker": {
+      "enabled": true,
+      "url": "CHUNKER_HOST",
+      "port": 8009,
+      "protocol": "https",
+      "cert_file": "/etc/casmgr/mtls/client.crt",
+      "key_file": "/etc/casmgr/mtls/client.key",
+      "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 600.0,
+      "check_hostname": false
+    },
+    "embedding": {
+      "enabled": true,
+      "host": "EMBEDDING_HOST",
+      "port": 8001,
+      "protocol": "https",
+      "cert_file": "/etc/casmgr/mtls/client.crt",
+      "key_file": "/etc/casmgr/mtls/client.key",
+      "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 120.0,
+      "check_hostname": false
+    },
+    "worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 5,
+      "log_path": "/var/log/casmgr/vectorization_worker.log",
+      "watch_dirs": []
+    },
+    "file_watcher": {
+      "enabled": true,
+      "log_path": "/var/log/casmgr/file_watcher.log",
+      "version_dir": "/var/casmgr/versions"
+    },
+    "indexing_worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 5,
+      "log_path": "/var/log/casmgr/indexing_worker.log"
+    }
+  }
+}

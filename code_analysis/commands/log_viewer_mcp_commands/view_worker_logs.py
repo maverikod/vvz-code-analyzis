@@ -253,7 +253,7 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             log_name = WORKER_LOG_FILENAMES.get(worker_type)
             if not log_name:
                 return None
-            path = storage.config_dir / "logs" / log_name
+            path = storage.log_dir / log_name
             return str(path)
         except Exception as e:
             logger.debug("Could not resolve worker log path from config: %s", e)

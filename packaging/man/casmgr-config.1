@@ -1,0 +1,350 @@
+.\" Man page for code-analysis-server configuration generator CLI.
+.TH CASMGR-CONFIG 1 "June 2026" "casmgr-server" "User Commands"
+.SH NAME
+casmgr-config \- generate, validate, and apply schema for code-analysis-server config
+.br
+casmgr-config-generate \- generate config.json (shortcut for \fBcasmgr-config generate\fR)
+.br
+casmgr-config-validate \- validate config.json (shortcut for \fBcasmgr-config validate\fR)
+.SH SYNOPSIS
+.B casmgr-config
+.I COMMAND
+[\fIOPTIONS\fR]
+.PP
+.B casmgr-config-generate
+[\fIOPTIONS\fR]
+.PP
+.B casmgr-config-validate
+[\fB\-\-file\fR \fIPATH\fR]
+.PP
+Installed to
+.IR /usr/bin/
+(after
+.B casmgr-server
+package) or run from a checkout:
+.PP
+.RS
+.nf
+./scripts/casmgr-config \-\-help
+./scripts/casmgr-config-generate \-\-protocol https \-\-with-proxy \-\-out config.json
+./scripts/casmgr-config-validate \-\-file config.json
+.fi
+.RE
+.PP
+Scripts locate the project root and Python automatically.
+In a development checkout the first run creates
+.IR .venv
+and installs dependencies from
+.IR pyproject.toml
+(no manual
+.BR "pip install"
+step).
+After
+.B casmgr-server
+package install, the venv is created by
+.BR dpkg
+post-install scripts.
+.SH DESCRIPTION
+.B casmgr-config
+is the configuration tool for the Code Analysis MCP server. It wraps
+.BR CodeAnalysisConfigGenerator ,
+which extends
+.BR mcp\-proxy\-adapter 's
+.B SimpleConfigGenerator
+with
+.BR code_analysis ,
+database driver, worker, docs indexing, and search-session sections.
+.PP
+Generation is a two-step process:
+.IP \(bu 3
+.B SimpleConfigGenerator
+writes base sections:
+.BR server ,
+.BR client ,
+.BR registration ,
+.BR auth ,
+.BR queue_manager .
+.IP \(bu 3
+.B CodeAnalysisConfigGenerator
+reloads the file, adds
+.BR code_analysis
+(database driver, workers, FAISS paths,
+.BR docs_indexing ,
+.BR search_session ),
+aligns
+.B client.protocol
+and
+.B server_validation.protocol
+with HTTPS/mTLS, applies queue overrides, and saves JSON (backing up an existing output file to
+.BR old_code/ ).
+.PP
+After
+.BR generate ,
+the CLI runs
+.BR CodeAnalysisConfigValidator
+on the result and prints errors or warnings.
+.PP
+\fBProduction Debian install\fR ships a static template at
+.IR /etc/casmgr/config.json
+(from
+.IR /usr/share/doc/casmgr-server/config.json.template ),
+not a CLI-generated file. Use
+.B casmgr-config
+mainly in development or when creating a new config from scratch.
+.SH COMMANDS
+.TP
+.B generate
+.BR ( gen )
+Write a new config file.
+.TP
+.B validate
+.BR ( val )
+Validate an existing config; no writes.
+.TP
+.B schema
+Apply SQLite database schema from config (stops server/workers unless
+.BR \-\-no\-stop ).
+.SH GENERATE OPTIONS
+.SS Required
+.TP
+.B \-\-protocol {http,https,mtls}
+Server protocol. The project validator accepts only
+.B https
+or
+.BR mtls
+for production use; prefer
+.BR \-\-protocol\ https .
+.SS Output
+.TP
+.BI \-\-out PATH
+Output file (default:
+.BR config.json ).
+SSL paths in the config are resolved relative to the \fIconfig file directory\fR at validation time. Run generate with
+.BR \-\-out\ config.json
+at the project root, or pass absolute certificate paths.
+.TP
+.B \-\-with\-proxy
+Enable MCP proxy
+.B registration
+(auto UUID4, register/unregister/heartbeat URLs).
+.SS Server
+.TP
+.BI \-\-server\-host HOST
+Bind address (default:
+.BR 0.0.0.0 ).
+.TP
+.BI \-\-server\-port PORT
+MCP port (default:
+.BR 15000 ;
+production package template uses
+.BR 15010 ).
+.TP
+.BI \-\-server\-cert\-file " PATH "
+.TP
+.BI \-\-server\-key\-file " PATH "
+.TP
+.BI \-\-server\-ca\-cert\-file " PATH "
+.TP
+.BI \-\-server\-crl\-file " PATH "
+.TP
+.BI \-\-server\-log\-dir PATH
+(default:
+.BR ./logs ).
+.TP
+.BI \-\-server\-log\-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
+.TP
+.B \-\-server\-debug
+Enable debug mode.
+.SS Registration (with \fB\-\-with\-proxy\fR)
+.TP
+.BI \-\-registration\-host HOST
+Proxy host (default:
+.BR localhost ).
+.TP
+.BI \-\-registration\-port PORT
+Proxy port (default:
+.BR 3005 ;
+many deployments use
+.BR 3004 ).
+.TP
+.BI \-\-registration\-protocol {http,https,mtls}
+Defaults to the same as
+.BR \-\-protocol
+when omitted.
+.TP
+.BI \-\-registration\-server\-id ID
+(default:
+.BR code\-analysis\-server ).
+.TP
+.BI \-\-registration\-server\-name NAME
+.TP
+.BI \-\-instance\-uuid UUID4
+Auto-generated when omitted.
+.TP
+.BI \-\-registration\-cert\-file " PATH "
+.TP
+.BI \-\-registration\-key\-file " PATH "
+.TP
+.BI \-\-registration\-ca\-cert\-file " PATH "
+.SS Queue manager
+.TP
+.B \-\-queue\-enabled
+.B \-\-queue\-disabled
+.TP
+.B \-\-queue\-in\-memory
+.B \-\-queue\-persistent
+.TP
+.BI \-\-queue\-max\-concurrent N
+.TP
+.BI \-\-queue\-retention\-seconds N
+Completed job retention (default base generator:
+.BR 21600 ).
+.SS code_analysis section
+.TP
+.BI \-\-code\-analysis\-driver\-type {sqlite,sqlite_proxy,postgres,mysql}
+(default:
+.BR sqlite_proxy ).
+.TP
+.BI \-\-code\-analysis\-db\-path PATH
+Legacy SQLite path (default:
+.BR data/code_analysis.db ).
+.TP
+.BI \-\-code\-analysis\-pg\-host HOST
+.TP
+.BI \-\-code\-analysis\-pg\-port PORT
+.TP
+.BI \-\-code\-analysis\-pg\-dbname NAME
+.TP
+.BI \-\-code\-analysis\-pg\-user USER
+.TP
+.BI \-\-code\-analysis\-pg\-password\-env VAR
+(default:
+.BR CODE_ANALYSIS_POSTGRES_PASSWORD ).
+.TP
+.BI \-\-code\-analysis\-log PATH
+.TP
+.BI \-\-code\-analysis\-faiss\-index\-path PATH
+.TP
+.BI \-\-code\-analysis\-vector\-dim N
+.TP
+.BI \-\-indexing\-worker\-enabled
+.B \-\-indexing\-worker\-disabled
+.TP
+.BI \-\-file\-watcher\-enabled
+.B \-\-file\-watcher\-disabled
+.TP
+.B \-\-allow\-line\-commands\-on\-healthy\-files
+.SS docs_indexing (Markdown/JSON/YAML docs roots)
+.TP
+.B \-\-code\-analysis\-docs\-indexing\-enabled
+.B \-\-code\-analysis\-docs\-indexing\-disabled
+(default: disabled).
+.TP
+.BI \-\-code\-analysis\-docs\-indexing\-roots CSV
+.TP
+.BI \-\-code\-analysis\-docs\-indexing\-include CSV
+.TP
+.BI \-\-code\-analysis\-docs\-indexing\-exclude CSV
+.SH GENERATED code_analysis DEFAULTS
+When not overridden, the generator adds:
+.TP
+.B database.driver
+.BR sqlite_proxy
+with RPC worker settings, or
+.B postgres
+when requested.
+.TP
+.B database.rpc
+shared-memory threshold 65536 bytes.
+.TP
+.B indexing_worker
+enabled, poll 30s, batch 5.
+.TP
+.B file_watcher
+enabled, scan 60s, version dir
+.BR data/versions .
+.TP
+.B docs_indexing
+disabled; safe include globs for @file{docs/} when enabled.
+.TP
+.B search_session
+TTL and max block size from code constants.
+.TP
+.B port
+Matches
+.BR \-\-server\-port
+(default 15000).
+.SH CONVENIENCE COMMANDS
+.TP
+.B casmgr-config-generate
+Same as
+.BR "casmgr-config generate" .
+All
+.B generate
+options apply (e.g.
+.BR \-\-protocol\ https ,
+.BR \-\-with\-proxy ).
+.TP
+.B casmgr-config-validate
+Same as
+.BR "casmgr-config validate" .
+When called with no arguments and
+.IR /etc/casmgr/config.json
+exists (or
+.BR CASMGR_CONFIG
+is set), validates that file automatically.
+.SH EXAMPLES
+.SS Development HTTPS + MCP proxy + PostgreSQL
+.PP
+From the git checkout root (cert paths relative to generated @file{config.json}):
+.PP
+.RS
+.nf
+casmgr-config-generate \\
+  \-\-protocol https \\
+  \-\-with\-proxy \\
+  \-\-registration\-port 3004 \\
+  \-\-registration\-server\-id code\-analysis\-server\-dev \\
+  \-\-server\-port 15000 \\
+  \-\-server\-cert\-file mtls_certificates/.../server.crt \\
+  \-\-server\-key\-file mtls_certificates/.../server.key \\
+  \-\-server\-ca\-cert\-file mtls_certificates/.../ca.crt \\
+  \-\-registration\-cert\-file mtls_certificates/.../client.crt \\
+  \-\-registration\-key\-file mtls_certificates/.../client.key \\
+  \-\-registration\-ca\-cert\-file mtls_certificates/.../ca.crt \\
+  \-\-code\-analysis\-driver\-type postgres \\
+  \-\-code\-analysis\-pg\-user code_analysis \\
+  \-\-out config.json
+.fi
+.RE
+.SS Validate existing config
+.PP
+.RS
+.nf
+casmgr-config-validate
+casmgr-config validate \-\-file /etc/casmgr/config.json
+.fi
+.RE
+.SS Apply SQLite schema (development)
+.PP
+.RS
+.nf
+casmgr-config schema \-\-file config.json
+.fi
+.RE
+.SH FILES
+.BR config.json
+\-\- typical output in project root
+.br
+.BR old_code/
+\-\- backup of previous output when regenerating
+.br
+.IR /usr/share/doc/casmgr-server/config.json.template
+\-\- production static template (not produced by this CLI)
+.SH SEE ALSO
+.BR casmgr-server (8),
+.BR casmgr (1),
+info \fBcasmgr-server\fR,
+.IR /usr/share/doc/casmgr-server/CASMGR_DEPLOYMENT.md
+.SH AUTHOR
+Vasiliy Zdanovskiy <vasilyvz@gmail.com>

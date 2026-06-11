@@ -147,6 +147,8 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         watch_dir_id: Optional[str] = None,
         transaction_id: Optional[str] = None,
         priority: int = 0,
+        deleted: bool = False,
+        processing_paused: bool = False,
     ) -> None:
         """Insert or reclaim a ``projects`` row for the current server instance via RPC.
 
@@ -253,9 +255,10 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         self.execute(
             f"""
             INSERT INTO projects (
-                id, server_instance_id, root_path, name, comment, watch_dir_id, updated_at
+                id, server_instance_id, root_path, name, comment, watch_dir_id,
+                deleted, processing_paused, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, {_now})
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now})
             """,
             (
                 project_id,
@@ -264,10 +267,53 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
                 name,
                 comment,
                 watch_dir_id,
+                bool(deleted),
+                bool(processing_paused),
             ),
             transaction_id=transaction_id,
             priority=priority,
         )
+
+    def sync_project_metadata_from_projectid(
+        self,
+        root_dir: str | Path,
+        *,
+        transaction_id: Optional[str] = None,
+        priority: int = 0,
+    ) -> Optional[str]:
+        """Sync ``projects.deleted``, ``processing_paused``, ``comment`` from ``projectid``."""
+        from code_analysis.core.project_resolution import load_project_info
+
+        try:
+            info = load_project_info(root_dir)
+        except Exception as e:
+            logger.warning(
+                "sync_project_metadata_from_projectid: cannot load projectid at %s: %s",
+                root_dir,
+                e,
+            )
+            return None
+
+        sid = current_server_instance_id()
+        self.execute(
+            """
+            UPDATE projects
+            SET deleted = ?,
+                processing_paused = ?,
+                comment = ?
+            WHERE server_instance_id = ? AND id = ?
+            """,
+            (
+                bool(info.deleted),
+                bool(info.processing_paused),
+                info.description or None,
+                sid,
+                info.project_id,
+            ),
+            transaction_id=transaction_id,
+            priority=priority,
+        )
+        return info.project_id
 
     def create_project(self, project: Project) -> Project:
         """Create new project in database.

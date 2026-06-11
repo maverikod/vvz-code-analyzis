@@ -1,0 +1,33 @@
+[Unit]
+Description=Code Analysis MCP Server (casmgr)
+Documentation=man:casmgr-server(8) info:casmgr-server
+After=network-online.target casmgr-postgres.service
+Wants=network-online.target
+Requires=casmgr-postgres.service
+
+[Service]
+Type=simple
+User=casuser
+Group=casgrp
+WorkingDirectory=/usr/lib/casmgr-server
+Environment=PYTHONUNBUFFERED=1
+Environment=CASMGR_CONFIG=/etc/casmgr/config.json
+Environment=CASMGR_LOG=/var/log/casmgr
+Environment=CASMGR_SECRETS=/var/casmgr/secrets
+EnvironmentFile=-/var/casmgr/secrets/.env
+Environment=PATH=/usr/lib/casmgr-server/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/lib/casmgr-server/.venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --daemon
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=casmgr-server
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/var/casmgr /var/log/casmgr /etc/casmgr
+
+[Install]
+WantedBy=multi-user.target

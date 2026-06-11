@@ -17,8 +17,13 @@ from code_analysis.core.project_root_path import (
 )
 from code_analysis.core.server_instance import get_server_instance_id
 
+from ..watch_dir_access import describe_watch_dir_access
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from .watcher_project_metadata import (
+    load_projectid_flags_for_insert,
+    refresh_project_metadata_from_projectid,
+)
 from .multi_project_worker_specs import WatchDirSpec
 
 logger = logging.getLogger(__name__)
@@ -223,7 +228,29 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
-        if watch_dir_path.exists():
+        access_issue = describe_watch_dir_access(watch_dir_path)
+        if access_issue:
+            database.execute(
+                f"""
+                INSERT INTO watch_dir_paths (
+                    server_instance_id, watch_dir_id, absolute_path, updated_at
+                )
+                VALUES (?, ?, NULL, {now_sql})
+                ON CONFLICT {watch_dir_paths_conflict} DO UPDATE SET
+                    server_instance_id = EXCLUDED.server_instance_id,
+                    absolute_path = EXCLUDED.absolute_path,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (server_instance_id, wid),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+            )
+            logger.warning(
+                "Watch dir path not accessible during init (id=%s, path=%s): %s",
+                wid,
+                watch_dir_path,
+                access_issue,
+            )
+        else:
             normalized_path = normalize_path_simple(str(watch_dir_path))
             database.execute(
                 f"""
@@ -292,7 +319,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             database.execute(
                                 f"""
                                 UPDATE projects
-                                SET watch_dir_id = ?, server_instance_id = ?, updated_at = {now_sql}
+                                SET watch_dir_id = ?, server_instance_id = ?
                                 WHERE id = ?
                                   AND (server_instance_id IS NULL
                                        OR server_instance_id = ?)
@@ -309,6 +336,11 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 f"Updated project {project_root_obj.project_id} "
                                 f"watch_dir_id to {wid}"
                             )
+                        refresh_project_metadata_from_projectid(
+                            database,
+                            project_root_obj.root_path,
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                        )
                     else:
                         existing_by_root = find_project_id_by_resolved_absolute_root(
                             database,
@@ -325,6 +357,9 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 )
                             continue
                         project_name = project_root_obj.root_path.name
+                        pid_deleted, pid_paused = load_projectid_flags_for_insert(
+                            project_root_obj.root_path
+                        )
                         root_stored = persist_projects_root_path_stored_value(
                             project_root_absolute=project_root_obj.root_path,
                             watch_dir_id=wid or None,
@@ -337,6 +372,8 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 project_name,
                                 comment=project_root_obj.description,
                                 watch_dir_id=wid,
+                                deleted=pid_deleted,
+                                processing_paused=pid_paused,
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         else:
@@ -358,6 +395,11 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 ),
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
+                        refresh_project_metadata_from_projectid(
+                            database,
+                            project_root_obj.root_path,
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                        )
                         logger.info(
                             f"Created project {project_root_obj.project_id} "
                             f"at {project_root_obj.root_path} "
@@ -368,25 +410,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     f"Error discovering projects in {watch_dir_path}: {e}",
                     exc_info=True,
                 )
-        else:
-            database.execute(
-                f"""
-                INSERT INTO watch_dir_paths (
-                    server_instance_id, watch_dir_id, absolute_path, updated_at
-                )
-                VALUES (?, ?, NULL, {now_sql})
-                ON CONFLICT {watch_dir_paths_conflict} DO UPDATE SET
-                    server_instance_id = EXCLUDED.server_instance_id,
-                    absolute_path = EXCLUDED.absolute_path,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                (server_instance_id, wid),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-            )
-            logger.warning(
-                f"Watch dir path does not exist: {watch_dir_path}, "
-                f"setting NULL for watch_dir_id: {wid}"
-            )
 
     if config_watch_dir_ids:
         placeholders = ",".join("?" * len(config_watch_dir_ids))

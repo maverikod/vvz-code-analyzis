@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Validate config.json (casmgr-config validate).
+#
+# Run directly: ./scripts/casmgr-config-validate --file config.json
+# With no args: uses $CASMGR_CONFIG or /etc/casmgr/config.json when present.
+#
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+
+set -euo pipefail
+
+_script="${BASH_SOURCE[0]}"
+_dir="$(cd "$(dirname "$_script")" && pwd)"
+if [[ -f "${_dir}/lib/casmgr-entry.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "${_dir}/lib/casmgr-entry.sh"
+elif [[ -f "/usr/lib/casmgr-server/scripts/lib/casmgr-entry.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "/usr/lib/casmgr-server/scripts/lib/casmgr-entry.sh"
+else
+    echo "ERROR: casmgr-entry.sh not found" >&2
+    exit 1
+fi
+
+casmgr_init_from_script "$_script"
+
+_default_file="${CASMGR_CONFIG:-/etc/casmgr/config.json}"
+if [[ $# -eq 1 && "$1" != -* && -f "$1" ]]; then
+    set -- --file "$1"
+elif [[ $# -eq 0 && -f "$_default_file" ]]; then
+    set -- --file "$_default_file"
+fi
+casmgr_exec_config_cli validate "$@"

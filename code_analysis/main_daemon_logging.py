@@ -107,7 +107,10 @@ def setup_daemon_logging(
             os.getpid(),
             daemon_log_file,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            f"WARNING: daemon log setup failed ({exc}); errors go to stderr/journal only",
+            file=sys.stderr,
+        )
 
     return heartbeat_stop

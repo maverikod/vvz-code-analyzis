@@ -198,6 +198,135 @@ def build_file_purge_sql_batch(
     return ops
 
 
+def build_file_purge_sql_deletes_for_temp_table(
+    project_id: str,
+    temp_table: str,
+    *,
+    include_code_content_fts: bool = True,
+) -> List[Tuple[str, tuple[Any, ...]]]:
+    """
+    FK-safe DELETE ops when ``temp_table`` already holds ``files.id`` values.
+
+    Does not create or populate the temp table.
+    """
+    purge_sel = f"SELECT id FROM {temp_table}"
+    ops: List[Tuple[str, tuple[Any, ...]]] = []
+    pid = project_id
+
+    ops.append(
+        (
+            f"DELETE FROM duplicate_occurrences WHERE duplicate_id IN ("
+            f"SELECT DISTINCT duplicate_id FROM duplicate_occurrences "
+            f"WHERE file_id IN ({purge_sel}))",
+            (),
+        )
+    )
+    ops.append(
+        (
+            "DELETE FROM code_duplicates WHERE project_id = ? AND NOT EXISTS ("
+            "SELECT 1 FROM duplicate_occurrences o WHERE o.duplicate_id = code_duplicates.id)",
+            (pid,),
+        )
+    )
+
+    if include_code_content_fts:
+        ops.append(
+            (
+                "DELETE FROM code_content_fts WHERE rowid IN ("
+                f"SELECT rowid FROM code_content WHERE file_id IN ({purge_sel}))",
+                (),
+            )
+        )
+
+    ops.append((f"DELETE FROM code_chunks WHERE file_id IN ({purge_sel})", ()))
+
+    issues_sql = f"""
+DELETE FROM issues WHERE
+  file_id IN ({purge_sel})
+  OR class_id IN (SELECT id FROM classes WHERE file_id IN ({purge_sel}))
+  OR method_id IN (
+    SELECT id FROM methods WHERE class_id IN (
+      SELECT id FROM classes WHERE file_id IN ({purge_sel})
+    )
+  )
+  OR function_id IN (SELECT id FROM functions WHERE file_id IN ({purge_sel}))
+""".strip()
+    ops.append((issues_sql, ()))
+
+    ecr_sql = f"""
+DELETE FROM entity_cross_ref WHERE
+  file_id IN ({purge_sel})
+  OR caller_class_id IN (SELECT id FROM classes WHERE file_id IN ({purge_sel}))
+  OR callee_class_id IN (SELECT id FROM classes WHERE file_id IN ({purge_sel}))
+  OR caller_method_id IN (SELECT id FROM methods WHERE class_id IN (SELECT id FROM classes WHERE file_id IN ({purge_sel})))
+  OR callee_method_id IN (SELECT id FROM methods WHERE class_id IN (SELECT id FROM classes WHERE file_id IN ({purge_sel})))
+  OR caller_function_id IN (SELECT id FROM functions WHERE file_id IN ({purge_sel}))
+  OR callee_function_id IN (SELECT id FROM functions WHERE file_id IN ({purge_sel}))
+""".strip()
+    ops.append((ecr_sql, ()))
+
+    ops.append(
+        (
+            f"DELETE FROM methods WHERE class_id IN ("
+            f"SELECT id FROM classes WHERE file_id IN ({purge_sel}))",
+            (),
+        )
+    )
+    ops.append((f"DELETE FROM classes WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM functions WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM imports WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM code_content WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM ast_trees WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM cst_trees WHERE file_id IN ({purge_sel})", ()))
+    ops.append((f"DELETE FROM usages WHERE file_id IN ({purge_sel})", ()))
+    ops.append(
+        (
+            f"DELETE FROM comprehensive_analysis_results WHERE file_id IN ({purge_sel})",
+            (),
+        )
+    )
+    ops.append(
+        (
+            "DELETE FROM file_tree_snapshot_nodes WHERE snapshot_id IN ("
+            f"SELECT id FROM file_tree_snapshots WHERE file_id IN ({purge_sel}))",
+            (),
+        )
+    )
+    ops.append(
+        (
+            "DELETE FROM file_tree_snapshot_roots WHERE snapshot_id IN ("
+            f"SELECT id FROM file_tree_snapshots WHERE file_id IN ({purge_sel}))",
+            (),
+        )
+    )
+    ops.append(
+        (f"DELETE FROM file_tree_snapshots WHERE file_id IN ({purge_sel})", ()),
+    )
+    ops.append(
+        (
+            f"DELETE FROM indexing_errors WHERE project_id = ? AND file_path IN ("
+            f"SELECT path FROM files WHERE id IN ({purge_sel}))",
+            (pid,),
+        )
+    )
+    ops.append(
+        (
+            f"DELETE FROM vector_index WHERE project_id = ? AND ("
+            f"(entity_type = 'file' AND entity_id IN ({purge_sel})) OR "
+            f"(entity_type = 'class' AND entity_id IN ("
+            f"SELECT id FROM classes WHERE file_id IN ({purge_sel}))) OR "
+            f"(entity_type = 'function' AND entity_id IN ("
+            f"SELECT id FROM functions WHERE file_id IN ({purge_sel}))) OR "
+            f"(entity_type = 'method' AND entity_id IN ("
+            f"SELECT m.id FROM methods m JOIN classes c ON m.class_id = c.id "
+            f"WHERE c.file_id IN ({purge_sel}))))",
+            (pid,),
+        )
+    )
+    ops.append((f"DELETE FROM files WHERE id IN ({purge_sel})", ()))
+    return ops
+
+
 def build_file_purge_logical_write_program(
     project_id: str,
     file_ids: Sequence[str],

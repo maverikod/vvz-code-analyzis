@@ -145,6 +145,7 @@ def run_file_watcher_worker(
         Stats dict (only when stopped).
     """
     import os
+    import time
 
     # Enforce worker policy: never spawn DB worker from this process.
     os.environ["CODE_ANALYSIS_DB_WORKER_NO_SPAWN"] = "1"
@@ -160,26 +161,33 @@ def run_file_watcher_worker(
     status_file_path = (
         Path(worker_log_path).with_suffix(".status.json") if worker_log_path else None
     )
-    worker = MultiProjectFileWatcherWorker(
-        db_path=Path(db_path),
-        watch_dirs=build_watch_dir_specs(watch_dirs),
-        locks_dir=Path(locks_dir),
-        scan_interval=int(scan_interval),
-        version_dir=version_dir,
-        ignore_patterns=ignore_patterns or [],
-        status_file_path=status_file_path,
-        config_path=config_path,
-    )
+    restart_delay_seconds = 5
 
-    try:
-        return asyncio.run(worker.run())
-    except KeyboardInterrupt:
-        worker.stop()
-        return {"cycles": 0, "errors": 0, "interrupted": True}
-    except Exception as e:
-        logger.error(f"File watcher worker error: {e}", exc_info=True)
-        return {"cycles": 0, "errors": 1}
-    finally:
-        # Remove PID file only if it contains this process's PID (do not remove another process's file)
-        if pid_file_path:
-            _remove_pid_file_if_ours(pid_file_path)
+    while True:
+        worker = MultiProjectFileWatcherWorker(
+            db_path=Path(db_path),
+            watch_dirs=build_watch_dir_specs(watch_dirs),
+            locks_dir=Path(locks_dir),
+            scan_interval=int(scan_interval),
+            version_dir=version_dir,
+            ignore_patterns=ignore_patterns or [],
+            status_file_path=status_file_path,
+            config_path=config_path,
+        )
+
+        try:
+            return asyncio.run(worker.run())
+        except KeyboardInterrupt:
+            worker.stop()
+            if pid_file_path:
+                _remove_pid_file_if_ours(pid_file_path)
+            return {"cycles": 0, "errors": 0, "interrupted": True}
+        except Exception as e:
+            logger.error(
+                "File watcher worker crashed; restarting in %ss: %s",
+                restart_delay_seconds,
+                e,
+                exc_info=True,
+            )
+            time.sleep(restart_delay_seconds)
+            continue

@@ -44,6 +44,8 @@ def insert_project_row(
     comment: Optional[str] = None,
     watch_dir_id: Optional[str] = None,
     server_instance_id: Optional[str] = None,
+    deleted: bool = False,
+    processing_paused: bool = False,
 ) -> None:
     """Insert a ``projects`` row for the current server instance."""
     sid = server_instance_id or current_server_instance_id()
@@ -51,13 +53,68 @@ def insert_project_row(
     self._execute(
         f"""
         INSERT INTO projects (
-            id, server_instance_id, root_path, name, comment, watch_dir_id, updated_at
+            id, server_instance_id, root_path, name, comment, watch_dir_id,
+            deleted, processing_paused, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, {_now})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, {_now})
         """,
-        (project_id, sid, root_path_stored, name, comment, watch_dir_id),
+        (
+            project_id,
+            sid,
+            root_path_stored,
+            name,
+            comment,
+            watch_dir_id,
+            bool(deleted),
+            bool(processing_paused),
+        ),
     )
     self._commit()
+
+
+def sync_project_metadata_from_projectid(
+    self,
+    root_dir: str | Path,
+) -> Optional[str]:
+    """
+    Read ``projectid`` and sync ``projects.deleted``, ``processing_paused``, ``comment``.
+
+    The projectid file is the source of truth for those fields.
+
+    Returns:
+        Project id when update was attempted, else None if projectid unreadable.
+    """
+    from code_analysis.core.project_resolution import load_project_info
+
+    try:
+        info = load_project_info(root_dir)
+    except Exception as e:
+        logger.warning(
+            "sync_project_metadata_from_projectid: cannot load projectid at %s: %s",
+            root_dir,
+            e,
+        )
+        return None
+
+    sid = current_server_instance_id()
+    self._execute(
+        f"""
+        UPDATE projects
+        SET deleted = ?,
+            processing_paused = ?,
+            comment = ?
+        WHERE server_instance_id = ? AND id = ?
+        """,
+        (
+            bool(info.deleted),
+            bool(info.processing_paused),
+            info.description or None,
+            sid,
+            info.project_id,
+        ),
+    )
+    self._commit()
+    return info.project_id
 
 
 def get_or_create_project(

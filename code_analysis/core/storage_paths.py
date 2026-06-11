@@ -10,7 +10,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -34,6 +33,7 @@ class StoragePaths:
     """
 
     config_dir: Path
+    log_dir: Path
     db_path: Path
     faiss_dir: Path
     locks_dir: Path
@@ -60,19 +60,47 @@ def _resolve_path(config_dir: Path, value: str) -> Path:
     return p.resolve()
 
 
+def resolve_service_log_dir(
+    *,
+    config_data: Mapping[str, Any],
+    config_path: Path,
+) -> Path:
+    """
+    Resolve ``server.log_dir`` (absolute or relative to the config file directory).
+
+    Worker logs, database query journals, and the database driver subprocess log
+    must use this path — not ``<config_dir>/logs``, which is not writable under
+    ``/etc/casmgr`` in production.
+    """
+    config_dir = Path(config_path).resolve().parent
+    server = config_data.get("server") or {}
+    if not isinstance(server, Mapping):
+        server = {}
+    log_dir_str = server.get("log_dir", "./logs")
+    if not isinstance(log_dir_str, str) or not log_dir_str.strip():
+        log_dir_str = "./logs"
+    return _resolve_path(config_dir, log_dir_str)
+
+
 def load_raw_config(config_path: Path) -> dict[str, Any]:
     """
-    Load raw JSON config from disk.
+    Load and validate JSON config from disk.
+
+    Updates global config runtime state on every read.
 
     Args:
         config_path: Path to JSON config.
 
     Returns:
-        Parsed dict.
-    """
+        Parsed dict (even when semantically invalid; see ``is_config_valid()``).
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    Raises:
+        ConfigJSONDecodeError: On JSON syntax errors.
+    """
+    from code_analysis.core.config_state import revalidate_config_at_path
+
+    data, _valid = revalidate_config_at_path(Path(config_path))
+    return data
 
 
 def resolve_storage_paths(
@@ -160,8 +188,11 @@ def resolve_storage_paths(
     else:
         trash_dir = _resolve_path(config_dir, "data/trash")
 
+    log_dir = resolve_service_log_dir(config_data=config_data, config_path=config_path)
+
     return StoragePaths(
         config_dir=config_dir,
+        log_dir=log_dir,
         db_path=db_path,
         faiss_dir=faiss_dir,
         locks_dir=locks_dir,
@@ -179,6 +210,7 @@ def ensure_storage_dirs(paths: StoragePaths) -> None:
         paths: StoragePaths.
     """
 
+    paths.log_dir.mkdir(parents=True, exist_ok=True)
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)
     paths.faiss_dir.mkdir(parents=True, exist_ok=True)
     paths.locks_dir.mkdir(parents=True, exist_ok=True)
@@ -219,3 +251,61 @@ def get_file_trash_dir(trash_dir: Path, project_id: str) -> Path:
         Path to trash subfolder for this project's deleted files.
     """
     return trash_dir / project_id
+
+
+_FORBIDDEN_BATCH_OUTPUT_PREFIXES = (
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/sys",
+    "/proc",
+    "/root",
+    "/boot",
+    "/lib",
+    "/lib64",
+    "/dev",
+)
+
+
+def _is_forbidden_batch_output_path(path: Path) -> bool:
+    path_str = str(path.resolve())
+    if path_str == "/":
+        return True
+    for prefix in _FORBIDDEN_BATCH_OUTPUT_PREFIXES:
+        if path_str == prefix or path_str.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def resolve_batch_output_dir(*, config_path: Path, dir_str: str) -> Path:
+    """
+    Resolve batch output directory (absolute or relative to config file directory).
+
+    Relative values must not be resolved against process cwd (daemon WorkingDirectory
+    may be /usr/lib/casmgr-server).
+    """
+    from code_analysis.core.constants import DEFAULT_BATCH_OUTPUT_DIR
+
+    value = dir_str.strip() if isinstance(dir_str, str) and dir_str.strip() else DEFAULT_BATCH_OUTPUT_DIR
+    return _resolve_path(Path(config_path).resolve().parent, value)
+
+
+def apply_resolved_batch_output_dir(
+    server_config_dict: dict[str, Any],
+    config_path: Path,
+) -> dict[str, Any]:
+    """Return a copy with ``batch_output_dir`` resolved for ``ServerConfig`` validation."""
+    from code_analysis.core.constants import DEFAULT_BATCH_OUTPUT_DIR
+
+    out = dict(server_config_dict)
+    raw = out.get("batch_output_dir", DEFAULT_BATCH_OUTPUT_DIR)
+    if not isinstance(raw, str):
+        raw = DEFAULT_BATCH_OUTPUT_DIR
+    resolved = resolve_batch_output_dir(config_path=config_path, dir_str=raw)
+    if _is_forbidden_batch_output_path(resolved):
+        config_data = load_raw_config(config_path)
+        storage = resolve_storage_paths(config_data=config_data, config_path=config_path)
+        resolved = storage.db_path.parent / "batch_output"
+    out["batch_output_dir"] = str(resolved.resolve())
+    return out

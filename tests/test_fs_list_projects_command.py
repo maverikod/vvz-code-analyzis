@@ -1,5 +1,5 @@
 """
-Tests for fs_list_projects and watch_dirs_from_config discovery.
+Tests for list_projects disk discovery helpers (watch_dirs_from_config).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,6 +15,7 @@ import pytest
 
 from code_analysis.core.watch_dirs_from_config import (
     discover_projects_for_watch_specs,
+    discovered_project_to_list_row,
     load_watch_dir_specs_from_config,
 )
 from code_analysis.core.file_watcher_pkg.multi_project_worker_specs import WatchDirSpec
@@ -33,10 +34,11 @@ def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
     return config_path
 
 
-def _write_projectid(project_dir: Path, project_id: str) -> None:
+def _write_projectid(project_dir: Path, project_id: str, **extra: object) -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict = {"id": project_id, "description": "test project", **extra}
     (project_dir / "projectid").write_text(
-        json.dumps({"id": project_id, "description": "test project"}),
+        json.dumps(payload, indent=4) + "\n",
         encoding="utf-8",
     )
 
@@ -72,6 +74,26 @@ def test_discover_immediate_child_projects_only(tmp_path: Path) -> None:
     assert results[0].projects[0].watch_dir_id == spec.watch_dir_id
 
 
+def test_discover_reads_projectid_flags(tmp_path: Path) -> None:
+    watch_root = tmp_path / "watch"
+    watch_root.mkdir()
+    pid = str(uuid.uuid4())
+    _write_projectid(
+        watch_root / "paused",
+        pid,
+        deleted=True,
+        processing_paused=True,
+    )
+    spec = WatchDirSpec(watch_dir=watch_root, watch_dir_id=str(uuid.uuid4()))
+    item = discover_projects_for_watch_specs([spec])[0].projects[0]
+    assert item.deleted is True
+    assert item.processing_paused is True
+    row = discovered_project_to_list_row(item)
+    assert row["deleted"] is True
+    assert row["processing_paused"] is True
+    assert row["updated_at"] is None
+
+
 def test_discover_skips_missing_watch_dir(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
     spec = WatchDirSpec(watch_dir=missing, watch_dir_id=str(uuid.uuid4()))
@@ -79,41 +101,3 @@ def test_discover_skips_missing_watch_dir(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].exists is False
     assert results[0].projects == ()
-
-
-@pytest.mark.asyncio
-async def test_fs_list_projects_command(tmp_path: Path) -> None:
-    from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
-
-    from code_analysis.commands.command_metadata_helpers import REQUIRED_METADATA_KEYS
-    from code_analysis.commands.fs_list_projects_command import FsListProjectsCommand
-
-    meta = FsListProjectsCommand.metadata()
-    for key in REQUIRED_METADATA_KEYS:
-        assert key in meta, f"missing metadata key: {key}"
-    assert meta["return_value"].get("error")
-    assert meta["error_cases"]["WATCH_DIR_NOT_FOUND"].get("message")
-    assert meta["error_cases"]["WATCH_DIR_NOT_FOUND"].get("solution")
-
-    watch_root = tmp_path / "tools"
-    watch_root.mkdir()
-    wid = str(uuid.uuid4())
-    pid = str(uuid.uuid4())
-    _write_projectid(watch_root / "my_app", pid)
-
-    config_path = _write_config(tmp_path, [{"id": wid, "path": str(watch_root)}])
-
-    cmd = FsListProjectsCommand()
-    cmd._resolve_config_path = lambda: config_path  # type: ignore[method-assign]
-
-    result = await cmd.execute()
-    assert isinstance(result, SuccessResult)
-    assert result.data["count"] == 1
-    project = result.data["projects"][0]
-    assert project["project_id"] == pid
-    assert project["watch_dir_id"] == wid
-    assert project["id"] == pid
-
-    filtered = await cmd.execute(watch_dir_id=str(uuid.uuid4()))
-    assert isinstance(filtered, ErrorResult)
-    assert filtered.code == "WATCH_DIR_NOT_FOUND"

@@ -78,7 +78,17 @@ class HealthCommand(Command):
         )
         dep = collect_dependency_compatibility(queue_enabled=queue_enabled)
 
-        overall_status = "ok" if dep["queue_ready"] else "degraded"
+        from code_analysis.core.config_state import get_config_runtime_state
+
+        cfg_state = get_config_runtime_state()
+        config_ok = cfg_state.valid
+
+        if not config_ok:
+            overall_status = "config_error"
+        elif dep["queue_ready"]:
+            overall_status = "ok"
+        else:
+            overall_status = "degraded"
         return SuccessResult(
             data={
                 "status": overall_status,
@@ -86,6 +96,7 @@ class HealthCommand(Command):
                 "uptime": uptime_seconds,
                 "cst_trees_loaded": len(_trees),
                 "components": {
+                    "configuration": cfg_state.summary(),
                     "system": {
                         "python_version": sys.version,
                         "platform": platform.platform(),

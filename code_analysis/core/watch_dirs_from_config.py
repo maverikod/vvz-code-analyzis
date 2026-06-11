@@ -36,6 +36,23 @@ class DiscoveredProjectOnDisk:
     root_path: str
     root_path_absolute: str
     description: str
+    deleted: bool = False
+    processing_paused: bool = False
+
+
+def discovered_project_to_list_row(item: DiscoveredProjectOnDisk) -> Dict[str, Any]:
+    """Map disk discovery row to ``list_projects`` API project dict."""
+    return {
+        "id": item.project_id,
+        "watch_dir": item.watch_dir_path,
+        "name": item.name,
+        "root_path": item.root_path,
+        "comment": item.description or None,
+        "watch_dir_id": item.watch_dir_id,
+        "processing_paused": item.processing_paused,
+        "deleted": item.deleted,
+        "updated_at": None,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,15 +131,20 @@ def _project_to_disk_entry(
     spec: WatchDirSpec,
     project: ProjectRoot,
 ) -> DiscoveredProjectOnDisk:
+    from .project_resolution import load_project_info
+
     root_abs = project.root_path.resolve()
+    info = load_project_info(root_abs)
     return DiscoveredProjectOnDisk(
         watch_dir_id=spec.watch_dir_id,
         watch_dir_path=str(spec.watch_dir.resolve()),
-        project_id=project.project_id,
+        project_id=info.project_id,
         name=root_abs.name,
         root_path=root_abs.name,
         root_path_absolute=str(root_abs),
-        description=project.description,
+        description=info.description,
+        deleted=info.deleted,
+        processing_paused=info.processing_paused,
     )
 
 

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Generate config.json (casmgr-config generate).
+#
+# Run directly: ./scripts/casmgr-config-generate --protocol https --with-proxy --out config.json
+#
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+
+set -euo pipefail
+
+_script="${BASH_SOURCE[0]}"
+_dir="$(cd "$(dirname "$_script")" && pwd)"
+if [[ -f "${_dir}/lib/casmgr-entry.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "${_dir}/lib/casmgr-entry.sh"
+elif [[ -f "/usr/lib/casmgr-server/scripts/lib/casmgr-entry.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "/usr/lib/casmgr-server/scripts/lib/casmgr-entry.sh"
+else
+    echo "ERROR: casmgr-entry.sh not found" >&2
+    exit 1
+fi
+
+casmgr_entry "$_script" config generate "$@"

@@ -8,11 +8,29 @@ ST="${CURDIR}/debian/casmgr-server"
 
 install -d "${ST}/usr/lib/casmgr-server"
 cp -a "${CURDIR}/code_analysis" "${CURDIR}/casmgr_entry" \
-    "${CURDIR}/pyproject.toml" "${CURDIR}/scripts/casmgr" \
+    "${CURDIR}/pyproject.toml" \
     "${ST}/usr/lib/casmgr-server/"
+install -d "${ST}/usr/lib/casmgr-server/scripts/lib"
+install -m 644 "${CURDIR}/scripts/lib/casmgr-runtime.sh" \
+    "${ST}/usr/lib/casmgr-server/scripts/lib/casmgr-runtime.sh"
+install -m 644 "${CURDIR}/scripts/lib/casmgr-entry.sh" \
+    "${ST}/usr/lib/casmgr-server/scripts/lib/casmgr-entry.sh"
+install -m 755 "${CURDIR}/scripts/casmgr" "${ST}/usr/lib/casmgr-server/scripts/casmgr"
+install -m 755 "${CURDIR}/scripts/casmgr-config" "${ST}/usr/lib/casmgr-server/scripts/casmgr-config"
+install -m 755 "${CURDIR}/scripts/casmgr-config-generate" \
+    "${ST}/usr/lib/casmgr-server/scripts/casmgr-config-generate"
+install -m 755 "${CURDIR}/scripts/casmgr-config-validate" \
+    "${ST}/usr/lib/casmgr-server/scripts/casmgr-config-validate"
+install -m 755 "${CURDIR}/scripts/casmgr_ensure_instance_uuid.py" \
+    "${ST}/usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py"
+install -d "${ST}/usr/lib/casmgr-server/docs"
+install -m 644 "${CURDIR}/docs/README.md" "${ST}/usr/lib/casmgr-server/docs/README.md"
 
 install -d "${ST}/usr/bin"
 install -m 755 "${CURDIR}/scripts/casmgr" "${ST}/usr/bin/casmgr"
+install -m 755 "${CURDIR}/scripts/casmgr-config" "${ST}/usr/bin/casmgr-config"
+install -m 755 "${CURDIR}/scripts/casmgr-config-generate" "${ST}/usr/bin/casmgr-config-generate"
+install -m 755 "${CURDIR}/scripts/casmgr-config-validate" "${ST}/usr/bin/casmgr-config-validate"
 
 install -d "${ST}/lib/systemd/system"
 install -m 644 "${CURDIR}/packaging/systemd/casmgr-server.service" \
@@ -61,6 +79,9 @@ install -m 644 "${CURDIR}/docs/CASMGR_DEPLOYMENT.md" \
 install -d "${ST}/usr/share/man/man8"
 install -m 644 "${CURDIR}/packaging/man/casmgr-server.8" \
     "${ST}/usr/share/man/man8/"
+install -d "${ST}/usr/share/man/man1"
+install -m 644 "${CURDIR}/packaging/man/casmgr-config.1" \
+    "${ST}/usr/share/man/man1/"
 
 install -d "${ST}/usr/share/info"
 if command -v makeinfo >/dev/null 2>&1; then

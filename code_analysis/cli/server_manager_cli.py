@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Union
 
+from code_analysis.core.config_json import load_config_json
 from code_analysis.core.client_sessions import (
     count_session_file_locks,
     list_client_sessions,
@@ -237,7 +238,7 @@ def _read_shutdown_grace_seconds(config_path: str) -> float:
     """
 
     try:
-        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        cfg = load_config_json(config_path)
     except Exception:
         return DEFAULT_SHUTDOWN_GRACE_SECONDS
 
@@ -645,7 +646,7 @@ def _daemon_log_file(config_path: str) -> Path | None:
         Path to mcp_server.log, or None if config cannot be read.
     """
     try:
-        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        cfg = load_config_json(config_path)
     except Exception:
         return None
     server = cfg.get("server")

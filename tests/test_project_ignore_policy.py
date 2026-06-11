@@ -7,10 +7,13 @@ from pathlib import Path
 import pytest
 
 from code_analysis.core.project_ignore_policy import (
+    GIT_DIR_BASENAME,
+    OLD_CODE_DIR_BASENAME,
     filter_ignore_exception_py_paths_for_watcher,
     filter_paths_for_default_project_listing,
     is_ignored_project_relative_path,
     path_is_under_project_local_venv,
+    path_matches_traversal_skip_shape_rules,
     sql_and_absolute_path_eligible_for_default_status_aggregates,
 )
 
@@ -31,6 +34,12 @@ from code_analysis.core.project_ignore_policy import (
         (".mypy_cache/3.12/foo.data.json", True),
         ("dist/wheel-0.1.tar.gz", True),
         ("build/lib/pkg/__init__.py", True),
+        ("old_code/index.txt", True),
+        ("old_code/pkg/mod.py.bak", True),
+        ("logs/server.log", True),
+        ("backups/db.dump", True),
+        ("data/trash/uuid/file.py", True),
+        ("data/versions/deleted.py", True),
         ("src/app.py", False),
         ("lib/README.md", False),
         ("x.lock", True),
@@ -48,7 +57,9 @@ def test_is_ignored_project_relative_path_defaults(rel: str, expected: bool) -> 
     )
 
 
-def test_is_ignored_project_relative_path_show_hidden_unignores_cache_and_dot_segments() -> None:
+def test_is_ignored_project_relative_path_show_hidden_unignores_cache_and_dot_segments() -> (
+    None
+):
     rel = ".mypy_cache/3.12/foo.data.json"
     assert is_ignored_project_relative_path(rel, show_hidden=False) is True
     assert is_ignored_project_relative_path(rel, show_hidden=True) is False
@@ -72,9 +83,12 @@ def test_filter_paths_for_default_project_listing_respects_show_hidden(
     p.parent.mkdir(parents=True)
     p.write_text("x", encoding="utf-8")
     pr = p.resolve()
-    assert filter_paths_for_default_project_listing(
-        [pr], root, include_venv=False, include_venv_ignore_exceptions=False
-    ) == []
+    assert (
+        filter_paths_for_default_project_listing(
+            [pr], root, include_venv=False, include_venv_ignore_exceptions=False
+        )
+        == []
+    )
     assert filter_paths_for_default_project_listing(
         [pr],
         root,
@@ -138,4 +152,38 @@ def test_sql_status_aggregate_fragment_references_venv_and_column() -> None:
     frag = sql_and_absolute_path_eligible_for_default_status_aggregates("files.path")
     assert "files.path" in frag
     assert ".venv" in frag
+    assert OLD_CODE_DIR_BASENAME in frag
     assert frag.strip().startswith("AND NOT")
+
+
+def test_path_matches_traversal_skip_shape_rules() -> None:
+    parts = ("home", "proj", "data", "trash", "uuid")
+    posix = "/home/proj/data/trash/uuid"
+    assert path_matches_traversal_skip_shape_rules(parts, posix) is True
+    parts_v = ("home", "proj", "data", "versions", "snap")
+    assert (
+        path_matches_traversal_skip_shape_rules(
+            parts_v, "/home/proj/data/versions/snap"
+        )
+        is True
+    )
+    assert (
+        path_matches_traversal_skip_shape_rules(
+            ("home", "proj", "src"), "/home/proj/src"
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "basename",
+    [OLD_CODE_DIR_BASENAME, GIT_DIR_BASENAME, "logs", "backups"],
+)
+def test_traversal_skip_directory_basenames_include_server_managed(
+    basename: str,
+) -> None:
+    from code_analysis.core.project_ignore_policy import (
+        DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES,
+    )
+
+    assert basename in DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES

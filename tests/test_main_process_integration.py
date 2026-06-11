@@ -125,6 +125,7 @@ class TestMainProcessIntegration:
 
         return StoragePaths(
             config_dir=tmp_path / "config",
+            log_dir=tmp_path / "logs",
             db_path=tmp_path / "test.db",
             faiss_dir=tmp_path / "faiss",
             locks_dir=tmp_path / "locks",

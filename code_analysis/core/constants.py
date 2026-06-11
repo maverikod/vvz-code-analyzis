@@ -9,7 +9,15 @@ email: vasilyvz@gmail.com
 
 from typing import Set
 
-from .project_ignore_policy import DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES
+from .project_ignore_policy import (
+    DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES,
+    FILE_TRASH_RELATIVE_DIR,
+    FILE_VERSIONS_RELATIVE_DIR,
+    GIT_DIR_BASENAME,
+    LOGS_DIR_BASENAME,
+    OLD_CODE_DIR_BASENAME,
+    DATA_DIR_BASENAME,
+)
 
 # ============================================================================
 # File Extensions
@@ -33,7 +41,7 @@ CONFIG_FILE_EXTENSIONS: Set[str] = {".json", ".yaml", ".yml", ".toml", ".ini", "
 # Default patterns to ignore (always applied). Unioned with shared traversal dir names.
 DEFAULT_IGNORE_PATTERNS: Set[str] = {
     "__pycache__",
-    ".git",
+    GIT_DIR_BASENAME,
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
@@ -43,8 +51,12 @@ DEFAULT_IGNORE_PATTERNS: Set[str] = {
     "node_modules",
     "dist",
     "build",
-    "data/versions",  # Version directory for deleted files
-    "data/versions/**",  # All subdirectories in versions
+    FILE_VERSIONS_RELATIVE_DIR,
+    f"{FILE_VERSIONS_RELATIVE_DIR}/**",
+    FILE_TRASH_RELATIVE_DIR,
+    f"{FILE_TRASH_RELATIVE_DIR}/**",
+    OLD_CODE_DIR_BASENAME,
+    f"{OLD_CODE_DIR_BASENAME}/**",
     "*.pyc",
     "*.pyo",
     "*.log",
@@ -98,22 +110,28 @@ GIT_IGNORE_PATTERNS: Set[str] = {
 PROJECTID_FILENAME: str = "projectid"
 
 # Git directory name
-GIT_DIR_NAME: str = ".git"
+GIT_DIR_NAME: str = GIT_DIR_BASENAME
 
 # Git ignore file name
 GITIGNORE_FILENAME: str = ".gitignore"
 
 # Version directory name (relative to project root)
-VERSIONS_DIR_NAME: str = "data/versions"
+VERSIONS_DIR_NAME: str = FILE_VERSIONS_RELATIVE_DIR
+
+# Backup/version snapshot directory (BackupManager; relative to project root)
+OLD_CODE_DIR_NAME: str = OLD_CODE_DIR_BASENAME
+
+# File trash directory (relative to project root / config storage)
+FILE_TRASH_DIR_NAME: str = FILE_TRASH_RELATIVE_DIR
 
 # Locks directory name (relative to config directory)
-LOCKS_DIR_NAME: str = "data/locks"
+LOCKS_DIR_NAME: str = f"{DATA_DIR_BASENAME}/locks"
 
 # Logs directory name (relative to project root)
-LOGS_DIR_NAME: str = "logs"
+LOGS_DIR_NAME: str = LOGS_DIR_BASENAME
 
 # Data directory name (relative to project root)
-DATA_DIR_NAME: str = "data"
+DATA_DIR_NAME: str = DATA_DIR_BASENAME
 
 
 # ============================================================================

@@ -13,7 +13,6 @@ from ._shared import (
     SuccessResult,
     ValidationError,
 )
-from ...core.sql_portable import sql_julian_timestamp_now_expr
 
 
 class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
@@ -79,21 +78,73 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
         processing_paused: bool,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Update projects.processing_paused and return the new value."""
+        """Write ``processing_paused`` to projectid, sync DB, return the new value."""
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # PostgreSQL column is BOOLEAN; bind Python bool (not 0/1) for psycopg.
-                bind_paused = bool(processing_paused)
-                _now = sql_julian_timestamp_now_expr(database)
-                database.execute(
-                    f"""
-                    UPDATE projects
-                    SET processing_paused = ?, updated_at = {_now}
-                    WHERE id = ?
-                    """,
-                    (bind_paused, project_id),
+                project = database.get_project(project_id)
+                if not project:
+                    return self._handle_error(
+                        ValidationError(
+                            "Project not found",
+                            field="project_id",
+                            details={"project_id": project_id},
+                        ),
+                        "PROJECT_NOT_FOUND",
+                        self.name,
+                    )
+                from ...core.project_root_path import resolve_project_root_absolute_str
+                from ...core.project_resolution import update_projectid_fields
+
+                stored_root = (
+                    project.get("root_path")
+                    if isinstance(project, dict)
+                    else getattr(project, "root_path", None)
                 )
+                watch_dir_id = (
+                    project.get("watch_dir_id")
+                    if isinstance(project, dict)
+                    else getattr(project, "watch_dir_id", None)
+                )
+                project_name = (
+                    project.get("name")
+                    if isinstance(project, dict)
+                    else getattr(project, "name", None)
+                )
+                resolved_root = resolve_project_root_absolute_str(
+                    project_id=project_id,
+                    root_path_stored=str(stored_root or ""),
+                    watch_dir_id=(
+                        str(watch_dir_id) if watch_dir_id is not None else None
+                    ),
+                    project_name=str(project_name or "").strip() or None,
+                    database=database,
+                    require_exists=True,
+                )
+                if not resolved_root:
+                    return self._handle_error(
+                        ValidationError(
+                            "Cannot resolve project root for projectid update",
+                            field="project_id",
+                            details={"project_id": project_id},
+                        ),
+                        "PROJECT_ROOT_NOT_FOUND",
+                        self.name,
+                    )
+                update_projectid_fields(
+                    resolved_root, processing_paused=bool(processing_paused)
+                )
+                if hasattr(database, "sync_project_metadata_from_projectid"):
+                    database.sync_project_metadata_from_projectid(resolved_root)
+                else:
+                    database.execute(
+                        """
+                        UPDATE projects
+                        SET processing_paused = ?
+                        WHERE id = ?
+                        """,
+                        (bool(processing_paused), project_id),
+                    )
                 rows = database.select("projects", where={"id": project_id}, limit=1)
                 if not rows:
                     return self._handle_error(
@@ -135,7 +186,8 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "Sets the persisted `processing_paused` flag on the project row. "
+                "Writes ``processing_paused`` to the project's ``projectid`` file "
+                "(source of truth), then syncs the ``projects`` row. "
                 "When true, the indexing worker does not pick up files for that project "
                 "and the vectorization worker excludes it from pending work and FAISS rebuild. "
                 "Does not stop the file watcher or other commands."

@@ -1,0 +1,20 @@
+[Unit]
+Description=casmgr PostgreSQL (Docker, pgvector)
+Documentation=info:casmgr-server
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+Environment=CASMGR_ETC=/etc/casmgr
+Environment=CASMGR_VAR=/var/casmgr
+Environment=CASMGR_LOG=/var/log/casmgr
+ExecStart=/usr/lib/casmgr/bin/casmgr-postgres-container start
+ExecStop=/usr/lib/casmgr/bin/casmgr-postgres-container stop
+
+[Install]
+WantedBy=multi-user.target

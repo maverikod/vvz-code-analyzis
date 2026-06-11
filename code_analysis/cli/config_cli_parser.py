@@ -16,6 +16,7 @@ def build_parser(
 ) -> argparse.ArgumentParser:
     """Build and return the config CLI argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
+        prog="casmgr-config",
         description="Configuration generator and validator for code-analysis-server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -48,7 +49,7 @@ def build_parser(
         "--server-host", type=str, help="Server host (default: 0.0.0.0)"
     )
     gen_parser.add_argument(
-        "--server-port", type=int, help="Server port (default: 8080)"
+        "--server-port", type=int, help="Server port (default: 15000)"
     )
     gen_parser.add_argument(
         "--server-cert-file", type=str, help="Server certificate file path"

@@ -8,3 +8,7 @@ behavior, which can break relative imports during type checking.
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
+
+from code_analysis.mcp_adapter_bootstrap import install_mcp_adapter_log_dir
+
+install_mcp_adapter_log_dir()

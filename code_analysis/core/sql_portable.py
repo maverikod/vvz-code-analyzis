@@ -39,6 +39,11 @@ WHERE_PROCESSING_ACTIVE_P = (
 )
 
 
+def unix_timestamp_to_julian_day(unix_ts: float) -> float:
+    """Convert Unix epoch seconds to Julian day (same convention as ``julianday()``)."""
+    return unix_ts / 86400.0 + 2440587.5
+
+
 def sql_julian_timestamp_now_expr(database: Any) -> str:
     """
     SQL fragment for REAL Julian-day style timestamps (``files.updated_at``).

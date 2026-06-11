@@ -7,7 +7,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -15,12 +14,15 @@ from typing import Any, Tuple
 
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
 
+from code_analysis.core.config_json import (
+    ConfigJSONDecodeError,
+    install_comment_json_for_mcp_adapter,
+)
 from code_analysis.core.storage_paths import (
     ensure_storage_dirs,
     resolve_storage_paths,
 )
 from code_analysis.main_server_presentation import sync_registration_presentation
-from code_analysis.main_validation import report_validation_failure
 
 
 def load_config_and_validate(
@@ -34,7 +36,7 @@ def load_config_and_validate(
     if not config_path.exists():
         print(f"❌ Configuration file not found: {config_path}", file=sys.stderr)
         print(
-            "   Generate one with: python -m code_analysis.cli.config_cli generate",
+            "   Generate one with: casmgr-config-generate --protocol https --with-proxy",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -42,38 +44,65 @@ def load_config_and_validate(
     from code_analysis.core.env_loader import load_dotenv_near_config
 
     load_dotenv_near_config(config_path)
+    install_comment_json_for_mcp_adapter()
+
+    from code_analysis.core.config_errors import print_config_error
+    from code_analysis.core.config_state import (
+        get_config_runtime_state,
+        revalidate_config_at_path,
+    )
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            full_config = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"❌ Invalid JSON in configuration file: {e}", file=sys.stderr)
+        full_config, is_valid = revalidate_config_at_path(config_path)
+    except ConfigJSONDecodeError as e:
+        print_config_error(str(e))
         sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to read configuration file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    from code_analysis.core.config_validator import CodeAnalysisConfigValidator
-
-    validator = CodeAnalysisConfigValidator(str(config_path))
-    try:
-        validator.load_config()
-        validation_results = validator.validate_config()
-        summary = validator.get_validation_summary()
-
-        if not summary["is_valid"]:
-            report_validation_failure(
-                validation_results, summary, full_config, config_path
-            )
-
-    except Exception as e:
-        print(f"❌ Failed to validate configuration: {e}", file=sys.stderr)
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
+    if not is_valid:
+        st = get_config_runtime_state()
+        print_config_error("\n".join(st.error_lines))
+        print(
+            "\n⚠️  Starting in configuration error state "
+            "(only help and health commands will work until config is fixed).",
+            file=sys.stderr,
+        )
 
     return (config_path, full_config)
+
+
+def resolve_server_bind(
+    *,
+    args: Any,
+    settings: Any,
+    config_host: str,
+    config_port: int,
+) -> Tuple[str, int]:
+    """
+    Resolve Hypercorn bind host/port.
+
+    Priority: CLI ``--host`` / ``--port`` > ``CODE_ANALYSIS_SERVER_*`` env >
+    ``server.host`` / ``server.port`` from config.  Do not use
+    ``settings.get("server_port")`` here — it always falls back to the dev
+    constant (15000) and ignores config.json.
+    """
+    host = config_host
+    port = config_port
+
+    overrides = getattr(settings, "_cli_overrides", {}) or {}
+    if "server_host" in overrides and not args.host:
+        host = overrides["server_host"]
+    if "server_port" in overrides and args.port is None:
+        port = overrides["server_port"]
+
+    if args.host:
+        host = args.host
+    if args.port is not None:
+        port = args.port
+
+    return host, int(port)
 
 
 def ensure_storage_and_load_app_config(
@@ -110,11 +139,11 @@ def ensure_storage_and_load_app_config(
     from code_analysis.core.settings_manager import get_settings
 
     settings = get_settings()
-    server_host = (
-        settings.get("server_host") or args.host or simple_config.model.server.host
-    )
-    server_port = (
-        settings.get("server_port") or args.port or simple_config.model.server.port
+    server_host, server_port = resolve_server_bind(
+        args=args,
+        settings=settings,
+        config_host=simple_config.model.server.host,
+        config_port=int(simple_config.model.server.port),
     )
 
     app_config = simple_config.to_dict()

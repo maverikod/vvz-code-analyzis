@@ -38,7 +38,7 @@ debian/casmgr-server/
 debian/casmgr-docker-image
 debian/changelog
 
-# Debian binary outputs (also written to parent dir by dpkg-buildpackage — outside git)
+# Debian binary outputs (dpkg-buildpackage also writes ../casmgr-server_*.deb outside this repo)
 *.deb
 *.changes
 *.buildinfo
@@ -152,6 +152,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Ruff
+.ruff_cache/
+
 # Output directories
 reports/
 
@@ -206,8 +209,10 @@ backups/
 
 *.tree
 
-# Machine-local deployment identity (per host; never commit)
+# Machine-local deployment identity and config (per host; never commit)
 projectid
 config.json
+config-venv.json
 
-packaging/
+# packaging/ — source templates for deb (systemd, bin, config templates).
+# MUST stay tracked; only debian/casmgr-server/ staging above is build output.

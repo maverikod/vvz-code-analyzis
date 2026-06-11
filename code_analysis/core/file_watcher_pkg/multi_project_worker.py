@@ -142,9 +142,6 @@ class MultiProjectFileWatcherWorker:
         backoff = 1.0
         backoff_max = 60.0
 
-        # Initialize watch_dirs on first successful database connection
-        watch_dirs_initialized = False
-
         try:
             while not self._stop_event.is_set():
                 if database is None:
@@ -169,26 +166,6 @@ class MultiProjectFileWatcherWorker:
                                 db_available = True
                                 db_status_logged = True
                                 backoff = 1.0  # Reset backoff
-
-                            # Initialize watch_dirs on first connection (always, not just when db becomes available)
-                            if not watch_dirs_initialized:
-                                try:
-                                    logger.info("Initializing watch directories...")
-                                    self._initialize_watch_dirs(database)
-                                    watch_dirs_initialized = True
-                                    logger.info(
-                                        "Watch directories initialization completed"
-                                    )
-                                except Exception as init_e:
-                                    logger.error(
-                                        f"Failed to initialize watch_dirs: {init_e}",
-                                        exc_info=True,
-                                    )
-                                    # Avoid tight CPU loop if the next scan fails fast;
-                                    # init retries only after DB reconnect.
-                                    pause = min(5.0, float(self.scan_interval or 60))
-                                    await asyncio.sleep(pause)
-                                    # Continue anyway - will retry on next reconnect
                             else:
                                 db_status_logged = False  # Already logged as available
                         except Exception as conn_e:
@@ -246,7 +223,17 @@ class MultiProjectFileWatcherWorker:
                         continue
 
                 try:
-                    cycle_stats = await self._scan_cycle(database, None)
+                    should_scan = await self._sync_config_and_watch_dirs(database)
+                    if should_scan:
+                        cycle_stats = await self._scan_cycle(database, None)
+                    else:
+                        cycle_stats = {
+                            "scanned_dirs": 0,
+                            "new_files": 0,
+                            "changed_files": 0,
+                            "deleted_files": 0,
+                            "errors": 0,
+                        }
                 except Exception as e:
                     total_stats["errors"] += 1
                     error_str = str(e).lower()
@@ -389,6 +376,60 @@ class MultiProjectFileWatcherWorker:
                 continue
 
         return total_files
+
+    async def _sync_config_and_watch_dirs(self, database: Any) -> bool:
+        """
+        Reload watch_dirs and related settings from config.json each cycle.
+
+        Returns:
+            True when a scan cycle should run, False when idle (disabled/empty).
+        """
+        if not self.config_path:
+            return bool(self.watch_dirs)
+
+        from .watch_dirs_config import (
+            apply_runtime_settings_to_worker,
+            load_file_watcher_runtime_settings,
+        )
+
+        try:
+            settings = load_file_watcher_runtime_settings(Path(self.config_path))
+        except Exception as exc:
+            from ..config_json import ConfigJSONDecodeError
+
+            if isinstance(exc, ConfigJSONDecodeError):
+                logger.warning("Configuration reload failed:\n%s", exc)
+            else:
+                logger.warning(
+                    "Failed to reload file watcher config from %s: %s",
+                    self.config_path,
+                    exc,
+                )
+            return bool(self.watch_dirs)
+
+        if not settings.enabled:
+            logger.info("file_watcher.enabled=false in config; skipping scan cycle")
+            return False
+
+        apply_runtime_settings_to_worker(self, settings)
+
+        if not settings.watch_dir_specs:
+            logger.warning(
+                "No watch_dirs in config; file watcher idle until configured"
+            )
+            return False
+
+        try:
+            self._initialize_watch_dirs(database)
+        except Exception as init_e:
+            logger.error(
+                "Failed to sync watch_dirs from config: %s",
+                init_e,
+                exc_info=True,
+            )
+            return False
+
+        return True
 
     async def _scan_cycle(self, database: Any, processors: Any) -> Dict[str, Any]:
         """Perform one scan cycle for all watched directories (delegate to cycle module)."""

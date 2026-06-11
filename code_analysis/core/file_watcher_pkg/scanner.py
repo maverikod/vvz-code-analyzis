@@ -1,12 +1,15 @@
 """
 Directory scanner for file watcher worker.
 
-Scans configured directories for code files and discovers projects.
+At the **watch-directory boundary** the scanner lists only **immediate children**,
+re-validates each ``projectid``, and walks **only** validated project roots — it
+does not recurse through sibling folders without a project.
 
-Traversal pruning (``should_skip_dir``) runs **before** ``should_ignore_path`` on
-directory children: excluded trees (``test_data``, ``data/trash``, ``.venv``,
-``venv``, etc.) are never entered. Allowlisted virtualenv ``.py`` files are merged
-after the walk via explicit RECORD paths (no full ``site-packages`` traversal).
+Inside each project root, traversal pruning (``should_skip_dir``) runs **before**
+``should_ignore_path`` on directory children: excluded trees (``test_data``,
+``data/trash``, ``.venv``, ``venv``, etc.) are never entered. Allowlisted virtualenv
+``.py`` files are merged after the walk via explicit RECORD paths (no full
+``site-packages`` traversal).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -20,19 +23,33 @@ import os
 
 from pathlib import Path
 
-from typing import AbstractSet, Any, Dict, List, Optional, Sequence, Set, Union
+from typing import (
+    AbstractSet,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 
 from ..project_ignore_policy import (
     DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES,
+    DATA_DIR_BASENAME,
+    TEST_DATA_DIR_BASENAME,
+    VERSIONS_DIR_BASENAME,
     filter_ignore_exception_py_paths_for_watcher,
     path_is_under_project_local_venv,
+    path_matches_traversal_skip_shape_rules,
 )
 
 from ..docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from ..docs_indexing_eligibility import is_docs_markdown_eligible
 from ..settings_manager import get_settings
-
 
 logger = logging.getLogger(__name__)
 
@@ -200,39 +217,6 @@ def may_contain_ignore_exception(
     return False
 
 
-def _path_has_adjacent_parts(parts: tuple[str, ...], a: str, b: str) -> bool:
-    """Return True if ``a`` is immediately followed by ``b`` in ``parts``.
-
-    Args:
-        parts: Tuple of path segments to search.
-        a: First segment to look for.
-        b: Second segment that must follow ``a``.
-
-    Returns:
-        True if ``a`` is directly followed by ``b`` anywhere in parts.
-    """
-    for i in range(len(parts) - 1):
-        if parts[i] == a and parts[i + 1] == b:
-            return True
-    return False
-
-
-def _under_data_trash(parts: tuple[str, ...], posix_path: str) -> bool:
-    """True if path is under an application ``data/trash`` tree (name + full path).
-
-    Args:
-        parts: Tuple of resolved path segments.
-        posix_path: POSIX string representation of the resolved path.
-
-    Returns:
-        True if the path is located under a ``data/trash`` directory.
-    """
-    if _path_has_adjacent_parts(parts, "data", "trash"):
-        return True
-    norm = posix_path if posix_path.endswith("/") else posix_path + "/"
-    return "/data/trash/" in norm
-
-
 def _best_project_root_for_path(
     path: Path,
     immediate_project_roots: Optional[AbstractSet[Path]],
@@ -272,6 +256,352 @@ def _best_project_root_for_path(
     return best if best is not None else fallback_root
 
 
+def _resolve_path_set(
+    paths: Optional[AbstractSet[Path]],
+) -> Optional[AbstractSet[Path]]:
+    """Resolve a set of paths; on OSError keep the original Path."""
+    if not paths:
+        return None
+    resolved: Set[Path] = set()
+    for pr in paths:
+        try:
+            resolved.add(Path(pr).resolve())
+        except OSError:
+            resolved.add(Path(pr))
+    return resolved
+
+
+def _is_resolved_watch_dir_root(
+    root: Path, watch_dirs_resolved: List[Union[str, Path]]
+) -> bool:
+    """True when ``root`` is exactly one of the configured watch directories."""
+    try:
+        root_res = root.resolve()
+    except OSError:
+        root_res = root
+    for wd in watch_dirs_resolved:
+        try:
+            if root_res == Path(wd).resolve():
+                return True
+        except OSError:
+            if root_res == Path(wd):
+                return True
+    return False
+
+
+def _scan_tree_into_files(
+    files: Dict[str, Dict[str, Any]],
+    walk_root: Path,
+    watch_dirs_resolved: List[Union[str, Path]],
+    *,
+    ignore_patterns: Optional[List[str]] = None,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
+    soft_deleted_project_roots: Optional[AbstractSet[Path]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Recursively walk ``walk_root`` and merge eligible files into ``files``.
+
+    Args:
+        files: Mutable scan result map (absolute path -> file info).
+        walk_root: Directory root for this ``os.walk`` (typically one project root).
+        watch_dirs_resolved: Resolved watch directories for path normalization.
+        ignore_patterns: Glob patterns to ignore.
+        allowed_venv_py_files: Allowlisted venv ``.py`` paths merged after walk.
+        ignore_exception_files: Force-include paths from config exceptions.
+        ignore_exception_patterns: Glob patterns for ignore exceptions.
+        immediate_project_roots: Known project roots (for ``test_data`` exemption).
+        soft_deleted_project_roots: Project subtrees excluded from traversal.
+        docs_indexing: Optional docs-indexing config snapshot.
+    """
+    from ..exceptions import NestedProjectError, ProjectNotFoundError
+    from ..path_normalization import normalize_file_path
+
+    resolved_project_roots = _resolve_path_set(immediate_project_roots)
+    resolved_soft_deleted = _resolve_path_set(soft_deleted_project_roots)
+
+    try:
+        walk_resolved = walk_root.resolve()
+    except OSError:
+        walk_resolved = walk_root
+
+    try:
+        for dirpath, dirnames, filenames in os.walk(
+            walk_resolved, topdown=True, followlinks=False
+        ):
+            dir_path = Path(dirpath)
+            current_project_root = _best_project_root_for_path(
+                dir_path, resolved_project_roots, walk_resolved
+            )
+            dirnames[:] = [
+                d
+                for d in sorted(dirnames)
+                if not should_skip_dir(
+                    dir_path / d,
+                    walk_resolved,
+                    immediate_project_roots=resolved_project_roots,
+                    soft_deleted_project_roots=resolved_soft_deleted,
+                )
+            ]
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if not should_prune_ignored_dir(
+                    dir_path / d,
+                    ignore_patterns,
+                    allowed_venv_py_files=allowed_venv_py_files,
+                    ignore_exception_files=ignore_exception_files,
+                    ignore_exception_patterns=ignore_exception_patterns,
+                    project_root=current_project_root,
+                    docs_indexing=docs_indexing,
+                )
+            ]
+
+            for name in filenames:
+                item = dir_path / name
+                file_project_root = _best_project_root_for_path(
+                    item, resolved_project_roots, current_project_root
+                )
+                if should_ignore_path(
+                    item,
+                    ignore_patterns,
+                    allowed_venv_py_files=allowed_venv_py_files,
+                    ignore_exception_files=ignore_exception_files,
+                    ignore_exception_patterns=ignore_exception_patterns,
+                    project_root=file_project_root,
+                    docs_indexing=docs_indexing,
+                ):
+                    continue
+                if not item.is_file():
+                    continue
+                try:
+                    stat = item.stat()
+                    try:
+                        normalized = normalize_file_path(
+                            item, watch_dirs=watch_dirs_resolved
+                        )
+                        path_key = normalized.absolute_path
+
+                        file_info: Dict[str, Any] = {
+                            "path": Path(normalized.absolute_path),
+                            "mtime": stat.st_mtime,
+                            "size": stat.st_size,
+                            "project_root": normalized.project_root,
+                            "project_id": normalized.project_id,
+                        }
+                        files[path_key] = file_info
+                    except (ProjectNotFoundError, NestedProjectError) as e:
+                        logger.warning(
+                            f"No project found for file {item}: {e}, skipping"
+                        )
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Error normalizing path for {item}: {e}")
+                        continue
+                except OSError as e:
+                    logger.debug(f"Error accessing file {item}: {e}")
+                    continue
+
+    except OSError as e:
+        logger.error(f"Error scanning directory {walk_root}: {e}")
+
+
+def _paths_under_project_root(
+    project_root: Path, candidates: Optional[AbstractSet[Path]]
+) -> Set[Path]:
+    """Return resolved paths from ``candidates`` that lie under ``project_root``."""
+    if not candidates:
+        return set()
+    try:
+        proot = project_root.resolve()
+    except OSError:
+        proot = project_root
+    out: Set[Path] = set()
+    for item in candidates:
+        try:
+            resolved = Path(item).resolve()
+        except OSError:
+            resolved = Path(item)
+        try:
+            resolved.relative_to(proot)
+        except ValueError:
+            continue
+        out.add(resolved)
+    return out
+
+
+def _build_project_merge_paths(
+    project_root: Path,
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
+) -> Set[Path]:
+    """Collect allowlisted venv / ignore-exception paths belonging to one project."""
+    merge_paths: Set[Path] = _paths_under_project_root(
+        project_root, allowed_venv_py_files
+    )
+    if ignore_exception_files:
+        exc_merge = _paths_under_project_root(project_root, ignore_exception_files)
+        if immediate_project_roots:
+            exc_merge = filter_ignore_exception_py_paths_for_watcher(
+                exc_merge,
+                immediate_project_roots,
+                allowed_venv_py_files,
+            )
+        merge_paths.update(exc_merge)
+    return merge_paths
+
+
+def iter_watch_dir_project_scans(
+    watch_dir: Path,
+    watch_dirs: List[Path],
+    ignore_patterns: Optional[List[str]] = None,
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
+    soft_deleted_project_roots: Optional[AbstractSet[Path]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
+) -> Iterator[Tuple[str, Path, Dict[str, Dict[str, Any]]]]:
+    """
+    Yield ``(project_id, project_root, files_map)`` for each validated watch-dir child.
+
+    Each yield completes one project tree walk, explicit merge paths for that project,
+    and is ready for per-project delta/queue (buffer flush) before the next child.
+    """
+    from ..exceptions import InvalidProjectIdFormatError, ProjectIdError
+    from ..project_resolution import load_project_info
+
+    watch_dirs_resolved: List[Union[str, Path]] = [
+        Path(wd).resolve() for wd in watch_dirs
+    ]
+    resolved_soft_deleted = _resolve_path_set(soft_deleted_project_roots)
+    resolved_project_roots = _resolve_path_set(immediate_project_roots)
+
+    try:
+        children = sorted(watch_dir.iterdir(), key=lambda p: p.name.lower())
+    except OSError as e:
+        logger.error("Error listing watch directory %s: %s", watch_dir, e)
+        return
+
+    for child in children:
+        if not child.is_dir():
+            continue
+        try:
+            child_resolved = child.resolve()
+        except OSError:
+            child_resolved = child
+
+        if resolved_soft_deleted:
+            skip_soft = False
+            for ex in resolved_soft_deleted:
+                if child_resolved == ex:
+                    logger.debug(
+                        "[SCAN PROJECT] skip soft-deleted root %s", child_resolved
+                    )
+                    skip_soft = True
+                    break
+            if skip_soft:
+                continue
+
+        projectid_path = child / "projectid"
+        if not projectid_path.is_file():
+            continue
+
+        try:
+            project_info = load_project_info(child)
+        except (ProjectIdError, InvalidProjectIdFormatError) as e:
+            logger.warning(
+                "Skipping watch-dir child without valid projectid: %s (%s)",
+                child,
+                e,
+            )
+            continue
+
+        project_root = child_resolved
+        project_id = project_info.project_id
+        logger.info(
+            "[SCAN PROJECT] root=%s project_id=%s",
+            project_root,
+            project_id,
+        )
+        roots_for_walk: AbstractSet[Path] = {project_root}
+        if resolved_project_roots:
+            merged_roots = set(resolved_project_roots)
+            merged_roots.add(project_root)
+            roots_for_walk = merged_roots
+
+        project_files: Dict[str, Dict[str, Any]] = {}
+        _scan_tree_into_files(
+            project_files,
+            project_root,
+            watch_dirs_resolved,
+            ignore_patterns=ignore_patterns,
+            allowed_venv_py_files=allowed_venv_py_files,
+            ignore_exception_files=ignore_exception_files,
+            ignore_exception_patterns=ignore_exception_patterns,
+            immediate_project_roots=roots_for_walk,
+            soft_deleted_project_roots=resolved_soft_deleted,
+            docs_indexing=docs_indexing,
+        )
+        merge_paths = _build_project_merge_paths(
+            project_root,
+            allowed_venv_py_files=allowed_venv_py_files,
+            ignore_exception_files=ignore_exception_files,
+            immediate_project_roots=roots_for_walk,
+        )
+        _merge_explicit_watcher_file_paths(
+            project_files,
+            watch_dirs_resolved,
+            merge_paths,
+            resolved_soft_deleted,
+        )
+        yield project_id, project_root, project_files
+
+
+def _scan_watch_dir_by_immediate_projects(
+    watch_dir: Path,
+    watch_dirs_resolved: List[Union[str, Path]],
+    *,
+    ignore_patterns: Optional[List[str]] = None,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
+    soft_deleted_project_roots: Optional[AbstractSet[Path]] = None,
+    docs_indexing: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Scan a watch directory by validating each immediate child and walking projects only.
+
+    For every direct subdirectory of ``watch_dir``:
+    1. Skip when the path is a soft-deleted project root.
+    2. Require a readable ``projectid`` file and re-validate it via ``load_project_info``.
+    3. Walk that project root fully via :func:`_scan_tree_into_files`.
+
+    Immediate children without a valid ``projectid`` are never entered.
+    """
+    files: Dict[str, Dict[str, Any]] = {}
+    for _project_id, _project_root, batch in iter_watch_dir_project_scans(
+        watch_dir,
+        watch_dirs_resolved,
+        ignore_patterns,
+        allowed_venv_py_files=allowed_venv_py_files,
+        ignore_exception_files=ignore_exception_files,
+        ignore_exception_patterns=ignore_exception_patterns,
+        immediate_project_roots=immediate_project_roots,
+        soft_deleted_project_roots=soft_deleted_project_roots,
+        docs_indexing=docs_indexing,
+    ):
+        files.update(batch)
+    return files
+
+
 def should_skip_dir(
     dir_path: Path,
     walk_root: Path | None = None,
@@ -284,9 +614,10 @@ def should_skip_dir(
 
     Filesystem-only traversal control (not ``should_ignore_path``). Skips any
     directory named ``test_data`` (except resolved roots listed in
-    ``immediate_project_roots``), paths under ``data/trash`` (by path segments and
-    ``/data/trash/`` in the full path), ``data/versions``, virtualenvs, VCS, caches,
-    and other names in :data:`DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES`.
+    ``immediate_project_roots``), paths under configured trash/version trees
+    (see :data:`DEFAULT_TRAVERSAL_SKIP_ADJACENT_PATH_SEGMENT_PAIRS`), virtualenvs,
+    VCS (``.git``), backup trees (``old_code``), and other names in
+    :data:`DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES`.
 
     Args:
         dir_path: Candidate subdirectory (typically ``parent / name`` from ``os.walk``).
@@ -329,13 +660,11 @@ def should_skip_dir(
             return False
     parts = resolved.parts
     posix_path = resolved.as_posix()
-    if _under_data_trash(parts, posix_path):
+    if path_matches_traversal_skip_shape_rules(parts, posix_path):
         return True
-    if resolved.name == "test_data":
+    if resolved.name == TEST_DATA_DIR_BASENAME:
         if immediate_project_roots and resolved in immediate_project_roots:
             return False
-        return True
-    if _path_has_adjacent_parts(parts, "data", "versions"):
         return True
     return False
 
@@ -481,14 +810,13 @@ def should_ignore_path(
         if part in all_patterns:
             return True
 
-        # Special handling for "data" and "versions" directories
-        if part == "data":
-            # Check if next part is "versions" or if path contains "data/versions"
+        # Special handling for configured data/versions directory shape
+        if part == DATA_DIR_BASENAME:
             try:
                 part_idx = path.parts.index(part)
                 if (
                     part_idx + 1 < len(path.parts)
-                    and path.parts[part_idx + 1] == "versions"
+                    and path.parts[part_idx + 1] == VERSIONS_DIR_BASENAME
                 ):
                     return True
             except (ValueError, IndexError):
@@ -562,14 +890,17 @@ def scan_directory(
     docs_indexing: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict]:
     """
-    Scan directory recursively for code files and discover projects.
+    Scan a watch directory or project subtree for code files.
 
-    Implements project discovery: for each file, finds the project root as the
-    directory ``watch_dir/<one_segment>/`` that contains a valid ``projectid``
-    (only immediate children of each watch_dir; see ``project_discovery.find_project_root``).
+    When ``root_dir`` is a configured watch directory, only **immediate children**
+    with a valid ``projectid`` are scanned (each project root is walked fully).
+    Sibling directories without ``projectid`` are not entered.
+
+    When ``root_dir`` is a project subtree (not a watch dir), that subtree alone
+    is walked recursively.
 
     Args:
-        root_dir: Root directory to scan
+        root_dir: Watch directory or project subtree to scan
         watch_dirs: List of watched directories for project discovery (REQUIRED)
         ignore_patterns: Glob patterns to ignore
         allowed_venv_py_files: Optional set of resolved ``.py`` paths under venv
@@ -602,13 +933,8 @@ def scan_directory(
         ``immediate_project_roots`` is provided (same as
         :func:`~code_analysis.core.project_ignore_policy.filter_ignore_exception_py_paths_for_watcher`).
     """
-    from ..exceptions import NestedProjectError, ProjectNotFoundError
-    from ..path_normalization import normalize_file_path
-
     files: Dict[str, Dict[str, Any]] = {}
 
-    # Resolve watch_dirs to absolute paths; annotated as List[Union[str, Path]]
-    # to satisfy normalize_file_path signature.
     watch_dirs_resolved: List[Union[str, Path]] = [
         Path(wd).resolve() for wd in watch_dirs
     ]
@@ -618,105 +944,34 @@ def scan_directory(
     except OSError:
         walk_root = root_dir
 
-    resolved_project_roots: Optional[AbstractSet[Path]] = None
-    if immediate_project_roots:
-        resolved_project_roots = set()
-        for pr in immediate_project_roots:
-            try:
-                resolved_project_roots.add(Path(pr).resolve())
-            except OSError:
-                resolved_project_roots.add(Path(pr))
+    resolved_project_roots = _resolve_path_set(immediate_project_roots)
+    resolved_soft_deleted = _resolve_path_set(soft_deleted_project_roots)
 
-    resolved_soft_deleted: Optional[AbstractSet[Path]] = None
-    if soft_deleted_project_roots:
-        resolved_soft_deleted = set()
-        for pr in soft_deleted_project_roots:
-            try:
-                resolved_soft_deleted.add(Path(pr).resolve())
-            except OSError:
-                resolved_soft_deleted.add(Path(pr))
+    if _is_resolved_watch_dir_root(walk_root, watch_dirs_resolved):
+        return _scan_watch_dir_by_immediate_projects(
+            walk_root,
+            watch_dirs_resolved,
+            ignore_patterns=ignore_patterns,
+            allowed_venv_py_files=allowed_venv_py_files,
+            ignore_exception_files=ignore_exception_files,
+            ignore_exception_patterns=ignore_exception_patterns,
+            immediate_project_roots=resolved_project_roots,
+            soft_deleted_project_roots=resolved_soft_deleted,
+            docs_indexing=docs_indexing,
+        )
 
-    try:
-        for dirpath, dirnames, filenames in os.walk(
-            walk_root, topdown=True, followlinks=False
-        ):
-            dir_path = Path(dirpath)
-            current_project_root = _best_project_root_for_path(
-                dir_path, resolved_project_roots, walk_root
-            )
-            # Pre-traversal: prune excluded directory trees before any ignore-pattern logic.
-            dirnames[:] = [
-                d
-                for d in sorted(dirnames)
-                if not should_skip_dir(
-                    dir_path / d,
-                    walk_root,
-                    immediate_project_roots=resolved_project_roots,
-                    soft_deleted_project_roots=resolved_soft_deleted,
-                )
-            ]
-            # Secondary: pattern-based directory pruning for ignored directory shapes.
-            dirnames[:] = [
-                d
-                for d in dirnames
-                if not should_prune_ignored_dir(
-                    dir_path / d,
-                    ignore_patterns,
-                    allowed_venv_py_files=allowed_venv_py_files,
-                    ignore_exception_files=ignore_exception_files,
-                    ignore_exception_patterns=ignore_exception_patterns,
-                    project_root=current_project_root,
-                    docs_indexing=docs_indexing,
-                )
-            ]
-
-            for name in filenames:
-                item = dir_path / name
-                file_project_root = _best_project_root_for_path(
-                    item, resolved_project_roots, current_project_root
-                )
-                if should_ignore_path(
-                    item,
-                    ignore_patterns,
-                    allowed_venv_py_files=allowed_venv_py_files,
-                    ignore_exception_files=ignore_exception_files,
-                    ignore_exception_patterns=ignore_exception_patterns,
-                    project_root=file_project_root,
-                    docs_indexing=docs_indexing,
-                ):
-                    continue
-                if not item.is_file():
-                    continue
-                try:
-                    stat = item.stat()
-                    try:
-                        normalized = normalize_file_path(
-                            item, watch_dirs=watch_dirs_resolved
-                        )
-                        path_key = normalized.absolute_path
-
-                        file_info: Dict[str, Any] = {
-                            "path": Path(normalized.absolute_path),
-                            "mtime": stat.st_mtime,
-                            "size": stat.st_size,
-                            "project_root": normalized.project_root,
-                            "project_id": normalized.project_id,
-                        }
-                        files[path_key] = file_info
-                    except (ProjectNotFoundError, NestedProjectError) as e:
-                        logger.warning(
-                            f"No project found for file {item}: {e}, skipping"
-                        )
-                        continue
-                    except Exception as e:
-                        logger.debug(f"Error normalizing path for {item}: {e}")
-                        continue
-                except OSError as e:
-                    logger.debug(f"Error accessing file {item}: {e}")
-                    continue
-
-    except OSError as e:
-        logger.error(f"Error scanning directory {root_dir}: {e}")
+    _scan_tree_into_files(
+        files,
+        walk_root,
+        watch_dirs_resolved,
+        ignore_patterns=ignore_patterns,
+        allowed_venv_py_files=allowed_venv_py_files,
+        ignore_exception_files=ignore_exception_files,
+        ignore_exception_patterns=ignore_exception_patterns,
+        immediate_project_roots=resolved_project_roots,
+        soft_deleted_project_roots=resolved_soft_deleted,
+        docs_indexing=docs_indexing,
+    )
 
     merge_paths: Set[Path] = set()
     if allowed_venv_py_files:

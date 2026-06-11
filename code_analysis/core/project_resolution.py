@@ -15,7 +15,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from .exceptions import (
     InvalidProjectIdFormatError,
@@ -74,6 +74,29 @@ def normalize_abs_path(path: str | Path) -> str:
     return normalize_path_simple(path)
 
 
+def _parse_optional_bool(value: Any, field_name: str, projectid_path: str) -> bool:
+    """Parse optional boolean field from projectid JSON (default False)."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes"):
+            return True
+        if lowered in ("false", "0", "no", ""):
+            return False
+    raise InvalidProjectIdFormatError(
+        message=(
+            f"Invalid projectid format: '{field_name}' must be a boolean, "
+            f"got {type(value).__name__}"
+        ),
+        projectid_path=projectid_path,
+    )
+
+
 @dataclass
 class ProjectInfo:
     """Information about project root."""
@@ -81,6 +104,8 @@ class ProjectInfo:
     root_path: Path  # Absolute path to project root
     project_id: str  # UUID4 identifier
     description: str  # Human-readable description
+    deleted: bool = False  # Soft-deleted / in trash lifecycle
+    processing_paused: bool = False  # Workers skip indexing/vectorization
 
 
 def load_project_id(root_dir: str | Path) -> str:
@@ -90,8 +115,13 @@ def load_project_id(root_dir: str | Path) -> str:
     Expected JSON format:
     {
         "id": "550e8400-e29b-41d4-a716-446655440000",
-        "description": "Human readable description of project"
+        "description": "Human readable description of project",
+        "deleted": false,
+        "processing_paused": false
     }
+
+    ``deleted`` and ``processing_paused`` are optional (default false). They are
+    persisted in ``projectid`` and synced to ``projects`` DB columns.
 
     The refactor plan enforces `project_id` as a mandatory safety gate for
     mutating operations. This function is the single source of truth for that ID.
@@ -117,14 +147,16 @@ def load_project_info(root_dir: str | Path) -> ProjectInfo:
     Expected JSON format:
     {
         "id": "550e8400-e29b-41d4-a716-446655440000",
-        "description": "Human readable description of project"
+        "description": "Human readable description of project",
+        "deleted": false,
+        "processing_paused": false
     }
 
     Args:
         root_dir: Project root directory (contains `projectid` file).
 
     Returns:
-        ProjectInfo with project_id and description.
+        ProjectInfo with project_id, description, deleted, processing_paused.
 
     Raises:
         ProjectIdError: If file is missing or empty.
@@ -168,6 +200,10 @@ def load_project_info(root_dir: str | Path) -> ProjectInfo:
 
     project_id = data["id"]
     description = data.get("description", "")
+    deleted = _parse_optional_bool(data.get("deleted"), "deleted", str(pid_path))
+    processing_paused = _parse_optional_bool(
+        data.get("processing_paused"), "processing_paused", str(pid_path)
+    )
 
     # Validate UUID4 format
     try:
@@ -185,8 +221,73 @@ def load_project_info(root_dir: str | Path) -> ProjectInfo:
         )
 
     return ProjectInfo(
-        root_path=root_path, project_id=project_id, description=description
+        root_path=root_path,
+        project_id=project_id,
+        description=description,
+        deleted=deleted,
+        processing_paused=processing_paused,
     )
+
+
+def project_info_to_dict(info: ProjectInfo) -> dict[str, Any]:
+    """Serialize ProjectInfo to projectid JSON object."""
+    payload: dict[str, Any] = {
+        "id": info.project_id,
+        "description": info.description,
+    }
+    if info.deleted:
+        payload["deleted"] = True
+    if info.processing_paused:
+        payload["processing_paused"] = True
+    return payload
+
+
+def save_project_info(info: ProjectInfo, *, backup: bool = True) -> None:
+    """
+    Write ``projectid`` from ProjectInfo (atomic replace with optional backup).
+
+    Args:
+        info: Project metadata to persist.
+        backup: When True and file exists, copy prior version to ``old_code``.
+    """
+    pid_path = info.root_path / "projectid"
+    text = json.dumps(project_info_to_dict(info), indent=4, ensure_ascii=False) + "\n"
+    if backup and pid_path.exists():
+        from .backup_manager import BackupManager
+
+        BackupManager(info.root_path).create_backup(
+            pid_path, command="save_project_info"
+        )
+    pid_path.write_text(text, encoding="utf-8")
+
+
+def update_projectid_fields(
+    root_dir: str | Path,
+    *,
+    description: Optional[str] = None,
+    deleted: Optional[bool] = None,
+    processing_paused: Optional[bool] = None,
+    backup: bool = True,
+) -> ProjectInfo:
+    """
+    Merge-update selected fields in ``projectid`` and return the new ProjectInfo.
+
+    ``id`` is never changed. Unspecified fields are preserved from the current file.
+    """
+    current = load_project_info(root_dir)
+    updated = ProjectInfo(
+        root_path=current.root_path,
+        project_id=current.project_id,
+        description=current.description if description is None else description,
+        deleted=current.deleted if deleted is None else bool(deleted),
+        processing_paused=(
+            current.processing_paused
+            if processing_paused is None
+            else bool(processing_paused)
+        ),
+    )
+    save_project_info(updated, backup=backup)
+    return updated
 
 
 def require_matching_project_id(root_dir: str | Path, project_id: str | None) -> str:
@@ -292,6 +393,8 @@ def find_project_root_for_path(
         root_path=project_root.root_path,
         project_id=project_info.project_id,
         description=project_info.description,
+        deleted=project_info.deleted,
+        processing_paused=project_info.processing_paused,
     )
 
 

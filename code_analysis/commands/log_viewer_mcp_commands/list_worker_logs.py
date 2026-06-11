@@ -126,7 +126,7 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
             if not resolved_dirs:
                 try:
                     storage = BaseMCPCommand._get_shared_storage()
-                    config_logs = str(storage.config_dir / "logs")
+                    config_logs = str(storage.log_dir)
                     resolved_dirs = [config_logs, "logs"]
                 except Exception:
                     resolved_dirs = ["logs"]

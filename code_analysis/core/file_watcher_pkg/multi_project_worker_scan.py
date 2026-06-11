@@ -18,6 +18,7 @@ from code_analysis.core.project_root_path import (
 )
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
+from ..watch_dir_access import describe_watch_dir_access
 from ..venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     build_ignore_exception_files_for_projects,
@@ -36,12 +37,27 @@ from ..worker_project_activity import (
 from .lock_manager import LockManager
 from .multi_project_worker_specs import WatchDirSpec
 from .processor import FileChangeProcessor
-from .scanner import scan_directory
+from .processor_delta import (
+    compute_project_delta,
+    compute_supplemental_watch_dir_deltas,
+)
+from .scanner import iter_watch_dir_project_scans
+from .watcher_project_metadata import (
+    apply_project_updated_at_from_scan,
+    load_projectid_flags_for_insert,
+    refresh_project_metadata_from_projectid,
+)
 from .watcher_soft_deleted_projects import (
     partition_discovered_projects_by_db_soft_delete,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_queue_stats(into: Dict[str, Any], part: Dict[str, Any]) -> None:
+    """Add per-project queue counters into watch-dir totals."""
+    for key in ("new_files", "changed_files", "deleted_files", "errors"):
+        into[key] = int(into.get(key, 0)) + int(part.get(key, 0))
 
 
 def _abspath_dedup_ts(value: Any) -> float:
@@ -308,8 +324,14 @@ def scan_watch_dir(
     }
 
     watch_dir = spec.watch_dir
-    if not watch_dir.exists():
-        logger.warning(f"Watched directory does not exist: {watch_dir}")
+    access_issue = describe_watch_dir_access(watch_dir)
+    if access_issue:
+        logger.warning(
+            "Watch directory not accessible (id=%s, path=%s): %s — will retry next cycle",
+            spec.watch_dir_id,
+            watch_dir,
+            access_issue,
+        )
         return stats
 
     lock_key = str(watch_dir.resolve())
@@ -444,7 +466,7 @@ def scan_watch_dir(
                         database.execute(
                             f"""
                             UPDATE projects 
-                            SET {', '.join(update_fields)}, updated_at = {_now_sql}
+                            SET {', '.join(update_fields)}
                             WHERE id = ?
                             """,
                             tuple(update_values),
@@ -455,6 +477,11 @@ def scan_watch_dir(
                             f"comment={current_comment} -> {project_root_obj.description}, "
                             f"watch_dir_id={current_watch_dir_id} -> {watch_dir_id}"
                         )
+                    refresh_project_metadata_from_projectid(
+                        database,
+                        project_root_obj.root_path,
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                    )
                 else:
                     existing_project_id = find_project_id_by_resolved_absolute_root(
                         database,
@@ -470,7 +497,7 @@ def scan_watch_dir(
                             database.execute(
                                 f"""
                                 UPDATE projects 
-                                SET id = ?, comment = ?, updated_at = {_now_sql}
+                                SET id = ?, comment = ?
                                 WHERE id = ?
                                 """,
                                 (
@@ -480,6 +507,11 @@ def scan_watch_dir(
                                 ),
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
+                        refresh_project_metadata_from_projectid(
+                            database,
+                            project_root_obj.root_path,
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                        )
                     else:
                         existing_project_obj = database.get_project(
                             project_root_obj.project_id
@@ -509,6 +541,9 @@ def scan_watch_dir(
                         project_name = project_root_obj.root_path.name
                         project_description = project_root_obj.description
                         watch_dir_id = spec.watch_dir_id
+                        pid_deleted, pid_paused = load_projectid_flags_for_insert(
+                            project_root_obj.root_path
+                        )
                         root_stored = persist_projects_root_path_stored_value(
                             project_root_absolute=project_root_obj.root_path,
                             watch_dir_id=(
@@ -527,6 +562,8 @@ def scan_watch_dir(
                                     if watch_dir_id is not None
                                     else None
                                 ),
+                                deleted=pid_deleted,
+                                processing_paused=pid_paused,
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         else:
@@ -553,6 +590,11 @@ def scan_watch_dir(
                                 ),
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
+                        refresh_project_metadata_from_projectid(
+                            database,
+                            project_root_obj.root_path,
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                        )
                         logger.info(
                             f"Auto-created project {project_root_obj.project_id} "
                             f"at {project_root_obj.root_path} "
@@ -616,36 +658,184 @@ def scan_watch_dir(
         )
 
         immediate_roots = {Path(p.root_path).resolve() for p in discovered_projects}
-        scanned_files = scan_directory(
-            root_dir=watch_dir,
-            watch_dirs=[spec.watch_dir],
-            ignore_patterns=merged_ignore,
+        all_scanned_files: Dict[str, Dict[str, Any]] = {}
+        project_deltas: Dict[str, Any] = {}
+        dir_stats: Dict[str, Any] = {
+            "new_files": 0,
+            "changed_files": 0,
+            "deleted_files": 0,
+            "errors": 0,
+        }
+        processed_project_ids: Set[str] = set()
+        watcher_coord = {
+            "database": database,
+            "owner_id": watcher_owner_id,
+            "lease_ttl": watcher_lease_ttl,
+            "config_path": config_path,
+        }
+
+        from .ignore_pre_scan_purge import (
+            apply_ignore_purge_split_to_deltas,
+            run_pre_scan_ignore_purge_for_project,
+        )
+        from .watcher_bulk_sync import bulk_sync_supported
+        from .watcher_disk_manifest import build_project_disk_manifest
+
+        project_id_to_root: Dict[str, Path] = {
+            p.project_id: Path(p.root_path) for p in discovered_projects
+        }
+
+        for project_id, project_root, project_files in iter_watch_dir_project_scans(
+            watch_dir,
+            [spec.watch_dir],
+            merged_ignore,
             allowed_venv_py_files=allowed_venv_py or None,
             ignore_exception_files=exc_files_filtered or None,
             ignore_exception_patterns=exc_patterns or None,
             immediate_project_roots=immediate_roots,
             soft_deleted_project_roots=soft_deleted_roots or None,
             docs_indexing=docs_indexing_snap,
-        )
+        ):
+            processed_project_ids.add(project_id)
+            all_scanned_files.update(project_files)
 
-        delta = processor.compute_delta(watch_dir, scanned_files)
+            if project_id in skipped_projects:
+                continue
+
+            if bulk_sync_supported(database):
+                run_pre_scan_ignore_purge_for_project(
+                    database,
+                    project_id,
+                    merged_ignore,
+                    allowed_venv_py_files=allowed_venv_py or None,
+                    ignore_exception_files=exc_files_filtered or None,
+                    ignore_exception_patterns=exc_patterns or None,
+                    config_path=config_path,
+                    docs_indexing=docs_indexing_snap,
+                )
+                manifest = build_project_disk_manifest(
+                    project_files, project_id, project_root
+                )
+                project_queue_stats = processor.queue_project_bulk_sync(
+                    project_id,
+                    project_root,
+                    manifest,
+                    watch_dir_id=(
+                        str(spec.watch_dir_id)
+                        if spec.watch_dir_id is not None
+                        else None
+                    ),
+                    watcher_coord=watcher_coord,
+                )
+                project_deltas[project_id] = compute_project_delta(
+                    database, project_root, project_id, project_files
+                )
+            else:
+                project_delta = compute_project_delta(
+                    database, project_root, project_id, project_files
+                )
+                project_deltas[project_id] = project_delta
+                apply_ignore_purge_split_to_deltas(
+                    {project_id: project_delta},
+                    {project_id: project_root},
+                    merged_ignore,
+                    allowed_venv_py_files=allowed_venv_py or None,
+                    ignore_exception_files=exc_files_filtered or None,
+                    ignore_exception_patterns=exc_patterns or None,
+                    docs_indexing=docs_indexing_snap,
+                )
+                project_queue_stats = processor.queue_changes(
+                    watch_dir,
+                    {project_id: project_delta},
+                    watcher_coord=watcher_coord,
+                )
+            _merge_queue_stats(dir_stats, project_queue_stats)
+            apply_project_updated_at_from_scan(
+                database,
+                project_id,
+                project_files,
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+            )
+            logger.info(
+                "[QUEUE PROJECT] watch_dir=%s project_id=%s "
+                "new=%s changed=%s deleted=%s errors=%s files_buffered=%s",
+                watch_dir,
+                project_id,
+                project_queue_stats.get("new_files", 0),
+                project_queue_stats.get("changed_files", 0),
+                project_queue_stats.get("deleted_files", 0),
+                project_queue_stats.get("errors", 0),
+                len(project_files),
+            )
+
+        supplemental = compute_supplemental_watch_dir_deltas(
+            database,
+            [spec.watch_dir.resolve()],
+            watch_dir,
+            processed_project_ids,
+        )
         if skipped_projects:
-            delta = {k: v for k, v in delta.items() if k not in skipped_projects}
+            supplemental = {
+                k: v for k, v in supplemental.items() if k not in skipped_projects
+            }
+        if supplemental:
+            if bulk_sync_supported(database):
+                for supp_pid, _supp_delta in supplemental.items():
+                    supp_root = project_id_to_root.get(supp_pid)
+                    if supp_root is None:
+                        continue
+                    run_pre_scan_ignore_purge_for_project(
+                        database,
+                        supp_pid,
+                        merged_ignore,
+                        allowed_venv_py_files=allowed_venv_py or None,
+                        ignore_exception_files=exc_files_filtered or None,
+                        ignore_exception_patterns=exc_patterns or None,
+                        config_path=config_path,
+                        docs_indexing=docs_indexing_snap,
+                    )
+                    supp_stats = processor.queue_project_bulk_sync(
+                        supp_pid,
+                        supp_root,
+                        [],
+                        watch_dir_id=(
+                            str(spec.watch_dir_id)
+                            if spec.watch_dir_id is not None
+                            else None
+                        ),
+                        watcher_coord=watcher_coord,
+                    )
+                    _merge_queue_stats(dir_stats, supp_stats)
+                project_deltas.update(supplemental)
+            else:
+                apply_ignore_purge_split_to_deltas(
+                    supplemental,
+                    project_id_to_root,
+                    merged_ignore,
+                    allowed_venv_py_files=allowed_venv_py or None,
+                    ignore_exception_files=exc_files_filtered or None,
+                    ignore_exception_patterns=exc_patterns or None,
+                    docs_indexing=docs_indexing_snap,
+                )
+                supp_stats = processor.queue_changes(
+                    watch_dir,
+                    supplemental,
+                    watcher_coord=watcher_coord,
+                )
+                _merge_queue_stats(dir_stats, supp_stats)
+                project_deltas.update(supplemental)
+            logger.info(
+                "[QUEUE SUPPLEMENTAL] watch_dir=%s projects=%s "
+                "new=%s changed=%s deleted=%s errors=%s",
+                watch_dir,
+                len(supplemental),
+                supp_stats.get("new_files", 0),
+                supp_stats.get("changed_files", 0),
+                supp_stats.get("deleted_files", 0),
+                supp_stats.get("errors", 0),
+            )
 
-        from .ignore_pre_scan_purge import apply_ignore_purge_split_to_deltas
-
-        project_id_to_root: Dict[str, Path] = {
-            p.project_id: Path(p.root_path) for p in discovered_projects
-        }
-        apply_ignore_purge_split_to_deltas(
-            delta,
-            project_id_to_root,
-            merged_ignore,
-            allowed_venv_py_files=allowed_venv_py or None,
-            ignore_exception_files=exc_files_filtered or None,
-            ignore_exception_patterns=exc_patterns or None,
-            docs_indexing=docs_indexing_snap,
-        )
+        delta = {k: v for k, v in project_deltas.items() if k not in skipped_projects}
 
         scan_end = datetime.now()
         scan_duration = (scan_end - scan_start).total_seconds()
@@ -661,28 +851,15 @@ def scan_watch_dir(
             f"[SCAN END] Watch directory: {watch_dir} | "
             f"time: {scan_end.strftime('%Y-%m-%d %H:%M:%S')} | "
             f"duration: {scan_duration:.2f}s | "
-            f"files_scanned: {len(scanned_files)} | "
+            f"files_scanned: {len(all_scanned_files)} | "
             f"projects: {len(delta)} | "
             f"delta: new={total_new}, changed={total_changed}, deleted={total_deleted} | "
             f"per_project: {per_project}"
         )
 
-        queue_start = datetime.now()
-        dir_stats = processor.queue_changes(
-            watch_dir,
-            delta,
-            watcher_coord={
-                "database": database,
-                "owner_id": watcher_owner_id,
-                "lease_ttl": watcher_lease_ttl,
-                "config_path": config_path,
-            },
-        )
-        queue_end = datetime.now()
-        queue_duration = (queue_end - queue_start).total_seconds()
         logger.info(
             f"[QUEUE END] Watch directory: {watch_dir} | "
-            f"duration: {queue_duration:.2f}s | "
+            f"duration: {(datetime.now() - scan_start).total_seconds():.2f}s | "
             f"new: {dir_stats.get('new_files', 0)} | "
             f"changed: {dir_stats.get('changed_files', 0)} | "
             f"deleted: {dir_stats.get('deleted_files', 0)}"
@@ -722,7 +899,7 @@ def scan_watch_dir(
                     logger.debug(f"Could not update current_project_id: {e}")
 
         stats["scanned_dirs"] += 1
-        stats["files_scanned"] = len(scanned_files)
+        stats["files_scanned"] = len(all_scanned_files)
         stats["new_files"] += int(dir_stats.get("new_files", 0))
         stats["changed_files"] += int(dir_stats.get("changed_files", 0))
         stats["deleted_files"] += int(dir_stats.get("deleted_files", 0))

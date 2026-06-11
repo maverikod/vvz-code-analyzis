@@ -5,10 +5,15 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
+
+from code_analysis.core.config_json import (
+    ConfigJSONDecodeError,
+    install_comment_json_for_mcp_adapter,
+    load_config_json,
+)
 from mcp_proxy_adapter.core.config.simple_config_validator import (
     SimpleConfigValidator,
 )
@@ -61,13 +66,13 @@ class CodeAnalysisConfigValidator:
         if not self.config_path:
             raise ValueError("No configuration path provided")
 
+        install_comment_json_for_mcp_adapter()
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self.config_data = json.load(f)
+            self.config_data = load_config_json(self.config_path)
         except FileNotFoundError:
             raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in configuration file: {e}")
+        except ConfigJSONDecodeError as e:
+            raise ValueError(str(e)) from e
         except Exception as e:
             raise RuntimeError(f"Error loading configuration: {e}")
 

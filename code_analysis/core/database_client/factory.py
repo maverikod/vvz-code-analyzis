@@ -55,9 +55,7 @@ def resolve_driver_config_like_main_workers(
     if driver_type in ("sqlite", "sqlite_proxy"):
         config_dict["path"] = str(storage.db_path.resolve())
     if "query_log_path" not in config_dict:
-        config_dict["query_log_path"] = str(
-            storage.config_dir / "logs" / "database_queries.jsonl"
-        )
+        config_dict["query_log_path"] = str(storage.log_dir / "database_queries.jsonl")
     return resolved
 
 

@@ -10,6 +10,10 @@ import logging
 import os
 import sys
 
+from code_analysis.mcp_adapter_bootstrap import install_mcp_adapter_log_dir
+
+install_mcp_adapter_log_dir()
+
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
 
 from code_analysis.core.constants import DEFAULT_CONFIG_FILENAME

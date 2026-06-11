@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +55,13 @@ def load_dotenv_near_config(
         if candidate.is_file():
             load_dotenv(candidate, override=override)
             loaded = True
+
+    secrets_dir = os.environ.get("CASMGR_SECRETS", "/var/casmgr/secrets")
+    secrets_env = Path(secrets_dir).expanduser() / ".env"
+    if secrets_env.is_file():
+        load_dotenv(secrets_env, override=override)
+        loaded = True
+
     if load_dotenv_best_effort(override=override):
         loaded = True
     return loaded

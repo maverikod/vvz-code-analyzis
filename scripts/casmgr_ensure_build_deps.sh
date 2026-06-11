@@ -84,20 +84,6 @@ _casmgr_sudo() {
     sudo "$@"
 }
 
-_casmgr_queue_pkg() {
-    local pkg="$1"
-    local -n _queue="$2"
-    local seen="$3"
-    if [[ " ${seen} " == *" ${pkg} "* ]]; then
-        return 0
-    fi
-    if _casmgr_pkg_installed "$pkg"; then
-        return 0
-    fi
-    _queue+=("$pkg")
-    echo "${seen} ${pkg}"
-}
-
 _casmgr_apt_install() {
     local missing=("$@")
     if (( ${#missing[@]} == 0 )); then
@@ -128,8 +114,17 @@ _casmgr_dedupe_array() {
 _casmgr_require_cmds() {
     local cmd
     for cmd in "$@"; do
-        command -v "$cmd" >/dev/null 2>&1 || \
-            _casmgr_deps_error "required command not found: ${cmd}"
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            case "$cmd" in
+                pg_isready)
+                    _casmgr_deps_error \
+                        "${cmd} not found (install: sudo apt-get install postgresql-client)"
+                    ;;
+                *)
+                    _casmgr_deps_error "required command not found: ${cmd}"
+                    ;;
+            esac
+        fi
     done
 }
 
@@ -259,16 +254,56 @@ EOF
     local to_install=() seen=""
     local pkg
 
-    if (( want_runtime || want_info || want_deb )); then
-        for pkg in "${CASMGR_APT_PYTHON[@]}"; do
-            seen="$(_casmgr_queue_pkg "$pkg" to_install "$seen")"
+    # Nested helpers mutate to_install in this shell (no command-substitution subshells).
+    _queue_pkg() {
+        local pkg="$1"
+        local force="${2:-0}"
+        if [[ " ${seen} " == *" ${pkg} "* ]]; then
+            return 0
+        fi
+        if (( force == 0 )) && _casmgr_pkg_installed "$pkg"; then
+            return 0
+        fi
+        to_install+=("$pkg")
+        seen+=" ${pkg}"
+    }
+
+    _queue_for_cmd() {
+        local cmd="$1"
+        shift
+        if command -v "$cmd" >/dev/null 2>&1; then
+            return 0
+        fi
+        local pkg
+        for pkg in "$@"; do
+            _queue_pkg "$pkg" 1
         done
-    fi
+    }
 
     if (( want_runtime )); then
         for pkg in "${CASMGR_APT_RUNTIME[@]}"; do
-            seen="$(_casmgr_queue_pkg "$pkg" to_install "$seen")"
+            _queue_pkg "$pkg"
         done
+        _queue_for_cmd pg_isready postgresql-client postgresql-client-common
+        _queue_for_cmd openssl openssl
+        _queue_for_cmd rsync rsync
+        _queue_for_cmd addgroup adduser
+        _queue_for_cmd adduser adduser
+        _queue_for_cmd systemctl systemd
+    fi
+
+    if (( want_runtime || want_info || want_deb )); then
+        if ! command -v python3 >/dev/null 2>&1; then
+            _queue_pkg python3 1
+        fi
+        if ! python3 -m pip --version >/dev/null 2>&1; then
+            for pkg in "${CASMGR_APT_PYTHON[@]}"; do
+                _queue_pkg "$pkg" 1
+            done
+        fi
+        if ! python3 -m venv --help >/dev/null 2>&1; then
+            _queue_pkg python3-venv 1
+        fi
     fi
 
     if (( want_deb || want_info )); then
@@ -276,14 +311,22 @@ EOF
             if [[ "$pkg" == "texinfo" ]] && command -v makeinfo >/dev/null 2>&1; then
                 continue
             fi
-            seen="$(_casmgr_queue_pkg "$pkg" to_install "$seen")"
+            _queue_pkg "$pkg"
         done
+        if (( want_deb )); then
+            _queue_for_cmd dpkg-buildpackage devscripts
+            _queue_for_cmd dh debhelper
+            _queue_for_cmd dpkg-deb dpkg-dev
+        fi
+        if (( want_info || want_deb )) && ! command -v makeinfo >/dev/null 2>&1; then
+            _queue_pkg texinfo 1
+        fi
     fi
 
     if (( want_docker )); then
         if ! command -v docker >/dev/null 2>&1; then
             if ! _casmgr_any_pkg_installed docker.io docker-ce docker-ce-cli moby-engine; then
-                seen="$(_casmgr_queue_pkg "docker.io" to_install "$seen")"
+                _queue_pkg docker.io
             fi
         fi
     fi

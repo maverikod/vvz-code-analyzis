@@ -230,6 +230,34 @@ class TestScannerWithDiscovery:
         assert len(files) == 1
         assert not any("gone.py" in k for k in files)
 
+    def test_scan_directory_skips_old_code_subtree(self, temp_dir, project_id):
+        """``old_code`` must not be descended into (traversal basename skip)."""
+        project_root = temp_dir / "proj"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        create_file(project_root, "ok.py", "x=1")
+        backup_py = project_root / "old_code" / "src" / "app.py.bak"
+        backup_py.parent.mkdir(parents=True)
+        backup_py.write_text("x=3", encoding="utf-8")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert len(files) == 1
+        assert not any("app.py.bak" in k for k in files)
+
+    def test_scan_directory_skips_dot_git_subtree(self, temp_dir, project_id):
+        """``.git`` must not be descended into."""
+        project_root = temp_dir / "proj"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        create_file(project_root, "ok.py", "x=1")
+        git_py = project_root / ".git" / "hooks" / "fake.py"
+        git_py.parent.mkdir(parents=True)
+        git_py.write_text("x=3", encoding="utf-8")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert len(files) == 1
+        assert not any("fake.py" in k for k in files)
+
     def test_should_skip_dir_nested_test_data(self, temp_dir):
         root = temp_dir.resolve()
         inner = temp_dir / "a" / "test_data"
@@ -456,3 +484,39 @@ class TestScannerWithDiscovery:
         assert len(files) == 3
         for k in files:
             assert ".venv" not in k
+
+    def test_scan_watch_dir_does_not_walk_non_project_siblings(
+        self, temp_dir, project_id, monkeypatch
+    ):
+        """Immediate children without projectid must not be entered at all."""
+        import os
+
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        create_file(project_root, "in_project.py", "x=1")
+
+        junk = temp_dir / "not_a_project"
+        junk.mkdir()
+        deep = junk / "deep" / "tree"
+        deep.mkdir(parents=True)
+        create_file(deep, "outside.py", "x=2")
+
+        walk_roots: list[str] = []
+        orig_walk = os.walk
+
+        def tracked_walk(top, *args, **kwargs):
+            walk_roots.append(str(Path(top).resolve()))
+            return orig_walk(top, *args, **kwargs)
+
+        monkeypatch.setattr(os, "walk", tracked_walk)
+
+        files = scan_directory(temp_dir, [temp_dir])
+
+        assert len(files) == 1
+        assert str((project_root / "in_project.py").resolve()) in files
+        junk_res = str(junk.resolve())
+        assert not any(
+            root == junk_res or root.startswith(junk_res + "/") for root in walk_roots
+        )
+        assert any(root == str(project_root.resolve()) for root in walk_roots)

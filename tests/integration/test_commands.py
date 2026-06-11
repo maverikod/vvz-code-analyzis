@@ -137,6 +137,7 @@ class TestCommandsIntegration:
 
         return StoragePaths(
             config_dir=tmp_path,
+            log_dir=tmp_path / "logs",
             db_path=db_path,
             faiss_dir=tmp_path / "faiss",
             locks_dir=tmp_path / "locks",

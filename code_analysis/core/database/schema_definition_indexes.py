@@ -26,6 +26,27 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
             "where_clause": None,
         },
         {
+            "name": "idx_files_unique_project_path",
+            "table": "files",
+            "columns": ["project_id", "path"],
+            "unique": True,
+            "where_clause": None,
+        },
+        {
+            "name": "idx_files_active_project_path",
+            "table": "files",
+            "columns": ["project_id", "path"],
+            "unique": False,
+            "where_clause": "(deleted = 0 OR deleted IS NULL)",
+        },
+        {
+            "name": "idx_files_active_project_relative_path",
+            "table": "files",
+            "columns": ["project_id", "relative_path"],
+            "unique": False,
+            "where_clause": "(deleted = 0 OR deleted IS NULL) AND relative_path IS NOT NULL",
+        },
+        {
             "name": "idx_files_path",
             "table": "files",
             "columns": ["path"],

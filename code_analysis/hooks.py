@@ -13,6 +13,7 @@ from mcp_proxy_adapter.commands.hooks import register_custom_commands_hook
 from mcp_proxy_adapter.commands.command_registry import registry
 from mcp_proxy_adapter.commands.hooks import register_auto_import_module
 
+from .core.config_command_gate import install_config_command_gate
 from .hooks_register_part1 import register_commands_part1
 from .hooks_register_part2 import register_commands_part2
 
@@ -36,6 +37,7 @@ def register_code_analysis_commands(reg: registry) -> None:
 
 
 # Register hook
+install_config_command_gate()
 register_custom_commands_hook(register_code_analysis_commands)
 
 # Register modules for auto-import in child processes (spawn mode).

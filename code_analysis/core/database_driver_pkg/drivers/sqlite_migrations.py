@@ -142,8 +142,7 @@ def ensure_indexing_errors_table(conn: Any) -> None:
         if cur.fetchone() is not None:
             return
         logger.info("Creating indexing_errors table (driver)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS indexing_errors (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id TEXT NOT NULL,
@@ -153,8 +152,7 @@ def ensure_indexing_errors_table(conn: Any) -> None:
                 created_at REAL DEFAULT (julianday('now')),
                 UNIQUE(project_id, file_path)
             )
-            """
-        )
+            """)
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path "
             "ON indexing_errors(project_id, file_path)"
@@ -259,69 +257,8 @@ def ensure_indexing_worker_stats_table(conn: Any, schema_manager: Any) -> None:
 
 
 def ensure_files_table_migrations(conn: Any, schema_manager: Any) -> None:
-    """Run migrations on files table (needs_chunking; drop dataset_id if present)."""
-    if not conn or not schema_manager:
-        return
-    try:
-        info = schema_manager.get_table_info("files")
-        columns = {row["name"] for row in info}
-        if "needs_chunking" not in columns:
-            logger.info("Migrating files table: adding needs_chunking column (driver)")
-            conn.execute(
-                "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
-            )
-            conn.commit()
-        info = schema_manager.get_table_info("files")
-        columns = {row["name"] for row in info}
-        if "editing_pid" not in columns:
-            logger.info("Migrating files table: adding editing_pid column (driver)")
-            conn.execute(
-                "ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL"
-            )
-            conn.commit()
-        if "dataset_id" in columns:
-            logger.info("Migrating files table: dropping dataset_id column (driver)")
-            try:
-                conn.execute("ALTER TABLE files DROP COLUMN dataset_id")
-                conn.commit()
-            except Exception as drop_e:
-                logger.warning(
-                    "Could not drop dataset_id (SQLite 3.35+ required): %s",
-                    drop_e,
-                )
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.warning("Could not add needs_chunking column to files in driver: %s", e)
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-    # sync_schema only CREATE TABLE IF NOT EXISTS; existing DBs never gained inline
-    # UNIQUE(project_id, path). File watcher / processor_queue upserts use
-    # ON CONFLICT(project_id, path), which requires a matching unique index.
-    try:
-        info = schema_manager.get_table_info("files")
-        columns = {row["name"] for row in info}
-        if "project_id" in columns and "path" in columns:
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_unique_project_path "
-                "ON files(project_id, path)"
-            )
-            conn.commit()
-    except Exception as e:
-        logger.warning(
-            "Could not ensure idx_files_unique_project_path on files "
-            "(required for ON CONFLICT upserts; duplicate rows?): %s",
-            e,
-        )
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+    """Legacy hook: schema sync owns files table shape and indexes (greenfield)."""
+    _ = conn, schema_manager
 
 
 def ensure_project_activity_locks_table(conn: Any) -> None:

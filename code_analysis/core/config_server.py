@@ -480,10 +480,14 @@ class ServerConfig(BaseModel):
     @field_validator("batch_output_dir")
     @classmethod
     def validate_batch_output_dir(cls, v: str) -> str:
-        """Resolve path and enforce writable path policy (no system dirs)."""
+        """Resolve absolute paths and enforce writable path policy (no system dirs)."""
         if not v or not v.strip():
             raise ValueError("batch_output_dir cannot be empty")
-        path = Path(v.strip()).resolve()
+        path = Path(v.strip()).expanduser()
+        if not path.is_absolute():
+            # Resolved at runtime against config directory (see storage_paths).
+            return v.strip()
+        path = path.resolve()
         forbidden_prefixes = (
             "/etc",
             "/usr",

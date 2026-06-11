@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 """
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.core.config.simple_config_generator import SimpleConfigGenerator
@@ -17,8 +18,25 @@ from code_analysis.core.search_session.policy import (
     SEARCH_SESSION_TTL_SECONDS_DEFAULT,
 )
 
-from .constants import DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
+from .constants import (
+    DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES,
+    DEFAULT_SERVER_PORT,
+)
 from .docs_indexing_defaults import default_docs_indexing_dict
+
+
+def _resolve_optional_path(path: Optional[str], anchors: List[Path]) -> Optional[str]:
+    """Resolve a relative path against anchors; store absolute paths in generated config."""
+    if path is None or not str(path).strip():
+        return path
+    p = Path(path)
+    if p.is_absolute():
+        return str(p)
+    for anchor in anchors:
+        candidate = (anchor / p).resolve()
+        if candidate.is_file():
+            return str(candidate)
+    return str((anchors[0] / p).resolve())
 
 
 class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
@@ -151,35 +169,78 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         Returns:
             Path to generated configuration file
         """
+        out = Path(out_path)
+        anchors = [Path.cwd(), out.parent]
+        effective_port = (
+            int(server_port) if server_port is not None else DEFAULT_SERVER_PORT
+        )
+        effective_reg_protocol = registration_protocol
+        if with_proxy and effective_reg_protocol is None:
+            effective_reg_protocol = (
+                protocol if protocol in ("https", "mtls") else "https"
+            )
+        effective_reg_server_id = registration_server_id or (
+            "code-analysis-server" if with_proxy else None
+        )
+        effective_reg_server_name = registration_server_name or (
+            "Code Analysis Server" if with_proxy else None
+        )
+
         # Generate base config using SimpleConfigGenerator
         base_config_path = super().generate(
             protocol=protocol,
             with_proxy=with_proxy,
             out_path=out_path,
             server_host=server_host,
-            server_port=server_port,
-            server_cert_file=server_cert_file,
-            server_key_file=server_key_file,
-            server_ca_cert_file=server_ca_cert_file,
-            server_crl_file=server_crl_file,
+            server_port=effective_port,
+            server_cert_file=_resolve_optional_path(server_cert_file, anchors),
+            server_key_file=_resolve_optional_path(server_key_file, anchors),
+            server_ca_cert_file=_resolve_optional_path(server_ca_cert_file, anchors),
+            server_crl_file=_resolve_optional_path(server_crl_file, anchors),
             server_debug=server_debug,
             server_log_level=server_log_level,
             server_log_dir=server_log_dir,
             registration_host=registration_host,
             registration_port=registration_port,
-            registration_protocol=registration_protocol,
-            registration_cert_file=registration_cert_file,
-            registration_key_file=registration_key_file,
-            registration_ca_cert_file=registration_ca_cert_file,
-            registration_crl_file=registration_crl_file,
-            registration_server_id=registration_server_id,
-            registration_server_name=registration_server_name,
+            registration_protocol=effective_reg_protocol,
+            registration_cert_file=_resolve_optional_path(
+                registration_cert_file, anchors
+            ),
+            registration_key_file=_resolve_optional_path(
+                registration_key_file, anchors
+            ),
+            registration_ca_cert_file=_resolve_optional_path(
+                registration_ca_cert_file, anchors
+            ),
+            registration_crl_file=_resolve_optional_path(
+                registration_crl_file, anchors
+            ),
+            registration_server_id=effective_reg_server_id,
+            registration_server_name=effective_reg_server_name,
             instance_uuid=instance_uuid,
         )
 
-        # Load generated config
-        with open(base_config_path, "r", encoding="utf-8") as f:
-            config: Dict[str, Any] = json.load(f)
+        from .config_json import load_config_json
+
+        config: Dict[str, Any] = load_config_json(base_config_path)
+
+        if protocol in ("https", "mtls"):
+            for section in ("client", "server_validation"):
+                block = config.get(section)
+                if isinstance(block, dict) and block.get("protocol") == "http":
+                    block["protocol"] = protocol
+
+        if "queue_manager" not in config:
+            config["queue_manager"] = {}
+        qm = config["queue_manager"]
+        if queue_enabled is not None:
+            qm["enabled"] = queue_enabled
+        if queue_in_memory is not None:
+            qm["in_memory"] = queue_in_memory
+        if queue_max_concurrent is not None:
+            qm["max_concurrent_jobs"] = queue_max_concurrent
+        if queue_retention_seconds is not None:
+            qm["completed_job_retention_seconds"] = queue_retention_seconds
 
         # Add code_analysis section
         if "code_analysis" not in config:
@@ -239,7 +300,7 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         ca["host"] = (
             server_host if server_host is not None else ca.get("host", "0.0.0.0")
         )
-        ca["port"] = server_port if server_port is not None else ca.get("port", 15000)
+        ca["port"] = effective_port
         ca["log"] = (
             code_analysis_log
             if code_analysis_log is not None
@@ -363,6 +424,15 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         }
 
         # Save updated config
+        out_file = Path(base_config_path)
+        if out_file.is_file():
+            from .backup_manager import BackupManager
+
+            BackupManager(out_file.parent).create_backup(
+                out_file,
+                command="config_generator",
+            )
+
         with open(base_config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 

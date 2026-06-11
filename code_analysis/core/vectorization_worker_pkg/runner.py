@@ -237,6 +237,11 @@ def run_vectorization_worker(
     )
     if svo_config:
         try:
+            from ..storage_paths import apply_resolved_batch_output_dir
+
+            svo_config = apply_resolved_batch_output_dir(
+                dict(svo_config), cfg_path_resolved
+            )
             logger.info(
                 f"Creating ServerConfig from svo_config, keys: {list(svo_config.keys()) if isinstance(svo_config, dict) else 'not a dict'}"
             )

@@ -29,6 +29,20 @@ import fnmatch
 from pathlib import Path
 from typing import AbstractSet, Collection, FrozenSet, Optional
 
+# Well-known directory / path segment names (single source for watcher + listing).
+DATA_DIR_BASENAME: str = "data"
+TRASH_DIR_BASENAME: str = "trash"
+VERSIONS_DIR_BASENAME: str = "versions"
+OLD_CODE_DIR_BASENAME: str = "old_code"
+TEST_DATA_DIR_BASENAME: str = "test_data"
+LOGS_DIR_BASENAME: str = "logs"
+BACKUPS_DIR_BASENAME: str = "backups"
+GIT_DIR_BASENAME: str = ".git"
+
+# Project-relative paths built from the segment names above.
+FILE_TRASH_RELATIVE_DIR: str = f"{DATA_DIR_BASENAME}/{TRASH_DIR_BASENAME}"
+FILE_VERSIONS_RELATIVE_DIR: str = f"{DATA_DIR_BASENAME}/{VERSIONS_DIR_BASENAME}"
+
 # Cache-like directory basenames: omitted from default ``list_project_files`` unless
 # ``show_hidden`` (with dot-prefixed dirs, ``ls -a``-style); venv uses separate flags.
 LISTING_CACHE_DIRECTORY_SEGMENTS: FrozenSet[str] = frozenset(
@@ -42,12 +56,12 @@ LISTING_CACHE_DIRECTORY_SEGMENTS: FrozenSet[str] = frozenset(
 )
 
 # Directory basenames: never descend in watcher / prune in project walks.
-DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES: FrozenSet[str] = frozenset(
+_DEFAULT_TRAVERSAL_SKIP_VENV_AND_TOOLING: FrozenSet[str] = frozenset(
     {
         ".venv",
         "venv",
         "env",
-        ".git",
+        GIT_DIR_BASENAME,
         "__pycache__",
         ".mypy_cache",
         ".pytest_cache",
@@ -69,6 +83,35 @@ DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES: FrozenSet[str] = frozenset(
     }
 )
 
+# Server-managed / generated trees (backups, trash parent segments, logs).
+_DEFAULT_TRAVERSAL_SKIP_SERVER_MANAGED: FrozenSet[str] = frozenset(
+    {
+        OLD_CODE_DIR_BASENAME,
+        LOGS_DIR_BASENAME,
+        BACKUPS_DIR_BASENAME,
+        ".code_mapper_backups",
+    }
+)
+
+DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES: FrozenSet[str] = (
+    _DEFAULT_TRAVERSAL_SKIP_VENV_AND_TOOLING | _DEFAULT_TRAVERSAL_SKIP_SERVER_MANAGED
+)
+
+# Multi-segment path shapes skipped at watcher traversal time (not basename-only).
+DEFAULT_TRAVERSAL_SKIP_ADJACENT_PATH_SEGMENT_PAIRS: FrozenSet[tuple[str, str]] = (
+    frozenset(
+        {
+            (DATA_DIR_BASENAME, TRASH_DIR_BASENAME),
+            (DATA_DIR_BASENAME, VERSIONS_DIR_BASENAME),
+        }
+    )
+)
+
+# Extra POSIX substrings for trash trees (defensive; pairs above are primary).
+DEFAULT_TRAVERSAL_SKIP_POSIX_SUBPATH_MARKERS: FrozenSet[str] = frozenset(
+    {f"/{FILE_TRASH_RELATIVE_DIR}/"}
+)
+
 # Basenames matched against path segments (POSIX) for ``is_ignored_project_relative_path``.
 DEFAULT_IGNORED_RELATIVE_DIR_SEGMENTS: FrozenSet[str] = (
     DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES
@@ -79,6 +122,33 @@ _DEFAULT_IGNORED_FILE_SUFFIXES: FrozenSet[str] = frozenset(
 )
 
 _DEFAULT_IGNORED_FILE_BASENAME_GLOBS: FrozenSet[str] = frozenset({"*.lock"})
+
+
+def path_has_adjacent_segments(parts: tuple[str, ...], first: str, second: str) -> bool:
+    """Return True when ``first`` is immediately followed by ``second`` in ``parts``."""
+    for i in range(len(parts) - 1):
+        if parts[i] == first and parts[i + 1] == second:
+            return True
+    return False
+
+
+def path_matches_traversal_skip_shape_rules(
+    parts: tuple[str, ...], posix_path: str
+) -> bool:
+    """
+    True when ``parts``/``posix_path`` match multi-segment watcher skip rules.
+
+    Used by :func:`code_analysis.core.file_watcher_pkg.scanner.should_skip_dir`
+    for ``data/trash``, ``data/versions``, and related path-shape exclusions.
+    """
+    for seg_a, seg_b in DEFAULT_TRAVERSAL_SKIP_ADJACENT_PATH_SEGMENT_PAIRS:
+        if path_has_adjacent_segments(parts, seg_a, seg_b):
+            return True
+    norm = posix_path if posix_path.endswith("/") else posix_path + "/"
+    for marker in DEFAULT_TRAVERSAL_SKIP_POSIX_SUBPATH_MARKERS:
+        if marker in norm:
+            return True
+    return False
 
 
 def path_is_under_project_local_venv(resolved_path: Path, project_root: Path) -> bool:
@@ -123,7 +193,9 @@ def is_ignored_project_relative_path(
     rel = (relative_posix or "").strip().replace("\\", "/").strip("/")
     if not rel:
         return False
-    parts = [x for x in rel.split("/") if x]
+    parts = tuple(x for x in rel.split("/") if x)
+    if path_matches_traversal_skip_shape_rules(parts, rel):
+        return True
     for seg in parts:
         if seg in DEFAULT_IGNORED_RELATIVE_DIR_SEGMENTS:
             if seg in (".venv", "venv") and (
@@ -132,11 +204,7 @@ def is_ignored_project_relative_path(
                 continue
             if seg in LISTING_CACHE_DIRECTORY_SEGMENTS and show_hidden:
                 continue
-            if (
-                show_hidden
-                and seg.startswith(".")
-                and seg not in (".venv", "venv")
-            ):
+            if show_hidden and seg.startswith(".") and seg not in (".venv", "venv"):
                 continue
             return True
     base = parts[-1] if parts else ""

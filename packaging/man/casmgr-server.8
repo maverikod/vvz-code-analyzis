@@ -1,0 +1,539 @@
+.\" Man page for casmgr-server production deployment.
+.TH CASMGR-SERVER 8 "June 2026" "casmgr-server" "System Administration"
+.SH NAME
+casmgr-server \- Code Analysis MCP server and PostgreSQL (Docker) deployment
+.SH SYNOPSIS
+.B casmgr
+[\fB--config\fR \fIPATH\fR] {start|stop|restart|status|sessions|locks}
+.PP
+.B casmgr-postgres-container
+{\fBpull\fR|\fBrecreate\fR|\fBstart\fR|\fBstop\fR|\fBremove\fR|\fBstatus\fR}
+.PP
+.B casmgr-pg-init
+[\fB--fix-existing-db-owner\fR]
+.PP
+.B casmgr-pg-set-password
+[\fB--superuser-only\fR]
+.PP
+.B systemctl
+{start|stop|restart|status|enable} {casmgr-postgres|casmgr-server}
+.SH DESCRIPTION
+.B casmgr-server
+is the production deployment of the Code Analysis MCP server. The Debian package
+installs application code under
+.IR /usr/lib/casmgr-server ,
+systemd units, admin scripts under
+.IR /usr/lib/casmgr/bin/
+(symlinked in
+.IR /usr/sbin/ ),
+and configuration under
+.IR /etc/casmgr/ .
+.PP
+PostgreSQL with pgvector runs in Docker container
+.BR casmgr-postgres .
+The package version equals the Docker Hub tag recorded in
+.IR /usr/share/casmgr/docker-image .
+.PP
+Admin scripts accept only
+.B root
+or
+.BR casuser .
+The MCP daemon runs as
+.BR casuser:casgrp .
+.PP
+Full narrative guide:
+.IR /usr/share/doc/casmgr-server/CASMGR_DEPLOYMENT.md .
+Extended reference:
+.B info casmgr-server
+.SH FILES AND LAYOUT
+.TP
+.B /etc/casmgr/config.json
+Main server configuration (mode 640, group
+.BR casgrp ).
+Conffile: preserved across package upgrades.
+.TP
+.B /var/casmgr/secrets/.env
+PostgreSQL passwords and optional overrides (mode 640,
+.BR casuser:casgrp ).
+Conffile.
+.TP
+.B /etc/casmgr/mtls/
+mTLS certificates for server and MCP proxy registration (mode 0750, group
+.BR casgrp ).
+.TP
+.B /var/casmgr/postgres/data
+PostgreSQL data directory (bind mount, UID 999).
+.TP
+.B /var/casmgr/postgres/cache
+PostgreSQL cache directory (bind mount, UID 999).
+.TP
+.B /var/log/casmgr
+Application logs;
+.B /var/log/casmgr/postgres
+for PostgreSQL inside Docker.
+.TP
+.B /usr/lib/casmgr/bin/
+Admin scripts (also
+.IR /usr/sbin/ ).
+.TP
+.B /usr/share/doc/casmgr-server/config.json.template
+Reference copy of the shipped config template.
+.SH CONFIGURATION
+Configuration file:
+.IR /etc/casmgr/config.json .
+JSON with comments is supported (JSONC). On first install the template is copied
+from the package; placeholders must be replaced before
+.B casmgr-server.service
+starts automatically.
+.SS server
+MCP HTTPS listener and logging.
+.TP
+.B host
+Bind address (default
+.BR 0.0.0.0 ).
+.TP
+.B port
+TCP port for MCP/API (production default
+.BR 15010 ;
+dev git checkout uses
+.BR 15000 ).
+.TP
+.B protocol
+.B https
+for production mTLS.
+.TP
+.B servername
+TLS server name (SNI).
+.TP
+.B advertised_host
+Host/IP sent to MCP proxy at registration. Replace
+.B CHANGE_ME
+with this machine's reachable address.
+.TP
+.B log_dir
+Application log directory (default
+.IR /var/log/casmgr ).
+.TP
+.B ssl.cert, ssl.key, ssl.ca
+Paths to server certificate, private key, and CA under
+.IR /etc/casmgr/mtls/ .
+.SS registration
+MCP proxy registration and heartbeat.
+.TP
+.B enabled
+.B true
+to register on startup.
+.TP
+.B register_url, unregister_url, heartbeat.url
+Replace
+.B MCP_PROXY_HOST
+with the proxy hostname or IP (port 3004 in the template).
+.TP
+.B server_id
+Proxy-visible server identifier (production:
+.BR code-analysis-server ).
+.TP
+.B server_name
+Human-readable name in proxy catalog.
+.TP
+.B instance_uuid
+Unique UUID4 per server instance. Auto-generated on install; must differ when
+two servers share one PostgreSQL cluster.
+.TP
+.B auto_on_startup, auto_on_shutdown
+Register/unregister with proxy on daemon start/stop.
+.TP
+.B heartbeat.interval
+Seconds between heartbeat requests (default 30).
+.TP
+.B ssl.cert, ssl.key, ssl.ca
+Client mTLS credentials for proxy communication.
+.SS code_analysis
+Application storage, database, and background workers.
+.TP
+.B port
+Legacy/auxiliary port; keep equal to
+.B server.port
+in production.
+.TP
+.B log
+Path to main application log file.
+.TP
+.B storage
+Directories under
+.IR /var/casmgr/
+for SQLite fallback paths, FAISS indexes, locks, backups, trash.
+.TP
+.B database.driver.type
+.B postgres
+in production.
+.TP
+.B database.driver.config
+PostgreSQL connection:
+.B host
+(default
+.BR 127.0.0.1 ),
+.B port
+(5432),
+.B dbname
+,
+.B user
+,
+.B password_env
+(name of variable in
+.IR /var/casmgr/secrets/.env ,
+typically
+.BR CODE_ANALYSIS_POSTGRES_PASSWORD ).
+.TP
+.B worker
+Vectorization worker:
+.B enabled
+,
+.B poll_interval
+,
+.B batch_size
+,
+.B log_path
+,
+.B watch_dirs
+— list of indexed directory roots, each
+\fB{"id": "<uuid>", "path": "/absolute/path"}\fR.
+.TP
+.B file_watcher
+File change watcher:
+.B enabled
+,
+.B log_path
+,
+.B version_dir
+(under
+.IR /var/casmgr/versions ).
+.TP
+.B indexing_worker
+Code index maintenance worker (poll interval, batch size, log path).
+.SS Other sections
+.TP
+.B queue_manager
+In-memory job queue limits and retention.
+.TP
+.B process_management.shutdown_grace_seconds
+Grace period on daemon shutdown.
+.TP
+.B auth
+Optional token/role auth (disabled in default template).
+.SH SECRETS
+File:
+.IR /var/casmgr/secrets/.env .
+Loaded by systemd (
+.B EnvironmentFile
+), admin scripts, and the daemon via
+.BR password_env .
+.TP
+.B POSTGRES_SUPERUSER_PASSWORD
+Target password for PostgreSQL superuser (
+.BR postgres ).
+Also used as
+.B POSTGRES_PASSWORD
+when the Docker container is first created.
+.TP
+.B CODE_ANALYSIS_POSTGRES_PASSWORD
+Application role password; referenced by
+.B code_analysis.database.driver.config.password_env
+.TP
+.B POSTGRES_SUPERUSER_CONNECT_PASSWORD
+Optional. Current superuser password when
+.B POSTGRES_SUPERUSER_PASSWORD
+is being rotated and differs from the cluster password.
+.TP
+.B POSTGRES_DB
+Database name created in the container (default
+.BR code_analysis ).
+.PP
+On first install, random passwords are generated if placeholders remain.
+Back up this file securely. After any edit, run
+.BR casmgr-pg-set-password .
+.SH mTLS
+Install five files under
+.IR /etc/casmgr/mtls/ :
+.TP
+.B server.crt, server.key
+Server certificate and private key (MCP/API listener).
+.TP
+.B ca.crt
+Certificate authority for verifying peers.
+.TP
+.B client.crt, client.key
+Client certificate for MCP proxy registration.
+.PP
+Permissions (applied by
+.BR "dpkg --configure casmgr-server" ):
+directory mode 0750
+.BR root:casgrp ;
+files mode 0640. Private keys must be readable by
+.BR casuser
+(via group
+.BR casgrp ).
+.SH ADMIN COMMANDS
+All commands below require
+.B root
+or
+.BR casuser .
+Paths shown are production defaults.
+.SS casmgr-postgres-container
+Manage Docker container
+.BR casmgr-postgres .
+.TP
+.B pull
+Download image from
+.IR /usr/share/casmgr/docker-image .
+.TP
+.B recreate
+Remove existing container and create a new one with host bind mounts. Uses
+.B POSTGRES_SUPERUSER_PASSWORD
+and
+.B POSTGRES_DB
+from secrets. Publishes PostgreSQL on
+.BR 127.0.0.1:5432
+(port from config).
+.TP
+.B start
+Start container; runs
+.B recreate
+if missing.
+.TP
+.B stop
+Stop container.
+.TP
+.B remove
+Stop and remove container (image retained).
+.TP
+.B status
+Print container name, state, and image.
+.PP
+Bind mounts:
+.B /var/casmgr/postgres/data
+,
+.B /var/casmgr/postgres/cache
+,
+.B /var/log/casmgr/postgres
+,
+.B /etc/casmgr
+(read-only).
+.SS casmgr-pg-init
+Bootstrap PostgreSQL after the container is running:
+.IP \(bu 3
+Apply superuser password from secrets.
+.IP \(bu 3
+Create application role and database from
+.IR config.json
+driver settings.
+.IP \(bu 3
+Grant privileges on database and
+.B public
+schema.
+.PP
+Option
+.B --fix-existing-db-owner
+runs
+.B ALTER DATABASE ... OWNER
+when the database already exists.
+.PP
+Run after first install, after
+.B recreate
+on empty data, or when secrets were reset:
+.PP
+.RS
+.nf
+sudo systemctl start casmgr-postgres
+sudo casmgr-pg-init
+.fi
+.RE
+.SS casmgr-pg-set-password
+Apply passwords from
+.IR /var/casmgr/secrets/.env
+to the running cluster.
+.PP
+Default: updates superuser and application role
+.RB ( ALTER ROLE ).
+Option
+.B --superuser-only
+skips the application role.
+.PP
+When rotating the superuser password, set
+.B POSTGRES_SUPERUSER_CONNECT_PASSWORD
+to the current cluster password for that run.
+.PP
+.RS
+.nf
+sudo casmgr-pg-set-password
+sudo casmgr-pg-set-password --superuser-only
+.fi
+.RE
+.SS casmgr
+Daemon manager CLI (also
+.IR /usr/bin/casmgr ).
+Uses the package venv when installed under
+.IR /usr/lib/casmgr-server .
+.TP
+.B --config PATH
+Config file (default
+.IR /etc/casmgr/config.json
+via
+.BR CASMGR_CONFIG ).
+.TP
+.B start, stop, restart, status
+Start or stop the MCP daemon outside systemd, or inspect pidfile/process state.
+.TP
+.B sessions, locks
+List active client sessions and file locks.
+.PP
+Production service management should use systemd; use
+.B casmgr
+for debugging or non-systemd layouts.
+.SS casmgr_ensure_instance_uuid
+Python helper at
+.IR /usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py .
+Ensures
+.B registration.instance_uuid
+is a valid UUID4. Invoked from package
+.BR postinst .
+.TP
+.B --config PATH
+Config file (default
+.IR /etc/casmgr/config.json ).
+.TP
+.B --dry-run
+Report without writing.
+.SH SYSTEMD
+.TP
+.B casmgr-postgres.service
+Oneshot unit: starts Docker container via
+.BR casmgr-postgres-container start .
+Requires Docker.
+.TP
+.B casmgr-server.service
+Runs MCP daemon as
+.BR casuser .
+Requires
+.BR casmgr-postgres.service .
+Reads
+.IR /etc/casmgr/config.json ;
+loads
+.IR /var/casmgr/secrets/.env .
+.PP
+.RS
+.nf
+sudo systemctl enable casmgr-postgres casmgr-server
+sudo systemctl start casmgr-postgres
+sudo casmgr-pg-init
+sudo systemctl start casmgr-server
+sudo systemctl status casmgr-postgres casmgr-server
+sudo journalctl -u casmgr-server -f
+.fi
+.RE
+.PP
+The package starts
+.B casmgr-server
+automatically only when config has no
+.B CHANGE_ME
+or
+.B MCP_PROXY_HOST
+placeholders and all five mTLS files exist.
+.SH ENVIRONMENT
+Admin scripts and services honor these variables when set:
+.TP
+.B CASMGR_CONFIG
+Path to
+.IR config.json
+(default
+.IR /etc/casmgr/config.json ).
+.TP
+.B CASMGR_SECRETS
+Secrets directory (default
+.IR /var/casmgr/secrets ).
+.TP
+.B CASMGR_ETC, CASMGR_VAR, CASMGR_LOG
+Configuration, data, and log roots under FHS layout.
+.TP
+.B CASMGR_PG_CONTAINER
+Docker container name (default
+.BR casmgr-postgres ).
+.TP
+.B CODE_ANALYSIS_DAEMON_PYTHON, CASMGR_PYTHON
+Override Python interpreter for admin tooling.
+.SH INSTALLATION
+.PP
+.RS
+.nf
+sudo dpkg -i casmgr-server_VERSION-1_all.deb
+sudo apt-get install -f
+.fi
+.RE
+.PP
+On configure: creates
+.B casuser
+/
+.BR casgrp ,
+installs config and secrets if missing, pulls Docker image, recreates container,
+runs
+.BR casmgr-pg-init ,
+enables systemd units, and prints a post-install checklist.
+.SH POST-INSTALL
+Replace placeholders in
+.IR /etc/casmgr/config.json
+(\fBadvertised_host\fR, MCP proxy URLs,
+.BR watch_dirs ).
+Review passwords in
+.IR /var/casmgr/secrets/.env
+and apply with
+.BR casmgr-pg-set-password .
+Install mTLS files under
+.IR /etc/casmgr/mtls/ ,
+then start services (see
+.B SYSTEMD
+above).
+.SH RELEASE BUILD
+From the source tree:
+.PP
+.RS
+.nf
+./build.sh
+./scripts/release_build.sh [--deb-only|--docker-only]
+.fi
+.RE
+.SH UPGRADE
+Replaces legacy package
+.BR code-analysis-server .
+Disables
+.B code-analysis-server.service
+if present. Preserves conffiles
+.IR /etc/casmgr/config.json
+and
+.IR /var/casmgr/secrets/.env .
+.SH REMOVAL
+.TP
+.B apt remove casmgr-server
+Stops units and removes the container; keeps image and
+.IR /var/casmgr
+data.
+.TP
+.B apt purge casmgr-server
+Also removes the pinned Docker image.
+.SH SEE ALSO
+.BR casmgr-config (1),
+.BR casmgr (1),
+.BR systemctl (1),
+.BR docker (1),
+info \fBcasmgr-server\fR,
+.IR /usr/share/doc/casmgr-server/CASMGR_DEPLOYMENT.md
+.SH CONFIG GENERATOR
+For generating dev configs from scratch, see
+.BR casmgr-config (1)
+(\fBcasmgr-config\fR,
+.BR casmgr-config-generate ,
+.BR casmgr-config-validate ).
+Production installs use the static template at
+.IR /usr/share/doc/casmgr-server/config.json.template ,
+not the CLI.
+.SH AUTHOR
+Vasiliy Zdanovskiy <vasilyvz@gmail.com>

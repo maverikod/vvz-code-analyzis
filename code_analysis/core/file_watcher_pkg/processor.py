@@ -23,7 +23,7 @@ email: vasilyvz@gmail.com
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .processor_delta import FileDelta, compute_delta
+from .processor_delta import FileDelta, compute_delta, compute_project_delta
 from .processor_queue import ProcessorQueueOps
 
 __all__ = ["FileChangeProcessor", "FileDelta"]
@@ -64,11 +64,40 @@ class FileChangeProcessor:
             scanned_files,
         )
 
+    def compute_project_delta(
+        self,
+        project_root: Path,
+        project_id: str,
+        scanned_files: Dict[str, Dict],
+    ) -> FileDelta:
+        """Compute delta for one project (scan phase — no DB writes)."""
+        return compute_project_delta(
+            self.database, project_root, project_id, scanned_files
+        )
+
     def queue_changes(
         self, root_dir: Path, deltas: Dict[str, FileDelta], **kwargs: Any
     ) -> Dict[str, Any]:
         """Queue file changes for multiple projects (QUEUE PHASE - batch DB operations)."""
         return self._queue_ops.queue_changes(root_dir, deltas, **kwargs)
+
+    def queue_project_bulk_sync(
+        self,
+        project_id: str,
+        project_root: Path,
+        disk_rows: List[Any],
+        *,
+        watch_dir_id: Optional[str] = None,
+        watcher_coord: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """PostgreSQL bulk queue for one project (manifest built at scan)."""
+        return self._queue_ops.queue_project_bulk_sync(
+            project_id,
+            project_root,
+            disk_rows,
+            watch_dir_id=watch_dir_id,
+            watcher_coord=watcher_coord,
+        )
 
     def process_changes(
         self, root_dir: Path, scanned_files: Dict[str, Dict]

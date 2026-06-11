@@ -76,6 +76,8 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+from code_analysis.core.config_json import load_config_json
+
 _IDENT_SAFE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _DOCKER_CONTAINER_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 _DEFAULT_PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
@@ -84,6 +86,36 @@ _PG_DATA_MOUNT = "/var/lib/postgresql/data"
 _DOCKER_USER = "1000:1000"
 # User-defined bridge for cross-service DNS (e.g. smart-assistant stack).
 _SMART_ASSISTANT_DOCKER_NETWORK = "smart-assistant"
+
+_PG_SUBCOMMANDS = frozenset(
+    {
+        "set-superuser-password",
+        "ensure-app-db",
+        "pull-postgres-docker-image",
+        "run-postgres-docker",
+        "pull-and-run-postgres-docker",
+    }
+)
+
+
+def _config_from_argv(argv: list[str]) -> str | None:
+    """
+    Recover ``--config PATH`` when it appears before the subcommand name.
+
+    ``argparse`` subparsers do not retain parent options that precede the
+    subcommand token; packaging scripts and users may pass either order.
+    """
+    for i, token in enumerate(argv):
+        if token != "--config" or i + 1 >= len(argv):
+            continue
+        path = argv[i + 1]
+        if not path or path.startswith("-"):
+            continue
+        prev_is_sub = i > 0 and argv[i - 1] in _PG_SUBCOMMANDS
+        next_is_sub = i + 2 < len(argv) and argv[i + 2] in _PG_SUBCOMMANDS
+        if prev_is_sub or next_is_sub:
+            return path
+    return None
 
 
 def _repo_root() -> Path:
@@ -495,7 +527,7 @@ def cmd_run_postgres_docker(
         os.environ.get("POSTGRES_SUPERUSER_PASSWORD") or "",
     )
 
-    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    cfg = load_config_json(config_path)
     dc = _merge_env_overrides(_driver_config_from_json(cfg))
 
     container = _container_name_from_driver_host(str(dc.get("host") or ""))
@@ -628,7 +660,7 @@ def cmd_set_superuser_password(config_path: Path) -> None:
             "PGPASSWORD."
         )
 
-    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    cfg = load_config_json(config_path)
     dc = _merge_env_overrides(_driver_config_from_json(cfg))
     host = str(dc.get("host") or "127.0.0.1").strip()
     port = int(dc.get("port") or 5432)
@@ -671,7 +703,7 @@ def cmd_ensure_app_db(config_path: Path, *, fix_existing_db_owner: bool) -> None
             "POSTGRES_PASSWORD / PGPASSWORD (see script docstring)."
         )
 
-    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    cfg = load_config_json(config_path)
     dc = _merge_env_overrides(_driver_config_from_json(cfg))
 
     try:
@@ -814,28 +846,41 @@ def cmd_ensure_app_db(config_path: Path, *, fix_existing_db_owner: bool) -> None
     )
 
 
+def _config_argument_parser() -> argparse.ArgumentParser:
+    """Shared ``--config`` for the main parser and config-requiring subcommands."""
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "Path to config.json (default: CONFIG_PATH / CASMGR_CONFIG / "
+            "config-venv.json / config.json)."
+        ),
+    )
+    return p
+
+
 def main() -> int:
+    config_parent = _config_argument_parser()
     parser = argparse.ArgumentParser(
         description=(
             "PostgreSQL: superuser password, app DB bootstrap, and optional Docker pgvector "
             "container from config + .env."
-        )
-    )
-    parser.add_argument(
-        "--config",
-        metavar="PATH",
-        help="Path to config.json (default: CONFIG_PATH / CASMGR_CONFIG / config-venv.json / config.json).",
+        ),
+        parents=[config_parent],
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_super = sub.add_parser(
         "set-superuser-password",
+        parents=[config_parent],
         help="ALTER ROLE superuser PASSWORD from POSTGRES_SUPERUSER_PASSWORD.",
     )
     p_super.set_defaults(func=_dispatch_set_super)
 
     p_app = sub.add_parser(
         "ensure-app-db",
+        parents=[config_parent],
         help="Create DB/role from driver config; password from password_env / .env.",
     )
     p_app.add_argument(
@@ -866,6 +911,7 @@ def main() -> int:
 
     p_docker = sub.add_parser(
         "run-postgres-docker",
+        parents=[config_parent],
         help=(
             "Create/start Docker Postgres (pull image separately first). "
             "Adds --add-host from host /etc/hosts for IPs in Docker subnets on new run."
@@ -903,6 +949,7 @@ def main() -> int:
 
     p_pull_run = sub.add_parser(
         "pull-and-run-postgres-docker",
+        parents=[config_parent],
         help="pull-postgres-docker-image then run-postgres-docker.",
     )
     p_pull_run.add_argument(
@@ -942,7 +989,8 @@ def main() -> int:
     args = parser.parse_args()
     config_path: Path | None = None
     if getattr(args, "needs_config", True):
-        config_path = _resolve_config_path(args.config)
+        config_explicit = args.config or _config_from_argv(sys.argv[1:])
+        config_path = _resolve_config_path(config_explicit)
 
     sr = str(_repo_root())
     if sr not in sys.path:

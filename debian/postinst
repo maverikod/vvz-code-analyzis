@@ -27,9 +27,15 @@ create_layout() {
     install -d -m 0750 -o "$CASMGR_USER" -g "$CASMGR_GROUP" \
         "$DATA_DIR" "$LOG_DIR" \
         "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" \
+        "${DATA_DIR}/data" "${DATA_DIR}/faiss" "${DATA_DIR}/locks" \
+        "${DATA_DIR}/backups" "${DATA_DIR}/trash" \
         "${LOG_DIR}/postgres" "${DATA_DIR}/versions" "$SECRETS"
     if [[ ! -f "$CONFIG" && -f /usr/share/doc/casmgr-server/config.json.template ]]; then
         cp /usr/share/doc/casmgr-server/config.json.template "$CONFIG"
+        if command -v uuidgen >/dev/null 2>&1; then
+            instance_uuid="$(uuidgen)"
+            sed -i "s/REPLACE_ON_INSTALL/${instance_uuid}/" "$CONFIG"
+        fi
         chown root:"$CASMGR_GROUP" "$CONFIG"
         chmod 0640 "$CONFIG"
     fi
@@ -50,18 +56,70 @@ create_layout() {
     chown -R 999:999 "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" 2>/dev/null || true
 }
 
+fix_mtls_permissions() {
+    local mtls="${CONFIG_DIR}/mtls"
+    [[ -d "$mtls" ]] || return 0
+    chown root:"$CASMGR_GROUP" "$mtls"
+    chmod 0750 "$mtls"
+    local f
+    for f in "$mtls"/*; do
+        [[ -e "$f" ]] || continue
+        chown root:"$CASMGR_GROUP" "$f"
+        chmod 0640 "$f"
+    done
+}
+
+ensure_instance_uuid() {
+    [[ -f "$CONFIG" ]] || return 0
+    local py="${INSTALL_DIR}/.venv/bin/python"
+    local script="${INSTALL_DIR}/scripts/casmgr_ensure_instance_uuid.py"
+    if [[ -x "$py" && -f "$script" ]]; then
+        "$py" "$script" --config "$CONFIG" || true
+    fi
+}
+
 install_venv() {
     if [[ ! -d "${INSTALL_DIR}/.venv" ]]; then
         python3 -m venv "${INSTALL_DIR}/.venv"
         "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip setuptools wheel
     fi
-    if [[ -f "${INSTALL_DIR}/pyproject.toml" ]]; then
-        "${INSTALL_DIR}/.venv/bin/pip" install "${INSTALL_DIR}"
-    else
+    if [[ ! -f "${INSTALL_DIR}/pyproject.toml" ]]; then
         echo "ERROR: ${INSTALL_DIR}/pyproject.toml missing" >&2
         exit 1
     fi
+    if [[ ! -f "${INSTALL_DIR}/docs/README.md" ]]; then
+        echo "ERROR: ${INSTALL_DIR}/docs/README.md missing (broken package layout)" >&2
+        exit 1
+    fi
+    if [[ ! -f "${INSTALL_DIR}/scripts/casmgr" ]]; then
+        echo "ERROR: ${INSTALL_DIR}/scripts/casmgr missing (broken package layout)" >&2
+        exit 1
+    fi
+    "${INSTALL_DIR}/.venv/bin/pip" install --no-cache-dir "${INSTALL_DIR}"
     chown -R "$CASMGR_USER:$CASMGR_GROUP" "${INSTALL_DIR}/.venv"
+    verify_venv_imports
+}
+
+verify_venv_imports() {
+    local py="${INSTALL_DIR}/.venv/bin/python"
+    local pip="${INSTALL_DIR}/.venv/bin/pip"
+    if "$py" -c "
+from svo_client import SvoChunkerClient
+from markdown_it import MarkdownIt
+from code_analysis.commands.fs_grep_command import FsGrepCommand
+" 2>/dev/null; then
+        return 0
+    fi
+    echo "WARNING: venv import check failed; ensuring runtime dependencies..." >&2
+    "$pip" install --no-cache-dir "python-dateutil>=2.8" "markdown-it-py>=4.0"
+    if ! "$py" -c "
+from svo_client import SvoChunkerClient
+from markdown_it import MarkdownIt
+from code_analysis.commands.fs_grep_command import FsGrepCommand
+"; then
+        echo "ERROR: venv is missing required Python packages (see pip output above)" >&2
+        exit 1
+    fi
 }
 
 setup_postgres() {
@@ -76,7 +134,7 @@ setup_postgres() {
 
 config_ready_for_server() {
     [[ -f "$CONFIG" ]] || return 1
-    if grep -qE 'CHANGE_ME|MCP_PROXY_HOST' "$CONFIG" 2>/dev/null; then
+    if grep -qE 'CHANGE_ME|MCP_PROXY_HOST|CHUNKER_HOST|EMBEDDING_HOST' "$CONFIG" 2>/dev/null; then
         return 1
     fi
     local cert
@@ -96,10 +154,97 @@ migrate_legacy_service() {
     fi
 }
 
+print_post_install_banner() {
+    local server_started=0
+    local pw_status="review and back up"
+    local config_pending=()
+    local cert missing
+
+    if config_ready_for_server; then
+        server_started=1
+    fi
+    if [[ -f "${SECRETS}/.env" ]]; then
+        if grep -qE 'CHANGE_ME' "${SECRETS}/.env" 2>/dev/null; then
+            pw_status="REPLACE CHANGE_ME_* placeholders, then run: sudo casmgr-pg-set-password"
+        else
+            pw_status="auto-generated on first install — back up securely; rotate with: sudo casmgr-pg-set-password"
+        fi
+    else
+        pw_status="create ${SECRETS}/.env from secrets.env.template"
+    fi
+    if [[ -f "$CONFIG" ]]; then
+        grep -q 'CHANGE_ME' "$CONFIG" 2>/dev/null && config_pending+=("server.advertised_host (CHANGE_ME)")
+        grep -q 'MCP_PROXY_HOST' "$CONFIG" 2>/dev/null && config_pending+=("registration URLs (MCP_PROXY_HOST)")
+        grep -q 'CHUNKER_HOST' "$CONFIG" 2>/dev/null && config_pending+=("code_analysis.chunker.url (CHUNKER_HOST, port 8009)")
+        grep -q 'EMBEDDING_HOST' "$CONFIG" 2>/dev/null && config_pending+=("code_analysis.embedding.host (EMBEDDING_HOST, port 8001)")
+        grep -q 'REPLACE_ON_INSTALL' "$CONFIG" 2>/dev/null && config_pending+=("registration.instance_uuid (REPLACE_ON_INSTALL)")
+    fi
+    for cert in server.crt server.key ca.crt client.crt client.key; do
+        [[ -f "${CONFIG_DIR}/mtls/${cert}" ]] || missing=1
+    done
+
+    echo ""
+    echo "================================================================================"
+    echo "casmgr-server installed — configure before production use"
+    echo "================================================================================"
+    echo ""
+    echo "Paths:"
+    echo "  Config:  ${CONFIG}"
+    echo "  Secrets: ${SECRETS}/.env"
+    echo "  mTLS:    ${CONFIG_DIR}/mtls/"
+    echo "  Logs:    ${LOG_DIR}"
+    echo "  Docs:    man casmgr-server   info casmgr-server"
+    echo ""
+    echo "1) Edit ${CONFIG}:"
+    if ((${#config_pending[@]} > 0)); then
+        local item
+        for item in "${config_pending[@]}"; do
+            echo "     - ${item}"
+        done
+    else
+        echo "     - registration URLs, advertised_host, watch_dirs (if not set yet)"
+    fi
+    echo "     - code_analysis.chunker.url and embedding.host (inside code_analysis, not root;"
+    echo "       SVO chunker :8009, embedding API :8001 — required for vectorization worker)"
+    echo "     - MCP port default: 15010 (dev git checkout uses 15000 on the same host)"
+    echo ""
+    echo "2) PostgreSQL passwords (${SECRETS}/.env):"
+    echo "     ${pw_status}"
+    echo "     Apply after any edit:"
+    echo "       sudo casmgr-pg-set-password"
+    echo "     First DB bootstrap (also applies passwords):"
+    echo "       sudo casmgr-pg-init"
+    echo ""
+    echo "3) mTLS certificates under ${CONFIG_DIR}/mtls/:"
+    if [[ -n "${missing:-}" ]]; then
+        echo "     MISSING: server.crt, server.key, ca.crt, client.crt, client.key"
+    else
+        echo "     OK: required files present"
+    fi
+    echo ""
+    if (( server_started == 1 )); then
+        echo "4) casmgr-server.service was started (config and mTLS look ready)."
+        echo "     sudo systemctl status casmgr-postgres casmgr-server"
+    else
+        echo "4) Start after steps 1–3:"
+        echo "     sudo systemctl start casmgr-postgres"
+        echo "     sudo casmgr-pg-init"
+        echo "     sudo systemctl start casmgr-server"
+    fi
+    echo ""
+    echo "Password rotation: edit ${SECRETS}/.env, then sudo casmgr-pg-set-password"
+    echo "  (set POSTGRES_SUPERUSER_CONNECT_PASSWORD to the old superuser password when rotating)"
+    echo ""
+    echo "================================================================================"
+    echo ""
+}
+
 if [[ "$1" == "configure" ]]; then
     create_user
     create_layout
+    fix_mtls_permissions
     install_venv
+    ensure_instance_uuid
     migrate_legacy_service
     setup_postgres
     if [[ -f /usr/share/casmgr/docker-image ]]; then
@@ -115,21 +260,9 @@ if [[ "$1" == "configure" ]]; then
         "${BIN}/casmgr-pg-init" 2>/dev/null || true
         if config_ready_for_server; then
             systemctl start casmgr-server.service || true
-        else
-            echo ""
-            echo "casmgr-server NOT started: edit ${CONFIG}, install mTLS certs under"
-            echo "  ${CONFIG_DIR}/mtls/, then run:"
-            echo "  sudo systemctl start casmgr-server"
-            echo ""
         fi
     fi
-    echo ""
-    echo "casmgr-server installed."
-    echo "  Config:  ${CONFIG}"
-    echo "  Secrets: ${SECRETS}/.env"
-    echo "  Logs:    ${LOG_DIR}"
-    echo "  Docs:    man casmgr-server   info casmgr-server"
-    echo ""
+    print_post_install_banner
 fi
 
 exit 0

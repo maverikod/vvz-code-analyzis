@@ -1,0 +1,699 @@
+This is casmgr-server.info, produced by makeinfo version 7.2 from
+casmgr-server.texi.
+
+
+File: casmgr-server.info,  Node: Top,  Next: Overview,  Up: (dir)
+
+Casmgr Server Deployment
+************************
+
+* Menu:
+
+* Overview::                    Purpose and filesystem layout
+* Release build::               Docker image + Debian package
+* Installation::                apt install and post-install checklist
+* Config generator::              casmgr-config CLI (generate, validate, schema)
+* Config reference::            /etc/casmgr/config.json sections
+* Secrets::                     /var/casmgr/secrets/.env variables
+* mTLS::                        Certificate layout and permissions
+* Admin commands::              Setup and maintenance tools
+* PostgreSQL container::        Docker mounts and lifecycle
+* Ports and co-existence with dev::  MCP ports vs git checkout
+* Systemd::                     Service units and journal
+* Environment::                 Override variables for admin scripts
+* Upgrade and removal::         apt upgrade, remove, purge
+* Troubleshooting::             Common failures
+
+
+File: casmgr-server.info,  Node: Overview,  Next: Release build,  Prev: Top,  Up: Top
+
+1 Overview
+**********
+
+The ‘casmgr-server’ Debian package installs:
+
+   • The Code Analysis MCP daemon (‘casmgr-server.service’), running as
+     ‘casuser:casgrp’.
+   • A version-locked PostgreSQL/pgvector Docker container
+     (‘casmgr-postgres.service’).
+   • Admin scripts under ‘/usr/lib/casmgr/bin/’ (symlinked in
+     ‘/usr/sbin/’).
+
+   *Version lock:* the Debian package version equals the Docker Hub tag
+for ‘casmgr-postgres’.  The full image reference is stored in
+‘/usr/share/casmgr/docker-image’ at install time.
+
+Host filesystem layout
+======================
+
+‘/etc/casmgr/config.json’
+     Server configuration (mode 640, group ‘casgrp’, *conffile*).
+‘/var/casmgr/secrets/.env’
+     PostgreSQL passwords (mode 640, ‘casuser:casgrp’, *conffile*).
+‘/etc/casmgr/mtls/’
+     Server and client mTLS material (mode 0750, ‘root:casgrp’).
+‘/var/casmgr/postgres/data’
+     Database cluster files (bind-mounted, UID 999).
+‘/var/casmgr/postgres/cache’
+     Database cache directory (bind-mounted, UID 999).
+‘/var/log/casmgr’
+     Application logs; ‘/var/log/casmgr/postgres’ for PostgreSQL inside
+     Docker.
+‘/var/casmgr/data’, ‘faiss’, ‘locks’, ‘backups’, ‘trash’, ‘versions’
+     Application storage paths referenced from config.
+‘/usr/lib/casmgr-server’
+     Application tree and Python virtual environment.
+‘/usr/lib/casmgr/bin/’
+     Admin scripts (‘casmgr-postgres-container’, ‘casmgr-pg-init’,
+     ‘casmgr-pg-set-password’).
+‘/usr/share/doc/casmgr-server/config.json.template’
+     Reference copy of the shipped config template.
+‘/usr/share/doc/casmgr-server/CASMGR_DEPLOYMENT.md’
+     Narrative deployment guide.
+
+   Only ‘root’ or ‘casuser’ may run PostgreSQL admin scripts.
+
+
+File: casmgr-server.info,  Node: Release build,  Next: Installation,  Prev: Overview,  Up: Top
+
+2 Release build
+***************
+
+After git clone, build the Debian package with one command (installs
+build deps via ‘sudo apt-get’ when needed):
+
+     ./build.sh
+
+   Full release (Docker push + deb), version from ‘pyproject.toml’
+unless passed explicitly:
+
+     ./scripts/release_build.sh
+     ./scripts/release_build.sh 1.0.7 --deb-only
+
+   Environment variables:
+
+‘CASMGR_DOCKER_REGISTRY’
+     Docker Hub user or registry prefix (default: ‘vasilyvz’).
+‘CASMGR_DOCKER_IMAGE_NAME’
+     Image name (default: ‘casmgr-postgres’).
+
+   Flags:
+
+‘--deb-only’
+     Build the Debian package without pushing Docker.
+‘--docker-only’
+     Push Docker only, skip ‘dpkg-buildpackage’.
+‘--skip-deps’
+     Do not auto-install build packages.
+
+
+File: casmgr-server.info,  Node: Installation,  Next: Config generator,  Prev: Release build,  Up: Top
+
+3 Installation
+**************
+
+     sudo dpkg -i casmgr-server_1.0.6-1_all.deb
+     sudo apt-get install -f
+
+   ‘postinst’ on ‘configure’:
+
+  1. Creates ‘casuser’ / ‘casgrp’.
+  2. Installs ‘/etc/casmgr/config.json’ from template if missing;
+     generates ‘instance_uuid’.
+  3. Generates ‘/var/casmgr/secrets/.env’ with random passwords if
+     missing.
+  4. ‘docker pull’ for the pinned image.
+  5. Recreates container ‘casmgr-postgres’ with host bind mounts.
+  6. Runs ‘casmgr-pg-init’ (roles, database, grants).
+  7. Enables systemd units; starts PostgreSQL when Docker is available.
+  8. Starts ‘casmgr-server’ only after config placeholders and mTLS are
+     ready.
+  9. Prints a post-install checklist on the terminal.
+
+Post-install checklist
+======================
+
+  1. Edit ‘/etc/casmgr/config.json’: replace ‘CHANGE_ME’,
+     ‘MCP_PROXY_HOST’, set ‘watch_dirs’.
+  2. Review ‘/var/casmgr/secrets/.env’ (passwords auto-generated on
+     first install); back up securely.
+  3. Install mTLS files under ‘/etc/casmgr/mtls/’.
+  4. ‘sudo casmgr-pg-set-password’ after editing passwords; ‘sudo
+     casmgr-pg-init’ for first DB bootstrap.
+  5. ‘sudo systemctl start casmgr-server’ when config and certificates
+     are ready.
+
+
+File: casmgr-server.info,  Node: Config generator,  Next: Config reference,  Prev: Installation,  Up: Top
+
+4 Config generator
+******************
+
+Production installs use the static template
+‘/usr/share/doc/casmgr-server/config.json.template’ copied to
+‘/etc/casmgr/config.json’.  For development and custom deployments,
+generate a config with the *casmgr-config* CLI:
+
+     python -m code_analysis.cli.config_cli generate --help
+     python -m code_analysis.cli.config_cli validate --file config.json
+     python -m code_analysis.cli.config_cli schema --file config.json
+
+   Installed package:
+
+     /usr/lib/casmgr-server/.venv/bin/python -m code_analysis.cli.config_cli generate ...
+
+Architecture
+============
+
+Generation runs in two phases:
+
+  1. ‘SimpleConfigGenerator’ (from ‘mcp-proxy-adapter’) writes ‘server’,
+     ‘client’, ‘registration’, ‘auth’, and ‘queue_manager’.
+  2. ‘CodeAnalysisConfigGenerator’ reloads the file, adds
+     ‘code_analysis’ (database driver, workers, ‘docs_indexing’,
+     ‘search_session’), aligns HTTPS protocol fields, applies queue CLI
+     overrides, backs up an existing output file to ‘old_code/’, and
+     saves JSON.
+
+   The ‘generate’ command always runs ‘CodeAnalysisConfigValidator’
+afterward.
+
+Defaults and conventions
+========================
+
+MCP port
+     *15000* when ‘--server-port’ is omitted (‘code_analysis.port’
+     matches).  Production template uses *15010*.
+Database driver
+     ‘sqlite_proxy’ unless ‘--code-analysis-driver-type postgres’.
+Registration
+     Requires ‘--with-proxy’.  ‘registration.protocol’ defaults to
+     ‘server.protocol’.  ‘registration.server_id’ defaults to
+     ‘code-analysis-server’; use ‘code-analysis-server-dev’ on dev hosts
+     sharing a proxy with production.
+SSL paths
+     Stored as absolute paths when the source file exists under the
+     current directory.  Validator resolves relative paths against the
+     *config file directory*—prefer ‘--out config.json’ at the project
+     root or absolute paths.
+‘docs_indexing’
+     Disabled by default (safe Markdown/JSON/YAML globs under ‘docs/’
+     when enabled).
+‘search_session’
+     Emits ‘ttl_seconds’ and ‘max_block_size_bytes’ from code constants.
+
+Example: dev HTTPS, proxy, PostgreSQL
+=====================================
+
+From the git checkout root:
+
+     python -m code_analysis.cli.config_cli generate \
+       --protocol https \
+       --with-proxy \
+       --registration-port 3004 \
+       --registration-server-id code-analysis-server-dev \
+       --server-port 15000 \
+       --server-cert-file mtls_certificates/mtls_certificates/server/code-analysis-server.crt \
+       --server-key-file mtls_certificates/mtls_certificates/server/code-analysis-server.key \
+       --server-ca-cert-file mtls_certificates/mtls_certificates/ca/ca.crt \
+       --registration-cert-file mtls_certificates/mtls_certificates/client/code-analysis.crt \
+       --registration-key-file mtls_certificates/mtls_certificates/client/code-analysis.key \
+       --registration-ca-cert-file mtls_certificates/mtls_certificates/ca/ca.crt \
+       --code-analysis-driver-type postgres \
+       --code-analysis-pg-user code_analysis \
+       --out config.json
+
+Subcommands
+===========
+
+‘generate’ (‘gen’)
+     Write config; validate result.
+‘validate’ (‘val’)
+     ‘--file PATH’ — check config only.
+‘schema’
+     Apply SQLite schema from config; stops server unless ‘--no-stop’.
+
+   See ‘man casmgr-config’ for the full option list.
+
+
+File: casmgr-server.info,  Node: Config reference,  Next: Secrets,  Prev: Config generator,  Up: Top
+
+5 Config reference
+******************
+
+Primary file: ‘/etc/casmgr/config.json’.  JSON with comments (JSONC) is
+supported.  Template:
+‘/usr/share/doc/casmgr-server/config.json.template’.  To create a new
+dev config from scratch, use the *note Config generator: Config
+generator. chapter.
+
+5.1 server
+==========
+
+MCP HTTPS listener and logging.
+
+‘host’
+     Bind address (default ‘0.0.0.0’).
+‘port’
+     TCP port for MCP/API. Production default *15010*; dev git checkout
+     uses *15000*.
+‘protocol’
+     ‘https’ for production mTLS.
+‘servername’
+     TLS server name (SNI).
+‘advertised_host’
+     Host/IP advertised to MCP proxy at registration.  Replace
+     ‘CHANGE_ME’.
+‘log_dir’
+     Application log directory (default ‘/var/log/casmgr’).
+‘ssl.cert’, ‘ssl.key’, ‘ssl.ca’
+     Paths to server certificate, private key, and CA under
+     ‘/etc/casmgr/mtls/’.
+
+5.2 registration
+================
+
+MCP proxy registration and heartbeat.
+
+‘enabled’
+     ‘true’ to register on startup.
+‘register_url’, ‘unregister_url’, ‘heartbeat.url’
+     Replace ‘MCP_PROXY_HOST’ with proxy hostname or IP (port ‘3004’ in
+     template).
+‘server_id’
+     Proxy-visible identifier (production: ‘code-analysis-server’).
+‘server_name’
+     Human-readable name in proxy catalog.
+‘instance_uuid’
+     UUID4 unique per server instance.  Auto-generated on install; must
+     differ when two servers share one PostgreSQL cluster.
+‘auto_on_startup’, ‘auto_on_shutdown’
+     Register/unregister with proxy on daemon start/stop.
+‘heartbeat.interval’
+     Seconds between heartbeat requests (default ‘30’).
+‘ssl.cert’, ‘ssl.key’, ‘ssl.ca’
+     Client mTLS credentials for proxy communication.
+
+5.3 code_analysis
+=================
+
+Application storage, database, and background workers.
+
+‘port’
+     Keep equal to ‘server.port’ in production.
+‘log’
+     Main application log file path.
+‘storage’
+     Directories under ‘/var/casmgr/’ for indexes, locks, backups,
+     trash.
+‘database.driver.type’
+     ‘postgres’ in production.
+‘database.driver.config’
+     ‘host’ (‘127.0.0.1’), ‘port’ (‘5432’), ‘dbname’, ‘user’,
+     ‘password_env’.
+‘worker’
+     Vectorization worker: ‘enabled’, ‘poll_interval’, ‘batch_size’,
+     ‘log_path’, ‘watch_dirs’.
+‘file_watcher’
+     File change watcher: ‘enabled’, ‘log_path’, ‘version_dir’.
+‘indexing_worker’
+     Code index worker: poll interval, batch size, log path.
+
+watch_dirs format
+=================
+
+Each entry in ‘code_analysis.worker.watch_dirs’ indexes a filesystem
+root.  Use stable UUID ‘id’ values.  Paths must be absolute and readable
+by ‘casuser’.
+
+"watch_dirs": [
+  {"id": "550e8400-e29b-41d4-a716-446655440000", "path": "/srv/projects"}
+]
+
+5.4 Other config sections
+=========================
+
+‘queue_manager’
+     In-memory job queue limits and completed-job retention.
+‘process_management.shutdown_grace_seconds’
+     Grace period on daemon shutdown.
+‘auth’
+     Optional token/role authentication (disabled in default template).
+‘client’, ‘server_validation’
+     Disabled in default production template.
+
+
+File: casmgr-server.info,  Node: Secrets,  Next: mTLS,  Prev: Config reference,  Up: Top
+
+6 Secrets
+*********
+
+File: ‘/var/casmgr/secrets/.env’.  Loaded by systemd
+(‘EnvironmentFile’), admin scripts, and the daemon via ‘password_env’.
+
+‘POSTGRES_SUPERUSER_PASSWORD’
+     Target password for PostgreSQL superuser (‘postgres’).  Also used
+     as ‘POSTGRES_PASSWORD’ when the Docker container is first created.
+‘CODE_ANALYSIS_POSTGRES_PASSWORD’
+     Application role password; referenced by
+     ‘code_analysis.database.driver.config.password_env’.
+‘POSTGRES_SUPERUSER_CONNECT_PASSWORD’
+     Optional.  Current superuser password when
+     ‘POSTGRES_SUPERUSER_PASSWORD’ is being rotated and differs from the
+     cluster password.
+‘POSTGRES_DB’
+     Database name created in the container (default ‘code_analysis’).
+
+   On first install, random passwords replace ‘CHANGE_ME_*’
+placeholders.  Back up this file securely.
+
+   After any edit, apply to the running cluster:
+
+     sudo casmgr-pg-set-password
+
+   Superuser only:
+
+     sudo casmgr-pg-set-password --superuser-only
+
+
+File: casmgr-server.info,  Node: mTLS,  Next: Admin commands,  Prev: Secrets,  Up: Top
+
+7 mTLS
+******
+
+Install five files under ‘/etc/casmgr/mtls/’:
+
+‘server.crt’, ‘server.key’
+     Server certificate and private key (MCP/API listener).
+‘ca.crt’
+     Certificate authority for verifying peers.
+‘client.crt’, ‘client.key’
+     Client certificate for MCP proxy registration.
+
+   Permissions (applied by ‘dpkg --configure casmgr-server’): directory
+mode ‘0750’ ‘root:casgrp’; files mode ‘0640’.  Private keys must be
+readable by ‘casuser’ via group ‘casgrp’.
+
+   Paths in ‘config.json’ (see template for full structure):
+
+"server": { "ssl": {
+  "cert": "/etc/casmgr/mtls/server.crt",
+  "key": "/etc/casmgr/mtls/server.key",
+  "ca": "/etc/casmgr/mtls/ca.crt"
+}},
+"registration": { "ssl": {
+  "cert": "/etc/casmgr/mtls/client.crt",
+  "key": "/etc/casmgr/mtls/client.key",
+  "ca": "/etc/casmgr/mtls/ca.crt"
+}}
+
+
+File: casmgr-server.info,  Node: Admin commands,  Next: PostgreSQL container,  Prev: mTLS,  Up: Top
+
+8 Admin commands
+****************
+
+All commands require ‘root’ or ‘casuser’.  Installed under
+‘/usr/lib/casmgr/bin/’ and ‘/usr/sbin/’.
+
+8.1 casmgr-postgres-container
+=============================
+
+Manage Docker container ‘casmgr-postgres’.
+
+‘pull’
+     Download image from ‘/usr/share/casmgr/docker-image’.
+‘recreate’
+     Remove existing container and create a new one with host bind
+     mounts.  Uses ‘POSTGRES_SUPERUSER_PASSWORD’ and ‘POSTGRES_DB’ from
+     secrets.  Publishes PostgreSQL on ‘127.0.0.1:5432’ (port from
+     config).
+‘start’
+     Start container; runs ‘recreate’ if missing.
+‘stop’
+     Stop container.
+‘remove’
+     Stop and remove container (image retained).
+‘status’
+     Print container name, state, and image.
+
+     sudo casmgr-postgres-container pull
+     sudo casmgr-postgres-container recreate
+     sudo casmgr-postgres-container status
+
+8.2 casmgr-pg-init
+==================
+
+Bootstrap PostgreSQL after the container is running:
+
+   • Apply superuser password from secrets.
+   • Create application role and database from ‘config.json’ driver
+     settings.
+   • Grant privileges on database and ‘public’ schema.
+
+   Option ‘--fix-existing-db-owner’ runs ‘ALTER DATABASE ... OWNER’ when
+the database already exists.
+
+     sudo systemctl start casmgr-postgres
+     sudo casmgr-pg-init
+     sudo casmgr-pg-init --fix-existing-db-owner
+
+8.3 casmgr-pg-set-password
+==========================
+
+Apply passwords from ‘/var/casmgr/secrets/.env’ to the running cluster.
+
+   Default: updates superuser and application role (‘ALTER ROLE’).
+Option ‘--superuser-only’ skips the application role.
+
+   When rotating the superuser password, set
+‘POSTGRES_SUPERUSER_CONNECT_PASSWORD’ to the current cluster password
+for that run.
+
+     sudo casmgr-pg-set-password
+     sudo casmgr-pg-set-password --superuser-only
+
+8.4 casmgr
+==========
+
+Daemon manager CLI (‘/usr/bin/casmgr’).  Uses the package venv under
+‘/usr/lib/casmgr-server’.
+
+‘--config PATH’
+     Config file (default ‘/etc/casmgr/config.json’ via
+     ‘CASMGR_CONFIG’).
+‘start’, ‘stop’, ‘restart’, ‘status’
+     Manage MCP daemon outside systemd or inspect process state.
+‘sessions’, ‘locks’
+     List active client sessions and file locks.
+
+   Production service management should use systemd; use ‘casmgr’ for
+debugging.
+
+     sudo casmgr --config /etc/casmgr/config.json status
+     sudo casmgr --config /etc/casmgr/config.json restart
+
+8.5 casmgr_ensure_instance_uuid
+===============================
+
+Python helper at
+‘/usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py’.
+Ensures ‘registration.instance_uuid’ is a valid UUID4.  Invoked from
+package ‘postinst’.
+
+     sudo /usr/lib/casmgr-server/.venv/bin/python \
+       /usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py \
+       --config /etc/casmgr/config.json
+     sudo .../casmgr_ensure_instance_uuid.py --dry-run
+
+
+File: casmgr-server.info,  Node: PostgreSQL container,  Next: Ports and co-existence with dev,  Prev: Admin commands,  Up: Top
+
+9 PostgreSQL container
+**********************
+
+‘casmgr-postgres-container recreate’ removes any old container and
+creates a new one:
+
+     sudo casmgr-postgres-container pull
+     sudo casmgr-postgres-container recreate
+     sudo casmgr-pg-init
+
+   Bind mounts:
+
+Host ‘/var/casmgr/postgres/data’
+     Container ‘/var/lib/postgresql/data’
+Host ‘/var/casmgr/postgres/cache’
+     Container ‘/var/lib/postgresql/cache’
+Host ‘/var/log/casmgr/postgres’
+     Container ‘/var/log/postgresql’
+Host ‘/etc/casmgr’
+     Container ‘/etc/casmgr’ (read-only)
+Host ‘/etc/casmgr/postgres’
+     Container ‘/etc/casmgr/postgres’ (read-only)
+
+   Port publishing: ‘127.0.0.1:5432’ on the host (configurable via
+‘code_analysis.database.driver.config.port’).
+
+
+File: casmgr-server.info,  Node: Ports and co-existence with dev,  Next: Systemd,  Prev: PostgreSQL container,  Up: Top
+
+10 Ports and co-existence with dev
+**********************************
+
+On one host, production and a git-checkout dev server must not share the
+same MCP port or proxy ‘server_id’:
+
+Production (‘/etc/casmgr/config.json’)
+     MCP port *15010*, ‘registration.server_id’ ‘code-analysis-server’
+Development (repo ‘config.json’)
+     MCP port *15000*, ‘registration.server_id’
+     ‘code-analysis-server-dev’
+PostgreSQL (Docker)
+     ‘127.0.0.1:5432’ — may be shared; use distinct ‘instance_uuid’ per
+     server
+
+   Upgrades preserve an existing ‘/etc/casmgr/config.json’; change
+‘server.port’ to *15010* if it still uses *15000* and you run both
+servers on the same machine.
+
+
+File: casmgr-server.info,  Node: Systemd,  Next: Environment,  Prev: Ports and co-existence with dev,  Up: Top
+
+11 Systemd
+**********
+
+‘casmgr-postgres.service’
+     Oneshot unit: starts Docker container via
+     ‘casmgr-postgres-container start’.  Requires Docker.
+‘casmgr-server.service’
+     Runs ‘python -m code_analysis.main --config /etc/casmgr/config.json
+     --daemon’ as ‘casuser’.  Requires ‘casmgr-postgres.service’.  Loads
+     ‘/var/casmgr/secrets/.env’.
+
+     sudo systemctl enable casmgr-postgres casmgr-server
+     sudo systemctl start casmgr-postgres
+     sudo casmgr-pg-init
+     sudo systemctl start casmgr-server
+     sudo systemctl status casmgr-postgres casmgr-server
+     sudo systemctl restart casmgr-server
+     sudo journalctl -u casmgr-server -f
+
+   The package starts ‘casmgr-server’ automatically only when config has
+no ‘CHANGE_ME’ or ‘MCP_PROXY_HOST’ placeholders and all five mTLS files
+exist.
+
+
+File: casmgr-server.info,  Node: Environment,  Next: Upgrade and removal,  Prev: Systemd,  Up: Top
+
+12 Environment
+**************
+
+Admin scripts and services honor these variables when set:
+
+‘CASMGR_CONFIG’
+     Path to ‘config.json’ (default ‘/etc/casmgr/config.json’).
+‘CASMGR_SECRETS’
+     Secrets directory (default ‘/var/casmgr/secrets’).
+‘CASMGR_ETC’, ‘CASMGR_VAR’, ‘CASMGR_LOG’
+     Configuration, data, and log roots under FHS layout.
+‘CASMGR_PG_CONTAINER’
+     Docker container name (default ‘casmgr-postgres’).
+‘CASMGR_DOCKER_IMAGE_FILE’
+     Pinned image ref (default ‘/usr/share/casmgr/docker-image’).
+‘CODE_ANALYSIS_DAEMON_PYTHON’, ‘CASMGR_PYTHON’
+     Override Python interpreter for admin tooling.
+
+
+File: casmgr-server.info,  Node: Upgrade and removal,  Next: Troubleshooting,  Prev: Environment,  Up: Top
+
+13 Upgrade and removal
+**********************
+
+*Upgrade:* installing a newer ‘.deb’ pulls the new pinned image, removes
+the old container, creates a new one, and re-runs initialization
+helpers.  Data in ‘/var/casmgr/postgres/data’ is preserved.  Conffiles
+‘/etc/casmgr/config.json’ and ‘/var/casmgr/secrets/.env’ are kept.
+
+   *Remove:* ‘apt remove casmgr-server’ stops services and removes the
+container.
+
+   *Purge:* ‘apt purge casmgr-server’ also runs ‘docker rmi’ on the
+pinned image.  ‘/var/casmgr’ data is retained unless deleted manually.
+
+   Replaces legacy package ‘code-analysis-server’; disables
+‘code-analysis-server.service’ if present.
+
+
+File: casmgr-server.info,  Node: Troubleshooting,  Prev: Upgrade and removal,  Up: Top
+
+14 Troubleshooting
+******************
+
+Address already in use (MCP port)
+=================================
+
+Production uses port *15010*; dev checkout uses *15000*.  Stop one
+instance or align ‘server.port’ in config.  Check listeners: ‘ss -tlnp |
+grep -E '15000|15010'’.
+
+initdb: Operation not permitted
+===============================
+
+Ensure ‘/var/casmgr/postgres/data’ is owned by UID 999 (postgres in the
+official image):
+
+     sudo chown -R 999:999 /var/casmgr/postgres/data /var/casmgr/postgres/cache
+
+Server cannot connect to PostgreSQL
+===================================
+
+Check ‘casmgr-postgres’ is running, port 5432 is published on
+‘127.0.0.1’, and ‘/var/casmgr/secrets/.env’ matches ‘password_env’ in
+config.  Re-apply passwords:
+
+     sudo casmgr-pg-set-password
+     sudo systemctl restart casmgr-server
+
+Password rotation failed
+========================
+
+Set ‘POSTGRES_SUPERUSER_CONNECT_PASSWORD’ to the *current* cluster
+superuser password, update ‘POSTGRES_SUPERUSER_PASSWORD’ to the new
+value, then run ‘sudo casmgr-pg-set-password’.
+
+Wrong Docker image version
+==========================
+
+Inspect ‘/usr/share/casmgr/docker-image’ and reinstall the matching
+package version.
+
+Missing Python modules after install
+====================================
+
+     sudo dpkg --configure casmgr-server
+
+
+Tag Table:
+Node: Top87
+Node: Overview1109
+Node: Release build3026
+Node: Installation3892
+Node: Config generator5307
+Node: Config reference8936
+Node: Secrets12341
+Node: mTLS13469
+Node: Admin commands14428
+Node: PostgreSQL container17560
+Node: Ports and co-existence with dev18479
+Node: Systemd19321
+Node: Environment20291
+Node: Upgrade and removal21063
+Node: Troubleshooting21864
+
+End Tag Table
+
+
+Local Variables:
+coding: utf-8
+End:

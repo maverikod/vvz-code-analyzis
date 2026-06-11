@@ -24,3 +24,6 @@ override_dh_installsystemd:
 
 override_dh_installdocs:
 	dh_installdocs
+
+override_dh_installinfo:
+	dh_installinfo

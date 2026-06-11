@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +47,43 @@ def _partition_columns_present(database: Any) -> bool:
     )
 
 
+def _postgres_primary_key_columns(database: Any, table: str) -> List[str]:
+    if getattr(database, "_driver_type", None) != "postgres":
+        return []
+    rows = database._fetchall(
+        """
+        SELECT a.attname
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+        WHERE c.contype = 'p'
+          AND t.relname = ?
+          AND n.nspname = current_schema()
+        ORDER BY array_position(c.conkey, a.attnum)
+        """,
+        (table,),
+    )
+    return [str(row["attname"]) for row in rows if row.get("attname") is not None]
+
+
+def _watch_dirs_composite_pk_present(database: Any) -> bool:
+    return _postgres_primary_key_columns(database, "watch_dirs") == [
+        "server_instance_id",
+        "id",
+    ]
+
+
 def migrate_watch_dirs_server_instance(database: Any) -> None:
     """Idempotent schema migration (PostgreSQL and SQLite)."""
     if _db_settings_has(database, _MIGRATION_KEY) and _partition_columns_present(
         database
     ):
+        return
+    if _watch_dirs_composite_pk_present(database) and _partition_columns_present(
+        database
+    ):
+        _db_settings_set(database, _MIGRATION_KEY, "1")
         return
     if _db_settings_has(database, _MIGRATION_KEY):
         logger.warning(
@@ -160,13 +192,15 @@ def _backfill_null_server_instance_ids(database: Any) -> None:
     except Exception as ex:
         logger.warning("server_instance_id backfill skipped: %s", ex)
         try:
-            database._commit()
+            database._conn.rollback()
         except Exception:
             pass
 
 
 def _migrate_watch_dirs_composite_keys(database: Any) -> None:
     """Allow the same config watch_dir ``id`` on different server instances."""
+    if _watch_dirs_composite_pk_present(database):
+        return
     if not _column_exists(database, "watch_dirs", "server_instance_id"):
         return
 
@@ -199,10 +233,23 @@ def _migrate_watch_dirs_composite_keys(database: Any) -> None:
                 "ALTER TABLE watch_dirs DROP CONSTRAINT IF EXISTS watch_dirs_pkey"
             )
             database._commit()
-            database._execute(
-                "ALTER TABLE watch_dirs ADD PRIMARY KEY (server_instance_id, id)"
-            )
-            database._commit()
+            try:
+                database._execute(
+                    "ALTER TABLE watch_dirs ADD PRIMARY KEY (server_instance_id, id)"
+                )
+                database._commit()
+            except Exception as inner:
+                try:
+                    database._conn.rollback()
+                except Exception:
+                    pass
+                logger.warning(
+                    "watch_dirs composite PK failed (%s); restoring PRIMARY KEY (id)",
+                    inner,
+                )
+                database._execute("ALTER TABLE watch_dirs ADD PRIMARY KEY (id)")
+                database._commit()
+                return
         else:
             database._execute(
                 "CREATE TABLE IF NOT EXISTS watch_dirs_new ("

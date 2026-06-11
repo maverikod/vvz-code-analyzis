@@ -27,15 +27,7 @@ from ..core.constants import (
     DEFAULT_BATCH_MAX_RESPONSE_BYTES,
     DEFAULT_BATCH_OUTPUT_DIR,
 )
-
-
-def _resolve_batch_output_dir(config_path: Path, dir_str: str) -> str:
-    """Resolve batch output dir (absolute or relative to config dir)."""
-    config_dir = config_path.resolve().parent
-    p = Path(dir_str).expanduser()
-    if not p.is_absolute():
-        p = (config_dir / p).resolve()
-    return str(p.resolve())
+from ..core.storage_paths import resolve_batch_output_dir
 
 
 class ReadOnlyBatchMCPCommand(BaseMCPCommand):
@@ -122,7 +114,9 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
         if max_bytes <= 0:
             max_bytes = DEFAULT_BATCH_MAX_RESPONSE_BYTES
         output_dir_str = ca.get("batch_output_dir", DEFAULT_BATCH_OUTPUT_DIR)
-        output_dir = _resolve_batch_output_dir(config_path, output_dir_str)
+        output_dir = str(
+            resolve_batch_output_dir(config_path=config_path, dir_str=output_dir_str)
+        )
 
         inv_list: List[Dict[str, Any]] = [
             {"command": inv.get("command", ""), "params": inv.get("params") or {}}

@@ -10,6 +10,11 @@ import json
 import sys
 from pathlib import Path
 
+from ..core.config_errors import (
+    format_validation_error_report,
+    print_config_error,
+)
+from ..core.config_json import ConfigJSONDecodeError, load_config_json
 from ..core.config_validator import CodeAnalysisConfigValidator
 from ..core.env_loader import load_dotenv_near_config
 
@@ -31,8 +36,7 @@ def cmd_schema(args: argparse.Namespace) -> int:
         print(f"Error: config file not found: {config_path}", file=sys.stderr)
         return 1
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+        config = load_config_json(config_path)
         db_path = _get_db_path_from_config(config)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -86,7 +90,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
         load_dotenv_near_config(config_path)
 
         validator = CodeAnalysisConfigValidator(str(config_path))
-        validator.load_config()
+        try:
+            validator.load_config()
+        except (ConfigJSONDecodeError, ValueError) as e:
+            print_config_error(str(e))
+            return 1
+
         results = validator.validate_config()
         summary = validator.get_validation_summary()
 
@@ -110,12 +119,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if summary["is_valid"]:
             print("\n✅ Configuration is valid")
             return 0
-        print(f"\n❌ Configuration is invalid: {summary['errors']} error(s)")
+
+        print(
+            "\n" + format_validation_error_report(results, config_path=config_path),
+            file=sys.stderr,
+        )
         return 1
 
+    except ConfigJSONDecodeError as e:
+        print_config_error(str(e))
+        return 1
+    except ValueError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"❌ Failed to validate configuration: {e}", file=sys.stderr)
-        import traceback
-
-        traceback.print_exc()
         return 1

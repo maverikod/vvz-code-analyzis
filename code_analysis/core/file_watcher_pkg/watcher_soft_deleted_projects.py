@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, List, Set, Tuple
 
 from ..project_discovery import ProjectRoot
+from ..project_resolution import load_project_info
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,9 @@ def partition_discovered_projects_by_db_soft_delete(
     Split ``discovered`` into active projects vs roots that must not be scanned.
 
     A discovered root is excluded when:
-    - ``database.get_project(project_id)`` exists and ``projects.deleted`` is set, or
+    - ``projectid`` has ``deleted: true`` (source of truth on disk), or
+    - after syncing from ``projectid``, ``database.get_project(project_id)`` has
+      ``projects.deleted`` set, or
     - a row for the same ``root_path`` exists with ``projects.deleted`` set (covers
       id/file mismatch while trash lifecycle is in flight).
 
@@ -74,6 +77,39 @@ def partition_discovered_projects_by_db_soft_delete(
         except OSError:
             root_resolved = Path(pr.root_path)
         root_s = str(root_resolved)
+
+        try:
+            pid_info = load_project_info(pr.root_path)
+        except Exception as exc:
+            logger.warning(
+                "[WATCHER] skip unreadable projectid root=%s project_id=%s: %s",
+                root_s,
+                pr.project_id,
+                exc,
+            )
+            excluded_resolved.add(root_resolved)
+            continue
+
+        if pid_info.deleted:
+            if hasattr(database, "sync_project_metadata_from_projectid"):
+                database.sync_project_metadata_from_projectid(
+                    pr.root_path,
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                )
+            logger.info(
+                "[WATCHER] skip discovered project root=%s project_id=%s "
+                "reason=projectid.deleted",
+                root_s,
+                pr.project_id,
+            )
+            excluded_resolved.add(root_resolved)
+            continue
+
+        if hasattr(database, "sync_project_metadata_from_projectid"):
+            database.sync_project_metadata_from_projectid(
+                pr.root_path,
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+            )
 
         proj_by_id = database.get_project(pr.project_id)
         if is_project_record_soft_deleted(proj_by_id):

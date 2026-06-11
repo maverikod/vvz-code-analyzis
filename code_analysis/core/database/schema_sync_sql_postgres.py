@@ -104,12 +104,27 @@ def generate_create_table_sql_postgres(
     if composite_pk:
         col_defs.append(f"PRIMARY KEY ({', '.join(pk_cols)})")
 
+    tables = schema_definition.get("tables", {})
+
     for fk in table_def.get("foreign_keys", []):
+        ref_table = fk["references_table"]
+        ref_cols = list(fk.get("references_columns") or [])
+        ref_table_def = tables.get(ref_table, {})
+        ref_pk_cols = [
+            col["name"]
+            for col in ref_table_def.get("columns", [])
+            if col.get("primary_key")
+        ]
+        # PostgreSQL: FK must reference a UNIQUE/PRIMARY KEY column set. Legacy
+        # single-column refs (e.g. files.watch_dir_id -> watch_dirs.id) are invalid
+        # once watch_dirs uses composite PK (server_instance_id, id).
+        if len(ref_pk_cols) > 1 and ref_cols != ref_pk_cols:
+            continue
         fk_cols = ", ".join(fk["columns"])
-        ref_cols = ", ".join(fk["references_columns"])
+        ref_cols_sql = ", ".join(ref_cols)
         on_delete = fk.get("on_delete", "")
         fk_sql = (
-            f"FOREIGN KEY ({fk_cols}) REFERENCES {fk['references_table']}({ref_cols})"
+            f"FOREIGN KEY ({fk_cols}) REFERENCES {ref_table}({ref_cols_sql})"
         )
         if on_delete:
             fk_sql += f" ON DELETE {on_delete}"

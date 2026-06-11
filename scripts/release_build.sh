@@ -136,7 +136,53 @@ casmgr-server (${DEB_VERSION}) unstable; urgency=medium
 
 EOF
 
+casmgr_clean_source_for_debian_build() {
+    local root="$1"
+    info "Cleaning Python artifacts before dpkg-buildpackage ..."
+    rm -rf "${root}/debian/casmgr-server" "${root}/debian/files" 2>/dev/null || true
+
+    local need_sudo=0
+    local dir
+    while IFS= read -r dir; do
+        [[ -n "$dir" ]] || continue
+        if ! rm -rf "$dir" 2>/dev/null; then
+            need_sudo=1
+        fi
+    done < <(
+        find "$root" \
+            \( -path "${root}/.git" -o -path "${root}/.venv" -o -path "${root}/venv" \) -prune \
+            -o -type d -name __pycache__ -print 2>/dev/null
+    )
+
+    if (( need_sudo )); then
+        warn "Some __pycache__ dirs are not writable (often root-owned after 'sudo' runs)"
+        if command -v sudo >/dev/null 2>&1; then
+            info "Retrying __pycache__ cleanup with sudo ..."
+            while IFS= read -r dir; do
+                [[ -n "$dir" ]] || continue
+                sudo rm -rf "$dir" 2>/dev/null || true
+            done < <(
+                find "$root" \
+                    \( -path "${root}/.git" -o -path "${root}/.venv" -o -path "${root}/venv" \) -prune \
+                    -o -type d -name __pycache__ -print 2>/dev/null
+            )
+        else
+            error "Remove root-owned __pycache__, then rebuild: sudo rm -rf code_analysis/**/__pycache__"
+        fi
+    fi
+
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        rm -f "$f" 2>/dev/null || sudo rm -f "$f" 2>/dev/null || true
+    done < <(
+        find "$root" \
+            \( -path "${root}/.git" -o -path "${root}/.venv" -o -path "${root}/venv" \) -prune \
+            -o -type f \( -name '*.pyc' -o -name '*.pyo' \) -print 2>/dev/null
+    )
+}
+
 if (( DO_DEB )); then
+    casmgr_clean_source_for_debian_build "$ROOT"
     info "Building Debian package casmgr-server_${DEB_VERSION}_all.deb"
     rm -rf debian/casmgr-server debian/files ../casmgr-server_*.deb ../casmgr-server_*.changes 2>/dev/null || true
     dpkg-buildpackage -us -uc -b

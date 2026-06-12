@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from code_analysis.core.tree_file_write import match_file_owner
 from code_analysis.tree.sibling_convention import sibling_tree_path
 
 from .models import CSTTree, TreeNodeMetadata
@@ -192,6 +193,7 @@ def write_sidecar_atomic(py_path: Path, tree: CSTTree) -> Path:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.replace(tmp_name, str(target_path))
+        match_file_owner(target_path, py_path)
     except Exception:
         try:
             os.unlink(tmp_name)

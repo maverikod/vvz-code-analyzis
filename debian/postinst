@@ -127,8 +127,16 @@ setup_postgres() {
         echo "WARNING: docker not installed; skip PostgreSQL container setup." >&2
         return 0
     fi
-    "${BIN}/casmgr-postgres-container" pull
-    "${BIN}/casmgr-postgres-container" recreate
+    if ! "${BIN}/casmgr-postgres-container" pull; then
+        echo "WARNING: docker pull failed (image may not be published yet)." >&2
+        echo "WARNING: After the image is available, run: sudo casmgr-postgres-container pull" >&2
+        echo "WARNING: Then: sudo casmgr-postgres-container recreate && sudo casmgr-pg-init" >&2
+        return 0
+    fi
+    if ! "${BIN}/casmgr-postgres-container" recreate; then
+        echo "WARNING: postgres container recreate failed; check ${SECRETS}/.env and re-run recreate." >&2
+        return 0
+    fi
     "${BIN}/casmgr-pg-init" || echo "WARNING: casmgr-pg-init failed; configure secrets and re-run." >&2
 }
 

@@ -85,8 +85,8 @@ Sync checks (in-process registry):
 pytest tests/test_client_server_api_sync.py tests/test_code_analysis_client.py -k session
 ```
 
-Package version is in ``client/code_analysis_client/version.txt`` (synced with the
-root ``code-analysis`` project via ``scripts/sync_code_analysis_client_version.py``).
+Package version is in the root ``pyproject.toml``; before a client wheel build run
+``python scripts/sync_code_analysis_client_version.py`` (also done by ``release_build.sh``).
 
 ## Examples (this repository)
 

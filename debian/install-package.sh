@@ -60,6 +60,11 @@ else
     echo "vasilyvz/casmgr-postgres:unknown" > "${ST}/usr/share/casmgr/docker-image"
 fi
 
+if [[ ! -f "${CURDIR}/packaging/config.json.template" ]]; then
+    echo "ERROR: ${CURDIR}/packaging/config.json.template missing" >&2
+    exit 1
+fi
+
 install -d "${ST}/etc/casmgr/postgres"
 install -m 640 "${CURDIR}/packaging/config.json.template" \
     "${ST}/etc/casmgr/config.json"

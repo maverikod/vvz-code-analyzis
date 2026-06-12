@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import yaml
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -33,6 +31,7 @@ from code_analysis.core.tree_temp.sidecar_payload import (
     SidecarParseError,
     loads_sidecar,
 )
+from code_analysis.core.tree_file_write import atomic_write_sibling_tree_file
 from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
@@ -230,7 +229,6 @@ def _recreate_tree_for_format(
     content_checksum: str,
 ) -> TreeRepresentationRef:
     """Rebuild a missing or stale sidecar via existing indexer tree builders."""
-    import os
     import yaml as _yaml
 
     source_text = source_abs.read_text(encoding="utf-8")
@@ -257,10 +255,11 @@ def _recreate_tree_for_format(
         sidecar_text = serialize_sidecar_to_json_text(
             tree, source_sha256=content_checksum
         )
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-        tmp.write_text(sidecar_text, encoding="utf-8")
-        os.replace(tmp, sidecar_path)
+        atomic_write_sibling_tree_file(
+            source_abs=source_abs,
+            sidecar_path=sidecar_path,
+            text=sidecar_text,
+        )
         return TreeRepresentationRef(
             file_path=file_path,
             sidecar_path=sidecar_path,
@@ -278,10 +277,11 @@ def _recreate_tree_for_format(
         sidecar_text = serialize_sidecar_to_json_text(
             tree, source_sha256=content_checksum
         )
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-        tmp.write_text(sidecar_text, encoding="utf-8")
-        os.replace(tmp, sidecar_path)
+        atomic_write_sibling_tree_file(
+            source_abs=source_abs,
+            sidecar_path=sidecar_path,
+            text=sidecar_text,
+        )
         return TreeRepresentationRef(
             file_path=file_path,
             sidecar_path=sidecar_path,
@@ -296,9 +296,11 @@ def _recreate_tree_for_format(
     root_stable_id = _read_adjacent_root_stable_id(sidecar_path)
     if root_stable_id is not None:
         payload["root_stable_id"] = root_stable_id
-    tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, sidecar_path)
+    atomic_write_sibling_tree_file(
+        source_abs=source_abs,
+        sidecar_path=sidecar_path,
+        text=json.dumps(payload, indent=2),
+    )
     return TreeRepresentationRef(
         file_path=file_path,
         sidecar_path=sidecar_path,

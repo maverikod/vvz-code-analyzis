@@ -18,15 +18,23 @@ sudo dpkg -i ../casmgr-server_*.deb
 sudo apt-get install -f
 ```
 
-## Full release (Docker + deb)
+## Full release (Docker + deb + PyPI client)
 
-Builds Docker image, pushes to Hub, and creates a Debian package with the **same version tag**:
+Builds Docker image, pushes to Hub, builds Debian package, and uploads
+**code-analysis-client** to PyPI (same version as root `pyproject.toml`):
 
 ```bash
+export TWINE_USERNAME=__token__
+export TWINE_PASSWORD=pypi-...   # API token
+
 ./scripts/release_build.sh
 # explicit version:
 ./scripts/release_build.sh 1.0.7
 ```
+
+Skip PyPI: `./scripts/release_build.sh --skip-pypi`  
+Deb-only + PyPI: `./scripts/release_build.sh --deb-only --pypi`  
+Build client wheel only (no upload): `./scripts/publish_code_analysis_client_pypi.sh --check-only`
 
 Environment:
 

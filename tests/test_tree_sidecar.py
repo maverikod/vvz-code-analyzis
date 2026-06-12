@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from code_analysis.core.cst_tree.tree_builder import create_tree_from_code, remove_tree
 from code_analysis.core.cst_tree.tree_sidecar import (
@@ -12,6 +17,10 @@ from code_analysis.core.cst_tree.tree_sidecar import (
     tree_to_sidecar_payload,
     verify_sidecar_against_source,
     write_sidecar_atomic,
+)
+from code_analysis.core.tree_file_write import (
+    atomic_write_sibling_tree_file,
+    match_file_owner,
 )
 from code_analysis.tree.sibling_convention import sibling_tree_path
 
@@ -65,3 +74,43 @@ def test_render_parse_roundtrip_dict() -> None:
     }
     text = render_sidecar_file(payload)
     assert text.splitlines()[0] == f"CST_TREE_V1 sha256={'a' * 64}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chown not supported on Windows")
+def test_write_sidecar_atomic_matches_source_owner(tmp_path: Path) -> None:
+    path = tmp_path / "owner.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+    tree = create_tree_from_code(str(path), "x = 1\n")
+    sidecar = sibling_tree_path(path.resolve())
+    try:
+        with patch(
+            "code_analysis.core.cst_tree.tree_sidecar.match_file_owner"
+        ) as chown:
+            write_sidecar_atomic(path, tree)
+            chown.assert_called_once_with(sidecar.resolve(), path.resolve())
+    finally:
+        remove_tree(tree.tree_id)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chown not supported on Windows")
+def test_atomic_write_sibling_tree_file_applies_chown(tmp_path: Path) -> None:
+    source = tmp_path / "data.json"
+    source.write_text("{}", encoding="utf-8")
+    sidecar = sibling_tree_path(source.resolve())
+    with patch("code_analysis.core.tree_file_write.os.chown") as chown:
+        atomic_write_sibling_tree_file(
+            source_abs=source,
+            sidecar_path=sidecar,
+            text='{"source_sha256": "a" * 64}\n',
+        )
+        st = os.stat(source)
+        chown.assert_called_once_with(sidecar.resolve(), st.st_uid, st.st_gid)
+
+
+def test_match_file_owner_noop_on_windows(tmp_path: Path) -> None:
+    target = tmp_path / "t.tree"
+    target.write_text("x", encoding="utf-8")
+    reference = tmp_path / "s.py"
+    reference.write_text("y", encoding="utf-8")
+    with patch.object(sys, "platform", "win32"):
+        match_file_owner(target, reference)

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from code_analysis.core.search_session.tree_representation import (
@@ -143,6 +142,8 @@ def recreate_tree_from_content(
     """
     # Local imports break a module-load cycle with tree_representation and keep
     # the per-format builder dependencies lazy (heavy modules).
+    from code_analysis.core.tree_file_write import atomic_write_sibling_tree_file
+
     if kind == TreeFormatKind.python_cst:
         from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
         from code_analysis.core.search_session.tree_representation import (
@@ -190,10 +191,11 @@ def recreate_tree_from_content(
             roots = parse_yaml_source_to_roots(content)
 
         sidecar_text = serialize_sidecar_to_json_text(content_checksum, roots)
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-        tmp.write_text(sidecar_text, encoding="utf-8")
-        os.replace(tmp, sidecar_path)
+        atomic_write_sibling_tree_file(
+            source_abs=source_abs,
+            sidecar_path=sidecar_path,
+            text=sidecar_text,
+        )
         return TreeRepresentationRef(
             file_path=file_path,
             sidecar_path=sidecar_path,
@@ -216,9 +218,11 @@ def recreate_tree_from_content(
     root_stable_id = _read_adjacent_root_stable_id(sidecar_path)
     if root_stable_id is not None:
         payload["root_stable_id"] = root_stable_id
-    tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, sidecar_path)
+    atomic_write_sibling_tree_file(
+        source_abs=source_abs,
+        sidecar_path=sidecar_path,
+        text=json.dumps(payload, indent=2),
+    )
     return TreeRepresentationRef(
         file_path=file_path,
         sidecar_path=sidecar_path,

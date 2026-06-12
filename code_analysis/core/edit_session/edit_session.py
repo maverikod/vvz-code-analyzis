@@ -26,6 +26,7 @@ from code_analysis.core.edit_session.marker_cycle import (
 )
 from code_analysis.core.edit_session.session_history import SessionHistory
 from code_analysis.core.edit_session.session_repo import SessionRepo
+from code_analysis.core.tree_file_write import match_file_owner
 from code_analysis.core.search_session.tree_representation import sidecar_path_for
 from code_analysis.core.tree_lifecycle import (
     compute_content_checksum,
@@ -518,6 +519,7 @@ class EditSession:
                 if self.tree_abs.exists():
                     shutil.copy2(self.tree_abs, backup_tree)
                 tmp_tree.replace(self.tree_abs)
+                match_file_owner(self.tree_abs, self.source_abs)
                 try:
                     tmp_source.replace(self.source_abs)
                 except Exception:

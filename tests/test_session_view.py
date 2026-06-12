@@ -135,6 +135,7 @@ def test_build_session_view_with_locks_and_subordinates() -> None:
 
             subs = view["subordinate_sessions"]
             assert len(subs) == 1
+            assert subs[0]["session_id"] == parent_id
             assert subs[0]["session_presentation"] == "leading session"
             assert subs[0]["server_presentation"]["title"] == "Local"
             assert subs[0]["link_comment"] == "link note"

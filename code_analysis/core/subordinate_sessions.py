@@ -72,6 +72,29 @@ class SubordinateSessionAlreadyExistsError(ValueError):
         self.server_uuid = server_uuid
 
 
+def _table_has_legacy_subordinate_column(conn: Any) -> bool:
+    try:
+        cur = conn.execute("PRAGMA table_info(subordinate_sessions)")
+        rows = cur.fetchall()
+    except Exception:
+        return False
+    if not rows:
+        return False
+    return any(str(row[1]) == "subordinate_session_id" for row in rows)
+
+
+def _migrate_legacy_subordinate_table(conn: Any) -> None:
+    """Drop pre-1.0.7 table shape that included subordinate_session_id."""
+    if not _table_has_legacy_subordinate_column(conn):
+        return
+    logger.info(
+        "Migrating subordinate_sessions: dropping legacy schema with "
+        "subordinate_session_id"
+    )
+    conn.execute("DROP TABLE subordinate_sessions")
+    conn.commit()
+
+
 def ensure_subordinate_session_tables(conn: Any) -> None:
     """
     Create subordinate_sessions table and indexes idempotently.
@@ -82,6 +105,7 @@ def ensure_subordinate_session_tables(conn: Any) -> None:
     if not conn:
         return
     try:
+        _migrate_legacy_subordinate_table(conn)
         conn.execute(SUBORDINATE_SESSIONS_DDL)
         conn.execute(SUBORDINATE_SESSIONS_IDX_PARENT)
         conn.execute(SUBORDINATE_SESSIONS_IDX_SERVER)

@@ -146,6 +146,7 @@ def build_session_view(
         server_uuid = str(row_dict["server_uuid"])
         subordinate_sessions.append(
             {
+                "session_id": session_id,
                 "server_uuid": server_uuid,
                 "session_presentation": format_session_presentation(
                     row_dict.get("leading_comment"), session_id

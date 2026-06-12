@@ -10,11 +10,10 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from code_analysis.core.search_session.tree_representation import TreeRepresentationRef
+from code_analysis.core.tree_file_write import atomic_write_sibling_tree_file
 from code_analysis.core.tree_lifecycle.node_id_map import (
     ChecksumsSection,
     DiscoveredNode,
@@ -27,6 +26,11 @@ from code_analysis.core.tree_lifecycle.node_id_map import (
 from code_analysis.tree.format_handler import FormatHandler
 from code_analysis.tree.handler_registry import HandlerRegistry
 from code_analysis.tree.tree_node import TreeNode
+
+if TYPE_CHECKING:
+    from code_analysis.core.search_session.tree_representation import (
+        TreeRepresentationRef,
+    )
 
 
 def _discovered_nodes_from_tree_nodes(nodes: List[TreeNode]) -> List[DiscoveredNode]:
@@ -123,10 +127,15 @@ class TreeBuilder:
                 checksums=checksums,
             )
         file_text = serialize_tree_file(sections)
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = sidecar_path.with_suffix(sidecar_path.suffix + ".tmp")
-        tmp.write_text(file_text, encoding="utf-8")
-        os.replace(tmp, sidecar_path)
+        atomic_write_sibling_tree_file(
+            source_abs=source_abs,
+            sidecar_path=sidecar_path,
+            text=file_text,
+        )
+        from code_analysis.core.search_session.tree_representation import (
+            TreeRepresentationRef,
+        )
+
         return TreeRepresentationRef(
             file_path=file_path,
             sidecar_path=sidecar_path,

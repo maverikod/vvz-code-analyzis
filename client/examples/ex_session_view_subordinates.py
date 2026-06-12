@@ -239,6 +239,12 @@ async def run_all() -> int:
                 }
                 if server_uuid not in sub_servers:
                     raise AssertionError(f"view missing subordinate: {view!r}")
+                for row in subs:
+                    if isinstance(row, dict) and row.get("server_uuid") == server_uuid:
+                        if str(row.get("session_id") or "") != parent:
+                            raise AssertionError(
+                                f"view session_id must be leading id: {row!r}"
+                            )
 
                 await fs.unlock_file(parent, fx.project_id, fx.file_id)
                 await fs.delete_subordinate_session(parent, server_uuid)

@@ -46,6 +46,28 @@ def test_ensure_subordinate_session_tables_idempotent() -> None:
         conn.close()
 
 
+def test_legacy_schema_migrated_on_ensure() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        conn = sqlite3.connect(f"{td}/test.db")
+        ensure_client_session_tables(conn)
+        conn.execute(
+            "CREATE TABLE subordinate_sessions ("
+            "parent_session_id TEXT NOT NULL, "
+            "subordinate_session_id TEXT NOT NULL, "
+            "server_uuid TEXT NOT NULL, "
+            "comment TEXT NOT NULL DEFAULT '', "
+            "PRIMARY KEY (parent_session_id, subordinate_session_id, server_uuid))"
+        )
+        conn.commit()
+        ensure_subordinate_session_tables(conn)
+        cur = conn.execute("PRAGMA table_info(subordinate_sessions)")
+        cols = {row[1] for row in cur.fetchall()}
+        assert "subordinate_session_id" not in cols
+        assert "parent_session_id" in cols
+        assert "server_uuid" in cols
+        conn.close()
+
+
 def test_subordinate_session_crud() -> None:
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))

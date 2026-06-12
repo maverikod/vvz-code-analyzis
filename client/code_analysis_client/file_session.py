@@ -153,10 +153,11 @@ class FileSessionClient:
         """Delete a client session (``session_delete``).
 
         ``force`` defaults to false (omit on the wire when false). Safe delete
-        requires no ``session_file_locks`` and no ``subordinate_sessions`` rows
-        where this session is ``parent_session_id``. When ``force`` is true,
-        subordinate server link rows and file locks for this session are removed
-        before the session row is deleted.
+        requires no ``session_file_locks``, no ``subordinate_sessions`` rows
+        where this session is ``parent_session_id``, and no advisory file-lock
+        leases. When ``force`` is true, subordinate link rows, DB file locks, and
+        advisory leases for this session are released before the session row is
+        deleted.
 
         Returns ``session_id``, ``deleted``, ``released_lock_count``,
         ``released_subordinate_count``, and ``released_advisory_lease_count``.
@@ -176,7 +177,8 @@ class FileSessionClient:
 
         Returns ``locked_files_by_project`` (file_id, file_path,
         project_presentation per project) and ``subordinate_sessions``
-        (server_uuid, session_presentation, server_presentation, link_comment).
+        (session_id, server_uuid, session_presentation, server_presentation,
+        link_comment).
         """
         sid = _require_non_empty(session_id, field="session_id")
         return _unwrap(
@@ -195,8 +197,9 @@ class FileSessionClient:
     ) -> Dict[str, Any]:
         """Register leading session on a subordinate server (``subordinate_session_create``).
 
-        The same ``parent_session_id`` is used on the remote server. ``server_uuid``
-        defaults to the server's ``registration.instance_uuid`` when omitted.
+        Subordinate servers use ``parent_session_id`` as ``session_id``.
+        ``server_uuid`` defaults to the server's ``registration.instance_uuid``
+        when omitted.
         """
         params: Dict[str, Any] = {
             "parent_session_id": _require_non_empty(
@@ -215,7 +218,7 @@ class FileSessionClient:
         parent_session_id: str,
         server_uuid: str,
     ) -> Dict[str, Any]:
-        """Fetch one subordinate link (``subordinate_session_get``)."""
+        """Fetch one subordinate server link (``subordinate_session_get``)."""
         return _unwrap(
             await self._client.call_validated(
                 "subordinate_session_get",
@@ -253,9 +256,9 @@ class FileSessionClient:
         parent_session_id: str,
         server_uuid: str,
     ) -> Dict[str, Any]:
-        """Remove subordinate link only (``subordinate_session_delete``).
+        """Remove subordinate server link (``subordinate_session_delete``).
 
-        Does not delete the ``client_sessions`` row for ``parent_session_id``.
+        Does not delete the leading ``client_sessions`` row; use :meth:`delete_session`.
         """
         return _unwrap(
             await self._client.call_validated(
@@ -275,7 +278,7 @@ class FileSessionClient:
         parent_session_id: Optional[str] = None,
         server_uuid: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """List subordinate links (``subordinate_session_list``).
+        """List subordinate server links (``subordinate_session_list``).
 
         Returns ``links`` and ``count``. All filter parameters are optional.
         """

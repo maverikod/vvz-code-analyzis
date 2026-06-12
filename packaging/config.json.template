@@ -95,6 +95,10 @@
           "user": "code_analysis",
           "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
         }
+      },
+      "rpc": {
+        "shm_threshold_bytes": 65536,
+        "shm_enabled": true
       }
     },
     "vector_dim": 384,
@@ -138,6 +142,7 @@
     },
     "file_watcher": {
       "enabled": true,
+      "scan_interval": 60,
       "log_path": "/var/log/casmgr/file_watcher.log",
       "version_dir": "/var/casmgr/versions"
     },
@@ -146,6 +151,32 @@
       "poll_interval": 30,
       "batch_size": 5,
       "log_path": "/var/log/casmgr/indexing_worker.log"
+    },
+    "docs_indexing": {
+      "enabled": false,
+      "vectorize": false,
+      "roots": [
+        "docs"
+      ],
+      "include": [
+        "docs/**/*.md",
+        "docs/*.md",
+        "docs/**/*.json",
+        "docs/*.json",
+        "docs/**/*.yaml",
+        "docs/**/*.yml",
+        "docs/*.yaml",
+        "docs/*.yml",
+        "README.md"
+      ],
+      "exclude": [
+        "docs/plans/**",
+        "docs/ai_reports/**"
+      ]
+    },
+    "search_session": {
+      "ttl_seconds": 1800,
+      "max_block_size_bytes": 4096
     }
   }
 }

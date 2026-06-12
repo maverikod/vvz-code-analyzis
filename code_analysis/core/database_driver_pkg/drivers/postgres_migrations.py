@@ -207,6 +207,28 @@ _CLIENT_SESSION_TABLES = (
 )
 
 
+def _migrate_legacy_subordinate_sessions_table(conn: Any) -> None:
+    """Drop pre-1.0.7 subordinate_sessions shape that included subordinate_session_id."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'subordinate_sessions'
+              AND column_name = 'subordinate_session_id'
+            LIMIT 1
+            """
+        )
+        if cur.fetchone() is None:
+            return
+        logger.info(
+            "PostgreSQL migrate: dropping legacy subordinate_sessions with "
+            "subordinate_session_id"
+        )
+        cur.execute("DROP TABLE subordinate_sessions CASCADE")
+    conn.commit()
+
+
 def idempotent_ensure_client_session_tables(
     conn: Any, schema_definition: Dict[str, Any]
 ) -> None:
@@ -216,6 +238,7 @@ def idempotent_ensure_client_session_tables(
     Uses the same DDL as create_postgresql_schema for these tables (CREATE IF NOT EXISTS).
     Safe to run repeatedly; no SQLite-only syntax.
     """
+    _migrate_legacy_subordinate_sessions_table(conn)
     with conn.cursor() as cur:
         for table_name in _CLIENT_SESSION_TABLES:
             if table_name not in schema_definition.get("tables", {}):

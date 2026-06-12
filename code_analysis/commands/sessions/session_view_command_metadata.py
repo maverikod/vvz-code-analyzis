@@ -38,9 +38,10 @@ def get_session_view_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "project_presentation (human-readable label from name/comment), "
             "and files with file_id, file_path (project-relative when indexed), "
             "locked_at.\n\n"
-            "2. **subordinate_sessions** — links where this session is the parent. "
-            "Each entry includes server_uuid, session_presentation (parent session "
-            "comment when the session row exists), server_presentation "
+            "2. **subordinate_sessions** — server links where this session is the "
+            "leading session. Each entry includes session_id (same as the leading "
+            "session, used on subordinate servers), server_uuid, "
+            "session_presentation (leading session comment), server_presentation "
             "(title/description/version when server_uuid matches this server's "
             "registration.instance_uuid), and link_comment from the "
             "subordinate_sessions row.\n\n"
@@ -77,8 +78,9 @@ def get_session_view_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "subordinate_session_count": 1,
                 "subordinate_sessions": [
                     {
+                        "session_id": EXAMPLE_SESSION_ID,
                         "server_uuid": EXAMPLE_SERVER_UUID,
-                        "session_presentation": "worker session",
+                        "session_presentation": "coordinator session",
                         "server_presentation": {
                             "title": "Code Analysis Server",
                             "description": "…",

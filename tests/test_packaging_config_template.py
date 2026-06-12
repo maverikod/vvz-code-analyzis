@@ -60,20 +60,28 @@ def test_packaging_template_production_shape() -> None:
 def test_install_package_script_uses_packaging_template() -> None:
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert "packaging/config.json.template" in text
-    assert "/usr/share/doc/casmgr-server/config.json.template" in text
-    assert "/etc/casmgr/config.json" in text
+    assert "/usr/share/casmgr-server/config.json.template" in text
+    assert '${ST}/etc/casmgr/config.json' in text or \
+        '"${ST}/etc/casmgr/config.json"' in text or \
+        "${ST}/etc/casmgr/config.json" in text
 
 
 @pytest.mark.parametrize(
     "staging_rel,mode",
     [
         ("etc/casmgr/config.json", "640"),
-        ("usr/share/doc/casmgr-server/config.json.template", "644"),
+        ("usr/share/casmgr-server/config.json.template", "644"),
     ],
 )
-def test_debian_staging_installs_same_template(staging_rel: str, mode: str) -> None:
+def test_debian_staging_installs_config_and_runtime_template(
+    staging_rel: str, mode: str
+) -> None:
     staging_root = REPO_ROOT / "debian" / "casmgr-server"
     try:
+        if staging_root.is_dir():
+            import shutil
+
+            shutil.rmtree(staging_root, ignore_errors=True)
         subprocess.run(
             ["bash", str(INSTALL_SCRIPT), str(REPO_ROOT)],
             check=True,

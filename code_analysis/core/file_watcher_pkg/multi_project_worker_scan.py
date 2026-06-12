@@ -12,9 +12,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
+from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
     persist_projects_root_path_stored_value,
+    resolve_project_root_absolute_str,
 )
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
@@ -421,28 +423,41 @@ def scan_watch_dir(
                         "watch_dir_id": getattr(project_obj, "watch_dir_id", None),
                     }
                 if project:
-                    try:
-                        old_root_res = Path(str(project["root_path"])).resolve()
-                        new_root_res = Path(project_root_obj.root_path).resolve()
-                    except OSError:
-                        old_root_res = Path(str(project["root_path"]))
-                        new_root_res = Path(project_root_obj.root_path)
-                    if old_root_res != new_root_res:
+                    old_abs = resolve_project_root_absolute_str(
+                        project_id=str(project_root_obj.project_id),
+                        root_path_stored=str(project.get("root_path") or ""),
+                        watch_dir_id=(
+                            str(project.get("watch_dir_id"))
+                            if project.get("watch_dir_id")
+                            else None
+                        ),
+                        project_name=str(project.get("name") or "") or None,
+                        database=database,
+                        require_exists=False,
+                    )
+                    new_norm = normalize_path_simple(
+                        str(project_root_obj.root_path.resolve())
+                    )
+                    old_norm = normalize_path_simple(old_abs) if old_abs else ""
+                    if old_norm != new_norm:
+                        old_for_relocate = old_abs or str(
+                            project.get("root_path") or ""
+                        )
                         ok = database.relocate_project_root_after_disk_move(
                             project_root_obj.project_id,
-                            str(old_root_res),
-                            str(new_root_res),
+                            old_for_relocate,
+                            str(project_root_obj.root_path.resolve()),
                             new_watch_dir_id=spec.watch_dir_id,
                         )
                         if not ok:
                             stats["errors"] += 1
                             continue
-                        project["root_path"] = str(new_root_res)
+                        project["root_path"] = str(project_root_obj.root_path.resolve())
                         logger.info(
                             "[WATCHER] project_id=%s root_path synced disk move: %s -> %s",
                             project_root_obj.project_id,
-                            old_root_res,
-                            new_root_res,
+                            old_for_relocate,
+                            new_norm,
                         )
                     current_comment = project.get("comment")
                     current_watch_dir_id = project.get("watch_dir_id")

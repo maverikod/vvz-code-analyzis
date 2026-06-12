@@ -11,9 +11,11 @@ import logging
 from pathlib import Path
 from typing import Any, List
 
+from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
     persist_projects_root_path_stored_value,
+    resolve_project_root_absolute_str,
 )
 from code_analysis.core.server_instance import get_server_instance_id
 
@@ -40,6 +42,45 @@ def _watch_dir_id_str(watch_dir_id: Any) -> str:
     if watch_dir_id is None:
         return ""
     return str(watch_dir_id)
+
+
+def _project_row_field(proj: Any, key: str, default: Any = None) -> Any:
+    """Read a field from a project row dict or object."""
+    if isinstance(proj, dict):
+        return proj.get(key, default)
+    return getattr(proj, key, default)
+
+
+def _resolve_project_row_absolute_path(
+    proj: Any,
+    database: Any,
+    *,
+    require_exists: bool = False,
+) -> Path | None:
+    """Resolve ``projects`` row to absolute root via watch_dir + segment (never CWD)."""
+    project_id = _project_row_field(proj, "id")
+    raw_root = _project_row_field(proj, "root_path")
+    if not project_id or not raw_root:
+        return None
+    watch_dir_id = _project_row_field(proj, "watch_dir_id")
+    project_name = _project_row_field(proj, "name")
+    abs_str = resolve_project_root_absolute_str(
+        project_id=str(project_id),
+        root_path_stored=str(raw_root),
+        watch_dir_id=str(watch_dir_id) if watch_dir_id else None,
+        project_name=str(project_name) if project_name else None,
+        database=database,
+        require_exists=require_exists,
+    )
+    if not abs_str:
+        return None
+    normalized = normalize_path_simple(abs_str)
+    if not normalized:
+        return None
+    try:
+        return Path(normalized).resolve()
+    except OSError:
+        return Path(normalized)
 
 
 def _is_path_under(path: Path, parent: Path) -> bool:
@@ -87,34 +128,41 @@ def _verify_and_relocate_orphaned_projects(
 
     all_projects = database.get_all_projects()
     for proj in all_projects:
-        project_id = (
-            proj.get("id") if isinstance(proj, dict) else getattr(proj, "id", None)
-        )
-        raw_root = (
-            proj.get("root_path")
-            if isinstance(proj, dict)
-            else getattr(proj, "root_path", None)
-        )
+        project_id = _project_row_field(proj, "id")
+        raw_root = _project_row_field(proj, "root_path")
         if not project_id or not raw_root:
             continue
 
-        try:
-            current_root = Path(str(raw_root)).resolve()
-        except OSError:
-            current_root = Path(str(raw_root))
-
-        is_under_config = any(_is_path_under(current_root, wd) for wd in config_roots)
+        current_root = _resolve_project_row_absolute_path(
+            proj, database, require_exists=False
+        )
+        if current_root is None:
+            logger.warning(
+                "[WATCHER_INIT] project_id=%s root_path=%s could not be resolved; "
+                "searching for projectid file",
+                project_id,
+                raw_root,
+            )
+            is_under_config = False
+        else:
+            is_under_config = any(
+                _is_path_under(current_root, wd) for wd in config_roots
+            )
         if is_under_config:
             continue
 
+        display_root = current_root if current_root is not None else raw_root
         logger.info(
             "[WATCHER_INIT] project_id=%s root_path=%s is outside all config "
             "watch_dirs; searching for projectid file",
             project_id,
-            current_root,
+            display_root,
         )
 
         found = False
+        old_for_relocate = (
+            str(current_root) if current_root is not None else str(raw_root)
+        )
         for wid, wd_path in config_watch_dir_paths.items():
             if not wd_path.exists():
                 continue
@@ -134,14 +182,14 @@ def _verify_and_relocate_orphaned_projects(
                 new_root = candidate.root_path.resolve()
                 if database.relocate_project_root_after_disk_move(
                     project_id,
-                    str(current_root),
+                    old_for_relocate,
                     str(new_root),
                     new_watch_dir_id=wid,
                 ):
                     logger.info(
                         "[WATCHER_INIT] project_id=%s relocated %s -> %s, watch_dir_id=%s",
                         project_id,
-                        current_root,
+                        display_root,
                         new_root,
                         wid,
                     )
@@ -161,7 +209,7 @@ def _verify_and_relocate_orphaned_projects(
                 "[WATCHER_INIT] project_id=%s root_path=%s not found in any config "
                 "watch_dir; leaving as-is",
                 project_id,
-                current_root,
+                display_root,
             )
 
 
@@ -278,22 +326,27 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                 for project_root_obj in discovered_projects:
                     project_obj = database.get_project(project_root_obj.project_id)
                     if project_obj:
-                        stored_root = (
-                            project_obj.get("root_path")
-                            if isinstance(project_obj, dict)
-                            else getattr(project_obj, "root_path", None)
-                        )
+                        stored_root = _project_row_field(project_obj, "root_path")
                         if stored_root:
-                            try:
-                                old_rr = Path(str(stored_root)).resolve()
-                                new_rr = project_root_obj.root_path.resolve()
-                            except OSError:
-                                old_rr = Path(str(stored_root))
-                                new_rr = project_root_obj.root_path.resolve()
-                            if old_rr != new_rr:
+                            old_rr = _resolve_project_row_absolute_path(
+                                project_obj, database, require_exists=False
+                            )
+                            new_rr = project_root_obj.root_path.resolve()
+                            old_norm = (
+                                normalize_path_simple(str(old_rr))
+                                if old_rr is not None
+                                else ""
+                            )
+                            new_norm = normalize_path_simple(str(new_rr))
+                            if old_norm != new_norm:
+                                old_for_relocate = (
+                                    str(old_rr)
+                                    if old_rr is not None
+                                    else str(stored_root)
+                                )
                                 if database.relocate_project_root_after_disk_move(
                                     project_root_obj.project_id,
-                                    str(old_rr),
+                                    old_for_relocate,
                                     str(new_rr),
                                     new_watch_dir_id=wid,
                                 ):

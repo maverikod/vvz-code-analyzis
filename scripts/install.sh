@@ -149,21 +149,26 @@ create_venv() {
 
 install_config() {
     info "Installing configuration file..."
-    
-    if [[ -f "$CONFIG_DIR/config.json" ]]; then
-        warn "Configuration file already exists at $CONFIG_DIR/config.json"
-        warn "Backing up existing config to $CONFIG_DIR/config.json.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$CONFIG_DIR/config.json" "$CONFIG_DIR/config.json.backup.$(date +%Y%m%d_%H%M%S)"
-    fi
-    
-    # Create config from template if exists, otherwise from example
+
+    local template=""
     if [[ -f "$INSTALL_DIR/config.example.json" ]]; then
-        cp "$INSTALL_DIR/config.example.json" "$CONFIG_DIR/config.json"
+        template="$INSTALL_DIR/config.example.json"
     elif [[ -f "$INSTALL_DIR/config.json" ]]; then
-        cp "$INSTALL_DIR/config.json" "$CONFIG_DIR/config.json"
+        template="$INSTALL_DIR/config.json"
     else
         error "No configuration template found"
     fi
+
+    if [[ -f "$CONFIG_DIR/config.json" ]]; then
+        cp "$template" "$CONFIG_DIR/config.json.template"
+        chown root:root "$CONFIG_DIR/config.json.template"
+        chmod 644 "$CONFIG_DIR/config.json.template"
+        info "Existing config preserved at $CONFIG_DIR/config.json"
+        info "Package template installed at $CONFIG_DIR/config.json.template"
+        return 0
+    fi
+
+    cp "$template" "$CONFIG_DIR/config.json"
     
     # Update paths in config for system installation
     python3 <<EOF

@@ -84,8 +84,34 @@ def _relative_posix_under_project_root(
         return None
 
 
+def _ignore_filter_path_parts(
+    path: Path, project_root: Optional[Path]
+) -> tuple[str, ...]:
+    """Path segments used for ignore/filter rules.
+
+    Ignore patterns from config and defaults apply only to the path **after**
+    ``project_root``. When ``project_root`` is set and ``path`` is under it,
+    host or watch-directory prefixes (e.g. a watch dir named ``data``) are
+    excluded from matching.
+    """
+    if project_root is not None:
+        rel = _relative_posix_under_project_root(path, project_root)
+        if rel is None:
+            return ()
+        if not rel or rel == ".":
+            return ()
+        return Path(rel).parts
+    return path.parts
+
+
 def _path_pattern_candidates(path: Path, project_root: Optional[Path]) -> Set[str]:
-    """POSIX-style absolute/relative candidates for glob matching.
+    """POSIX-style candidates for glob matching.
+
+    When ``project_root`` is set and ``path`` lies under it, only **project-relative**
+    strings are returned. Watch-directory ignore patterns (``**/data/**``, etc.) are
+    defined relative to the project root; including absolute paths would false-match
+    when the watch dir itself contains a segment such as ``data``
+    (e.g. ``/var/casmgr/data/...``).
 
     Args:
         path: Filesystem path to generate candidates for.
@@ -99,10 +125,7 @@ def _path_pattern_candidates(path: Path, project_root: Optional[Path]) -> Set[st
         resolved = path.resolve()
     except OSError:
         resolved = path
-    abs_posix = resolved.as_posix()
-    out.add(abs_posix)
-    out.add(abs_posix.lstrip("/"))
-    out.add("/" + abs_posix.lstrip("/"))
+
     if project_root is not None:
         try:
             root_resolved = project_root.resolve()
@@ -112,8 +135,14 @@ def _path_pattern_candidates(path: Path, project_root: Optional[Path]) -> Set[st
             rel = resolved.relative_to(root_resolved).as_posix()
             out.add(rel)
             out.add("/" + rel.lstrip("/"))
+            return out
         except ValueError:
             pass
+
+    abs_posix = resolved.as_posix()
+    out.add(abs_posix)
+    out.add(abs_posix.lstrip("/"))
+    out.add("/" + abs_posix.lstrip("/"))
     return out
 
 
@@ -743,6 +772,10 @@ def should_ignore_path(
     """
     Check if path should be ignored.
 
+    Ignore patterns (defaults and per-watch-dir config) are evaluated only on
+    the path **relative to** ``project_root`` when that root is provided. This
+    keeps filters from matching host or watch-directory prefixes.
+
     Args:
         path: Path to check
         ignore_patterns: Additional ignore patterns from config (optional)
@@ -803,24 +836,21 @@ def should_ignore_path(
 
     # Convert path to string for pattern matching
     candidates = _path_pattern_candidates(path, project_root)
+    filter_parts = _ignore_filter_path_parts(path, project_root)
 
-    # Check each part of the path
-    for part in path.parts:
+    # Check each part of the project-relative path (or full path when no root).
+    for idx, part in enumerate(filter_parts):
         # Direct name match
         if part in all_patterns:
             return True
 
         # Special handling for configured data/versions directory shape
         if part == DATA_DIR_BASENAME:
-            try:
-                part_idx = path.parts.index(part)
-                if (
-                    part_idx + 1 < len(path.parts)
-                    and path.parts[part_idx + 1] == VERSIONS_DIR_BASENAME
-                ):
-                    return True
-            except (ValueError, IndexError):
-                pass
+            if (
+                idx + 1 < len(filter_parts)
+                and filter_parts[idx + 1] == VERSIONS_DIR_BASENAME
+            ):
+                return True
 
     # Pattern matching for full path and subpaths
     for pattern in all_patterns:
@@ -836,13 +866,13 @@ def should_ignore_path(
                     if fnmatch.fnmatch("/" + subpath, pattern):
                         return True
 
-        # Simple pattern matching for each part
-        for part in path.parts:
+        # Simple pattern matching for each project-relative segment
+        for part in filter_parts:
             if fnmatch.fnmatch(part, pattern):
                 return True
 
-    # Check for hidden directories (except current/parent)
-    for part in path.parts:
+    # Hidden directories under the project (not host/watch prefixes)
+    for part in filter_parts:
         if part.startswith(".") and part != "." and part != "..":
             if path.is_dir():
                 return True

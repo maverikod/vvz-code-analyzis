@@ -1,0 +1,82 @@
+#!/bin/bash
+# Install or refresh casmgr-server config.json (postinst / admin helper).
+#
+# - config.json missing     → create from shipped template (+ instance UUID)
+# - config.json present, still pristine (REPLACE_ON_INSTALL) → finalize UUID only
+# - config.json present, customized → leave unchanged; copy template to config.json.template
+#
+# Usage: casmgr-install-server-config CONFIG_DIR TEMPLATE_DOC [GROUP]
+
+set -euo pipefail
+
+CONFIG_DIR="${1:?CONFIG_DIR required}"
+TEMPLATE_DOC="${2:?TEMPLATE_DOC required}"
+CASMGR_GROUP="${3:-casgrp}"
+
+CONFIG="${CONFIG_DIR}/config.json"
+CONFIG_TEMPLATE_LOCAL="${CONFIG_DIR}/config.json.template"
+
+_resolve_template_source() {
+    local primary="$1"
+    if [[ -f "$primary" ]]; then
+        printf '%s\n' "$primary"
+        return 0
+    fi
+    if [[ -f "${primary}.gz" ]]; then
+        printf '%s\n' "${primary}.gz"
+        return 0
+    fi
+    return 1
+}
+
+_copy_template_to() {
+    local src="$1" dest="$2"
+    if [[ "$src" == *.gz ]]; then
+        zcat "$src" >"$dest"
+    else
+        cp "$src" "$dest"
+    fi
+}
+
+TEMPLATE_SRC="$(_resolve_template_source "$TEMPLATE_DOC" || true)"
+if [[ -z "${TEMPLATE_SRC:-}" ]]; then
+    echo "ERROR: template not found: ${TEMPLATE_DOC} (or ${TEMPLATE_DOC}.gz)" >&2
+    exit 1
+fi
+
+mkdir -p "$CONFIG_DIR"
+
+_finalize_instance_uuid() {
+    if command -v uuidgen >/dev/null 2>&1; then
+        local instance_uuid
+        instance_uuid="$(uuidgen)"
+        sed -i "s/REPLACE_ON_INSTALL/${instance_uuid}/" "$CONFIG"
+    fi
+}
+
+if [[ -f "$CONFIG" ]]; then
+    if grep -q 'REPLACE_ON_INSTALL' "$CONFIG" 2>/dev/null; then
+        _finalize_instance_uuid
+        if (( EUID == 0 )); then
+            chown root:"$CASMGR_GROUP" "$CONFIG"
+        fi
+        chmod 0640 "$CONFIG"
+        echo "Finalized new ${CONFIG} from package template"
+        exit 0
+    fi
+    _copy_template_to "$TEMPLATE_SRC" "$CONFIG_TEMPLATE_LOCAL"
+    if (( EUID == 0 )); then
+        chown root:"$CASMGR_GROUP" "$CONFIG_TEMPLATE_LOCAL"
+    fi
+    chmod 0640 "$CONFIG_TEMPLATE_LOCAL"
+    echo "Preserved existing ${CONFIG}; new package template at ${CONFIG_TEMPLATE_LOCAL}"
+    exit 0
+fi
+
+_copy_template_to "$TEMPLATE_SRC" "$CONFIG"
+_finalize_instance_uuid
+if (( EUID == 0 )); then
+    chown root:"$CASMGR_GROUP" "$CONFIG"
+fi
+chmod 0640 "$CONFIG"
+echo "Installed new ${CONFIG} from package template"

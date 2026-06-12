@@ -1,5 +1,5 @@
 """
-Bulk watcher sync: disk manifest → TEMP FULL JOIN → INSERT/UPDATE/purge DELETE.
+Bulk watcher sync: disk manifest → temp diff (LEFT JOIN + purge) → INSERT/UPDATE/DELETE.
 
 PostgreSQL only; SQLite callers use legacy per-file queue.
 
@@ -58,7 +58,7 @@ def _chunked_disk_raw_inserts(
                     row.relative_path,
                     row.last_modified,
                     row.lines,
-                    1 if row.has_docstring else 0,
+                    bool(row.has_docstring),
                     row.tree_checksum,
                 ]
             )
@@ -80,7 +80,7 @@ def build_watcher_bulk_sync_program(
     database: Any,
 ) -> LogicalWriteProgramV1:
     """
-    Build logical-write program: load disk temp → FULL JOIN → DML + optional purge.
+    Build logical-write program: load disk temp → diff temp → DML + optional purge.
     """
     if not database_uses_postgres(database):
         raise RuntimeError("build_watcher_bulk_sync_program requires PostgreSQL")
@@ -109,8 +109,14 @@ def build_watcher_bulk_sync_program(
         )
     )
 
-    sync_sql = f"""
-CREATE TEMP TABLE {TEMP_SYNC} AS
+    path_match_sql = "(f.path = d.relative_path OR f.relative_path = d.relative_path)"
+    change_detect_sql = (
+        "f.tree_checksum IS DISTINCT FROM d.tree_checksum "
+        "OR f.last_modified IS NULL "
+        "OR abs(f.last_modified - d.last_modified) > 0.1"
+    )
+
+    disk_driven_sql = f"""
 SELECT
   action,
   id,
@@ -128,11 +134,7 @@ FROM (
   SELECT
     CASE
       WHEN f.id IS NULL THEN 'insert'
-      WHEN d.relative_path IS NULL THEN 'delete'
-      WHEN f.tree_checksum IS DISTINCT FROM d.tree_checksum
-        OR f.last_modified IS NULL
-        OR abs(f.last_modified - d.last_modified) > 0.1
-      THEN 'update'
+      WHEN {change_detect_sql} THEN 'update'
       ELSE 'skip'
     END AS action,
     COALESCE(f.id, gen_random_uuid()) AS id,
@@ -147,24 +149,58 @@ FROM (
     f.id AS existing_file_id,
     CASE
       WHEN f.id IS NULL THEN 1
-      WHEN f.tree_checksum IS DISTINCT FROM d.tree_checksum
-        OR f.last_modified IS NULL
-        OR abs(f.last_modified - d.last_modified) > 0.1
-      THEN 1
+      WHEN {change_detect_sql} THEN 1
       ELSE 0
     END AS needs_chunking
   FROM {TEMP_DISK_RAW} d
-  FULL OUTER JOIN files f
+  LEFT JOIN files f
     ON f.project_id = ?::uuid
    AND {active_f}
-   AND (f.path = d.relative_path OR f.relative_path = d.relative_path)
-) sub
+   AND {path_match_sql}
+) disk_side
+""".strip()
+
+    delete_sql = f"""
+SELECT
+  'delete' AS action,
+  f.id AS id,
+  ?::uuid AS project_id,
+  ?::uuid AS watch_dir_id,
+  f.path AS path,
+  COALESCE(f.relative_path, f.path) AS relative_path,
+  NULL::integer AS lines,
+  NULL::double precision AS last_modified,
+  NULL::boolean AS has_docstring,
+  NULL::text AS tree_checksum,
+  f.id AS existing_file_id,
+  0 AS needs_chunking
+FROM files f
+WHERE f.project_id = ?::uuid
+  AND {active_f}
+  AND NOT EXISTS (
+    SELECT 1 FROM {TEMP_DISK_RAW} d
+    WHERE d.relative_path = f.path OR d.relative_path = f.relative_path
+  )
+""".strip()
+
+    sync_sql = f"""
+CREATE TEMP TABLE {TEMP_SYNC} AS
+{disk_driven_sql}
+UNION ALL
+{delete_sql}
 """.strip()
 
     batch_b: List[SqlParamPair] = [
         (
             sync_sql,
-            (project_id, watch_dir_id, project_id),
+            (
+                project_id,
+                watch_dir_id,
+                project_id,
+                project_id,
+                watch_dir_id,
+                project_id,
+            ),
         ),
         (f"CREATE INDEX {IDX_SYNC_ACTION} ON {TEMP_SYNC} (action)", ()),
         (f"CREATE INDEX {IDX_SYNC_PATH} ON {TEMP_SYNC} (relative_path)", ()),
@@ -266,5 +302,5 @@ def submit_watcher_bulk_sync(
 
 
 def bulk_sync_supported(database: Any) -> bool:
-    """True when bulk FULL JOIN sync should run instead of legacy queue."""
+    """True when bulk PostgreSQL sync should run instead of legacy queue."""
     return database_uses_postgres(database)

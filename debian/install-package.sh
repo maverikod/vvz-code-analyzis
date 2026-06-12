@@ -47,6 +47,8 @@ install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-init" \
     "${ST}/usr/lib/casmgr/bin/"
 install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-set-password" \
     "${ST}/usr/lib/casmgr/bin/"
+install -m 755 "${CURDIR}/packaging/bin/casmgr-install-server-config" \
+    "${ST}/usr/lib/casmgr/bin/"
 
 install -d "${ST}/usr/share/casmgr-server/scripts"
 install -m 644 "${CURDIR}/scripts/postgres_setup_from_env_config.py" \
@@ -72,6 +74,12 @@ install -m 640 "${CURDIR}/packaging/config.json.template" \
 install -d "${ST}/var/casmgr/secrets"
 install -m 640 "${CURDIR}/packaging/secrets.env.template" \
     "${ST}/var/casmgr/secrets/.env"
+
+install -d "${ST}/usr/share/casmgr-server"
+install -m 644 "${CURDIR}/packaging/config.json.template" \
+    "${ST}/usr/share/casmgr-server/config.json.template"
+install -m 644 "${CURDIR}/packaging/secrets.env.template" \
+    "${ST}/usr/share/casmgr-server/secrets.env.template"
 
 install -d "${ST}/usr/share/doc/casmgr-server"
 install -m 644 "${CURDIR}/packaging/config.json.template" \

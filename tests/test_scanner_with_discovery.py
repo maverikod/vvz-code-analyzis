@@ -520,3 +520,44 @@ class TestScannerWithDiscovery:
             root == junk_res or root.startswith(junk_res + "/") for root in walk_roots
         )
         assert any(root == str(project_root.resolve()) for root in walk_roots)
+
+
+def test_scan_directory_ignore_data_pattern_with_watch_dir_named_data(
+    temp_dir, project_id
+):
+    """``**/data/**`` must not ignore all files when watch dir path contains ``data``."""
+    watch_dir = temp_dir / "casmgr" / "data"
+    project_root = watch_dir / "my_project"
+    project_root.mkdir(parents=True)
+    create_projectid_file(project_root, project_id)
+    py_file = create_file(project_root / "pkg", "module.py", "x = 1")
+    create_file(project_root / "data", "local.db", "binary")
+
+    ignore_patterns = ["**/data/**"]
+    files = scan_directory(
+        watch_dir,
+        [watch_dir],
+        ignore_patterns=ignore_patterns,
+    )
+
+    assert str(py_file.resolve()) in files
+    assert len(files) == 1
+
+
+def test_scan_directory_basename_data_filter_is_project_relative(temp_dir, project_id):
+    """Literal ``data`` ignore entry must not match the watch-dir ``data`` segment."""
+    watch_dir = temp_dir / "casmgr" / "data"
+    project_root = watch_dir / "my_project"
+    project_root.mkdir(parents=True)
+    create_projectid_file(project_root, project_id)
+    py_file = create_file(project_root / "pkg", "module.py", "x = 1")
+    create_file(project_root / "data", "local.db", "x")
+
+    files = scan_directory(
+        watch_dir,
+        [watch_dir],
+        ignore_patterns=["data"],
+    )
+
+    assert str(py_file.resolve()) in files
+    assert len(files) == 1

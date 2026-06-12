@@ -11,7 +11,29 @@ DATA_DIR="/var/casmgr"
 LOG_DIR="/var/log/casmgr"
 SECRETS="${DATA_DIR}/secrets"
 CONFIG="${CONFIG_DIR}/config.json"
+CONFIG_TEMPLATE_LOCAL="${CONFIG_DIR}/config.json.template"
+RUNTIME_CONFIG_TEMPLATE="/usr/share/casmgr-server/config.json.template"
 BIN="/usr/lib/casmgr/bin"
+RUNTIME_CONFIG_TEMPLATE="/usr/share/casmgr-server/config.json.template"
+
+ensure_runtime_config_template() {
+    if [[ -f "$RUNTIME_CONFIG_TEMPLATE" ]]; then
+        return 0
+    fi
+    install -d -m 0755 /usr/share/casmgr-server
+    if [[ -f /usr/share/doc/casmgr-server/config.json.template ]]; then
+        install -m 0644 /usr/share/doc/casmgr-server/config.json.template \
+            "$RUNTIME_CONFIG_TEMPLATE"
+        return 0
+    fi
+    if [[ -f /usr/share/doc/casmgr-server/config.json.template.gz ]]; then
+        zcat /usr/share/doc/casmgr-server/config.json.template.gz >"$RUNTIME_CONFIG_TEMPLATE"
+        chmod 0644 "$RUNTIME_CONFIG_TEMPLATE"
+        return 0
+    fi
+    echo "ERROR: config template missing (expected ${RUNTIME_CONFIG_TEMPLATE} or doc copy)" >&2
+    return 1
+}
 
 create_user() {
     if ! getent group "$CASMGR_GROUP" >/dev/null; then
@@ -30,18 +52,15 @@ create_layout() {
         "${DATA_DIR}/data" "${DATA_DIR}/faiss" "${DATA_DIR}/locks" \
         "${DATA_DIR}/backups" "${DATA_DIR}/trash" \
         "${LOG_DIR}/postgres" "${DATA_DIR}/versions" "$SECRETS"
-    if [[ ! -f "$CONFIG" && -f /usr/share/doc/casmgr-server/config.json.template ]]; then
-        cp /usr/share/doc/casmgr-server/config.json.template "$CONFIG"
-        if command -v uuidgen >/dev/null 2>&1; then
-            instance_uuid="$(uuidgen)"
-            sed -i "s/REPLACE_ON_INSTALL/${instance_uuid}/" "$CONFIG"
-        fi
-        chown root:"$CASMGR_GROUP" "$CONFIG"
-        chmod 0640 "$CONFIG"
-    fi
+    ensure_runtime_config_template
+    "${BIN}/casmgr-install-server-config" "$CONFIG_DIR" "$RUNTIME_CONFIG_TEMPLATE" "$CASMGR_GROUP"
     if [[ ! -f "${SECRETS}/.env" ]]; then
-        if [[ -f /usr/share/doc/casmgr-server/secrets.env.template ]]; then
+        if [[ -f /usr/share/casmgr-server/secrets.env.template ]]; then
+            cp /usr/share/casmgr-server/secrets.env.template "${SECRETS}/.env"
+        elif [[ -f /usr/share/doc/casmgr-server/secrets.env.template ]]; then
             cp /usr/share/doc/casmgr-server/secrets.env.template "${SECRETS}/.env"
+        elif [[ -f /usr/share/doc/casmgr-server/secrets.env.template.gz ]]; then
+            zcat /usr/share/doc/casmgr-server/secrets.env.template.gz >"${SECRETS}/.env"
         fi
         if grep -q CHANGE_ME "${SECRETS}/.env" 2>/dev/null; then
             super_pw="$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)"
@@ -198,6 +217,9 @@ print_post_install_banner() {
     echo ""
     echo "Paths:"
     echo "  Config:  ${CONFIG}"
+    if [[ -f "$CONFIG" && -f "$CONFIG_TEMPLATE_LOCAL" ]]; then
+        echo "  Template (package): ${CONFIG_TEMPLATE_LOCAL}"
+    fi
     echo "  Secrets: ${SECRETS}/.env"
     echo "  mTLS:    ${CONFIG_DIR}/mtls/"
     echo "  Logs:    ${LOG_DIR}"

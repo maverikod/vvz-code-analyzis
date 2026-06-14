@@ -684,16 +684,19 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     python = _python_executable_for_daemon(config_path)
     args = [python, "-m", "code_analysis.main", "--config", cfg_argv, "--daemon"]
 
-    stderr_dest: _StderrDest = subprocess.DEVNULL
+    child_env = os.environ.copy()
+    child_env.setdefault("PYTHONUNBUFFERED", "1")
     log_file_path = _daemon_log_file(cfg_abs)
+    if log_file_path is not None:
+        child_env["CASMGR_LOG"] = str(log_file_path.parent)
+    child_env["CASMGR_CONFIG"] = cfg_abs
+
+    stderr_dest: _StderrDest = subprocess.DEVNULL
     if log_file_path is not None:
         try:
             stderr_dest = open(log_file_path, "a", encoding="utf-8")
         except OSError:
             stderr_dest = subprocess.DEVNULL
-
-    child_env = os.environ.copy()
-    child_env.setdefault("PYTHONUNBUFFERED", "1")
 
     try:
         proc = subprocess.Popen(

@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any, Dict
 
 
@@ -15,6 +16,8 @@ def build_server_config(
     server_host: str,
     server_port: int,
     app_config: dict[str, Any],
+    *,
+    config_path: Path | None = None,
 ) -> Dict[str, Any]:
     """Build server_config dict for ServerEngine (hypercorn). Adds SSL if configured."""
     server_config = {
@@ -32,6 +35,14 @@ def build_server_config(
         if ssl_engine_config:
             server_config.update(ssl_engine_config)
     except ValueError as e:
+        if config_path is not None:
+            from code_analysis.core.server_log_dir import (
+                append_server_startup_log,
+                server_log_dir_from_config_data,
+            )
+
+            log_dir = server_log_dir_from_config_data(app_config, config_path)
+            append_server_startup_log(log_dir, f"ssl: invalid configuration: {e}")
         print(f"❌ SSL configuration invalid: {e}", file=sys.stderr)
         sys.exit(1)
 

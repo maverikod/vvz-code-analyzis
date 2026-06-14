@@ -86,13 +86,38 @@ def resolve_server_presentation(app_config: Dict[str, Any]) -> Tuple[str, str, s
     return str(title), str(description), str(version)
 
 
+_UNREACHABLE_BIND_HOSTS = frozenset({"0.0.0.0", "::", "[::]"})
+
+
+def _sync_registration_reachable_host(
+    app_config: Dict[str, Any], meta: Dict[str, Any]
+) -> None:
+    """
+    When the listener binds to all interfaces, proxy registration must advertise
+    a reachable host (``server.advertised_host``), not the bind address.
+    """
+    server = app_config.get("server")
+    if not isinstance(server, dict):
+        return
+    bind_host = server.get("host")
+    if bind_host not in _UNREACHABLE_BIND_HOSTS:
+        return
+    advertised = server.get("advertised_host")
+    if not advertised or advertised in _UNREACHABLE_BIND_HOSTS:
+        return
+    meta["host"] = str(advertised)
+    port = server.get("port")
+    if port is not None:
+        meta["port"] = int(port)
+
+
 def sync_registration_presentation(app_config: Dict[str, Any]) -> None:
     """
     Copy presentation into ``registration.metadata`` for proxy registration.
 
     ``RegistrationConfig`` (SimpleConfig) only accepts ``metadata`` as an extra
     dict; ``description`` / ``version`` must live there for ``build_server_metadata``.
-  """
+    """
     title, description, version = resolve_server_presentation(app_config)
     reg = app_config.setdefault("registration", {})
     if not isinstance(reg, dict):
@@ -111,6 +136,8 @@ def sync_registration_presentation(app_config: Dict[str, Any]) -> None:
         meta.setdefault("server_name", title)
         if not reg.get("server_name"):
             reg["server_name"] = title
+
+    _sync_registration_reachable_host(app_config, meta)
 
     # Legacy path used by RegistrationClient._prepare_registration_data
     reg["description"] = description

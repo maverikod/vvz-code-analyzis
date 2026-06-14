@@ -39,3 +39,18 @@ def test_sync_registration_for_proxy() -> None:
     assert reg["metadata"]["server_name"] == "My Server"
     assert reg["description"] == "For proxy"
     assert reg["server_name"] == "My Server"
+
+
+def test_sync_registration_reachable_host_overrides_wildcard_bind() -> None:
+    app_config = {
+        "server": {
+            "host": "0.0.0.0",
+            "port": 15010,
+            "advertised_host": "192.168.254.28",
+        },
+        "registration": {"server_id": "code-analysis-server", "metadata": {}},
+    }
+    sync_registration_presentation(app_config)
+    meta = app_config["registration"]["metadata"]
+    assert meta["host"] == "192.168.254.28"
+    assert meta["port"] == 15010

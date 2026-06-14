@@ -22,6 +22,10 @@ from code_analysis.core.storage_paths import (
     ensure_storage_dirs,
     resolve_storage_paths,
 )
+from code_analysis.core.server_log_dir import (
+    append_server_startup_log,
+    server_log_dir_from_config_data,
+)
 from code_analysis.main_server_presentation import sync_registration_presentation
 
 
@@ -33,7 +37,13 @@ def load_config_and_validate(
     Returns (config_path, full_config).
     """
     config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = (Path.cwd() / config_path).resolve()
     if not config_path.exists():
+        append_server_startup_log(
+            Path.cwd() / "logs",
+            f"config: file not found: {config_path}",
+        )
         print(f"❌ Configuration file not found: {config_path}", file=sys.stderr)
         print(
             "   Generate one with: casmgr-config-generate --protocol https --with-proxy",
@@ -55,11 +65,26 @@ def load_config_and_validate(
     try:
         full_config, is_valid = revalidate_config_at_path(config_path)
     except ConfigJSONDecodeError as e:
+        try:
+            log_dir = server_log_dir_from_config_data({}, config_path)
+        except Exception:
+            log_dir = Path.cwd() / "logs"
+        append_server_startup_log(log_dir, f"config: JSON parse error: {e}")
         print_config_error(str(e))
         sys.exit(1)
     except Exception as e:
+        append_server_startup_log(
+            Path.cwd() / "logs",
+            f"config: read error for {config_path}: {e}",
+        )
         print(f"❌ Failed to read configuration file: {e}", file=sys.stderr)
         sys.exit(1)
+
+    log_dir = server_log_dir_from_config_data(full_config, config_path)
+    append_server_startup_log(
+        log_dir,
+        f"config: loaded {config_path} valid={is_valid}",
+    )
 
     if not is_valid:
         st = get_config_runtime_state()
@@ -121,6 +146,10 @@ def ensure_storage_and_load_app_config(
         )
         ensure_storage_dirs(storage_paths)
     except Exception as e:
+        append_server_startup_log(
+            server_log_dir_from_config_data(full_config, config_path),
+            f"storage: prepare failed: {e}",
+        )
         print(f"❌ Failed to prepare storage directories: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -128,6 +157,10 @@ def ensure_storage_and_load_app_config(
         simple_config = SimpleConfig(str(config_path))
         model = simple_config.load()
     except Exception as e:
+        append_server_startup_log(
+            server_log_dir_from_config_data(full_config, config_path),
+            f"config: SimpleConfig load failed: {e}",
+        )
         print(f"❌ Failed to load configuration: {e}", file=sys.stderr)
         sys.exit(1)
 

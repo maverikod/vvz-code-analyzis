@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
+from code_analysis.core.docker_watch_paths import validate_docker_watch_dir_entry
+
 
 @dataclass(frozen=True, slots=True)
 class WatchDirSpec:
@@ -55,6 +57,11 @@ def build_watch_dir_specs(
             )
         watch_dir_id = watch_dir_config["id"]
         watch_dir_path = watch_dir_config["path"]
+        path_err = validate_docker_watch_dir_entry(
+            str(watch_dir_id), str(watch_dir_path)
+        )
+        if path_err:
+            raise ValueError(path_err)
         watch_path = Path(watch_dir_path).resolve()
         raw_ignore = watch_dir_config.get("ignore_patterns")
         ignore_patterns: Tuple[str, ...] = ()

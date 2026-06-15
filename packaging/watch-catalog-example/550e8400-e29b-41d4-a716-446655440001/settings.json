@@ -1,0 +1,28 @@
+{
+  "deleted": false,
+  "ignore_patterns": [
+    "**/.venv/**",
+    "**/venv/**",
+    "**/ENV/**",
+    "**/env/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.eggs/**",
+    "**/eggs/**",
+    "**/old_code/**",
+    "**/data/**",
+    "**/*.egg-info/**",
+    "**/*.egg",
+    "**/develop-eggs/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/wheels/**",
+    "**/.tox/**",
+    "**/.cache/**",
+    "**/htmlcov/**",
+    "**/.coverage",
+    "**/node_modules/**",
+    "**/test_data/**"
+  ]
+}

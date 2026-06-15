@@ -285,7 +285,7 @@ def scan_watch_dir(
     spec: WatchDirSpec,
     processor: FileChangeProcessor,
     database: Any,
-    _ignore_patterns: Tuple[str, ...],
+    global_ignore_patterns: Tuple[str, ...],
     locks_dir: Path,
     pid: int,
     *,
@@ -301,7 +301,7 @@ def scan_watch_dir(
         spec: Watch directory specification.
         processor: FileChangeProcessor for multi-project mode.
         database: Legacy SQL facade instance.
-        _ignore_patterns: Deprecated global ignore patterns (ignored; kept for API compatibility).
+        global_ignore_patterns: Global ``file_watcher.ignore_patterns`` from config.
         locks_dir: Directory for lock files.
         pid: Process ID for lock acquisition.
         config_path: Optional server ``config.json`` for FAISS index invalidation.
@@ -640,8 +640,14 @@ def scan_watch_dir(
             f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
-        # Ignore policy for watcher comes only from worker.watch_dirs[].ignore_patterns.
-        merged_ignore = list(spec.ignore_patterns)
+        from code_analysis.core.watch_dir_settings import merge_watch_ignore_patterns
+
+        merged_ignore = list(
+            merge_watch_ignore_patterns(
+                spec.ignore_patterns,
+                global_ignore_patterns,
+            )
+        )
         scan_start = datetime.now()
         docs_indexing_snap: Optional[Dict[str, Any]] = None
         if config_path is not None:

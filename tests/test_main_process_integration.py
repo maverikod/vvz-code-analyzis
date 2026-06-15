@@ -124,7 +124,7 @@ class TestMainProcessIntegration:
         from code_analysis.core.storage_paths import StoragePaths
 
         return StoragePaths(
-            config_dir=tmp_path / "config",
+            sessions_root=tmp_path / "search_sessions" / "config",
             log_dir=tmp_path / "logs",
             db_path=tmp_path / "test.db",
             faiss_dir=tmp_path / "faiss",

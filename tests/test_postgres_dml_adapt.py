@@ -49,6 +49,7 @@ def test_adapt_watch_dirs_insert_or_replace_to_upsert() -> None:
     assert "INSERT OR REPLACE" not in out
     assert "ON CONFLICT (server_instance_id, id) DO UPDATE SET" in out
     assert "name = EXCLUDED.name" in out
+    assert "deleted = EXCLUDED.deleted" in out
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_to_upsert() -> None:
@@ -83,6 +84,26 @@ def test_adapt_dml_combined_julianday_and_deleted_assignment() -> None:
     out = _adapt_sqlite_dml_for_postgres(raw)
     assert "deleted = FALSE" in out
     assert "julianday" not in out
+
+
+def test_adapt_watch_dirs_insert_values_deleted_literal() -> None:
+    raw = (
+        "INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at) "
+        "VALUES (?, ?, ?, 0, julianday('now'))"
+    )
+    out = _adapt_sqlite_dml_for_postgres(raw)
+    assert "VALUES (?, ?, ?, FALSE," in out
+    assert "julianday" not in out
+
+
+def test_adapt_watch_dirs_insert_bind_param_unchanged() -> None:
+    raw = (
+        "INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at) "
+        "VALUES (?, ?, ?, ?, julianday('now'))"
+    )
+    out = _adapt_sqlite_dml_for_postgres(raw)
+    assert "VALUES (?, ?, ?, ?," in out
+    assert "FALSE" not in out
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_null_path_to_upsert() -> None:

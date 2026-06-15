@@ -138,13 +138,36 @@
       "poll_interval": 30,
       "batch_size": 5,
       "log_path": "/var/log/casmgr/vectorization_worker.log",
-      "watch_dirs": []
+      // Trial watch root: seeded from packaging/watch-catalog-example/ on install.
+      // Replace path with your host tree; keep settings.json in the watch root (see docs/CASMGR_DOCKER.md).
+      "watch_dirs": [
+        {
+          "id": "550e8400-e29b-41d4-a716-446655440001",
+          "path": "/var/casmgr/watch_catalog/550e8400-e29b-41d4-a716-446655440001"
+        }
+      ]
     },
     "file_watcher": {
       "enabled": true,
       "scan_interval": 60,
       "log_path": "/var/log/casmgr/file_watcher.log",
-      "version_dir": "/var/casmgr/versions"
+      "version_dir": "/var/casmgr/versions",
+      "host_watch_catalog": "/var/casmgr/watch_catalog",
+      "watch_mount_root": "/var/casmgr/watched",
+      "ignore_patterns": [
+        "**/__pycache__/**",
+        "**/.git/**",
+        "**/node_modules/**",
+        "**/.venv/**",
+        "**/venv/**",
+        "**/env/**",
+        "**/ENV/**",
+        "**/.pytest_cache/**",
+        "**/.mypy_cache/**",
+        "**/.ruff_cache/**",
+        "**/.cache/**",
+        "**/cache/**"
+      ]
     },
     "indexing_worker": {
       "enabled": true,

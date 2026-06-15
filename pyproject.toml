@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis"
-version = "1.0.17"
+version = "1.0.24"
 description = "Code analysis MCP server, database tooling, and AST/CST commands"
 readme = { file = "docs/README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"

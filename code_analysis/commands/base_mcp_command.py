@@ -34,6 +34,7 @@ from ..core.exceptions import (
 from ..core.storage_paths import (
     StoragePaths,
     load_raw_config,
+    resolve_search_sessions_root,
     resolve_storage_paths,
 )
 from ..core.shared_database import get_shared_database
@@ -222,6 +223,16 @@ class BaseMCPCommand(Command):
         config_path = BaseMCPCommand._resolve_config_path()
         config_data = load_raw_config(config_path)
         return resolve_storage_paths(config_data=config_data, config_path=config_path)
+
+    @staticmethod
+    def _get_search_sessions_root() -> Path:
+        """Writable on-disk root for paginated search session directories."""
+        config_path = BaseMCPCommand._resolve_config_path()
+        config_data = load_raw_config(config_path)
+        return resolve_search_sessions_root(
+            config_data=config_data,
+            config_path=config_path,
+        )
 
     @staticmethod
     def _validate_project_id_exists(project_id: str) -> None:

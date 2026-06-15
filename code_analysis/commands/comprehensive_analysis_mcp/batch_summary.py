@@ -66,7 +66,7 @@ def build_batch_summary(
     """
     mypy_rows = results.get("mypy_errors") or []
     total_mypy, files_mypy = mypy_diagnostic_counts(mypy_rows)
-    return {
+    summary: Dict[str, Any] = {
         "total_placeholders": len(results["placeholders"]),
         "total_stubs": len(results["stubs"]),
         "total_empty_methods": len(results["empty_methods"]),
@@ -105,3 +105,25 @@ def build_batch_summary(
         "files_skipped_up_to_date": files_skipped_up_to_date,
         "files_skipped_unreadable_or_missing": files_skipped_unreadable_or_missing,
     }
+    integrity = results.get("project_integrity") or {}
+    if integrity:
+        summary = _merge_project_integrity_summary(summary, integrity)
+    return summary
+
+
+def _merge_project_integrity_summary(
+    summary: Dict[str, Any],
+    integrity: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Add project-level integrity counters (issues table) to batch summary."""
+    summary = dict(summary)
+    summary["project_integrity_skipped"] = bool(integrity.get("skipped"))
+    summary["project_integrity_skip_reason"] = integrity.get("reason")
+    summary["total_missing_files_on_disk"] = int(
+        integrity.get("missing_files_count") or 0
+    )
+    summary["total_circular_imports"] = int(
+        integrity.get("circular_imports_count") or 0
+    )
+    summary["integrity_issues_cleared"] = int(integrity.get("cleared_issues") or 0)
+    return summary

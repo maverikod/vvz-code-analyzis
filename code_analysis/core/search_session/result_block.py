@@ -50,15 +50,19 @@ def assemble_block(
     *,
     max_block_size_bytes: int,
     position: int,
+    max_results: int | None = None,
 ) -> SearchResultBlock:
     """
     Pack whole findings into one block without splitting a single result.
 
     Stops before adding a finding that would exceed ``max_block_size_bytes`` unless
-    the block is still empty and that finding alone exceeds the limit.
+    the block is still empty and that finding alone exceeds the limit. When
+    ``max_results`` is set, also caps the number of findings per block.
     """
     selected: list[dict[str, Any]] = []
     for finding in findings:
+        if max_results is not None and len(selected) >= max_results:
+            break
         if not selected:
             selected.append(finding)
             if _assembled_size_bytes(selected) > max_block_size_bytes:

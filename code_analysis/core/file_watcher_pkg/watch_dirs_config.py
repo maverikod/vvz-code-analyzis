@@ -99,8 +99,15 @@ def _watch_dir_specs_signature(specs: Sequence[WatchDirSpec]) -> tuple[Any, ...]
 
 def load_file_watcher_runtime_settings(
     config_path: Path,
+    *,
+    database: Any | None = None,
 ) -> FileWatcherRuntimeSettings:
-    """Read file-watcher runtime settings from ``config.json`` on disk."""
+    """Read file-watcher runtime settings from ``config.json`` on disk.
+
+    Watch directories come only from UUID4 children of ``watch_mount_root``
+    (after host ``casmgr-prepare-watch-mounts``). Config ``worker.watch_dirs``
+    is not read here.
+    """
     config_data = load_raw_config(config_path)
     code_analysis_config = config_data.get("code_analysis", {})
     if not isinstance(code_analysis_config, dict):
@@ -123,13 +130,31 @@ def load_file_watcher_runtime_settings(
         list(ignore_patterns_raw) if isinstance(ignore_patterns_raw, list) else []
     )
 
-    raw_dirs = parse_worker_watch_dirs_raw(code_analysis_config)
-    entries = build_file_watcher_watch_dir_entries(raw_dirs)
-    specs = build_watch_dir_specs(entries)
+    from .watch_dirs_mount_sync import resolve_effective_watch_mount_root
+    from code_analysis.core.watch_dirs_runtime import load_watch_dir_specs_runtime
 
+    specs = load_watch_dir_specs_runtime(
+        config_path,
+        database=database,
+    )
+    entries: List[Dict[str, Any]] = []
+    for spec in specs:
+        entry: Dict[str, Any] = {
+            "id": spec.watch_dir_id,
+            "path": str(spec.watch_dir),
+        }
+        if spec.ignore_patterns:
+            entry["ignore_patterns"] = list(spec.ignore_patterns)
+        entries.append(entry)
+    mount_root = resolve_effective_watch_mount_root({"code_analysis": code_analysis_config})
+    logger.info(
+        "Mount-root watch dirs: %s under %s",
+        len(specs),
+        mount_root or "?",
+    )
     return FileWatcherRuntimeSettings(
         watch_dir_entries=entries,
-        watch_dir_specs=specs,
+        watch_dir_specs=list(specs),
         scan_interval=scan_interval,
         ignore_patterns=ignore_patterns,
         enabled=enabled,

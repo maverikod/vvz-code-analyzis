@@ -265,14 +265,15 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
 
         database.execute(
             f"""
-            INSERT INTO watch_dirs (server_instance_id, id, name, updated_at)
-            VALUES (?, ?, ?, {now_sql})
+            INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at)
+            VALUES (?, ?, ?, ?, {now_sql})
             ON CONFLICT {watch_dirs_conflict} DO UPDATE SET
                 server_instance_id = EXCLUDED.server_instance_id,
                 name = EXCLUDED.name,
+                deleted = FALSE,
                 updated_at = EXCLUDED.updated_at
             """,
-            (server_instance_id, wid, watch_dir_path.name),
+            (server_instance_id, wid, watch_dir_path.name, False),
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 

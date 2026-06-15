@@ -38,7 +38,7 @@ def create_watch_dir(
     sid = server_instance_id or current_server_instance_id()
     self._execute(
         watch_dirs_insert_or_replace_sql(self),
-        (sid, watch_dir_id, name),
+        (sid, watch_dir_id, name, 0),
     )
     self._commit()
     logger.debug(

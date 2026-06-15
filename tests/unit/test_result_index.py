@@ -23,7 +23,7 @@ from code_analysis.core.search_session.result_index import (
 def test_append_block_entry_preserves_order(tmp_path) -> None:
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path,
+        sessions_root=tmp_path / "search_sessions",
         search_id=search_id,
     )
 
@@ -58,7 +58,7 @@ def test_append_block_entry_preserves_order(tmp_path) -> None:
 def test_mark_index_finished_sets_completeness_atomically(tmp_path) -> None:
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path,
+        sessions_root=tmp_path / "search_sessions",
         search_id=search_id,
     )
     append_block_entry(

@@ -2,17 +2,16 @@
 Paginated cross-search backend adapter (T-003/A-007).
 
 Phase-based algorithm:
-  Phase 1 (indexed) — semantic + fulltext in parallel, writes findings immediately.
-  Phase 2 (grep/disk) — only index-gap files, supported extensions only, runs in
-                         background task; findings written as each pattern finishes.
-  search_start blocks until block_1 is ready or all phases complete, then returns.
+  Phase 1 — fulltext (always), flush first block as soon as possible.
+  Phase 2 — semantic when enable_semantic (optional).
+  Phase 3 — grep on index-gap files when enable_grep (optional).
+  The ``search`` command returns after block_1; remaining phases run in background.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
-import asyncio
 import logging
 
 import time
@@ -72,6 +71,7 @@ _STRIP_KEYS = frozenset(
         "block_position",
         "search_type",
         "page_size",
+        "first_block_wait_seconds",
     }
 )
 logger = logging.getLogger(__name__)
@@ -202,6 +202,7 @@ def normalize_cross_finding(
 def _make_block_assembler(
     layout: SearchSessionDirectoryLayout,
     max_block_size_bytes: int,
+    max_results_per_block: int | None = None,
 ) -> BlockAssembler:
     def _append_index(position: int, completeness: str) -> None:
         block_path = layout.blocks_dir / f"block_{position}.json"
@@ -235,6 +236,7 @@ def _make_block_assembler(
         layout,
         RawFindingBuffer(layout.buffer_dir),
         max_block_size_bytes,
+        max_results_per_block=max_results_per_block,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
     )
@@ -341,11 +343,15 @@ async def run_paginated_cross(
 
     project_id = str(params.get("project_id", ""))
     query = str(params.get("query", ""))
+    enable_semantic = bool(params.get("enable_semantic", True))
+    enable_grep = bool(params.get("enable_grep", False))
     require_structural = bool(params.get("require_structural_grep", True))
-    semantic_limit = int(params.get("semantic_limit", 30))
+    semantic_limit = int(params.get("semantic_limit", 30)) if enable_semantic else 0
     fulltext_limit = int(params.get("fulltext_limit", 30))
-    grep_patterns: List[str] = list(params.get("grep_patterns") or [])
-    if not grep_patterns and query:
+    grep_patterns: List[str] = (
+        list(params.get("grep_patterns") or []) if enable_grep else []
+    )
+    if enable_grep and not grep_patterns and query:
         grep_patterns = [query]
     hard_timeout = float(params.get("hard_timeout_seconds", 120.0))
     min_score = float(params.get("min_semantic_score", 0.45))
@@ -370,7 +376,13 @@ async def run_paginated_cross(
 
     buffer = RawFindingBuffer(layout.buffer_dir)
     max_block_size_bytes = load_session_ttl_policy(raw_config).max_block_size_bytes
-    assembler = block_assembler_factory(layout, max_block_size_bytes)
+    page_size_raw = params.get("page_size", 20)
+    max_results_per_block = int(page_size_raw) if page_size_raw is not None else None
+    if max_results_per_block is not None and max_results_per_block < 1:
+        max_results_per_block = None
+    assembler = block_assembler_factory(
+        layout, max_block_size_bytes, max_results_per_block
+    )
     idx = 0
 
     def _flush(search_completed: bool = False) -> None:
@@ -422,18 +434,6 @@ async def run_paginated_cross(
             written += 1
         return written
 
-    indexed_paths, index_gap_paths = _prefilter_candidates(command, project_id, log)
-    log.info(
-        "[TIMING] prefilter result: indexed=%d index_gap=%d",
-        len(indexed_paths),
-        len(index_gap_paths),
-    )
-
-    # ------------------------------------------------------------------ #
-    # Phase 1: indexed (semantic + fulltext) in parallel                  #
-    # ------------------------------------------------------------------ #
-    log.info("[TIMING] phase1_indexed start")
-
     async def _run_semantic() -> List[dict[str, Any]]:
         if semantic_limit <= 0:
             return []
@@ -471,41 +471,17 @@ async def run_paginated_cross(
             log.warning("[TIMING] fulltext exception: %s", exc)
             return []
 
-    t_p1 = time.monotonic()
-    sem_rows, ft_rows = await asyncio.gather(_run_semantic(), _run_fulltext())
-    t_p1_done = time.monotonic()
-    log.info(
-        "[TIMING] phase1_indexed done: semantic=%d fulltext=%d elapsed=%.3fs",
-        len(sem_rows),
-        len(ft_rows),
-        t_p1_done - t_p1,
-    )
-
-    # Write phase-1 findings to buffer and flush immediately.
-    n_sem = _write_indexed_findings(sem_rows, "sem", "semantic")
-    n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
-    log.info(
-        "[TIMING] phase1_written: sem=%d ft=%d; flushing...",
-        n_sem,
-        n_ft,
-    )
-    _flush(search_completed=False)
-    log.info(
-        "[TIMING] phase1_flushed elapsed=%.3fs blocks=%s",
-        time.monotonic() - t0,
-        (layout.blocks_dir / "block_1.json").is_file(),
-    )
-
-    # ------------------------------------------------------------------ #
-    # Phase 2: grep on disk (index_gap, supported extensions only)        #
-    # ------------------------------------------------------------------ #
     async def _run_grep_phase() -> None:
         if not grep_patterns:
-            log.info("[TIMING] phase2_grep skipped: no patterns")
+            log.info("[TIMING] phase3_grep skipped: no patterns")
             _flush(search_completed=True)
             return
 
-        log.info("[TIMING] phase2_grep start patterns=%d", len(grep_patterns))
+        update_manifest_atomic(
+            layout,
+            lambda m: replace(m, phase="dynamic_discovery"),
+        )
+        log.info("[TIMING] phase3_grep start patterns=%d", len(grep_patterns))
         t_g = time.monotonic()
         grep_cmd = FsGrepCommand()
         for i, pattern in enumerate(grep_patterns):
@@ -516,7 +492,7 @@ async def run_paginated_cross(
                     pattern=pattern,
                     literal=bool(params.get("literal", True)),
                     case_sensitive=bool(params.get("case_sensitive", False)),
-                    skip_indexed_unchanged=True,  # index_gap only
+                    skip_indexed_unchanged=True,
                     fast_text_only=False,
                     enrich_blocks=True,
                     enrich_max_results=50,
@@ -528,15 +504,14 @@ async def run_paginated_cross(
                     auto_queue_on_inline_timeout=False,
                 )
             except Exception as exc:
-                log.warning("[TIMING] phase2 pattern[%d] exception: %s", i, exc)
+                log.warning("[TIMING] phase3 pattern[%d] exception: %s", i, exc)
                 continue
 
             if isinstance(result, ErrorResult):
-                log.warning("[TIMING] phase2 pattern[%d] error: %s", i, result)
+                log.warning("[TIMING] phase3 pattern[%d] error: %s", i, result)
                 continue
 
             matches = list((result.data or {}).get("matches") or [])
-            # Filter by supported extensions.
             filtered = [
                 m
                 for m in matches
@@ -548,7 +523,7 @@ async def run_paginated_cross(
             n_grep = _write_grep_findings(filtered, f"grep{i}", pattern)
             _flush(search_completed=False)
             log.info(
-                "[TIMING] phase2 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",
+                "[TIMING] phase3 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",
                 i,
                 pattern,
                 len(filtered),
@@ -556,34 +531,77 @@ async def run_paginated_cross(
                 time.monotonic() - t_pat,
             )
             if time.monotonic() - t_g >= hard_timeout:
-                log.warning("[TIMING] phase2_grep hard timeout reached")
+                log.warning("[TIMING] phase3_grep hard timeout reached")
                 break
 
         log.info(
-            "[TIMING] phase2_grep done total_elapsed=%.3fs",
+            "[TIMING] phase3_grep done total_elapsed=%.3fs",
             time.monotonic() - t_g,
         )
         _flush(search_completed=True)
 
-    # Launch grep as background task; return as soon as block_1 exists.
-    grep_task = asyncio.ensure_future(_run_grep_phase())
-    try:
-        # Poll until block_1 is published or grep is done.
-        poll_start = time.monotonic()
-        while not (layout.blocks_dir / "block_1.json").is_file():
-            if grep_task.done():
-                break
-            if time.monotonic() - poll_start > hard_timeout:
-                log.warning("[TIMING] poll timeout waiting for block_1")
-                break
-            await asyncio.sleep(0.05)
-        # Wait for grep to finish (it may already be done).
-        await grep_task
-    except Exception as exc:
-        log.warning("[TIMING] grep_task error: %s", exc)
+    indexed_paths, index_gap_paths = _prefilter_candidates(command, project_id, log)
+    log.info(
+        "[TIMING] prefilter result: indexed=%d index_gap=%d",
+        len(indexed_paths),
+        len(index_gap_paths),
+    )
+
+    # ------------------------------------------------------------------ #
+    # Phase 1: fulltext (always)                                        #
+    # ------------------------------------------------------------------ #
+    log.info("[TIMING] phase1_fulltext start")
+    t_p1 = time.monotonic()
+    ft_rows = await _run_fulltext()
+    n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
+    _flush(search_completed=False)
+    log.info(
+        "[TIMING] phase1_fulltext done: fulltext=%d elapsed=%.3fs block1=%s",
+        n_ft,
+        time.monotonic() - t_p1,
+        (layout.blocks_dir / "block_1.json").is_file(),
+    )
+
+    # ------------------------------------------------------------------ #
+    # Phase 2: semantic (optional)                                        #
+    # ------------------------------------------------------------------ #
+    if enable_semantic and semantic_limit > 0:
+        log.info("[TIMING] phase2_semantic start")
+        t_sem = time.monotonic()
+        sem_rows = await _run_semantic()
+        n_sem = _write_indexed_findings(sem_rows, "sem", "semantic")
+        _flush(search_completed=False)
+        log.info(
+            "[TIMING] phase2_semantic done: semantic=%d elapsed=%.3fs",
+            n_sem,
+            time.monotonic() - t_sem,
+        )
+        update_manifest_atomic(
+            layout,
+            lambda m: replace(m, phase="indexed_search"),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Phase 3: grep on disk (optional, index_gap only)                    #
+    # ------------------------------------------------------------------ #
+    if enable_grep and grep_patterns:
+        await _run_grep_phase()
+    else:
+        log.info("[TIMING] phase3_grep skipped")
+        _flush(search_completed=True)
 
     total = time.monotonic() - t0
     block1_ready = (layout.blocks_dir / "block_1.json").is_file()
+    update_manifest_atomic(
+        layout,
+        lambda m: replace(
+            m,
+            status="completed",
+            phase="completion",
+            last_access_at=time.time(),
+            heartbeat_at=time.time(),
+        ),
+    )
     log.info(
         "[TIMING] run_paginated_cross done total=%.3fs block1=%s findings=%d",
         total,

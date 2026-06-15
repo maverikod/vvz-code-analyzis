@@ -36,6 +36,7 @@ debian/*.debhelper
 debian/*.debhelper.log
 debian/casmgr-server/
 debian/casmgr-docker-image
+debian/casmgr-server-docker-image
 debian/changelog
 
 # Debian binary outputs (dpkg-buildpackage also writes ../casmgr-server_*.deb outside this repo)

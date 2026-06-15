@@ -133,6 +133,8 @@ casmgr_sync_client_version_from_pyproject() {
 REGISTRY="${CASMGR_DOCKER_REGISTRY:-vasilyvz}"
 IMAGE_NAME="${CASMGR_DOCKER_IMAGE_NAME:-casmgr-postgres}"
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+SERVER_IMAGE_NAME="${CASMGR_DOCKER_SERVER_IMAGE_NAME:-casmgr-server}"
+FULL_SERVER_IMAGE="${REGISTRY}/${SERVER_IMAGE_NAME}:${VERSION}"
 DEB_VERSION="${VERSION}-1"
 
 export CASMGR_RELEASE_VERSION="$VERSION"
@@ -160,6 +162,7 @@ casmgr_sync_client_version_from_pyproject
 
 casmgr_docker_image_on_hub() {
     local ref="$1"
+    local hub_name="${2:-${IMAGE_NAME}}"
     if command -v docker >/dev/null 2>&1; then
         if docker manifest inspect "$ref" >/dev/null 2>&1; then
             return 0
@@ -167,7 +170,7 @@ casmgr_docker_image_on_hub() {
     fi
     if command -v curl >/dev/null 2>&1; then
         if curl -fsS \
-            "https://hub.docker.com/v2/repositories/${REGISTRY}/${IMAGE_NAME}/tags/${VERSION}/" \
+            "https://hub.docker.com/v2/repositories/${REGISTRY}/${hub_name}/tags/${VERSION}/" \
             >/dev/null 2>&1; then
             return 0
         fi
@@ -177,7 +180,8 @@ casmgr_docker_image_on_hub() {
 
 casmgr_verify_docker_image_on_hub() {
     local ref="$1"
-    if casmgr_docker_image_on_hub "$ref"; then
+    local hub_name="${2:-${IMAGE_NAME}}"
+    if casmgr_docker_image_on_hub "$ref" "$hub_name"; then
         info "Verified on Docker Hub: ${ref}"
         return 0
     fi
@@ -196,6 +200,18 @@ casmgr_build_and_push_docker_image() {
     casmgr_verify_docker_image_on_hub "${FULL_IMAGE}"
 }
 
+casmgr_build_and_push_server_docker_image() {
+    info "Building Docker image ${FULL_SERVER_IMAGE}"
+    docker build \
+        -f docker/casmgr-server/Dockerfile \
+        --build-arg VERSION="${VERSION}" \
+        -t "${FULL_SERVER_IMAGE}" \
+        .
+    info "Pushing ${FULL_SERVER_IMAGE}"
+    docker push "${FULL_SERVER_IMAGE}"
+    casmgr_verify_docker_image_on_hub "${FULL_SERVER_IMAGE}" "${SERVER_IMAGE_NAME}"
+}
+
 casmgr_ensure_docker_image_published() {
     if casmgr_docker_image_on_hub "${FULL_IMAGE}"; then
         info "Docker Hub already has ${FULL_IMAGE}"
@@ -207,12 +223,14 @@ casmgr_ensure_docker_image_published() {
 
 if (( DO_DOCKER )); then
     casmgr_build_and_push_docker_image
+    casmgr_build_and_push_server_docker_image
 elif (( DO_DEB )) && (( ! SKIP_DOCKER_PUSH )); then
     casmgr_ensure_docker_image_published
 fi
 
 echo "${FULL_IMAGE}" > debian/casmgr-docker-image
-info "Recorded image ref in debian/casmgr-docker-image"
+echo "${FULL_SERVER_IMAGE}" > debian/casmgr-server-docker-image
+info "Recorded image refs in debian/casmgr-docker-image and debian/casmgr-server-docker-image"
 
 DEBIAN_DATE="$(date -R)"
 cat > debian/changelog <<EOF

@@ -45,12 +45,14 @@ class BlockAssembler:
         buffer: RawFindingBuffer,
         max_block_size_bytes: int,
         *,
+        max_results_per_block: int | None = None,
         append_index_entry: Callable[[int, str], None],
         update_manifest_metrics: Callable[[dict], None],
     ) -> None:
         self._layout = layout
         self._buffer = buffer
         self._max_block_size_bytes = max_block_size_bytes
+        self._max_results_per_block = max_results_per_block
         self._append_index_entry = append_index_entry
         self._update_manifest_metrics = update_manifest_metrics
 
@@ -96,6 +98,7 @@ class BlockAssembler:
                 block = assemble_block(
                     findings,
                     max_block_size_bytes=self._max_block_size_bytes,
+                    max_results=self._max_results_per_block,
                     position=position,
                 )
                 if not block.results:
@@ -204,6 +207,7 @@ class BlockAssembler:
             block = assemble_block(
                 remaining,
                 max_block_size_bytes=self._max_block_size_bytes,
+                max_results=self._max_results_per_block,
                 position=position,
             )
             if not block.results:

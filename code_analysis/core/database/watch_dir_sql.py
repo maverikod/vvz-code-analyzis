@@ -16,12 +16,21 @@ from typing import Any
 from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
 
+def watch_dirs_insert_new_row_sql() -> str:
+    """Plain INSERT for a new watch_dir row (mount sync); ``deleted`` is a bind param."""
+    return (
+        "INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at) "
+        "VALUES (?, ?, ?, ?, julianday('now'))"
+    )
+
+
 def watch_dirs_insert_or_replace_sql(database: Any) -> str:
     """``INSERT OR REPLACE`` for ``watch_dirs`` (partitioned by ``server_instance_id``)."""
     _now = sql_julian_timestamp_now_expr(database)
     return (
         "INSERT OR REPLACE INTO watch_dirs "
-        f"(server_instance_id, id, name, updated_at) VALUES (?, ?, ?, {_now})"
+        f"(server_instance_id, id, name, deleted, updated_at) "
+        f"VALUES (?, ?, ?, ?, {_now})"
     )
 
 
@@ -49,8 +58,8 @@ def watch_dirs_upsert_norm_for_postgres_adapter() -> str:
     """Normalized SQL (post-julianday rewrite) for ``postgres_run`` lookup."""
     return (
         "INSERT OR REPLACE INTO watch_dirs "
-        "(server_instance_id, id, name, updated_at) "
-        "VALUES (?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
+        "(server_instance_id, id, name, deleted, updated_at) "
+        "VALUES (?, ?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
     )
 
 

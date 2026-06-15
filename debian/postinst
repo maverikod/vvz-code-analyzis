@@ -35,6 +35,28 @@ ensure_runtime_config_template() {
     return 1
 }
 
+seed_watch_catalog_example() {
+    local example_src="/usr/share/casmgr-server/watch-catalog-example"
+    local catalog="${DATA_DIR}/watch_catalog"
+    [[ -d "$example_src" ]] || return 0
+    local uuid_dir
+    for uuid_dir in "$example_src"/*/; do
+        [[ -d "$uuid_dir" ]] || continue
+        local uuid
+        uuid="$(basename "$uuid_dir")"
+        local dest="${catalog}/${uuid}"
+        if [[ -e "$dest" ]]; then
+            continue
+        fi
+        cp -a "$uuid_dir" "$dest"
+        chown -R "$CASMGR_USER:$CASMGR_GROUP" "$dest"
+        chmod 0750 "$dest"
+        if [[ -f "${dest}/settings.json" ]]; then
+            chmod 0640 "${dest}/settings.json"
+        fi
+    done
+}
+
 create_user() {
     if ! getent group "$CASMGR_GROUP" >/dev/null; then
         addgroup --system "$CASMGR_GROUP"
@@ -51,7 +73,9 @@ create_layout() {
         "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" \
         "${DATA_DIR}/data" "${DATA_DIR}/faiss" "${DATA_DIR}/locks" \
         "${DATA_DIR}/backups" "${DATA_DIR}/trash" \
-        "${LOG_DIR}/postgres" "${DATA_DIR}/versions" "$SECRETS"
+        "${LOG_DIR}/postgres" "${DATA_DIR}/versions" \
+        "${DATA_DIR}/watch_catalog" "${DATA_DIR}/watched" "$SECRETS"
+    seed_watch_catalog_example
     ensure_runtime_config_template
     "${BIN}/casmgr-install-server-config" "$CONFIG_DIR" "$RUNTIME_CONFIG_TEMPLATE" "$CASMGR_GROUP"
     if [[ ! -f "${SECRETS}/.env" ]]; then

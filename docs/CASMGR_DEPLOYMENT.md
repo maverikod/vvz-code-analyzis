@@ -15,6 +15,9 @@ Full reference: **`man casmgr-server`**, **`man casmgr-config`**, **`info casmgr
 | `/usr/share/casmgr/docker-image` | Pinned image ref (`registry/name:tag`) |
 | `/usr/lib/casmgr/bin/` | Admin scripts (also in `/usr/sbin/`) |
 
+**Full Docker stack** (server + PostgreSQL in containers, `/watched/*` mount
+contract): see [CASMGR_DOCKER.md](CASMGR_DOCKER.md).
+
 ## Upgrade from `code-analysis-server`
 
 The `casmgr-server` package **Provides/Replaces/Conflicts** with the old

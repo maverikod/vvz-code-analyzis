@@ -16,6 +16,7 @@ Environment=CASMGR_LOG=/var/log/casmgr
 Environment=CASMGR_SECRETS=/var/casmgr/secrets
 EnvironmentFile=-/var/casmgr/secrets/.env
 Environment=PATH=/usr/lib/casmgr-server/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/usr/lib/casmgr-server/.venv/bin/python /usr/lib/casmgr-server/scripts/casmgr-prepare-watch-mounts.py --config /etc/casmgr/config.json
 ExecStart=/usr/lib/casmgr-server/.venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --daemon
 Restart=on-failure
 RestartSec=10s
@@ -27,7 +28,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/var/casmgr /var/log/casmgr /etc/casmgr
+ReadWritePaths=/var/casmgr /var/log/casmgr /etc/casmgr /var/casmgr/watched /var/casmgr/watch_catalog
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+# Bind mounts for watch directories. Regenerate with:
+#   python scripts/casmgr-prepare-watch-mounts.py \
+#     --config ../docker/runtime/etc/casmgr/config.json \
+#     --compose-out docker/docker-compose.watch-mounts.yml
+services:
+  casmgr-server:
+    volumes:
+      - ${HOST_WATCH_ROOT:-/home/vasilyvz/projects/tools}:/watched/${WATCH_DIR_ID:-a6c47e01-1ac8-47a6-a0e8-e6416086de0c}:rw

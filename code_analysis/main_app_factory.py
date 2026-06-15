@@ -39,11 +39,21 @@ def create_app_with_events(
     register_startup_shutdown_events(app, app_config, worker_manager)
     app.state.worker_manager = worker_manager
     patch_app_openapi_for_mcp_proxy(app)
-    config_dir = config_path.parent
-    register_search_job_routes(app, config_dir=config_dir)
+    from code_analysis.core.storage_paths import (
+        load_raw_config,
+        resolve_search_sessions_root,
+    )
+
+    config_data = load_raw_config(config_path)
+    sessions_root = resolve_search_sessions_root(
+        config_data=config_data,
+        config_path=config_path,
+    )
+    register_search_job_routes(app, sessions_root=sessions_root)
     register_search_session_cleanup(
         app,
-        config_dir=config_dir,
+        sessions_root=sessions_root,
+        config_path=config_path,
         app_config=app_config,
     )
 

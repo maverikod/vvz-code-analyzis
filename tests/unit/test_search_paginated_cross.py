@@ -25,7 +25,7 @@ def _session_and_layout(tmp_path: Path):
 
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path, search_id=search_id
+        sessions_root=tmp_path / "search_sessions", search_id=search_id
     )
     session = SearchSession(
         search_id=search_id,
@@ -35,7 +35,7 @@ def _session_and_layout(tmp_path: Path):
     return session, layout
 
 
-def _fake_assembler_factory(layout, raw_config):
+def _fake_assembler_factory(layout, max_block_size_bytes, max_results_per_block=None):
     assembler = MagicMock()
 
     def run(search_completed=False):
@@ -136,6 +136,7 @@ async def test_run_paginated_cross_publishes_block_from_fulltext(
                 "project_id": "pid",
                 "query": "foo",
                 "semantic_limit": 0,
+                "enable_grep": False,
                 "grep_patterns": [],
             },
             session=session,
@@ -199,7 +200,7 @@ async def test_run_paginated_cross_publishes_block_structural_grep(
     ):
         pos = await run_paginated_cross(
             command=command,
-            params={"project_id": "pid", "query": "q", "require_structural_grep": True},
+            params={"project_id": "pid", "query": "q", "enable_grep": True, "require_structural_grep": True},
             session=session,
             layout=layout,
             raw_config={"search_session": {"max_block_size_bytes": 65536}},

@@ -374,11 +374,21 @@ DEFAULT_CONFIG_FILENAME: str = "config.json"
 # File Watcher Ignore Patterns (for config)
 # ============================================================================
 
-# Default ignore patterns for file watcher (glob patterns)
+# Default ignore patterns for file watcher (glob patterns).
+# Merged with per-watch-dir ``settings.json`` / config ignore_patterns at scan time.
 FILE_WATCHER_IGNORE_PATTERNS: list[str] = [
     "**/__pycache__/**",
     "**/.git/**",
     "**/node_modules/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/env/**",
+    "**/ENV/**",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/.cache/**",
+    "**/cache/**",
 ]
 
 
@@ -396,3 +406,16 @@ DEFAULT_BATCH_OUTPUT_DIR: str = "data/batch_output"
 
 # Retention time in seconds for batch output files; 0 means no automatic cleanup.
 DEFAULT_BATCH_OUTPUT_RETENTION_SECONDS: int = 86_400  # 24 hours
+
+
+# ============================================================================
+# Docker deployment
+# ============================================================================
+
+# Parent directory inside the casmgr-server container. Each watch root is mounted at
+# ``{CASMGR_DOCKER_WATCH_ROOT}/{watch_dir_id}`` (same path in config and DB).
+CASMGR_DOCKER_WATCH_ROOT: str = "/watched"
+# Writable watch staging on native Debian host (systemd ReadWritePaths). Docker uses
+# ``/watched`` inside the container; when that path is read-only on the host, runtime
+# and casmgr-prepare-watch-mounts fall back here.
+CASMGR_NATIVE_HOST_WATCH_ROOT: str = "/var/casmgr/watched"

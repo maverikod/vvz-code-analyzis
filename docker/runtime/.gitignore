@@ -1,0 +1,3 @@
+# Local bind-mount state (created by scripts/docker/init-runtime-layout.sh)
+*
+!.gitignore

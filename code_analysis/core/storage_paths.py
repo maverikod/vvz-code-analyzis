@@ -202,6 +202,26 @@ def resolve_storage_paths(
     )
 
 
+def resolve_search_sessions_root(
+    *,
+    config_data: Mapping[str, Any],
+    config_path: Path,
+) -> Path:
+    """
+    Resolve on-disk root for paginated search session directories.
+
+    Defaults to ``{db_path.parent}/search_sessions`` so production state under
+    ``/var/casmgr/data`` stays writable when ``config.json`` lives in ``/etc/casmgr``.
+    """
+    storage = resolve_storage_paths(config_data=config_data, config_path=config_path)
+    search_cfg = config_data.get("search_session") or {}
+    if isinstance(search_cfg, Mapping):
+        raw = search_cfg.get("sessions_dir")
+        if isinstance(raw, str) and raw.strip():
+            return _resolve_path(storage.config_dir, raw)
+    return (storage.db_path.parent / "search_sessions").resolve()
+
+
 def ensure_storage_dirs(paths: StoragePaths) -> None:
     """
     Ensure that storage directories exist.
@@ -287,7 +307,11 @@ def resolve_batch_output_dir(*, config_path: Path, dir_str: str) -> Path:
     """
     from code_analysis.core.constants import DEFAULT_BATCH_OUTPUT_DIR
 
-    value = dir_str.strip() if isinstance(dir_str, str) and dir_str.strip() else DEFAULT_BATCH_OUTPUT_DIR
+    value = (
+        dir_str.strip()
+        if isinstance(dir_str, str) and dir_str.strip()
+        else DEFAULT_BATCH_OUTPUT_DIR
+    )
     return _resolve_path(Path(config_path).resolve().parent, value)
 
 
@@ -305,7 +329,9 @@ def apply_resolved_batch_output_dir(
     resolved = resolve_batch_output_dir(config_path=config_path, dir_str=raw)
     if _is_forbidden_batch_output_path(resolved):
         config_data = load_raw_config(config_path)
-        storage = resolve_storage_paths(config_data=config_data, config_path=config_path)
+        storage = resolve_storage_paths(
+            config_data=config_data, config_path=config_path
+        )
         resolved = storage.db_path.parent / "batch_output"
     out["batch_output_dir"] = str(resolved.resolve())
     return out

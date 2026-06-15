@@ -46,18 +46,25 @@ def _database_query_rows(
     return []
 
 
-def list_watch_dirs_with_paths(database: Any) -> List[Dict[str, Any]]:
+def list_watch_dirs_with_paths(
+    database: Any,
+    *,
+    include_deleted: bool = True,
+) -> List[Dict[str, Any]]:
     """List watch dirs for the current server instance with optional absolute paths."""
     sid = current_server_instance_id()
+    deleted_filter = ""
+    if not include_deleted:
+        deleted_filter = " AND (wd.deleted IS NULL OR wd.deleted = 0)"
     rows = _database_query_rows(
         database,
-        """
-        SELECT wd.id, wd.name, wdp.absolute_path
+        f"""
+        SELECT wd.id, wd.name, wd.deleted, wdp.absolute_path
         FROM watch_dirs wd
         LEFT JOIN watch_dir_paths wdp
           ON wd.server_instance_id = wdp.server_instance_id
          AND wd.id = wdp.watch_dir_id
-        WHERE wd.server_instance_id = ?
+        WHERE wd.server_instance_id = ?{deleted_filter}
         ORDER BY wd.created_at
         """,
         (sid,),
@@ -66,6 +73,7 @@ def list_watch_dirs_with_paths(database: Any) -> List[Dict[str, Any]]:
         {
             "id": r.get("id"),
             "name": r.get("name"),
+            "deleted": bool(r.get("deleted")),
             "absolute_path": r.get("absolute_path"),
         }
         for r in rows
@@ -73,15 +81,20 @@ def list_watch_dirs_with_paths(database: Any) -> List[Dict[str, Any]]:
 
 
 def list_watch_dir_path_pairs(database: Any) -> List[tuple[str, str]]:
-    """Return ``(watch_dir_id, absolute_path)`` for non-empty paths on this instance."""
+    """Return ``(watch_dir_id, absolute_path)`` for active non-empty paths on this instance."""
     sid = current_server_instance_id()
     rows = _database_query_rows(
         database,
         """
-        SELECT watch_dir_id, absolute_path FROM watch_dir_paths
-        WHERE server_instance_id = ?
-          AND absolute_path IS NOT NULL AND TRIM(absolute_path) != ''
-        ORDER BY watch_dir_id
+        SELECT wdp.watch_dir_id, wdp.absolute_path
+        FROM watch_dir_paths wdp
+        JOIN watch_dirs wd
+          ON wd.server_instance_id = wdp.server_instance_id
+         AND wd.id = wdp.watch_dir_id
+        WHERE wdp.server_instance_id = ?
+          AND (wd.deleted IS NULL OR wd.deleted = 0)
+          AND wdp.absolute_path IS NOT NULL AND TRIM(wdp.absolute_path) != ''
+        ORDER BY wdp.watch_dir_id
         """,
         (sid,),
     )

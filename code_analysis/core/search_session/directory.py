@@ -20,7 +20,6 @@ SERVICE_METADATA_FILENAME = "service_metadata.json"
 BLOCKS_DIRNAME = "blocks"
 RELEVANCE_BLOCKS_DIRNAME = "blocks_relevance"
 BUFFER_DIRNAME = "buffer"
-SEARCH_SESSIONS_DIRNAME = "data/search_sessions"
 
 
 @dataclass(frozen=True)
@@ -46,22 +45,9 @@ class SearchSessionDirectoryLayout:
     relevance_blocks_dir: Path
 
 
-def resolve_search_sessions_root(config_dir: Path) -> Path:
-    """
-    Return absolute path to ``data/search_sessions`` under ``config_dir``.
-
-    Args:
-        config_dir: Project root / config directory.
-
-    Returns:
-        Absolute path (directory is not created by this helper).
-    """
-    return (config_dir / SEARCH_SESSIONS_DIRNAME).resolve()
-
-
 def provision_search_session_directory(
     *,
-    config_dir: Path,
+    sessions_root: Path,
     search_id: str,
 ) -> SearchSessionDirectoryLayout:
     """
@@ -71,7 +57,8 @@ def provision_search_session_directory(
     Manifest, index, and service metadata files are created by later steps.
 
     Args:
-        config_dir: Project root / config directory.
+        sessions_root: Writable directory for all search sessions (see
+            ``resolve_search_sessions_root`` in ``storage_paths``).
         search_id: Session UUID string (used as subdirectory name).
 
     Returns:
@@ -80,7 +67,7 @@ def provision_search_session_directory(
     Raises:
         FileExistsError: If ``root`` already exists.
     """
-    root = resolve_search_sessions_root(config_dir) / search_id
+    root = sessions_root.resolve() / search_id
     blocks_dir = root / BLOCKS_DIRNAME
     relevance_blocks_dir = root / RELEVANCE_BLOCKS_DIRNAME
     buffer_dir = root / BUFFER_DIRNAME

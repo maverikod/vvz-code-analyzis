@@ -52,20 +52,18 @@ def register_commands_part1(reg: registry) -> None:
     except Exception as e:
         logger.error("Failed to register get_file_lines: %s", e, exc_info=True)
 
-    # On-disk search (unindexed files) + filesystem ops (not content editing).
+    # On-disk filesystem ops (not content editing).
     try:
-        from .commands.fs_grep_command import FsGrepCommand
         from .commands.fs_copy_move_remove_commands import (
             FsCopyCommand,
             FsMoveCommand,
             FsRemoveCommand,
         )
 
-        reg.register(FsGrepCommand, "custom")
         reg.register(FsCopyCommand, "custom")
         reg.register(FsMoveCommand, "custom")
         reg.register(FsRemoveCommand, "custom")
-        logger.info("✅ Registered fs_grep, fs_copy, fs_move, fs_remove")
+        logger.info("✅ Registered fs_copy, fs_move, fs_remove")
     except ImportError as e:
         logger.warning("Failed to import fs_* commands: %s", e)
 
@@ -135,14 +133,22 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
-        from .commands.semantic_search_mcp import SemanticSearchMCPCommand
+        from .commands.search_mcp_command import SearchMCPCommand
+        from .commands.search_get_page_command import SearchGetPageCommand
+        from .commands.search_get_status_command import SearchGetStatusCommand
+        from .commands.search_cancel_command import SearchCancelCommand
+        from .commands.search_close_command import SearchCloseCommand
 
-        reg.register(SemanticSearchMCPCommand, "custom")
-        logger.info("✅ Registered semantic_search command")
+        reg.register(SearchMCPCommand, "custom")
+        reg.register(SearchGetPageCommand, "custom")
+        reg.register(SearchGetStatusCommand, "custom")
+        reg.register(SearchCancelCommand, "custom")
+        reg.register(SearchCloseCommand, "custom")
+        logger.info("✅ Registered search (paginated cross) commands")
     except ImportError as e:
-        logger.warning("Failed to import semantic_search command: %s", e)
+        logger.warning("Failed to import search commands: %s", e)
     except Exception as e:
-        logger.error("Failed to register semantic_search command: %s", e, exc_info=True)
+        logger.error("Failed to register search commands: %s", e, exc_info=True)
 
     from .commands.code_quality_commands import (
         LintCodeCommand,
@@ -151,6 +157,17 @@ def register_commands_part1(reg: registry) -> None:
 
     reg.register(LintCodeCommand, "custom")
     reg.register(TypeCheckCodeCommand, "custom")
+
+    try:
+        from .commands.search_mcp_commands import (
+            FindClassesMCPCommand,
+            ListClassMethodsMCPCommand,
+        )
+
+        reg.register(ListClassMethodsMCPCommand, "custom")
+        reg.register(FindClassesMCPCommand, "custom")
+    except ImportError as e:
+        logger.warning("Failed to import find_classes commands: %s", e)
 
     try:
         from .commands.analyze_complexity_mcp import AnalyzeComplexityMCPCommand
@@ -185,37 +202,6 @@ def register_commands_part1(reg: registry) -> None:
         logger.error(
             "Failed to register comprehensive_analysis command: %s", e, exc_info=True
         )
-
-    try:
-        from .commands.search_mcp_commands import (
-            FindClassesMCPCommand,
-            FulltextSearchMCPCommand,
-            ListClassMethodsMCPCommand,
-        )
-
-        reg.register(FulltextSearchMCPCommand, "custom")
-        reg.register(ListClassMethodsMCPCommand, "custom")
-        reg.register(FindClassesMCPCommand, "custom")
-        from .commands.project_cross_search_command import ProjectCrossSearchCommand
-
-        reg.register(ProjectCrossSearchCommand, "custom")
-        from .commands.search_start_command import SearchStartCommand
-
-        reg.register(SearchStartCommand, "custom")
-        from .commands.search_get_page_command import SearchGetPageCommand
-        from .commands.search_get_status_command import SearchGetStatusCommand
-        from .commands.search_cancel_command import SearchCancelCommand
-        from .commands.search_close_command import SearchCloseCommand
-
-        reg.register(SearchGetPageCommand, "custom")
-        reg.register(SearchGetStatusCommand, "custom")
-        reg.register(SearchCancelCommand, "custom")
-        reg.register(SearchCloseCommand, "custom")
-        logger.info("✅ Registered search commands")
-    except ImportError as e:
-        logger.warning("Failed to import search commands: %s", e)
-    except Exception as e:
-        logger.error("Failed to register search commands: %s", e, exc_info=True)
 
     try:
         from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand

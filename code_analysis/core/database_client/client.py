@@ -20,6 +20,7 @@ from .client_api_comprehensive_analysis import (
 )
 from .client_api_duplicates_stats import _ClientAPIDuplicatesStatsMixin
 from .client_api_files import _ClientAPIFilesMixin
+from .client_api_integrity import _ClientAPIIntegrityMixin
 from .client_api_issues_usages import _ClientAPIIssuesUsagesMixin
 from .client_api_methods_imports import _ClientAPIMethodsImportsMixin
 from .client_api_projects import _ClientAPIProjectsMixin
@@ -42,6 +43,7 @@ class DatabaseClient(
     _ClientAPISearchMixin,
     _ClientAPIFilesMixin,
     _ClientAPIComprehensiveAnalysisMixin,
+    _ClientAPIIntegrityMixin,
     _ClientAPIAttributesMixin,
     _ClientAPIASTCSTMixin,
     _ClientAPIClassesFunctionsMixin,

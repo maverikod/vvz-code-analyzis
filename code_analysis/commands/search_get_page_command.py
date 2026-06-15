@@ -39,7 +39,7 @@ class SearchGetPageCommand(BaseMCPCommand):
     version = "1.0.0"
     descr = (
         "Return one published SearchResultBlock for a paginated search session. "
-        "Use job_id from search_start handoff and block_position (1-based)."
+        "Use job_id from search handoff and block_position (1-based)."
     )
     category = "search"
     author = "Vasiliy Zdanovskiy"
@@ -53,7 +53,7 @@ class SearchGetPageCommand(BaseMCPCommand):
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "SearchSession search_id from search_start handoff.",
+                    "description": "SearchSession job_id from search handoff.",
                 },
                 "block_position": {
                     "type": "integer",
@@ -98,13 +98,19 @@ class SearchGetPageCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
-        job_id = str(kwargs.get("job_id") or "").strip()
-        pos = max(1, int(kwargs.get("block_position") or 1))
-        ordering = str(kwargs.get("ordering") or "temporal")
-        wait = bool(kwargs.get("wait_for_new_results", False))
-        timeout = float(kwargs.get("wait_timeout_seconds") or 0)
-        storage = self._get_shared_storage()
-        ctx = HttpAccessContext(config_dir=storage.config_dir)
+        try:
+            params = self.validate_params(
+                {k: v for k, v in kwargs.items() if k != "context"}
+            )
+        except ValidationError as exc:
+            return self._handle_error(exc, "VALIDATION_ERROR", self.name)
+
+        job_id = str(params["job_id"]).strip()
+        pos = max(1, int(params.get("block_position") or 1))
+        ordering = str(params.get("ordering") or "temporal")
+        wait = bool(params.get("wait_for_new_results", False))
+        timeout = float(params.get("wait_timeout_seconds") or 0)
+        ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
@@ -212,7 +218,7 @@ class SearchGetPageCommand(BaseMCPCommand):
             "email": cls.email,
             "parameters": {
                 "job_id": {
-                    "description": "SearchSession job_id from search_start.",
+                    "description": "SearchSession job_id from search handoff.",
                     "type": "string",
                     "required": True,
                 },
@@ -221,6 +227,12 @@ class SearchGetPageCommand(BaseMCPCommand):
                     "type": "integer",
                     "required": False,
                     "default": 1,
+                },
+                "ordering": {
+                    "description": "temporal (live) or relevance (after completed).",
+                    "type": "string",
+                    "required": False,
+                    "default": "temporal",
                 },
                 "wait_for_new_results": {
                     "description": "Poll for block.",
@@ -235,15 +247,31 @@ class SearchGetPageCommand(BaseMCPCommand):
                     "default": 0,
                 },
             },
+            "return_value": {
+                "success": {
+                    "description": "One result block.",
+                    "data": {
+                        "job_id": "Session id",
+                        "block_position": "Requested block index",
+                        "ordering": "temporal or relevance",
+                        "items": "Finding rows for this block",
+                        "has_more": "True when more blocks may arrive or exist",
+                        "status": "Session manifest status",
+                        "progress": "Manifest metrics dict",
+                    },
+                },
+            },
             "error_cases": {
                 "SESSION_NOT_FOUND": {"description": "job_id not found."},
                 "BLOCK_NOT_READY": {"description": "Block not yet published."},
                 "CLOSED_SESSION": {
                     "description": "Session closed; continuation invalid."
                 },
+                "VALIDATION_ERROR": {"description": "Invalid job_id or block_position."},
             },
             "best_practices": [
-                "Use block_position from search_start handoff first_block_position.",
+                "Use first_block_position from search handoff for the first page.",
                 "Increment block_position for subsequent pages; do not use opaque cursor.",
+                "Use ordering=relevance after search_get_status reports completed.",
             ],
         }

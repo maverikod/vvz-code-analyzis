@@ -106,6 +106,34 @@ def get_schema(cls: Any) -> Dict[str, Any]:
                 ),
                 "default": 0,
             },
+            "check_missing_files_on_disk": {
+                "type": "boolean",
+                "description": (
+                    "Project-level: detect active ``files`` rows missing on disk; "
+                    "register ``missing_file_on_disk`` in ``issues``. Skipped while "
+                    "file watcher holds the project lease."
+                ),
+                "default": True,
+            },
+            "check_circular_imports": {
+                "type": "boolean",
+                "description": (
+                    "Project-level: detect circular import chains via indexed "
+                    "``imports`` (SQL temp edges → tree → filter); register "
+                    "``circular_import`` in ``issues``. Skipped while file watcher "
+                    "holds the project lease."
+                ),
+                "default": True,
+            },
+            "max_import_chain_depth": {
+                "type": "integer",
+                "description": (
+                    "Max import chain hops for circular-import SQL tree (default 10)."
+                ),
+                "default": 10,
+                "minimum": 2,
+                "maximum": 10,
+            },
         },
         "required": ["project_id"],
         "additionalProperties": False,

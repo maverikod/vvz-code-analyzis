@@ -47,7 +47,7 @@ class SearchCloseCommand(BaseMCPCommand):
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "SearchSession job_id from search_start handoff.",
+                    "description": "SearchSession job_id from search handoff.",
                 },
             },
             "required": ["job_id"],
@@ -64,8 +64,7 @@ class SearchCloseCommand(BaseMCPCommand):
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         job_id = str(kwargs.get("job_id") or "").strip()
-        storage = self._get_shared_storage()
-        ctx = HttpAccessContext(config_dir=storage.config_dir)
+        ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():

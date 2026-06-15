@@ -28,9 +28,11 @@ class SessionTTLPolicy:
 
 
 def load_session_ttl_policy(config_data: dict[str, Any]) -> SessionTTLPolicy:
-    """Load policy from ``code_analysis.search_session`` with code defaults."""
+    """Load policy from ``code_analysis.search_session`` or top-level ``search_session``."""
     code_analysis = config_data.get("code_analysis") or {}
-    search_session = code_analysis.get("search_session") or {}
+    search_session = code_analysis.get("search_session") or config_data.get(
+        "search_session"
+    ) or {}
     ttl_raw = search_session.get("ttl_seconds", SEARCH_SESSION_TTL_SECONDS_DEFAULT)
     block_raw = search_session.get(
         "max_block_size_bytes",

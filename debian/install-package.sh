@@ -23,6 +23,8 @@ install -m 755 "${CURDIR}/scripts/casmgr-config-validate" \
     "${ST}/usr/lib/casmgr-server/scripts/casmgr-config-validate"
 install -m 755 "${CURDIR}/scripts/casmgr_ensure_instance_uuid.py" \
     "${ST}/usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py"
+install -m 755 "${CURDIR}/scripts/casmgr-prepare-watch-mounts.py" \
+    "${ST}/usr/lib/casmgr-server/scripts/casmgr-prepare-watch-mounts.py"
 install -d "${ST}/usr/lib/casmgr-server/docs"
 install -m 644 "${CURDIR}/docs/README.md" "${ST}/usr/lib/casmgr-server/docs/README.md"
 
@@ -80,6 +82,9 @@ install -m 644 "${CURDIR}/packaging/config.json.template" \
     "${ST}/usr/share/casmgr-server/config.json.template"
 install -m 644 "${CURDIR}/packaging/secrets.env.template" \
     "${ST}/usr/share/casmgr-server/secrets.env.template"
+install -d "${ST}/usr/share/casmgr-server/watch-catalog-example"
+cp -a "${CURDIR}/packaging/watch-catalog-example/." \
+    "${ST}/usr/share/casmgr-server/watch-catalog-example/"
 
 install -d "${ST}/usr/share/doc/casmgr-server"
 install -m 644 "${CURDIR}/packaging/config.json.template" \

@@ -1,0 +1,66 @@
+# Full stack: PostgreSQL + casmgr-server (application code in image; state on host mounts).
+#
+# Usage:
+#   ./scripts/docker/init-runtime-layout.sh
+#   # edit docker/runtime/etc/casmgr/config.json and secrets/.env
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+
+name: casmgr
+
+include:
+  - path: docker-compose.watch-mounts.yml
+
+services:
+  casmgr-postgres:
+    image: ${CASMGR_POSTGRES_IMAGE:-vasilyvz/casmgr-postgres:1.0.18}
+    container_name: casmgr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-code_analysis}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?Set POSTGRES_SUPERUSER_PASSWORD in docker/runtime/secrets/.env}
+    volumes:
+      - ${CASMGR_RUNTIME:-./runtime}/postgres/data:/var/lib/postgresql/data
+      - ${CASMGR_RUNTIME:-./runtime}/postgres/cache:/var/lib/postgresql/cache
+      - ${CASMGR_RUNTIME:-./runtime}/log/postgres:/var/log/postgresql
+      - ${CASMGR_RUNTIME:-./runtime}/etc/casmgr:/etc/casmgr:ro
+    ports:
+      - "${CASMGR_PG_PUBLISH:-127.0.0.1:5432:5432}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-code_analysis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  casmgr-server:
+    image: ${CASMGR_SERVER_IMAGE:-vasilyvz/casmgr-server:1.0.18}
+    build:
+      context: ..
+      dockerfile: docker/casmgr-server/Dockerfile
+      args:
+        VERSION: ${CASMGR_SERVER_VERSION:-dev}
+    container_name: casmgr-server
+    restart: unless-stopped
+    depends_on:
+      casmgr-postgres:
+        condition: service_healthy
+    environment:
+      CASMGR_CONFIG: /etc/casmgr/config.json
+      CASMGR_SECRETS: /var/casmgr/secrets
+      CASMGR_WATCH_ROOT: /watched
+    volumes:
+      # Config + mTLS (read-only)
+      - ${CASMGR_RUNTIME:-./runtime}/etc/casmgr:/etc/casmgr:ro
+      - ${CASMGR_RUNTIME:-./runtime}/secrets:/var/casmgr/secrets:ro
+      # Writable service state
+      - ${CASMGR_RUNTIME:-./runtime}/log:/var/log/casmgr
+      - ${CASMGR_RUNTIME:-./runtime}/data:/var/casmgr/data
+      - ${CASMGR_RUNTIME:-./runtime}/faiss:/var/casmgr/faiss
+      - ${CASMGR_RUNTIME:-./runtime}/locks:/var/casmgr/locks
+      - ${CASMGR_RUNTIME:-./runtime}/backups:/var/casmgr/backups
+      - ${CASMGR_RUNTIME:-./runtime}/trash:/var/casmgr/trash
+      - ${CASMGR_RUNTIME:-./runtime}/versions:/var/casmgr/versions
+    ports:
+      - "${CASMGR_MCP_PUBLISH:-0.0.0.0:15010:15010}"

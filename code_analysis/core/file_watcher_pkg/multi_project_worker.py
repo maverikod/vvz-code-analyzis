@@ -319,8 +319,16 @@ class MultiProjectFileWatcherWorker:
                 continue
 
             try:
-                # Ignore policy is defined per watch_dir, not from file_watcher section.
-                merged_ignore = list(spec.ignore_patterns)
+                from code_analysis.core.watch_dir_settings import (
+                    merge_watch_ignore_patterns,
+                )
+
+                merged_ignore = list(
+                    merge_watch_ignore_patterns(
+                        spec.ignore_patterns,
+                        self.ignore_patterns,
+                    )
+                )
                 allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
                 docs_indexing_snap: Optional[Dict[str, Any]] = None
                 if self.config_path:
@@ -393,7 +401,10 @@ class MultiProjectFileWatcherWorker:
         )
 
         try:
-            settings = load_file_watcher_runtime_settings(Path(self.config_path))
+            settings = load_file_watcher_runtime_settings(
+                Path(self.config_path),
+                database=database,
+            )
         except Exception as exc:
             from ..config_json import ConfigJSONDecodeError
 

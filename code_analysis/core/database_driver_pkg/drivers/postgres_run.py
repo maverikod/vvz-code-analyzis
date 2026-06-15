@@ -195,7 +195,7 @@ _BOOL_COL_INT_ASSIGN = ("deleted", "has_docstring", "processing_paused")
 
 
 def _adapt_sqlite_bool_int_assignments_for_postgres(sql: str) -> str:
-    """Map ``col = 0`` / ``col = 1`` to BOOLEAN literals for known BOOLEAN columns."""
+    """Map SQLite-style 0/1 to BOOLEAN for known BOOLEAN columns (SET and VALUES)."""
     s = sql
     for col in _BOOL_COL_INT_ASSIGN:
         s = re.sub(
@@ -210,6 +210,20 @@ def _adapt_sqlite_bool_int_assignments_for_postgres(sql: str) -> str:
             s,
             flags=re.IGNORECASE,
         )
+    # ``watch_dirs.deleted`` as 4th VALUES literal (legacy portable SQL).
+    s = re.sub(
+        r"(\bINSERT\s+INTO\s+watch_dirs\b[^;]*?\bVALUES\s*\(\s*\?\s*,\s*\?\s*,\s*\?\s*,\s*)0(\s*,)",
+        r"\1FALSE\2",
+        s,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    # ``files.deleted`` as 7th VALUES literal in INSERT OR REPLACE shape.
+    s = re.sub(
+        r"(\bINSERT\s+INTO\s+files\b[^;]*?\bVALUES\s*\(\s*\?\s*,\s*\?\s*,\s*\?\s*,\s*\?\s*,\s*\?\s*,\s*\?\s*,\s*)0(\s*,)",
+        r"\1FALSE\2",
+        s,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     return s
 
 
@@ -242,10 +256,12 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
         )
     if norm == _WATCH_DIRS_INSERT_OR_REPLACE_NORM:
         return (
-            "INSERT INTO watch_dirs (server_instance_id, id, name, updated_at) "
-            "VALUES (?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
+            "INSERT INTO watch_dirs "
+            "(server_instance_id, id, name, deleted, updated_at) "
+            "VALUES (?, ?, ?, ?, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
             "ON CONFLICT (server_instance_id, id) DO UPDATE SET "
             "name = EXCLUDED.name, "
+            "deleted = EXCLUDED.deleted, "
             "updated_at = EXCLUDED.updated_at"
         )
     if norm == _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NORM:

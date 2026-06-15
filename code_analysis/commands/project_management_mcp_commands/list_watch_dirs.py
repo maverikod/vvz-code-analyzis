@@ -59,9 +59,30 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
+            config_path = self._resolve_config_path()
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 items = database.list_watch_dirs_with_paths()
+                if not items:
+                    from code_analysis.core.watch_dirs_runtime import (
+                        load_watch_dir_specs_runtime,
+                        mount_root_mode_active,
+                    )
+
+                    if mount_root_mode_active(config_path):
+                        specs = load_watch_dir_specs_runtime(
+                            config_path,
+                            database=database,
+                        )
+                        items = [
+                            {
+                                "id": spec.watch_dir_id,
+                                "name": spec.watch_dir_id,
+                                "deleted": False,
+                                "absolute_path": str(spec.watch_dir.resolve()),
+                            }
+                            for spec in specs
+                        ]
                 return SuccessResult(
                     data={"watch_dirs": items, "count": len(items)},
                     message=f"Found {len(items)} watch directory(ies)",

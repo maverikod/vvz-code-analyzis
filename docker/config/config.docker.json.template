@@ -1,0 +1,114 @@
+# Docker stack config (/etc/casmgr/config.json inside casmgr-server container).
+# Copy to docker/runtime/etc/casmgr/config.json and edit placeholders.
+#
+# Watch directories: each entry.path MUST be a direct child of /watched
+# (bind-mount host trees as /watched/<name> in docker-compose.yml).
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 15010,
+    "protocol": "https",
+    "servername": "code-analysis-server",
+    "advertised_host": "CHANGE_ME",
+    "debug": false,
+    "log_level": "INFO",
+    "log_dir": "/var/log/casmgr",
+    "ssl": {
+      "cert": "/etc/casmgr/mtls/server.crt",
+      "key": "/etc/casmgr/mtls/server.key",
+      "ca": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    }
+  },
+  "registration": {
+    "enabled": true,
+    "protocol": "https",
+    "register_url": "https://MCP_PROXY_HOST:3004/register",
+    "unregister_url": "https://MCP_PROXY_HOST:3004/unregister",
+    "server_id": "code-analysis-server",
+    "server_name": "Code Analysis Server",
+    "instance_uuid": "REPLACE_ON_INSTALL",
+    "auto_on_startup": true,
+    "auto_on_shutdown": true,
+    "heartbeat": {
+      "url": "https://MCP_PROXY_HOST:3004/proxy/heartbeat",
+      "interval": 30
+    },
+    "ssl": {
+      "cert": "/etc/casmgr/mtls/client.crt",
+      "key": "/etc/casmgr/mtls/client.key",
+      "ca": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    }
+  },
+  "queue_manager": {
+    "enabled": true,
+    "in_memory": true
+  },
+  "code_analysis": {
+    "host": "0.0.0.0",
+    "port": 15010,
+    "log": "/var/log/casmgr/code_analysis.log",
+    "vector_search_backend": "auto",
+    "batch_output_dir": "/var/casmgr/data/batch_output",
+    "storage": {
+      "db_path": "/var/casmgr/data/code_analysis.db",
+      "faiss_dir": "/var/casmgr/faiss",
+      "locks_dir": "/var/casmgr/locks",
+      "backup_dir": "/var/casmgr/backups",
+      "trash_dir": "/var/casmgr/trash"
+    },
+    "database": {
+      "driver": {
+        "type": "postgres",
+        "config": {
+          "host": "casmgr-postgres",
+          "port": 5432,
+          "dbname": "code_analysis",
+          "user": "code_analysis",
+          "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
+        }
+      }
+    },
+    "chunker": {
+      "enabled": true,
+      "url": "CHUNKER_HOST",
+      "port": 8009,
+      "protocol": "https",
+      "cert_file": "/etc/casmgr/mtls/client.crt",
+      "key_file": "/etc/casmgr/mtls/client.key",
+      "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    },
+    "embedding": {
+      "enabled": true,
+      "host": "EMBEDDING_HOST",
+      "port": 8001,
+      "protocol": "https",
+      "cert_file": "/etc/casmgr/mtls/client.crt",
+      "key_file": "/etc/casmgr/mtls/client.key",
+      "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "check_hostname": false
+    },
+    "worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 5,
+      "log_path": "/var/log/casmgr/vectorization_worker.log",
+      "watch_dirs": []
+    },
+    "file_watcher": {
+      "enabled": true,
+      "scan_interval": 60,
+      "log_path": "/var/log/casmgr/file_watcher.log",
+      "version_dir": "/var/casmgr/versions",
+      "watch_mount_root": "/watched"
+    },
+    "indexing_worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 5,
+      "log_path": "/var/log/casmgr/indexing_worker.log"
+    }
+  }
+}

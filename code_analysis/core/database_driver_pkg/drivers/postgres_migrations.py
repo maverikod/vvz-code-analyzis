@@ -338,6 +338,26 @@ def _ensure_watch_dirs_server_instance_partition(
         )
 
 
+def _ensure_watch_dirs_deleted_column(conn: Any, schema_manager: Any) -> None:
+    """Add ``watch_dirs.deleted`` (shared PG; not applied by CREATE TABLE IF NOT EXISTS)."""
+    from code_analysis.core.database.migrations.watch_dirs_deleted_column import (
+        migrate_watch_dirs_deleted_column,
+    )
+
+    _rollback_conn(conn)
+    try:
+        migrate_watch_dirs_deleted_column(
+            _PostgresConnMigrateAdapter(conn, schema_manager)
+        )
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL watch_dirs deleted column migration failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
 def _ensure_projects_root_path_migrations(conn: Any, schema_manager: Any) -> None:
     """Drop legacy global root_path UNIQUE; scope to server_instance_id (shared PG)."""
     from code_analysis.core.database.migrations.projects_root_segment_postgres import (
@@ -445,6 +465,7 @@ def ensure_postgres_schema(
         _ensure_watch_dirs_server_instance_partition(
             conn, PostgreSQLSchemaManager(conn)
         )
+        _ensure_watch_dirs_deleted_column(conn, PostgreSQLSchemaManager(conn))
         _ensure_projects_root_path_migrations(conn, PostgreSQLSchemaManager(conn))
         conn.commit()
     except Exception as exc:

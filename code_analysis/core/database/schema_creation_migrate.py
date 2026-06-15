@@ -400,6 +400,15 @@ def run_migrate_schema(db: Any) -> None:
         logger.warning("watch_dirs_server_instance migration failed: %s", e)
 
     try:
+        from code_analysis.core.database.migrations.watch_dirs_deleted_column import (
+            migrate_watch_dirs_deleted_column,
+        )
+
+        migrate_watch_dirs_deleted_column(db)
+    except Exception as e:
+        logger.warning("watch_dirs_deleted_column migration failed: %s", e)
+
+    try:
         from code_analysis.core.database.migrations.projects_root_segment_postgres import (
             migrate_projects_root_segment_postgres,
         )

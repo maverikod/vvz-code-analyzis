@@ -11,14 +11,14 @@ from code_analysis.core.search_session.directory import (
     BUFFER_DIRNAME,
     MANIFEST_FILENAME,
     provision_search_session_directory,
-    resolve_search_sessions_root,
 )
 
 
 def test_provision_search_session_directory_creates_layout(tmp_path) -> None:
     search_id = str(uuid.uuid4())
+    sessions_root = tmp_path / "search_sessions"
     layout = provision_search_session_directory(
-        config_dir=tmp_path,
+        sessions_root=sessions_root,
         search_id=search_id,
     )
 
@@ -29,11 +29,11 @@ def test_provision_search_session_directory_creates_layout(tmp_path) -> None:
     assert layout.manifest_path.name == MANIFEST_FILENAME
     assert layout.blocks_dir.name == BLOCKS_DIRNAME
     assert layout.buffer_dir.name == BUFFER_DIRNAME
-    assert resolve_search_sessions_root(tmp_path) in layout.root.parents
+    assert sessions_root in layout.root.parents
 
 
 def test_provision_search_session_directory_raises_when_exists(tmp_path) -> None:
     search_id = str(uuid.uuid4())
-    provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+    provision_search_session_directory(sessions_root=tmp_path / "search_sessions", search_id=search_id)
     with pytest.raises(FileExistsError):
-        provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+        provision_search_session_directory(sessions_root=tmp_path / "search_sessions", search_id=search_id)

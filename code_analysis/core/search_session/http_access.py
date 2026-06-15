@@ -21,7 +21,6 @@ from code_analysis.core.search_session.directory import (
     RELEVANCE_BLOCKS_DIRNAME,
     SERVICE_METADATA_FILENAME,
     SearchSessionDirectoryLayout,
-    resolve_search_sessions_root,
 )
 from code_analysis.core.search_session.manifest import read_manifest
 from code_analysis.core.search_session.result_index import (
@@ -44,7 +43,7 @@ BLOCK_NOT_FOUND = "BLOCK_NOT_FOUND"
 class HttpAccessContext:
     """Dependencies required by search job HTTP handlers."""
 
-    config_dir: Path
+    sessions_root: Path
 
 
 def resolve_session_layout(
@@ -52,7 +51,7 @@ def resolve_session_layout(
     job_id: str,
 ) -> SearchSessionDirectoryLayout:
     """Resolve on-disk layout for ``job_id`` under the configured sessions root."""
-    root = resolve_search_sessions_root(ctx.config_dir) / job_id
+    root = ctx.sessions_root.resolve() / job_id
     return SearchSessionDirectoryLayout(
         root=root,
         manifest_path=root / MANIFEST_FILENAME,

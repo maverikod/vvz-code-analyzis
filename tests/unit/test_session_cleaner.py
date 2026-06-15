@@ -27,14 +27,13 @@ from code_analysis.core.search_session.service_metadata import (
 
 
 def _write_session(
-    config_dir: Path,
+    sessions_root: Path,
     search_id: str,
     *,
     status: str,
     heartbeat_at: float,
     last_access_at: float,
 ) -> Path:
-    sessions_root = config_dir / "data" / "search_sessions"
     session_dir = sessions_root / search_id
     session_dir.mkdir(parents=True)
     layout = layout_from_directory(session_dir)
@@ -58,10 +57,11 @@ def _write_session(
 def config_dir(tmp_path: Path) -> Path:
     config = {
         "code_analysis": {
+            "storage": {"db_path": str(tmp_path / "data" / "code_analysis.db")},
             "search_session": {
                 "ttl_seconds": 1800,
                 "max_block_size_bytes": 1_048_576,
-            }
+            },
         }
     }
     (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
@@ -69,23 +69,29 @@ def config_dir(tmp_path: Path) -> Path:
 
 
 def test_expired_idle_session_deleted(config_dir: Path) -> None:
+    sessions_root = config_dir / "data" / "search_sessions"
     session_dir = _write_session(
-        config_dir,
+        sessions_root,
         "expired-session",
         status="completed",
         heartbeat_at=100.0,
         last_access_at=100.0,
     )
 
-    deleted = cleanup_expired_sessions(config_dir=config_dir, now=5000.0)
+    deleted = cleanup_expired_sessions(
+        sessions_root=sessions_root,
+        config_path=config_dir / "config.json",
+        now=5000.0,
+    )
 
     assert deleted == ["expired-session"]
     assert not session_dir.exists()
 
 
 def test_live_running_session_with_fresh_heartbeat_retained(config_dir: Path) -> None:
+    sessions_root = config_dir / "data" / "search_sessions"
     session_dir = _write_session(
-        config_dir,
+        sessions_root,
         "live-session",
         status="running",
         heartbeat_at=990.0,
@@ -107,6 +113,10 @@ def test_live_running_session_with_fresh_heartbeat_retained(config_dir: Path) ->
         assert delete is False
         assert reason == "live_running"
 
-        deleted = cleanup_expired_sessions(config_dir=config_dir, now=1000.0)
+        deleted = cleanup_expired_sessions(
+            sessions_root=sessions_root,
+            config_path=config_dir / "config.json",
+            now=1000.0,
+        )
         assert deleted == []
         assert session_dir.exists()

@@ -28,7 +28,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 def _make_layout(tmp_path: Path):
     search_id = str(uuid.uuid4())
-    return provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+    return provision_search_session_directory(sessions_root=tmp_path / "search_sessions", search_id=search_id)
 
 
 def _write_manifest(layout, status: str = "running") -> None:
@@ -50,9 +50,9 @@ def _write_manifest(layout, status: str = "running") -> None:
 
 def _cmd(tmp_path: Path) -> SearchCancelCommand:
     cmd = SearchCancelCommand()
-    storage = MagicMock()
-    storage.config_dir = tmp_path
-    cmd._get_shared_storage = MagicMock(return_value=storage)
+    cmd._get_search_sessions_root = MagicMock(
+        return_value=tmp_path / "search_sessions"
+    )
     return cmd
 
 

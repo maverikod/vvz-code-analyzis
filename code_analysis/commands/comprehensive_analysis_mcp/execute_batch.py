@@ -19,7 +19,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 from ..base_mcp_command import BaseMCPCommand
 from ...core.sql_portable import WHERE_FILES_ACTIVE
 from .batch_one_file import analyze_one_file_in_batch
-from .batch_summary import build_batch_summary
+from .batch_summary import build_batch_summary, _merge_project_integrity_summary
 
 logger = logging.getLogger(__name__)
 

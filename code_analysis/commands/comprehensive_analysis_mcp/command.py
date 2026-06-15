@@ -25,6 +25,7 @@ from . import schema
 from .execute_batch import run_batch
 from .execute_single import run_single_file
 from .metadata import get_metadata
+from .project_integrity_phase import maybe_run_project_integrity_checks
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         """Validate params and reject unknown project_id before queuing."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        depth = int(params.get("max_import_chain_depth", 10))
+        if depth < 2 or depth > 10:
+            raise ValidationError(
+                "max_import_chain_depth must be between 2 and 10",
+                field="max_import_chain_depth",
+            )
         return params
 
     async def execute(
@@ -70,6 +77,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         mypy_config_file: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
+        check_missing_files_on_disk: bool = True,
+        check_circular_imports: bool = True,
+        max_import_chain_depth: int = 10,
         **kwargs,
     ) -> Union[SuccessResult, ErrorResult]:
         """Execute comprehensive analysis."""
@@ -118,6 +128,11 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         mypy_config_file = params.get("mypy_config_file")
         limit = params.get("limit")
         offset = int(params.get("offset", 0))
+        check_missing_files_on_disk = bool(
+            params.get("check_missing_files_on_disk", True)
+        )
+        check_circular_imports = bool(params.get("check_circular_imports", True))
+        max_import_chain_depth = int(params.get("max_import_chain_depth", 10))
 
         t_start = time.perf_counter()
         progress_tracker = get_progress_tracker_from_context(context)
@@ -186,7 +201,19 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "mypy_errors": [],
                 "missing_docstrings": [],
                 "summary": {},
+                "project_integrity": {},
             }
+
+            project_integrity = maybe_run_project_integrity_checks(
+                db,
+                project_id,
+                root_path,
+                check_missing_files=check_missing_files_on_disk,
+                check_circular_imports=check_circular_imports,
+                max_import_chain_depth=max_import_chain_depth,
+                analysis_logger=analysis_logger,
+            )
+            results["project_integrity"] = project_integrity
 
             # Statistics for incremental analysis
             files_analyzed = 0
@@ -226,6 +253,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "duplicate_min_similarity": duplicate_min_similarity,
                 "limit": limit,
                 "offset": offset,
+                "check_missing_files_on_disk": check_missing_files_on_disk,
+                "check_circular_imports": check_circular_imports,
+                "max_import_chain_depth": max_import_chain_depth,
             }
 
             if file_path:

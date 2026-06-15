@@ -48,3 +48,12 @@ To avoid indexing Python virtualenvs, caches, and build artifacts, include at le
 - Full set of Python service dirs (see recommended list above).
 
 After changing `watch_dirs` or `ignore_patterns`, restart the server (or restart the file watcher) for changes to take effect.
+
+## Package template (trial watch catalog)
+
+Debian install ships a trial entry under `packaging/watch-catalog-example/{uuid}/`:
+
+- `settings.json` — full default ignore list (same as `DEFAULT_WATCH_DIR_IGNORE_PATTERNS` in code)
+- copied to `/var/casmgr/watch_catalog/{uuid}/` on first `postinst` when absent
+
+`packaging/config.json.template` references this UUID in `worker.watch_dirs`. Point `path` at your host tree and keep or edit `settings.json` in that watch root.

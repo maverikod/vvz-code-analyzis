@@ -96,3 +96,36 @@ def test_ensure_postgres_schema_defines_embedding_vec_when_pgvector_available() 
             "code_chunks.embedding_vec missing (pgvector extension not installed or "
             "CREATE EXTENSION not permitted on this database)"
         )
+
+
+@pytest.mark.skipif(
+    not os.environ.get(_PG_ENV),
+    reason=f"{_PG_ENV} not set (optional live PostgreSQL test)",
+)
+def test_ensure_postgres_schema_adds_watch_dirs_deleted_column() -> None:
+    """After ensure_postgres_schema, watch_dirs.deleted exists on live PostgreSQL."""
+    pytest.importorskip("psycopg")
+    import psycopg
+
+    from code_analysis.core.database.schema_definition import get_schema_definition
+    from code_analysis.core.database_driver_pkg.drivers.postgres_migrations import (
+        ensure_postgres_schema,
+    )
+
+    dsn = os.environ[_PG_ENV]
+    schema = get_schema_definition()
+    with psycopg.connect(dsn) as conn:
+        ensure_postgres_schema(conn, schema, vector_dim=384)
+
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'watch_dirs'
+                  AND column_name = 'deleted'
+                LIMIT 1
+                """
+            )
+            assert cur.fetchone() is not None

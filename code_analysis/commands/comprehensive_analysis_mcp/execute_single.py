@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.duplicate_detector import DuplicateDetector
 from ..base_mcp_command import BaseMCPCommand
+from .batch_summary import _merge_project_integrity_summary
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,9 @@ async def run_single_file(
         "files_skipped": 0,
         "files_total": 1,
     }
+    integrity = results.get("project_integrity") or {}
+    if integrity:
+        summary_data = _merge_project_integrity_summary(summary_data, integrity)
     results["summary"] = summary_data
 
     db.disconnect()

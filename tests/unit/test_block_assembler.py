@@ -24,7 +24,7 @@ def _make_assembler(
 ):
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path, search_id=search_id
+        sessions_root=tmp_path / "search_sessions", search_id=search_id
     )
     buffer = RawFindingBuffer(layout.buffer_dir)
     index_entries: list[tuple[int, str]] = []

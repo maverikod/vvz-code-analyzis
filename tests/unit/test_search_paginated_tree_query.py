@@ -23,7 +23,7 @@ def _session_and_layout(tmp_path: Path):
 
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path, search_id=search_id
+        sessions_root=tmp_path / "search_sessions", search_id=search_id
     )
     session = SearchSession(
         search_id=search_id,

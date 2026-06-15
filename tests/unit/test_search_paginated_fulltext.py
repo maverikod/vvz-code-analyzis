@@ -20,7 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 def _session_and_layout(tmp_path: Path):
     from code_analysis.core.search_session.directory import provision_search_session_directory
     search_id = str(uuid.uuid4())
-    layout = provision_search_session_directory(config_dir=tmp_path, search_id=search_id)
+    layout = provision_search_session_directory(sessions_root=tmp_path / "search_sessions", search_id=search_id)
     session = SearchSession(
         search_id=search_id,
         state=SearchSessionState.running,

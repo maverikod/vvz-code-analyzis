@@ -64,11 +64,14 @@ def get_list_projects_metadata(cls: Type[Any]) -> Dict[str, Any]:
         ],
         error_cases={
             "NO_WATCH_DIRS": {
-                "description": "Config has no valid ``code_analysis.worker.watch_dirs`` entries.",
-                "message": "No watch directories configured",
+                "description": (
+                    "No watch dirs in config and none mounted under watch_mount_root."
+                ),
+                "message": "No watch directories configured or mounted",
                 "solution": (
-                    "Add watch_dirs with ``id`` and ``path`` under "
-                    "``code_analysis.worker`` in config.json and restart the server."
+                    "Set ``host_watch_catalog`` / ``worker.watch_dirs`` in config, run "
+                    "``casmgr-prepare-watch-mounts`` on the host, ensure UUID4 dirs "
+                    "exist under ``watch_mount_root``, then restart the server."
                 ),
             },
             "INVALID_WATCHED_DIR_ID": {

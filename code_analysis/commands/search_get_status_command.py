@@ -46,7 +46,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "SearchSession job_id from search_start handoff.",
+                    "description": "SearchSession job_id from search handoff.",
                 },
             },
             "required": ["job_id"],
@@ -63,8 +63,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         job_id = str(kwargs.get("job_id") or "").strip()
-        storage = self._get_shared_storage()
-        ctx = HttpAccessContext(config_dir=storage.config_dir)
+        ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
@@ -119,6 +118,20 @@ class SearchGetStatusCommand(BaseMCPCommand):
                     "description": "SearchSession job_id.",
                     "type": "string",
                     "required": True,
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Session status snapshot.",
+                    "data": {
+                        "job_id": "Session id",
+                        "status": "running, completed, cancelled, closed, ...",
+                        "phase": "indexed_search, dynamic_discovery, completion, ...",
+                        "block_not_ready": "True when running and no blocks yet",
+                        "progress": "Manifest metrics",
+                        "block_ready_count": "Published temporal blocks count",
+                        "summary": "produced_results and written_blocks",
+                    },
                 },
             },
             "error_cases": {

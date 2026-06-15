@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -88,3 +90,47 @@ async def test_execute_rejects_min_score_out_of_range_at_entry(
     assert isinstance(result, ErrorResult)
     assert result.code == "VALIDATION_ERROR"
     assert "min_score" in result.message
+
+
+@pytest.mark.asyncio
+async def test_execute_loads_jsonc_config_not_stdlib_json(
+    cmd: SemanticSearchMCPCommand,
+    base_params: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production /etc/casmgr/config.json starts with # lines; stdlib json.load fails."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        "# casmgr-server configuration\n"
+        "{\n"
+        '  "code_analysis": {\n'
+        '    "vector_dim": 384,\n'
+        '    "vector_search_backend": "pgvector"\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        SemanticSearchMCPCommand,
+        "_resolve_config_path",
+        staticmethod(lambda: config_path),
+    )
+    monkeypatch.setattr(cmd, "_resolve_project_root", lambda _pid: tmp_path)
+
+    mock_db = MagicMock()
+    mock_db.disconnect = MagicMock()
+    monkeypatch.setattr(
+        cmd, "_open_database_from_config", lambda **kwargs: mock_db
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.semantic_search_mcp.effective_vector_search_backend",
+        lambda _dt, _cfg: "pgvector",
+    )
+
+    result = await cmd.execute(
+        project_id=str(base_params["project_id"]),
+        query=str(base_params["query"]),
+    )
+    assert isinstance(result, ErrorResult)
+    assert "Expecting value" not in (result.message or "")

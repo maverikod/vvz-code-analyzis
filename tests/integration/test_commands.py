@@ -136,7 +136,7 @@ class TestCommandsIntegration:
         from code_analysis.core.storage_paths import StoragePaths
 
         return StoragePaths(
-            config_dir=tmp_path,
+            sessions_root=tmp_path / "search_sessions",
             log_dir=tmp_path / "logs",
             db_path=db_path,
             faiss_dir=tmp_path / "faiss",

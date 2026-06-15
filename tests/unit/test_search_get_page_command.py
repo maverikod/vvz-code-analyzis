@@ -30,7 +30,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 def _make_layout(tmp_path: Path):
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
-        config_dir=tmp_path, search_id=search_id
+        sessions_root=tmp_path / "search_sessions", search_id=search_id
     )
     return layout
 
@@ -61,12 +61,14 @@ def _write_block(layout, position: int = 1) -> None:
     )
 
 
-def _cmd_with_storage(tmp_path: Path) -> SearchGetPageCommand:
+def _cmd_with_sessions_root(tmp_path: Path) -> SearchGetPageCommand:
     cmd = SearchGetPageCommand()
-    storage = MagicMock()
-    storage.config_dir = tmp_path
-    cmd._get_shared_storage = MagicMock(return_value=storage)
+    sessions_root = tmp_path / "search_sessions"
+    cmd._get_search_sessions_root = MagicMock(return_value=sessions_root)
     return cmd
+
+
+_cmd_with_storage = _cmd_with_sessions_root
 
 
 @pytest.mark.asyncio

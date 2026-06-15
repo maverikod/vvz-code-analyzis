@@ -227,6 +227,29 @@ def validate_code_analysis_section_impl(
                                 suggestion='Use a list of strings, e.g. ["**/.venv/**", "**/venv/**"]',
                             )
                         )
+                    if "id" in wd and "path" in wd:
+                        from code_analysis.core.docker_watch_paths import (
+                            validate_docker_watch_dir_entry,
+                        )
+
+                        path_err = validate_docker_watch_dir_entry(
+                            str(wd["id"]), str(wd["path"])
+                        )
+                        if path_err:
+                            results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message=(
+                                        f"code_analysis.worker.watch_dirs[{i}]: {path_err}"
+                                    ),
+                                    section="code_analysis",
+                                    key=f"worker.watch_dirs[{i}].path",
+                                    suggestion=(
+                                        "Set path to /watched/<same-uuid-as-id> and "
+                                        "bind-mount host tree to that container path"
+                                    ),
+                                )
+                            )
 
         indexing_worker = code_analysis.get("indexing_worker")
         if indexing_worker and isinstance(indexing_worker, dict):

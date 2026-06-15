@@ -24,9 +24,9 @@ def _json_response(status_code: int, payload: dict) -> JSONResponse:
     return JSONResponse(content=payload, status_code=status_code)
 
 
-def register_search_job_routes(app: Any, *, config_dir: Path) -> None:
+def register_search_job_routes(app: Any, *, sessions_root: Path) -> None:
     """Register non-streaming search job index, block, and status routes."""
-    ctx = HttpAccessContext(config_dir=config_dir)
+    ctx = HttpAccessContext(sessions_root=sessions_root)
 
     def get_index(job_id: str) -> JSONResponse:
         status_code, payload = handle_get_index(ctx, job_id)

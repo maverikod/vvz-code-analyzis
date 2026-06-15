@@ -18,7 +18,12 @@ from ..base_mcp_command import BaseMCPCommand
 from ...core.config import get_driver_config
 from ...core.faiss_manager import FaissIndexManager
 from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
-from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
+from ...core.config_json import ConfigJSONDecodeError
+from ...core.storage_paths import (
+    get_faiss_index_path,
+    load_raw_config,
+    resolve_storage_paths,
+)
 from ...core.vector_search_backend import effective_vector_search_backend
 
 logger = logging.getLogger(__name__)
@@ -101,11 +106,13 @@ class RebuildFaissCommand(BaseMCPCommand):
                         message=f"Configuration file not found: {config_path}",
                         code="CONFIG_NOT_FOUND",
                     )
-
-                import json
-
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config_dict = json.load(f)
+                try:
+                    config_dict = load_raw_config(config_path)
+                except ConfigJSONDecodeError as exc:
+                    return ErrorResult(
+                        message=str(exc),
+                        code="CONFIG_INVALID",
+                    )
 
                 storage_paths = resolve_storage_paths(
                     config_data=config_dict, config_path=config_path

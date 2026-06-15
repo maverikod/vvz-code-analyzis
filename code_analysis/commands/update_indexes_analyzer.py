@@ -116,10 +116,11 @@ async def _persist_markdown_doc_chunks_async(
     root_for_certs: Optional[Path] = None
     if server_config_path:
         try:
+            from code_analysis.core.config_json import load_config_json
+
             cfg_path = Path(server_config_path).expanduser().resolve()
             root_for_certs = cfg_path.parent
-            with cfg_path.open("r", encoding="utf-8") as f:
-                cfg = json.load(f)
+            cfg = load_config_json(cfg_path)
         except Exception as exc:
             logger.debug(
                 "Markdown index: could not load server config %s: %s",

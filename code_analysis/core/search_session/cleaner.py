@@ -27,7 +27,6 @@ from code_analysis.core.search_session.directory import (
     RELEVANCE_BLOCKS_DIRNAME,
     SERVICE_METADATA_FILENAME,
     SearchSessionDirectoryLayout,
-    resolve_search_sessions_root,
 )
 from code_analysis.core.search_session.manifest import read_manifest
 from code_analysis.core.search_session.policy import (
@@ -130,12 +129,17 @@ def cleanup_interval_seconds(policy: SessionTTLPolicy) -> float:
 
 async def _search_session_cleanup_loop(
     *,
-    config_dir: Path,
+    sessions_root: Path,
+    config_path: Path,
     interval_seconds: float,
 ) -> None:
     while True:
         try:
-            deleted = cleanup_expired_sessions(config_dir=config_dir, now=time.time())
+            deleted = cleanup_expired_sessions(
+                sessions_root=sessions_root,
+                config_path=config_path,
+                now=time.time(),
+            )
             if deleted:
                 logger.info(
                     "Search session cleanup removed %d session(s): %s",
@@ -150,7 +154,8 @@ async def _search_session_cleanup_loop(
 def register_search_session_cleanup(
     app: Any,
     *,
-    config_dir: Path,
+    sessions_root: Path,
+    config_path: Path,
     app_config: dict[str, Any],
 ) -> None:
     """Register periodic background cleanup of expired search sessions."""
@@ -161,20 +166,25 @@ def register_search_session_cleanup(
     async def _start_search_session_cleanup() -> None:
         asyncio.create_task(
             _search_session_cleanup_loop(
-                config_dir=config_dir,
+                sessions_root=sessions_root,
+                config_path=config_path,
                 interval_seconds=interval_seconds,
             )
         )
 
 
-def cleanup_expired_sessions(*, config_dir: Path, now: float) -> list[str]:
+def cleanup_expired_sessions(
+    *,
+    sessions_root: Path,
+    config_path: Path,
+    now: float,
+) -> list[str]:
     """Remove session directories approved by cleanup policy."""
-    config_path = config_dir / "config.json"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        config_data = json.load(handle)
+    from code_analysis.core.storage_paths import load_raw_config
+
+    config_data = load_raw_config(Path(config_path))
     policy = load_session_ttl_policy(config_data)
 
-    sessions_root = resolve_search_sessions_root(config_dir)
     deleted: list[str] = []
     for session_dir in iter_session_directories(sessions_root):
         layout = layout_from_directory(session_dir)

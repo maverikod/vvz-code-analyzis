@@ -13,10 +13,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.exceptions import DuplicateProjectIdError, ValidationError
 from ...core.watch_dirs_from_config import (
-    discover_projects_from_config,
     discovered_project_to_list_row,
     flatten_discovered_projects,
-    load_watch_dir_specs_from_config,
+)
+from ...core.watch_dirs_runtime import (
+    discover_projects_runtime,
+    load_watch_dir_specs_runtime,
+    runtime_has_watch_dirs,
 )
 from ._shared import BaseMCPCommand
 
@@ -27,8 +30,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
     name = "list_projects"
     version = "2.0.0"
     descr = (
-        "List projects discovered on disk from configured watch directories. "
-        "Reads projectid metadata; does not query the database."
+        "List projects discovered under mounted watch directories (UUID4 children "
+        "of watch_mount_root). Host prepare script materializes config/catalog first."
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
@@ -40,9 +43,10 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Discover projects on disk from ``code_analysis.worker.watch_dirs`` in "
-                "server config. Returns the standard list_projects project dict shape. "
-                "By default excludes projects with ``projectid.deleted: true``."
+                "Discover projects on disk under ``file_watcher.watch_mount_root``. "
+                "Only UUID4 immediate subdirectories count (same as file watcher). "
+                "Config ``worker.watch_dirs`` is applied on the host by "
+                "``casmgr-prepare-watch-mounts`` before server start."
             ),
             "properties": {
                 "include_deleted": {
@@ -105,7 +109,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     details={},
                 )
             config_path = self._resolve_config_path()
-            specs = load_watch_dir_specs_from_config(config_path)
+            specs = load_watch_dir_specs_runtime(config_path)
             if not any(s.watch_dir_id == wid for s in specs):
                 raise ValidationError(
                     f"Watched directory not found: {wid}",
@@ -140,7 +144,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
             config_path = self._resolve_config_path()
             try:
-                watch_results = discover_projects_from_config(
+                watch_results = discover_projects_runtime(
                     config_path,
                     watch_dir_id=watched_dir_id,
                 )
@@ -156,7 +160,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 )
 
             if watched_dir_id is not None and not watch_results:
-                specs = load_watch_dir_specs_from_config(config_path)
+                specs = load_watch_dir_specs_runtime(config_path)
                 known_ids = {s.watch_dir_id for s in specs}
                 if watched_dir_id not in known_ids:
                     return self._handle_error(
@@ -170,11 +174,18 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     )
 
             if not watch_results and watched_dir_id is None:
-                if not load_watch_dir_specs_from_config(config_path):
+                if not runtime_has_watch_dirs(config_path):
                     return ErrorResult(
-                        message="No watch directories configured",
+                        message="No watch directories mounted under watch_mount_root",
                         code="NO_WATCH_DIRS",
-                        details={"config_path": str(config_path)},
+                        details={
+                            "config_path": str(config_path),
+                            "hint": (
+                                "Run casmgr-prepare-watch-mounts on the host so config "
+                                "worker.watch_dirs and host_watch_catalog appear as "
+                                "UUID4 subdirectories of watch_mount_root"
+                            ),
+                        },
                     )
 
             flat = flatten_discovered_projects(watch_results)

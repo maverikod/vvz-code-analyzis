@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.exceptions import ValidationError
+from ...core.list_pagination import (
+    apply_list_pagination_defaults,
+    apply_pagination_fields,
+    list_pagination_schema_properties,
+)
 from ..base_mcp_command import BaseMCPCommand
 from ..log_viewer import parse_log_timestamp, parse_timing_line
 
@@ -27,10 +32,11 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
     """
 
     name = "analyze_timing_bottlenecks"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Collect [TIMING] lines from this server's worker logs and report bottlenecks "
-        "by internal operation (server-side only; not about user projects the server serves)."
+        "by internal operation (server-side only; not about user projects the server serves). "
+        "``operations`` is paginated (default ``page_size`` 20); ``limit`` caps lines scanned."
     )
     category = "logging"
     author = "Vasiliy Zdanovskiy"
@@ -86,6 +92,7 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
                     "description": "Number of top bottlenecks to return by total and by average time (default 10)",
                     "default": 10,
                 },
+                **list_pagination_schema_properties(include_limit_alias=False),
             },
             "required": [],
             "additionalProperties": False,
@@ -115,6 +122,7 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
                     field=key,
                     details={"minimum": minimum, "maximum": maximum},
                 )
+        apply_list_pagination_defaults(params)
         return params
 
     def _resolve_worker_log_path(self, worker_type: str) -> Optional[str]:
@@ -155,6 +163,9 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
         tail: Optional[int] = None,
         limit: int = 50000,
         top_n: int = 10,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        offset: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute analyze timing bottlenecks: read log, parse [TIMING] lines, aggregate by op_name."""
@@ -166,6 +177,9 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
             "tail": tail,
             "limit": limit,
             "top_n": top_n,
+            "page_size": page_size,
+            "block_position": block_position,
+            "offset": offset,
         }
         params.update(kwargs)
         try:
@@ -184,6 +198,9 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
         tail = params.get("tail")
         limit = int(params.get("limit", 50000))
         top_n = int(params.get("top_n", 10))
+        page_size_val = int(params["page_size"])
+        offset_val = int(params["offset"])
+        block_position_val = int(params["block_position"])
         if not self._is_timing_enabled():
             return ErrorResult(
                 code="TIMING_DISABLED",
@@ -273,14 +290,23 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
             "lines_scanned": lines_scanned,
             "timing_events": total_events,
             "total_duration_sec": round(total_duration_sec, 3),
-            "operations": operations,
+            "operations_total": len(operations),
             "bottlenecks_by_total": bottlenecks_by_total,
             "bottlenecks_by_avg": bottlenecks_by_avg,
-            "message": (
-                f"Parsed {total_events} timing events from {lines_scanned} lines; "
-                f"total time {total_duration_sec:.1f}s across {len(operations)} operations."
-            ),
         }
+        apply_pagination_fields(
+            data,
+            all_items=operations,
+            legacy_items_key="operations",
+            page_size=page_size_val,
+            block_position=block_position_val,
+            offset=offset_val,
+        )
+        data["message"] = (
+            f"Parsed {total_events} timing events from {lines_scanned} lines; "
+            f"total time {total_duration_sec:.1f}s across {len(operations)} operations; "
+            f"returning page {block_position_val} ({data['count']} rows)."
+        )
         return SuccessResult(data=data)
 
     @classmethod

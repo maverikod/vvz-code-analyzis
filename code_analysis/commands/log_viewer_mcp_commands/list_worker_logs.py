@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.list_pagination import (
+    apply_list_pagination_defaults,
+    apply_pagination_fields,
+    list_pagination_schema_properties,
+)
 from ..base_mcp_command import BaseMCPCommand
 from ..file_management.relative_path_list_pattern import (
     effective_listing_pattern,
@@ -48,12 +53,13 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
     """List available worker log files."""
 
     name = "list_worker_logs"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "List worker log files under scanned dirs; optional ``file_pattern`` / ``glob`` "
         "as fnmatch on each file's absolute path (normalized ``\\\\`` → ``/``). "
         "When multiple scan roots resolve to the same directory, each physical file "
-        "appears once in the response."
+        "appears once in the response. Returns paginated ``items`` / ``log_files`` "
+        "(default ``page_size`` 20); use ``block_position`` for the next page."
     )
     category = "logging"
     author = "Vasiliy Zdanovskiy"
@@ -107,10 +113,17 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                         "Alias of ``file_pattern``; non-empty ``file_pattern`` wins when both set."
                     ),
                 },
+                **list_pagination_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize pagination params after schema validation."""
+        params = super().validate_params(params)
+        apply_list_pagination_defaults(params)
+        return params
 
     async def execute(
         self,
@@ -118,10 +131,34 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
         worker_type: Optional[str] = None,
         file_pattern: Optional[str] = None,
         glob: Optional[str] = None,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute list worker logs command."""
         try:
+            params = self.validate_params(
+                {
+                    "log_dirs": log_dirs,
+                    "worker_type": worker_type,
+                    "file_pattern": file_pattern,
+                    "glob": glob,
+                    "page_size": page_size,
+                    "block_position": block_position,
+                    "limit": limit,
+                    "offset": offset,
+                    **kwargs,
+                }
+            )
+            log_dirs = params.get("log_dirs")
+            worker_type = params.get("worker_type")
+            file_pattern = params.get("file_pattern")
+            glob = params.get("glob")
+            page_size_val = int(params["page_size"])
+            offset_val = int(params["offset"])
+            block_position_val = int(params["block_position"])
             resolved_dirs = log_dirs
             if not resolved_dirs:
                 try:
@@ -141,7 +178,6 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                         list(result["log_files"])
                     ),
                 }
-                result["total_files"] = len(result["log_files"])
             eff = effective_listing_pattern(file_pattern, glob)
             if eff and isinstance(result, dict):
                 logs = result.get("log_files") or []
@@ -155,8 +191,22 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 result = {
                     **result,
                     "log_files": filtered,
-                    "total_files": len(filtered),
                 }
+            if isinstance(result, dict):
+                all_files = list(result.get("log_files") or [])
+                apply_pagination_fields(
+                    result,
+                    all_items=all_files,
+                    legacy_items_key="log_files",
+                    page_size=page_size_val,
+                    block_position=block_position_val,
+                    offset=offset_val,
+                )
+                result["total_files"] = result["total"]
+                result["message"] = (
+                    f"Found {result['total']} log file(s); "
+                    f"returning page {block_position_val} ({result['count']} rows)"
+                )
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "LOG_LIST_ERROR", "list_worker_logs")

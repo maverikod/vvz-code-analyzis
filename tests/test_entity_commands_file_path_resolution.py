@@ -69,8 +69,10 @@ async def test_list_code_entities_empty_when_file_not_in_project(
         )
 
     assert result.data["entities"] == []
+    assert result.data["items"] == []
     assert result.data["count"] == 0
-    assert mock_db.execute.call_count >= 1
+    assert result.data["has_more"] is False
+    assert mock_db.execute.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -79,8 +81,7 @@ async def test_list_code_entities_filters_by_resolved_file_id(tmp_path: Path) ->
     mock_db = MagicMock()
     mock_db.execute.side_effect = [
         {"data": [{"id": 42, "path": "/x/src/foo.py", "relative_path": "src/foo.py"}]},
-        {"data": []},
-        {"data": []},
+        {"data": [{"cnt": 0}]},
         {"data": []},
     ]
     mock_db.disconnect.return_value = None
@@ -104,11 +105,13 @@ async def test_list_code_entities_filters_by_resolved_file_id(tmp_path: Path) ->
         )
 
     calls = [c.args[0] for c in mock_db.execute.call_args_list]
-    filtered = [sql for sql in calls if "FROM files f WHERE f.project_id" not in sql]
-    for sql in filtered:
-        assert (
-            "file_id = ?" in sql or "func.file_id = ?" in sql or "c.file_id = ?" in sql
-        )
+    filtered = [
+        sql
+        for sql in calls
+        if "FROM files f WHERE f.project_id" not in sql and "COUNT" not in sql.upper()
+    ]
+    assert len(filtered) == 1
+    assert "LIMIT ? OFFSET ?" in filtered[0]
 
 
 @pytest.mark.asyncio

@@ -11,8 +11,14 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
+from .list_entities_page import count_code_entities, fetch_code_entities_page
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.list_pagination import (
+    build_list_page_payload,
+    list_pagination_schema_properties,
+    resolve_list_pagination,
+)
 
 
 def _is_valid_uuid4(value: Optional[str]) -> bool:
@@ -33,8 +39,12 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
     """List code entities (classes, functions, methods) in a file or project."""
 
     name = "list_code_entities"
-    version = "1.0.0"
-    descr = "List classes, functions, or methods in a file or project"
+    version = "1.1.0"
+    descr = (
+        "List classes, functions, or methods in a file or project. "
+        "Returns paginated ``items`` (default ``page_size`` 20); use "
+        "``block_position`` for the next page."
+    )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -43,6 +53,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         base_props = cls._get_base_schema_properties()
+        pagination = list_pagination_schema_properties()
         return {
             "type": "object",
             "properties": {
@@ -56,15 +67,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional file path to filter by (relative to project root)",
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional limit on number of results",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Offset for pagination",
-                    "default": 0,
-                },
+                **pagination,
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -75,6 +78,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         project_id: str,
         entity_type: Optional[str] = None,
         file_path: Optional[str] = None,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
         limit: Optional[int] = None,
         offset: int = 0,
         **kwargs,
@@ -83,6 +88,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
             "project_id": project_id,
             "entity_type": entity_type,
             "file_path": file_path,
+            "page_size": page_size,
+            "block_position": block_position,
             "limit": limit,
             "offset": offset,
         }
@@ -94,16 +101,12 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         project_id = params["project_id"]
         entity_type = params.get("entity_type")
         file_path = params.get("file_path")
-        limit = params.get("limit")
-        offset = int(params.get("offset", 0))
+        page_size, offset, block_position = resolve_list_pagination(params)
 
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
-
-            # List entities from database
-            entities = []
 
             resolved_file_id: Optional[Any] = None
             if file_path:
@@ -117,86 +120,42 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 if not file_record:
                     db.disconnect()
                     return SuccessResult(
-                        data={
-                            "success": True,
-                            "entities": [],
-                            "count": 0,
-                        }
+                        data=build_list_page_payload(
+                            items=[],
+                            total=0,
+                            page_size=page_size,
+                            block_position=block_position,
+                            offset=offset,
+                            legacy_items_key="entities",
+                        )
                     )
                 resolved_file_id = file_record["id"]
 
-            if not entity_type or entity_type == "class":
-                query = (
-                    "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id "
-                    "WHERE f.project_id = ?"
-                )
-                class_params: List[Any] = [proj_id]
-                if resolved_file_id is not None:
-                    query += " AND c.file_id = ?"
-                    class_params.append(resolved_file_id)
-                query += " ORDER BY f.path, c.line"
-                if limit:
-                    query += f" LIMIT {limit}"
-                if offset:
-                    query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(class_params))
-                rows = result.get("data", [])
-                for row in rows:
-                    if not row.get("file_path"):
-                        continue
-                    entities.append({"type": "class", **row})
-
-            if not entity_type or entity_type == "function":
-                query = (
-                    "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id "
-                    "WHERE f.project_id = ?"
-                )
-                func_params: List[Any] = [proj_id]
-                if resolved_file_id is not None:
-                    query += " AND func.file_id = ?"
-                    func_params.append(resolved_file_id)
-                query += " ORDER BY f.path, func.line"
-                if limit:
-                    query += f" LIMIT {limit}"
-                if offset:
-                    query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(func_params))
-                rows = result.get("data", [])
-                for row in rows:
-                    if not row.get("file_path"):
-                        continue
-                    entities.append({"type": "function", **row})
-
-            if not entity_type or entity_type == "method":
-                query = (
-                    "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m "
-                    "JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id "
-                    "WHERE f.project_id = ?"
-                )
-                method_params: List[Any] = [proj_id]
-                if resolved_file_id is not None:
-                    query += " AND c.file_id = ?"
-                    method_params.append(resolved_file_id)
-                query += " ORDER BY f.path, m.line"
-                if limit:
-                    query += f" LIMIT {limit}"
-                if offset:
-                    query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(method_params))
-                rows = result.get("data", [])
-                for row in rows:
-                    if not row.get("file_path"):
-                        continue
-                    entities.append({"type": "method", **row})
-
+            total = count_code_entities(
+                db,
+                project_id=proj_id,
+                entity_type=entity_type,
+                file_id=resolved_file_id,
+            )
+            entities = fetch_code_entities_page(
+                db,
+                project_id=proj_id,
+                entity_type=entity_type,
+                file_id=resolved_file_id,
+                limit=page_size,
+                offset=offset,
+            )
             db.disconnect()
 
             return SuccessResult(
-                data={
-                    "success": True,
-                    "entities": entities,
-                    "count": len(entities),
-                }
+                data=build_list_page_payload(
+                    items=entities,
+                    total=total,
+                    page_size=page_size,
+                    block_position=block_position,
+                    offset=offset,
+                    legacy_items_key="entities",
+                )
             )
         except Exception as e:
             return self._handle_error(e, "LIST_ENTITIES_ERROR", "list_code_entities")

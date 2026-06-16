@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.exceptions import ValidationError
+from ...core.list_pagination import (
+    apply_list_pagination_defaults,
+    list_pagination_schema_properties,
+)
 from ..base_mcp_command import BaseMCPCommand
 from ..log_viewer import LogViewerCommand
 
@@ -34,8 +38,12 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
     """View worker logs with filtering by time and event type."""
 
     name = "view_worker_logs"
-    version = "1.0.0"
-    descr = "View worker logs with filtering by time, event type, and search pattern"
+    version = "1.1.0"
+    descr = (
+        "View worker logs with filtering by time, event type, and search pattern. "
+        "Returns paginated ``items`` / ``entries`` (default ``page_size`` 20); "
+        "use ``block_position`` for the next page."
+    )
     category = "logging"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -118,11 +126,7 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Return last N lines (if specified, ignores time filters)",
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of lines to return",
-                    "default": 1000,
-                },
+                **list_pagination_schema_properties(),
             },
             "required": [],
             "additionalProperties": False,
@@ -160,6 +164,7 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     field=key,
                     details={"minimum": minimum, "maximum": maximum},
                 )
+        apply_list_pagination_defaults(params)
         return params
 
     async def execute(
@@ -175,7 +180,10 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         importance_min: Optional[int] = None,
         importance_max: Optional[int] = None,
         tail: Optional[int] = None,
-        limit: int = 1000,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute view worker logs command."""
@@ -191,7 +199,10 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             "importance_min": importance_min,
             "importance_max": importance_max,
             "tail": tail,
+            "page_size": page_size,
+            "block_position": block_position,
             "limit": limit,
+            "offset": offset,
         }
         params.update(kwargs)
         try:
@@ -214,7 +225,9 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         importance_min = params.get("importance_min")
         importance_max = params.get("importance_max")
         tail = params.get("tail")
-        limit = int(params.get("limit", 1000))
+        page_size = int(params["page_size"])
+        offset = int(params["offset"])
+        block_position = int(params["block_position"])
         try:
             resolved_path = log_path
             resolved_worker_type = worker_type
@@ -239,7 +252,9 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 importance_min=importance_min,
                 importance_max=importance_max,
                 tail=tail,
-                limit=limit,
+                page_size=page_size,
+                offset=offset,
+                block_position=block_position,
             )
             result = await command.execute()
             return SuccessResult(data=result)

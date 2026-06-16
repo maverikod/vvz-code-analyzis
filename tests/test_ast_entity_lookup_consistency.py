@@ -79,26 +79,24 @@ async def test_list_code_entities_file_path_filter() -> None:
                 }
             ]
         },
+        {"data": [{"cnt": 2}]},
         {
             "data": [
                 {
+                    "type": "class",
                     "name": "AIAdminCommand",
                     "line": 9,
                     "file_path": "ai_admin/commands/base.py",
                     "cst_node_id": node_id_class,
-                }
-            ]
-        },
-        {"data": []},
-        {
-            "data": [
+                },
                 {
+                    "type": "method",
                     "name": "execute",
                     "line": 11,
                     "class_name": "AIAdminCommand",
                     "file_path": "ai_admin/commands/base.py",
                     "cst_node_id": node_id_method,
-                }
+                },
             ]
         },
     ]

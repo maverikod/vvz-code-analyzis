@@ -19,6 +19,12 @@ from ..file_management.relative_path_list_pattern import (
     relative_path_matches_listing_pattern,
 )
 from ..project_fs_enumerate import enumerate_project_paths
+from ...core.list_pagination import (
+    build_list_page_payload,
+    list_pagination_schema_properties,
+    paginate_sequence,
+    resolve_list_pagination,
+)
 
 
 def _build_file_id_lookup(rows: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -89,7 +95,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
 
     name = "list_project_files"
 
-    version = "1.2.0"
+    version = "1.3.0"
 
     descr = (
         "List project files from disk (``ls`` semantics). Each row includes ``file_id`` "
@@ -99,8 +105,8 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         "literals without ``*?[]`` act as a directory prefix. Skips dot-prefixed dirs "
         "(``ls`` without ``-a``), cache dirs, and ``.venv``/``venv`` unless ``show_hidden``, "
         "``show_venv``, or ``include_venv_ignore_exceptions``. Set ``python_only`` for legacy "
-        "``.py``-only enumeration. Indexed search remains ``fulltext_search`` / "
-        "``semantic_search`` / AST commands."
+        "``.py``-only enumeration. Returns paginated ``items`` (default ``page_size`` "
+        "20); use ``block_position`` for the next page (same contract as ``search``)."
     )
 
     category = "ast"
@@ -113,6 +119,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        pagination = list_pagination_schema_properties()
         return {
             "type": "object",
             "properties": {
@@ -139,15 +146,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "non-empty ``file_pattern`` wins."
                     ),
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional limit on number of results",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Offset for pagination",
-                    "default": 0,
-                },
+                **pagination,
                 "show_venv": {
                     "type": "boolean",
                     "description": (
@@ -196,6 +195,8 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         project_id: str,
         file_pattern: Optional[str] = None,
         glob: Optional[str] = None,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
         limit: Optional[int] = None,
         offset: int = 0,
         show_venv: bool = False,
@@ -210,8 +211,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             project_id: Project UUID string.
             file_pattern: Optional shell-style glob or directory prefix to filter files.
             glob: Same as ``file_pattern`` when the client uses the name ``glob``.
-            limit: Maximum number of files to return.
-            offset: Number of files to skip from the beginning.
+            limit: Legacy alias for page_size.
+            offset: Legacy row offset when block_position is omitted.
+            page_size: Rows per page (default 20).
+            block_position: 1-based page index (default 1).
             show_venv: If True, include allowlisted venv site-packages files.
             python_only: If True, return only ``.py`` files.
             include_venv_ignore_exceptions: If True, include venv paths from ignore_exceptions.
@@ -244,8 +247,15 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 ]
 
             total = len(fs_paths)
-            if offset > 0 or limit is not None:
-                fs_paths = fs_paths[offset : offset + (limit or len(fs_paths))]
+            page_size, offset, block_position = resolve_list_pagination(
+                {
+                    "page_size": page_size,
+                    "block_position": block_position,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            )
+            page_paths = paginate_sequence(fs_paths, offset=offset, page_size=page_size)
 
             id_by_key: Dict[str, str] = {}
             try:
@@ -259,17 +269,18 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 _fs_file_dict_with_optional_id(
                     project_id, project_root, abs_path, id_by_key
                 )
-                for abs_path in fs_paths
+                for abs_path in page_paths
             ]
 
             return SuccessResult(
-                data={
-                    "success": True,
-                    "files": files_data,
-                    "count": len(files_data),
-                    "total": total,
-                    "offset": offset,
-                }
+                data=build_list_page_payload(
+                    items=files_data,
+                    total=total,
+                    page_size=page_size,
+                    block_position=block_position,
+                    offset=offset,
+                    legacy_items_key="files",
+                )
             )
         except Exception as e:
             return self._handle_error(e, "LIST_FILES_ERROR", "list_project_files")

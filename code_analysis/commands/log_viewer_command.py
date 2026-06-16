@@ -14,6 +14,10 @@ from typing import Any, Dict, List, Optional
 
 from code_analysis.logging import importance_from_level
 
+from ..core.list_pagination import (
+    DEFAULT_LIST_PAGE_SIZE,
+    apply_pagination_fields,
+)
 from .log_viewer_utils import (
     DATABASE_DRIVER_EVENT_PATTERNS,
     FILE_WATCHER_EVENT_PATTERNS,
@@ -45,7 +49,9 @@ class LogViewerCommand:
         importance_min: Optional[int] = None,
         importance_max: Optional[int] = None,
         tail: Optional[int] = None,
-        limit: int = 1000,
+        page_size: int = DEFAULT_LIST_PAGE_SIZE,
+        offset: int = 0,
+        block_position: int = 1,
     ):
         self.log_path = Path(log_path)
         self.worker_type = worker_type
@@ -59,7 +65,9 @@ class LogViewerCommand:
         self.importance_min = importance_min
         self.importance_max = importance_max
         self.tail = tail
-        self.limit = limit
+        self.page_size = page_size
+        self.offset = offset
+        self.block_position = block_position
         if worker_type == "file_watcher":
             self.event_patterns = FILE_WATCHER_EVENT_PATTERNS
         elif worker_type == "vectorization":
@@ -239,7 +247,6 @@ class LogViewerCommand:
             if self.tail:
                 lines = lines[-self.tail :]
             entries_list: List[Dict[str, Any]] = []
-            filtered_count = 0
             for line in lines:
                 parsed = self._parse_log_line(line.rstrip("\n"))
                 if not parsed:
@@ -257,14 +264,21 @@ class LogViewerCommand:
                         "raw": parsed.get("raw", ""),
                     }
                     entries_list.append(entry)
-                    filtered_count += 1
-                    if len(entries_list) >= self.limit:
-                        break
-            result["entries"] = entries_list
-            result["filtered_lines"] = filtered_count
+            total_matching = len(entries_list)
+            apply_pagination_fields(
+                result,
+                all_items=entries_list,
+                legacy_items_key="entries",
+                page_size=self.page_size,
+                block_position=self.block_position,
+                offset=self.offset,
+            )
+            result["filtered_lines"] = total_matching
             result["message"] = (
-                f"Found {result['filtered_lines']} matching entries "
-                f"(from {result['total_lines']} total lines)"
+                f"Found {total_matching} matching entries "
+                f"(from {result['total_lines']} total lines); "
+                f"returning page {self.block_position} "
+                f"({result['count']} of {total_matching})"
             )
         except Exception as e:
             logger.error(

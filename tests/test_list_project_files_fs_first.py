@@ -55,6 +55,9 @@ async def test_list_project_files_lists_file_on_disk(tmp_path) -> None:
     assert data["total"] == 1
     assert data["files"][0]["relative_path"] == "src/app.py"
     assert data["files"][0].get("file_id") is None
+    assert data["items"] == data["files"]
+    assert data["has_more"] is False
+    assert data["page_size"] == 20
 
 
 @pytest.mark.asyncio

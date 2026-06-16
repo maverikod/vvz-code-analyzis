@@ -60,7 +60,7 @@ def test_publishes_block_when_threshold_reached(tmp_path) -> None:
     block_path = layout.blocks_dir / "block_1.json"
     assert block_path.is_file()
     payload = json.loads(block_path.read_text(encoding="utf-8"))
-    assert len(payload["results"]) >= 1
+    assert len(payload["items"]) >= 1
     assert index_entries == [(1, COMPLETENESS_RUNNING)]
     assert metrics_updates[0]["written_blocks"] == 1
     assert buffer.lock_path.exists() is False

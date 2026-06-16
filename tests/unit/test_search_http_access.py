@@ -111,7 +111,7 @@ def test_handle_get_block_returns_published_block(tmp_path) -> None:
         completeness=COMPLETENESS_RUNNING,
     )
     block = SearchResultBlock(
-        position=1, results=({"id": "a"},), serialized_size_bytes=0
+        position=1, items=({"id": "a"},), serialized_size_bytes=0
     )
     block_path = layout.blocks_dir / "block_1.json"
     block_path.write_bytes(serialize_block(block))
@@ -121,7 +121,7 @@ def test_handle_get_block_returns_published_block(tmp_path) -> None:
 
     assert status_code == 200
     assert payload["position"] == 1
-    assert payload["results"] == [{"id": "a"}]
+    assert payload["items"] == [{"id": "a"}]
 
 
 def test_handle_get_status_reads_manifest_and_refreshes_access(tmp_path) -> None:

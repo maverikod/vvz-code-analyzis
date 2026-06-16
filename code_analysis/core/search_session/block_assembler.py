@@ -48,6 +48,7 @@ class BlockAssembler:
         max_results_per_block: int | None = None,
         append_index_entry: Callable[[int, str], None],
         update_manifest_metrics: Callable[[dict], None],
+        on_block_published: Callable[[int, int, int], None] | None = None,
     ) -> None:
         self._layout = layout
         self._buffer = buffer
@@ -55,6 +56,7 @@ class BlockAssembler:
         self._max_results_per_block = max_results_per_block
         self._append_index_entry = append_index_entry
         self._update_manifest_metrics = update_manifest_metrics
+        self._on_block_published = on_block_published
 
     def run_once(self, *, search_completed: bool) -> int:
         """
@@ -101,10 +103,10 @@ class BlockAssembler:
                     max_results=self._max_results_per_block,
                     position=position,
                 )
-                if not block.results:
+                if not block.items:
                     break
 
-                assembled_count = len(block.results)
+                assembled_count = len(block.items)
                 block_path = self._layout.blocks_dir / f"block_{block.position}.json"
                 atomic_write_bytes(block_path, serialize_block(block))
                 self._append_index_entry(block.position, COMPLETENESS_RUNNING)
@@ -117,6 +119,12 @@ class BlockAssembler:
                 )
                 self._buffer.remove_findings(finding_paths[:assembled_count])
                 blocks_published += 1
+                if self._on_block_published is not None:
+                    self._on_block_published(
+                        block.position,
+                        assembled_count,
+                        block.serialized_size_bytes,
+                    )
 
                 if search_completed and self._buffer.total_bytes() == 0:
                     self._finalize()
@@ -210,13 +218,13 @@ class BlockAssembler:
                 max_results=self._max_results_per_block,
                 position=position,
             )
-            if not block.results:
+            if not block.items:
                 break
             block_path = relevance_dir / f"block_{block.position}.json"
             data = serialize_block(block)
             atomic_write_bytes(block_path, data)
             entries.append({"position": position, "size_bytes": len(data)})
-            remaining = remaining[len(block.results) :]
+            remaining = remaining[len(block.items) :]
 
         return entries
 

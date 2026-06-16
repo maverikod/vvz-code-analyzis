@@ -16,12 +16,14 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from ..core.exceptions import ValidationError
 from ..core.search_session.http_access import HttpAccessContext, resolve_session_layout
 from ..core.search_session.manifest import read_manifest
+from ..core.search_session.page_payload import temporal_page_payload
+from ..core.search_session.result_block import block_items_from_payload
 from ..core.search_session.result_index import COMPLETENESS_RUNNING, read_index
+from ..core.search_session.search_profile_log import open_search_profile_recorder
 from ..core.search_session.service_metadata import (
     initialize_service_metadata,
     refresh_last_access,
 )
-from ..core.search_session.status import snapshot_from_manifest
 from .base_mcp_command import BaseMCPCommand
 
 BLOCK_NOT_READY = "BLOCK_NOT_READY"
@@ -110,10 +112,22 @@ class SearchGetPageCommand(BaseMCPCommand):
         ordering = str(params.get("ordering") or "temporal")
         wait = bool(params.get("wait_for_new_results", False))
         timeout = float(params.get("wait_timeout_seconds") or 0)
+        profile = open_search_profile_recorder(
+            job_id=job_id,
+            raw_config=self._get_raw_config(),
+            config_path=self._resolve_config_path(),
+        )
+        profile.checkpoint(
+            "get_page_start",
+            block_position=pos,
+            ordering=ordering,
+            wait=wait,
+        )
         ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
+            profile.checkpoint("get_page_error", code=SESSION_NOT_FOUND)
             return ErrorResult(
                 message=f"Search session not found: {job_id}",
                 code=SESSION_NOT_FOUND,  # type: ignore[arg-type]
@@ -138,63 +152,68 @@ class SearchGetPageCommand(BaseMCPCommand):
         while True:
             block_path = blocks_dir / f"block_{pos}.json"
             if block_path.is_file():
-                with open(block_path, encoding="utf-8") as fh:
-                    block_data = json.load(fh)
                 self._refresh(layout)
-                manifest_obj = (
-                    read_manifest(layout) if layout.manifest_path.is_file() else None
-                )
-                index = (
-                    read_index(layout.index_path)
-                    if layout.index_path.is_file()
-                    else None
-                )
-                has_more = False
-                if index:
-                    if ordering == "relevance":
+                if ordering == "relevance":
+                    with open(block_path, encoding="utf-8") as fh:
+                        block_data = json.load(fh)
+                    manifest_obj = (
+                        read_manifest(layout)
+                        if layout.manifest_path.is_file()
+                        else None
+                    )
+                    index = (
+                        read_index(layout.index_path)
+                        if layout.index_path.is_file()
+                        else None
+                    )
+                    has_more = False
+                    if index:
                         max_pos = max(
                             (e.get("position", 0) for e in index.relevance_blocks),
                             default=0,
                         )
-                        # Relevance set only available after completion; no "more" while running.
                         has_more = pos < max_pos
-                    else:
-                        max_pos = max(
-                            (e.get("position", 0) for e in index.blocks), default=0
-                        )
-                        has_more = (
-                            index.completeness == COMPLETENESS_RUNNING or pos < max_pos
-                        )
-                # Normalize: block may store results under 'results', 'items', or be a list directly
-                if isinstance(block_data, list):
-                    items = block_data
-                elif isinstance(block_data, dict):
-                    items = (
-                        block_data.get("items")
-                        or block_data.get("results")
-                        or block_data.get("matches")
-                        or []
+                    items = block_items_from_payload(block_data)
+                    profile.checkpoint(
+                        "get_page_done",
+                        items=len(items),
+                        has_more=has_more,
                     )
-                else:
-                    items = []
-                return SuccessResult(
-                    data={
-                        "job_id": job_id,
-                        "block_position": pos,
-                        "ordering": ordering,
-                        "items": items,
-                        "has_more": has_more,
-                        "status": manifest_obj.status if manifest_obj else "unknown",
-                        "progress": dict(manifest_obj.metrics) if manifest_obj else {},
-                        "warnings": [],
-                        "errors": [],
-                    }
+                    return SuccessResult(
+                        data={
+                            "job_id": job_id,
+                            "block_position": pos,
+                            "ordering": ordering,
+                            "items": items,
+                            "has_more": has_more,
+                            "status": (
+                                manifest_obj.status if manifest_obj else "unknown"
+                            ),
+                            "progress": (
+                                dict(manifest_obj.metrics) if manifest_obj else {}
+                            ),
+                            "warnings": [],
+                            "errors": [],
+                        }
+                    )
+                page_data = temporal_page_payload(
+                    layout=layout,
+                    job_id=job_id,
+                    block_position=pos,
+                    search_still_running=False,
                 )
+                profile.checkpoint(
+                    "get_page_done",
+                    items=len(page_data.get("items") or []),
+                    has_more=page_data.get("has_more"),
+                )
+                return SuccessResult(data=page_data)
 
             if deadline is not None and time.monotonic() < deadline:
                 time.sleep(0.25)
                 continue
 
+            profile.checkpoint("get_page_error", code=BLOCK_NOT_READY)
             return ErrorResult(
                 message=f"Block {pos} not yet published for job {job_id} (ordering={ordering}).",
                 code=BLOCK_NOT_READY,  # type: ignore[arg-type]
@@ -267,7 +286,9 @@ class SearchGetPageCommand(BaseMCPCommand):
                 "CLOSED_SESSION": {
                     "description": "Session closed; continuation invalid."
                 },
-                "VALIDATION_ERROR": {"description": "Invalid job_id or block_position."},
+                "VALIDATION_ERROR": {
+                    "description": "Invalid job_id or block_position."
+                },
             },
             "best_practices": [
                 "Use first_block_position from search handoff for the first page.",

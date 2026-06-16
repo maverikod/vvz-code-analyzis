@@ -45,7 +45,13 @@ from code_analysis.core.search_session.result_index import (
 from code_analysis.core.search_session.service_metadata import (
     initialize_service_metadata,
 )
+from code_analysis.core.search_session.search_profile_log import (
+    SearchProfileRecorder,
+    open_search_profile_recorder,
+    request_summary_fields,
+)
 from code_analysis.core.search_session.session import SearchSession
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.project_cross_search_command import (
     ProjectCrossSearchCommand,
 )
@@ -203,6 +209,8 @@ def _make_block_assembler(
     layout: SearchSessionDirectoryLayout,
     max_block_size_bytes: int,
     max_results_per_block: int | None = None,
+    *,
+    on_block_published: Callable[[int, int, int], None] | None = None,
 ) -> BlockAssembler:
     def _append_index(position: int, completeness: str) -> None:
         block_path = layout.blocks_dir / f"block_{position}.json"
@@ -239,6 +247,7 @@ def _make_block_assembler(
         max_results_per_block=max_results_per_block,
         append_index_entry=_append_index,
         update_manifest_metrics=_update_metrics,
+        on_block_published=on_block_published,
     )
 
 
@@ -246,6 +255,7 @@ def _prefilter_candidates(
     command: ProjectCrossSearchCommand,
     project_id: str,
     log: logging.Logger,
+    profile: SearchProfileRecorder | None = None,
 ) -> tuple[List[str], List[str]]:
     """
     Build the candidate file list and split it into indexed vs index-gap.
@@ -260,10 +270,14 @@ def _prefilter_candidates(
     back to unrestricted search.
     """
     t_pf = time.monotonic()
+    if profile is not None:
+        profile.checkpoint("prefilter_start", project_id=project_id)
     try:
         project_root = command._resolve_project_root(project_id).resolve()
     except Exception as exc:
         log.warning("[TIMING] prefilter: cannot resolve project root: %s", exc)
+        if profile is not None:
+            profile.checkpoint("prefilter_error", stage="resolve_root", error=str(exc))
         return [], []
 
     candidates: List[str] = []
@@ -282,6 +296,12 @@ def _prefilter_candidates(
             candidates.append(rel)
 
     t_walk = time.monotonic()
+    if profile is not None:
+        profile.checkpoint(
+            "prefilter_walk_done",
+            candidates=len(candidates),
+            walk_sec=round(t_walk - t_pf, 4),
+        )
     database = None
     indexed_paths: List[str] = []
     index_gap_paths: List[str] = []
@@ -297,6 +317,8 @@ def _prefilter_candidates(
         indexed_paths = [rel for rel in candidates if rel not in gap_set]
     except Exception as exc:
         log.warning("[TIMING] prefilter: coverage classification failed: %s", exc)
+        if profile is not None:
+            profile.checkpoint("prefilter_error", stage="classify", error=str(exc))
         return [], []
     finally:
         if database is not None:
@@ -312,6 +334,14 @@ def _prefilter_candidates(
         time.monotonic() - t_walk,
         time.monotonic() - t_pf,
     )
+    if profile is not None:
+        profile.checkpoint(
+            "prefilter_done",
+            candidates=len(candidates),
+            indexed=len(indexed_paths),
+            index_gap=len(index_gap_paths),
+            total_sec=round(time.monotonic() - t_pf, 4),
+        )
     return indexed_paths, index_gap_paths
 
 
@@ -340,6 +370,13 @@ async def run_paginated_cross(
     t0 = time.monotonic()
     log = logger.getChild(session.search_id[:8])
     log.info("[TIMING] run_paginated_cross start")
+    config_path = BaseMCPCommand._resolve_config_path()
+    profile = open_search_profile_recorder(
+        job_id=session.search_id,
+        raw_config=raw_config,
+        config_path=config_path,
+    )
+    profile.checkpoint("cross_run_start", **request_summary_fields(params))
 
     project_id = str(params.get("project_id", ""))
     query = str(params.get("query", ""))
@@ -373,6 +410,7 @@ async def run_paginated_cross(
     )
     write_manifest_atomic(layout, manifest)
     initialize_service_metadata(layout, now=now)
+    profile.checkpoint("cross_manifest_written")
 
     buffer = RawFindingBuffer(layout.buffer_dir)
     max_block_size_bytes = load_session_ttl_policy(raw_config).max_block_size_bytes
@@ -380,13 +418,37 @@ async def run_paginated_cross(
     max_results_per_block = int(page_size_raw) if page_size_raw is not None else None
     if max_results_per_block is not None and max_results_per_block < 1:
         max_results_per_block = None
+
+    def _on_block_published(position: int, item_count: int, size_bytes: int) -> None:
+        profile.checkpoint(
+            "assembler_block_published",
+            block_position=position,
+            items=item_count,
+            size_bytes=size_bytes,
+        )
+
     assembler = block_assembler_factory(
-        layout, max_block_size_bytes, max_results_per_block
+        layout,
+        max_block_size_bytes,
+        max_results_per_block,
+        on_block_published=_on_block_published,
     )
     idx = 0
 
     def _flush(search_completed: bool = False) -> None:
-        assembler.run_until_idle(search_completed=search_completed)
+        buffer_bytes = buffer.total_bytes()
+        t_flush = time.monotonic()
+        published = assembler.run_until_idle(search_completed=search_completed)
+        profile.checkpoint(
+            "block_flush",
+            search_completed=search_completed,
+            blocks_published=published,
+            buffer_bytes_before=buffer_bytes,
+            flush_sec=round(time.monotonic() - t_flush, 4),
+            block1_exists=(layout.blocks_dir / "block_1.json").is_file(),
+        )
+        if search_completed and published == 0 and buffer_bytes == 0:
+            profile.checkpoint("assembler_finalize", relevance=True)
 
     project_root: Optional[Any] = None
     try:
@@ -437,6 +499,8 @@ async def run_paginated_cross(
     async def _run_semantic() -> List[dict[str, Any]]:
         if semantic_limit <= 0:
             return []
+        profile.checkpoint("semantic_backend_start", limit=min(semantic_limit, 100))
+        t_be = time.monotonic()
         try:
             sem_cmd = SemanticSearchMCPCommand()
             result = await sem_cmd.execute(
@@ -447,15 +511,33 @@ async def run_paginated_cross(
             )
             if isinstance(result, ErrorResult):
                 log.warning("[TIMING] semantic error: %s", result)
+                profile.checkpoint(
+                    "semantic_backend_error",
+                    backend_sec=round(time.monotonic() - t_be, 4),
+                    error=str(result),
+                )
                 return []
-            return list((result.data or {}).get("results") or [])
+            rows = list((result.data or {}).get("results") or [])
+            profile.checkpoint(
+                "semantic_backend_done",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                rows=len(rows),
+            )
+            return rows
         except Exception as exc:
             log.warning("[TIMING] semantic exception: %s", exc)
+            profile.checkpoint(
+                "semantic_backend_error",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                error=str(exc),
+            )
             return []
 
     async def _run_fulltext() -> List[dict[str, Any]]:
         if fulltext_limit <= 0:
             return []
+        profile.checkpoint("fulltext_backend_start", limit=fulltext_limit)
+        t_be = time.monotonic()
         try:
             ft_cmd = FulltextSearchMCPCommand()
             result = await ft_cmd.execute(
@@ -465,15 +547,32 @@ async def run_paginated_cross(
             )
             if isinstance(result, ErrorResult):
                 log.warning("[TIMING] fulltext error: %s", result)
+                profile.checkpoint(
+                    "fulltext_backend_error",
+                    backend_sec=round(time.monotonic() - t_be, 4),
+                    error=str(result),
+                )
                 return []
-            return list((result.data or {}).get("results") or [])
+            rows = list((result.data or {}).get("results") or [])
+            profile.checkpoint(
+                "fulltext_backend_done",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                rows=len(rows),
+            )
+            return rows
         except Exception as exc:
             log.warning("[TIMING] fulltext exception: %s", exc)
+            profile.checkpoint(
+                "fulltext_backend_error",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                error=str(exc),
+            )
             return []
 
     async def _run_grep_phase() -> None:
         if not grep_patterns:
             log.info("[TIMING] phase3_grep skipped: no patterns")
+            profile.checkpoint("grep_phase_skipped", reason="no_patterns")
             _flush(search_completed=True)
             return
 
@@ -482,10 +581,16 @@ async def run_paginated_cross(
             lambda m: replace(m, phase="dynamic_discovery"),
         )
         log.info("[TIMING] phase3_grep start patterns=%d", len(grep_patterns))
+        profile.checkpoint("grep_phase_start", patterns=len(grep_patterns))
         t_g = time.monotonic()
         grep_cmd = FsGrepCommand()
         for i, pattern in enumerate(grep_patterns):
             t_pat = time.monotonic()
+            profile.checkpoint(
+                "grep_pattern_start",
+                pattern_index=i,
+                pattern_len=len(pattern),
+            )
             try:
                 result = await grep_cmd.execute(
                     project_id=project_id,
@@ -505,10 +610,22 @@ async def run_paginated_cross(
                 )
             except Exception as exc:
                 log.warning("[TIMING] phase3 pattern[%d] exception: %s", i, exc)
+                profile.checkpoint(
+                    "grep_pattern_error",
+                    pattern_index=i,
+                    error=str(exc),
+                    pattern_sec=round(time.monotonic() - t_pat, 4),
+                )
                 continue
 
             if isinstance(result, ErrorResult):
                 log.warning("[TIMING] phase3 pattern[%d] error: %s", i, result)
+                profile.checkpoint(
+                    "grep_pattern_error",
+                    pattern_index=i,
+                    error=str(result),
+                    pattern_sec=round(time.monotonic() - t_pat, 4),
+                )
                 continue
 
             matches = list((result.data or {}).get("matches") or [])
@@ -522,6 +639,13 @@ async def run_paginated_cross(
             ]
             n_grep = _write_grep_findings(filtered, f"grep{i}", pattern)
             _flush(search_completed=False)
+            profile.checkpoint(
+                "grep_pattern_done",
+                pattern_index=i,
+                matches=len(filtered),
+                written=n_grep,
+                pattern_sec=round(time.monotonic() - t_pat, 4),
+            )
             log.info(
                 "[TIMING] phase3 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",
                 i,
@@ -534,26 +658,30 @@ async def run_paginated_cross(
                 log.warning("[TIMING] phase3_grep hard timeout reached")
                 break
 
+            if time.monotonic() - t_g >= hard_timeout:
+                log.warning("[TIMING] phase3_grep hard timeout reached")
+                profile.checkpoint("grep_phase_timeout")
+                break
+
         log.info(
             "[TIMING] phase3_grep done total_elapsed=%.3fs",
             time.monotonic() - t_g,
         )
+        profile.checkpoint(
+            "grep_phase_done",
+            total_sec=round(time.monotonic() - t_g, 4),
+        )
         _flush(search_completed=True)
 
-    indexed_paths, index_gap_paths = _prefilter_candidates(command, project_id, log)
-    log.info(
-        "[TIMING] prefilter result: indexed=%d index_gap=%d",
-        len(indexed_paths),
-        len(index_gap_paths),
-    )
-
     # ------------------------------------------------------------------ #
-    # Phase 1: fulltext (always)                                        #
+    # Phase 1: fulltext (always) — before grep prefilter                 #
     # ------------------------------------------------------------------ #
     log.info("[TIMING] phase1_fulltext start")
+    profile.checkpoint("phase1_fulltext_start")
     t_p1 = time.monotonic()
     ft_rows = await _run_fulltext()
     n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
+    profile.checkpoint("phase1_fulltext_buffered", findings=n_ft)
     _flush(search_completed=False)
     log.info(
         "[TIMING] phase1_fulltext done: fulltext=%d elapsed=%.3fs block1=%s",
@@ -561,20 +689,33 @@ async def run_paginated_cross(
         time.monotonic() - t_p1,
         (layout.blocks_dir / "block_1.json").is_file(),
     )
+    profile.checkpoint(
+        "phase1_fulltext_done",
+        findings=n_ft,
+        phase_sec=round(time.monotonic() - t_p1, 4),
+        block1=(layout.blocks_dir / "block_1.json").is_file(),
+    )
 
     # ------------------------------------------------------------------ #
     # Phase 2: semantic (optional)                                        #
     # ------------------------------------------------------------------ #
     if enable_semantic and semantic_limit > 0:
         log.info("[TIMING] phase2_semantic start")
+        profile.checkpoint("phase2_semantic_start")
         t_sem = time.monotonic()
         sem_rows = await _run_semantic()
         n_sem = _write_indexed_findings(sem_rows, "sem", "semantic")
+        profile.checkpoint("phase2_semantic_buffered", findings=n_sem)
         _flush(search_completed=False)
         log.info(
             "[TIMING] phase2_semantic done: semantic=%d elapsed=%.3fs",
             n_sem,
             time.monotonic() - t_sem,
+        )
+        profile.checkpoint(
+            "phase2_semantic_done",
+            findings=n_sem,
+            phase_sec=round(time.monotonic() - t_sem, 4),
         )
         update_manifest_atomic(
             layout,
@@ -582,12 +723,21 @@ async def run_paginated_cross(
         )
 
     # ------------------------------------------------------------------ #
-    # Phase 3: grep on disk (optional, index_gap only)                    #
+    # Phase 3: grep on disk (optional; prefilter only when grep enabled)   #
     # ------------------------------------------------------------------ #
     if enable_grep and grep_patterns:
+        indexed_paths, index_gap_paths = _prefilter_candidates(
+            command, project_id, log, profile
+        )
+        log.info(
+            "[TIMING] prefilter result: indexed=%d index_gap=%d",
+            len(indexed_paths),
+            len(index_gap_paths),
+        )
         await _run_grep_phase()
     else:
         log.info("[TIMING] phase3_grep skipped")
+        profile.checkpoint("grep_phase_skipped", reason="disabled_or_no_patterns")
         _flush(search_completed=True)
 
     total = time.monotonic() - t0
@@ -607,5 +757,11 @@ async def run_paginated_cross(
         total,
         block1_ready,
         idx,
+    )
+    profile.checkpoint(
+        "cross_run_done",
+        total_sec=round(total, 4),
+        block1=block1_ready,
+        findings_total=idx,
     )
     return 1 if block1_ready else None

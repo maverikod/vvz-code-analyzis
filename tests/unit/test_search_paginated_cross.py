@@ -35,7 +35,12 @@ def _session_and_layout(tmp_path: Path):
     return session, layout
 
 
-def _fake_assembler_factory(layout, max_block_size_bytes, max_results_per_block=None):
+def _fake_assembler_factory(
+    layout,
+    max_block_size_bytes,
+    max_results_per_block=None,
+    **kwargs: object,
+):
     assembler = MagicMock()
 
     def run(search_completed=False):

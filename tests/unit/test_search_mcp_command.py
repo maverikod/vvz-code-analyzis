@@ -28,7 +28,8 @@ async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
     async def _fake_cross(**kwargs: object) -> int:
         layout = kwargs["layout"]
         (layout.blocks_dir / "block_1.json").write_text(
-            '{"position": 1, "items": []}', encoding="utf-8"
+            '{"position": 1, "items": [{"result_id": "ft-1", "source": "fulltext"}]}',
+            encoding="utf-8",
         )
         return 1
 
@@ -67,4 +68,9 @@ async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
     assert data["paginated"] is True
     assert data["job_id"]
     assert data["index_url"] == f"/search/jobs/{data['job_id']}/index"
+    assert data["first_block_position"] == 1
+    assert data["block_position"] == 1
+    assert data["ordering"] == "temporal"
+    assert data["items"] == [{"result_id": "ft-1", "source": "fulltext"}]
+    assert data["has_more"] in (True, False)
     assert (sessions_root / data["job_id"]).is_dir()

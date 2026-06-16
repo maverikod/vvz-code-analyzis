@@ -15,6 +15,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from ..core.exceptions import ValidationError
 from ..core.search_session.http_access import HttpAccessContext, resolve_session_layout
 from ..core.search_session.manifest import read_manifest
+from ..core.search_session.search_profile_log import open_search_profile_recorder
 from ..core.search_session.service_metadata import (
     initialize_service_metadata,
     refresh_last_access,
@@ -63,13 +64,21 @@ class SearchGetStatusCommand(BaseMCPCommand):
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         job_id = str(kwargs.get("job_id") or "").strip()
+        profile = open_search_profile_recorder(
+            job_id=job_id,
+            raw_config=self._get_raw_config(),
+            config_path=self._resolve_config_path(),
+        )
+        profile.checkpoint("get_status_start")
         ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
+            profile.checkpoint("get_status_error", code=SESSION_NOT_FOUND)
             return ErrorResult(message=f"Search session not found: {job_id}", code=SESSION_NOT_FOUND)  # type: ignore[arg-type]
 
         if not layout.manifest_path.is_file():
+            profile.checkpoint("get_status_error", code=SESSION_NOT_FOUND)
             return ErrorResult(message=f"Search manifest not found: {job_id}", code=SESSION_NOT_FOUND)  # type: ignore[arg-type]
 
         manifest = read_manifest(layout)
@@ -81,6 +90,12 @@ class SearchGetStatusCommand(BaseMCPCommand):
         else:
             initialize_service_metadata(layout, now=now)
 
+        profile.checkpoint(
+            "get_status_done",
+            status=snapshot.status,
+            phase=snapshot.phase.value,
+            block_ready_count=manifest.block_ready_count,
+        )
         return SuccessResult(
             data={
                 "job_id": job_id,

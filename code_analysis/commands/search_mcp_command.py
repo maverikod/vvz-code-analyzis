@@ -25,6 +25,11 @@ from ..core.search_session.directory import (
     SearchSessionDirectoryLayout,
     provision_search_session_directory,
 )
+from ..core.search_session.page_payload import temporal_page_payload
+from ..core.search_session.search_profile_log import (
+    open_search_profile_recorder,
+    request_summary_fields,
+)
 from ..core.search_session.session import SearchSession, SearchSessionState
 from .base_mcp_command import BaseMCPCommand
 from .project_cross_search_command import ProjectCrossSearchCommand
@@ -39,17 +44,17 @@ class SearchMCPCommand(BaseMCPCommand):
     """
     Start paginated cross search: fulltext always on; semantic and grep optional.
 
-    Returns a job handoff as soon as the first result block is published (or the
-    indexed phase finishes). Remaining work continues in the background; use
-    ``search_get_status`` and ``search_get_page`` to poll and paginate.
+    Returns the first result page as soon as block_1 is published (or when the
+    wait timeout elapses). Remaining work continues in the background; use
+    ``search_get_status`` and ``search_get_page`` for later blocks.
     """
 
     name = "search"
     version = "1.0.0"
     descr = (
         "Cross search with incremental paginated results. Fulltext always runs; "
-        "set enable_semantic or enable_grep to opt in. Returns job_id immediately "
-        "after first hits; use search_get_page and search_get_status to continue."
+        "set enable_semantic or enable_grep to opt in. Waits for the first result "
+        "block and returns it inline; use search_get_page for subsequent blocks."
     )
     category = "search"
     author = "Vasiliy Zdanovskiy"
@@ -178,6 +183,18 @@ class SearchMCPCommand(BaseMCPCommand):
         wait_seconds = float(
             params.get("first_block_wait_seconds", _FIRST_BLOCK_WAIT_SECONDS)
         )
+        config_path = self._resolve_config_path()
+        raw_config = self._get_raw_config()
+        profile = open_search_profile_recorder(
+            job_id=search_id,
+            raw_config=raw_config,
+            config_path=config_path,
+        )
+        profile.checkpoint(
+            "search_execute_start",
+            **request_summary_fields(params),
+            first_block_wait_seconds=wait_seconds,
+        )
 
         async def _background() -> None:
             try:
@@ -186,19 +203,29 @@ class SearchMCPCommand(BaseMCPCommand):
                     params=params,
                     session=session,
                     layout=layout,
-                    raw_config=self._get_raw_config(),
+                    raw_config=raw_config,
                 )
             except Exception:
                 logger.exception("search background job failed: %s", search_id)
+                profile.checkpoint("search_background_failed")
                 shutil.rmtree(layout.root, ignore_errors=True)
 
         task = asyncio.create_task(_background(), name=f"search-{search_id[:8]}")
+        profile.checkpoint("search_background_spawned")
+        wait_t0 = time.monotonic()
         first_block_position = await self._wait_for_first_block(
             layout=layout,
             task=task,
             timeout_seconds=wait_seconds,
         )
         search_still_running = not task.done()
+        profile.checkpoint(
+            "search_wait_block1_done",
+            block1_found=first_block_position is not None,
+            wait_sec=round(time.monotonic() - wait_t0, 4),
+            background_done=not search_still_running,
+        )
+        block_position = first_block_position if first_block_position is not None else 1
         handoff = PaginatedSearchHandoff(
             job_id=search_id,
             index_url=f"/search/jobs/{search_id}/index",
@@ -206,8 +233,20 @@ class SearchMCPCommand(BaseMCPCommand):
             legacy_payload=None,
         )
         payload = handoff_to_response(handoff)
+        page = temporal_page_payload(
+            layout=layout,
+            job_id=search_id,
+            block_position=block_position,
+            search_still_running=search_still_running,
+        )
+        payload.update(page)
         payload["search_still_running"] = search_still_running
-        payload["status"] = "running" if search_still_running else "completed"
+        profile.checkpoint(
+            "search_execute_return",
+            items=len(page.get("items") or []),
+            has_more=page.get("has_more"),
+            first_block_position=first_block_position,
+        )
         return SuccessResult(data=payload)
 
     @staticmethod
@@ -239,10 +278,10 @@ class SearchMCPCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "Unified paginated cross search. Fulltext (BM25) always runs first and "
-                "results stream into blocks under the service state directory. Optional "
-                "semantic and grep phases run afterward; ``search_still_running`` in the "
-                "handoff indicates background work. After completion, relevance-sorted "
-                "blocks are available via search_get_page with ordering=relevance."
+                "results stream into blocks under the service state directory. The command "
+                "waits until block_1 exists (or first_block_wait_seconds elapses), then "
+                "returns job_id plus the first page (items, has_more). Optional semantic "
+                "and grep phases continue in the background when enabled."
             ),
             "parameters": {
                 "project_id": {
@@ -275,7 +314,7 @@ class SearchMCPCommand(BaseMCPCommand):
                         "enable_semantic": False,
                         "enable_grep": False,
                     },
-                    "explanation": "BM25 only; first block returned as soon as hits are indexed.",
+                    "explanation": "BM25 only; response includes first items when block_1 is ready.",
                 },
                 {
                     "description": "Full cross search with pagination",
@@ -297,15 +336,20 @@ class SearchMCPCommand(BaseMCPCommand):
             },
             "return_value": {
                 "success": {
-                    "description": "Paginated search handoff.",
+                    "description": "Paginated search handoff with first result page.",
                     "data": {
                         "success": "True",
                         "paginated": "True",
                         "job_id": "Session UUID for search_get_page / search_get_status",
                         "index_url": "HTTP path /search/jobs/{job_id}/index",
                         "first_block_position": "1 when block_1 exists, else null",
+                        "block_position": "Same as first page (usually 1)",
+                        "ordering": "temporal",
+                        "items": "First page of findings (may be empty if timeout before block_1)",
+                        "has_more": "True when more blocks may arrive or exist",
                         "search_still_running": "True while background phases continue",
-                        "status": "running or completed at handoff time",
+                        "status": "Session manifest status",
+                        "progress": "Manifest metrics dict",
                     },
                 },
                 "error": {
@@ -314,8 +358,9 @@ class SearchMCPCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
+                "First response already contains items for block 1 when hits exist.",
+                "Call search_get_page(job_id, block_position=2, ...) for the next page.",
                 "Call search_get_status(job_id) to see phase and block_ready_count.",
-                "Use search_get_page with wait_for_new_results=true for the next block.",
                 "Use ordering=relevance after status is completed for score-sorted pages.",
             ],
         }

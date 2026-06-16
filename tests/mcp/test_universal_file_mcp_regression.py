@@ -14,9 +14,6 @@ import pytest
 import pytest_asyncio
 
 import code_analysis.hooks  # noqa: F401 — register_custom_commands_hook
-from code_analysis.commands.universal_file_edit.search_command import (
-    UniversalFileSearchCommand,
-)
 from code_analysis.commands.universal_file_preview_command import (
     UniversalFilePreviewCommand,
 )
@@ -54,15 +51,11 @@ def test_each_removed_command_absent(name: str) -> None:
 
 def test_registered_read_only_universal_file_command_classes() -> None:
     cls_preview = registry.get_command("universal_file_preview")
-    cls_search = registry.get_command("universal_file_search")
     cls_lines = registry.get_command("get_file_lines")
 
     assert cls_preview is UniversalFilePreviewCommand
     assert cls_preview.category == "preview"
     assert cls_preview.name == "universal_file_preview"
-
-    assert cls_search is UniversalFileSearchCommand
-    assert cls_search.name == "universal_file_search"
 
     assert cls_lines is GetFileLinesCommand
     assert cls_lines.name == "get_file_lines"
@@ -75,7 +68,7 @@ def test_editing_removed_subset_covers_legacy_and_edit_session() -> None:
     assert "format_code" in EDITING_REMOVED_COMMANDS
 
 
-def test_file_content_read_includes_preview_search_and_disk_grep() -> None:
-    assert {"universal_file_preview", "universal_file_search", "fs_grep"} <= (
+def test_file_content_read_includes_preview_and_search() -> None:
+    assert {"universal_file_preview", "search", "search_get_page"} <= (
         FILE_CONTENT_READ_COMMANDS
     )

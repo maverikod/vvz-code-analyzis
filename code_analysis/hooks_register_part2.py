@@ -201,22 +201,6 @@ def register_commands_part2(reg: registry) -> None:
         )
 
     try:
-        from .commands.universal_file_edit.search_command import (
-            UniversalFileSearchCommand,
-        )
-
-        reg.register(UniversalFileSearchCommand, "custom")
-        logger.info("✅ Registered universal_file_search command")
-    except ImportError as e:
-        logger.warning("Failed to import universal_file_search command: %s", e)
-    except Exception as e:
-        logger.error(
-            "Failed to register universal_file_search command: %s",
-            e,
-            exc_info=True,
-        )
-
-    try:
         from .commands.sessions.session_create_command import SessionCreateCommand
         from .commands.sessions.session_delete_command import SessionDeleteCommand
         from .commands.sessions.session_validate_command import SessionValidateCommand

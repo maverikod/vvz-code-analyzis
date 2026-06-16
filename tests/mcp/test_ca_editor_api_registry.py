@@ -27,7 +27,6 @@ _EDITOR_FACING_COMMANDS = (
     "project_file_lock_status",
     "list_project_files",
     "universal_file_preview",
-    "universal_file_search",
 )
 
 

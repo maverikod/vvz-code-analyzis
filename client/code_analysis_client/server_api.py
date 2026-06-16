@@ -8,13 +8,13 @@ editing (``universal_file_open/edit/write/close``, CST/JSON tree modify/save,
 
 **File content on CA** — read-only surface only:
 
-- :data:`FILE_CONTENT_READ_COMMANDS` — preview and search (including on-disk
-  grep for files not yet indexed).
+- :data:`FILE_CONTENT_READ_COMMANDS` — preview and project search (``search`` /
+  ``search_get_page``); on-disk grep is internal to ``search`` when enabled.
 - :data:`FS_COMMANDS` — filesystem operations (copy/move/remove/list/grep); not
   the structured edit workflow.
 
 Editor clients use :data:`CLIENT_FACADE_COMMANDS` (sessions, transfer, locks,
-``universal_file_preview`` / ``universal_file_search``).
+``universal_file_preview``).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -35,6 +35,7 @@ LEGACY_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
         "write_project_text_lines",
         "create_text_file",
         "replace_file_lines",
+        "universal_file_search",
     }
 )
 
@@ -106,10 +107,8 @@ REMOVED_COMMANDS: FrozenSet[str] = (
 FILE_CONTENT_READ_COMMANDS: FrozenSet[str] = frozenset(
     {
         "universal_file_preview",
-        "universal_file_search",
         "get_file_lines",
-        "fs_grep",
-        "search_start",
+        "search",
         "search_get_page",
         "search_get_status",
         "search_cancel",
@@ -157,7 +156,6 @@ TRANSFER_AND_LOCK_COMMANDS: FrozenSet[str] = frozenset(
 UNIVERSAL_FILE_COMMANDS: FrozenSet[str] = frozenset(
     {
         "universal_file_preview",
-        "universal_file_search",
     }
 )
 

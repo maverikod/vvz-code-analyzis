@@ -8,8 +8,8 @@ structured content editing here.
 
 **Content editing is not registered on this server** (``universal_file_open``,
 CST/JSON tree modify/save, ``format_code``, legacy line writers). Read-only
-content surface: ``universal_file_preview``, ``universal_file_search``,
-``get_file_lines``, ``fs_grep``, paginated ``search_*``. Filesystem ops
+content surface: ``universal_file_preview``, ``get_file_lines``, paginated
+``search`` / ``search_*``. Filesystem ops
 (``fs_copy`` / ``fs_move`` / ``fs_remove``) are a separate category.
 
 Author: Vasiliy Zdanovskiy
@@ -25,8 +25,8 @@ MCP_FILE_MANAGEMENT_REGISTRY_HELP = (
     "Use ``code_analysis.core.file_handlers.registry.get_handler_schema(handler_id, operation)`` "
     "for per-handler request hints and ``list_handler_mappings()`` for suffix→handler rows "
     "(handler ids: text, json, yaml, python). "
-    "File **content editing** is not on this server; use ``universal_file_preview`` / "
-    "``universal_file_search`` for inspection. Editors use ``session_*``, "
+    "File **content editing** is not on this server; use ``universal_file_preview`` "
+    "for inspection and ``search`` for project-wide lookup. Editors use ``session_*``, "
     "``project_file_transfer_*``, and ``project_file_advisory_lock_batch`` here."
 )
 

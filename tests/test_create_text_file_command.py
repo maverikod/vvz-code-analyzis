@@ -378,4 +378,4 @@ def test_command_registration() -> None:
 
     assert "create_text_file" not in reg.names
     assert "universal_file_preview" in reg.names
-    assert "universal_file_search" in reg.names
+    assert "universal_file_search" not in reg.names

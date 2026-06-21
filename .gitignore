@@ -219,3 +219,5 @@ config-venv.json
 # MUST stay tracked; only debian/casmgr-server/ staging above is build output.
 /.terminals/
 /.mcp_terminal/
+
+*.tree

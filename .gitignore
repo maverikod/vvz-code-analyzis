@@ -217,3 +217,5 @@ config-venv.json
 
 # packaging/ — source templates for deb (systemd, bin, config templates).
 # MUST stay tracked; only debian/casmgr-server/ staging above is build output.
+/.terminals/
+/.mcp_terminal/

@@ -62,6 +62,12 @@ DEFAULT_IGNORE_PATTERNS: Set[str] = {
     "*.log",
     "*.lock",
     ".coverage",
+    # CST node-ID sidecar dir + files (generated, never indexed).
+    ".cst",
+    "*.tree",
+    # Random-suffix temp / compose build artifacts.
+    "scripts/tmp_*",
+    "cli/cst_compose_*",
 } | set(DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES)
 
 # Git ignore patterns (additional patterns for .gitignore)
@@ -165,8 +171,9 @@ DEFAULT_QUEUE_MAX_SIZE: int = 1000
 # Maximum RPC request size in bytes (10 MB)
 RPC_MAX_REQUEST_SIZE: int = 10485760
 
-# Max .json file size (bytes on disk) for read_project_text_file to use structured JSON load
-# (same session shape as json_load_file). Above this, the command returns plain text lines.
+# Max .json size (bytes) for read_project_text_file to use structured
+# JSON load (same session shape as json_load_file). Above this, the
+# command returns plain text lines.
 DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES: int = 1048576
 
 

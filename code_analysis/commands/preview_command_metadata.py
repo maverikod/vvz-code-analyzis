@@ -34,21 +34,25 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  Omit node_ref — get the file root.\n"
             "  Pass a node_ref from a previous response — drill into that node.\n"
             "  Each block in the response carries its own node_ref for further drill-down.\n\n"
-            "node_ref format by file type:\n"
-            "  sidecar (.py)    — stable UUID (CST node identifier)\n"
-            "  tree-temp (.json/.yaml/.yml/.jsonl/.ndjson) — JSON Pointer, e.g. /database/host\n"
-            "  markdown (.md)   — dot-separated slug path from document root, e.g. intro.setup; "
-            "root is ''\n"
-            "  plain text (.txt, .rst, .adoc, …) — zero-based line index string, e.g. '3'\n\n"
+            "Identifier model (all marked-tree formats: .py, .json, .yaml, .md, .txt, …):\n"
+            "  API responses — positive integer short_id on focus.node_ref and blocks[].node_ref.\n"
+            "  API requests  — integer short_id (canonical) or legacy string alias resolved via\n"
+            "                  the ``.tree`` MAP (UUID4, JSON Pointer, markdown slug, decimal\n"
+            "                  short_id string). Internal TreeNodeUuid lives in MAP only.\n\n"
             "selector parameter:\n"
             "  String slice (contains ':' or starts with '-'): '0:5', '-3:', '2:8'\n"
             "  list[int]: explicit block indices, e.g. [0, 2, 4]\n"
             "  list[str]: explicit block identifiers (node_ref values)\n"
             "  Omit: return first preview_lines blocks (default 20)\n\n"
-            "Python full-text mode:\n"
-            "  When the .py file has fewer lines than full_text_max_lines (default 200),\n"
-            "  the entire source is returned as a single text block instead of the\n"
-            "  structured CST rendering. Set full_text_max_lines=0 to disable.\n\n"
+            "full_text_max_lines (all formats, including degraded text):\n"
+            "  When the file has fewer source lines than this threshold (default 200),\n"
+            "  root preview returns annotated full source on focus and every tree node\n"
+            "  in blocks. Applies to native .txt/.rst and to parse-error fallback when\n"
+            "  JSON/YAML/Python cannot be parsed (is_invalid=True). Set to 0 for drilldown only.\n\n"
+            "Parse-error fallback (is_invalid):\n"
+            "  Unparseable files are previewed as text format (paragraph/line tree).\n"
+            "  Use preview_offset/max_chars for envelope pagination; node_ref/selector\n"
+            "  are rejected until the file parses again.\n\n"
             "Edit session integration:\n"
             "  Pass session_id from universal_file_open to preview the current draft\n"
             "  (in-memory CST tree for sidecar, tree_temp_roots for tree-temp, draft file for text).\n"
@@ -72,13 +76,17 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "node_ref": {
                 "description": (
-                    "Stable node identifier in the file handler's native format. "
-                    "Omit for the file root (empty or whitespace-only string is treated "
-                    "the same as omitted). Use a node_ref value from a previous response "
-                    "to drill down."
+                    "Drill-down identifier from a prior preview response. "
+                    "All supported formats use marked-tree navigation: responses expose "
+                    "positive integer ``short_id`` values; requests should pass the same "
+                    "integer (or a legacy string alias resolved via the ``.tree`` MAP "
+                    "section — UUID4, JSON Pointer, markdown slug). Omit for file root."
                 ),
-                "type": "string",
+                "type": "integer | string",
                 "required": False,
+                "notes": (
+                    "Canonical form is integer short_id. UUID4 is internal to MAP only."
+                ),
             },
             "selector": {
                 "description": (
@@ -103,8 +111,10 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "full_text_max_lines": {
                 "description": (
-                    "Python handler only: return entire file as a text block when "
-                    "line count is below this threshold. Default 200. Set to 0 to disable."
+                    "Per-format source-line threshold (not bytes). When the file has "
+                    "fewer lines than this value, root preview returns annotated full "
+                    "source on focus and lists every tree node (all descendants) in "
+                    "blocks. Default 200. Set to 0 to disable (drilldown only)."
                 ),
                 "type": "integer",
                 "required": False,
@@ -123,6 +133,24 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "type": "string",
                 "required": False,
             },
+            "max_chars": {
+                "description": (
+                    "Invalid-source fallback only: max characters per preview_chunk page when "
+                    "the file failed structural parse (is_invalid). Ignored when the file parses."
+                ),
+                "type": "integer",
+                "required": False,
+            },
+            "preview_offset": {
+                "description": (
+                    "Invalid-source fallback only: character offset into serialized invalid-source "
+                    "preview; use preview_next_offset from the prior page. Must be 0 for parseable "
+                    "files (use node_ref / selector instead)."
+                ),
+                "type": "integer",
+                "required": False,
+                "default": 0,
+            },
         },
         "return_value": {
             "success": {
@@ -134,8 +162,8 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "selector_applied": "The selector that was applied, or null when omitted.",
                 },
                 "example": {
-                    "focus": {"node_kind": "mapping", "node_ref": "/database"},
-                    "blocks": [{"node_kind": "scalar", "node_ref": "/database/host"}],
+                    "focus": {"node_kind": "mapping", "node_ref": 1},
+                    "blocks": [{"node_kind": "scalar", "node_ref": 2}],
                     "total_blocks": 3,
                     "selector_applied": None,
                 },
@@ -155,7 +183,7 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 },
                 "explanation": (
                     "Returns the top-level keys as blocks. "
-                    "Each block has a node_ref (JSON Pointer) for drill-down."
+                    "Each block has an integer node_ref (short_id) for drill-down."
                 ),
             },
             {
@@ -163,9 +191,12 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "file_path": "config/settings.yaml",
-                    "node_ref": "/database",
+                    "node_ref": 2,
                 },
-                "explanation": "Pass node_ref from a previous preview response to see the children of /database.",
+                "explanation": (
+                    "Pass integer short_id from a previous preview response. "
+                    "Legacy input such as '/database' is also accepted and resolved via MAP."
+                ),
             },
             {
                 "description": "Preview a Python file (full-text for small files)",
@@ -175,8 +206,9 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "full_text_max_lines": 300,
                 },
                 "explanation": (
-                    "Files under 300 lines are returned as a single text block. "
-                    "Larger files return the CST structured rendering."
+                    "When the file has fewer than 300 source lines, root preview returns "
+                    "annotated full source on focus and every tree node in blocks (int short_id). "
+                    "Set full_text_max_lines=0 for drilldown-only on large files."
                 ),
             },
         ],
@@ -186,8 +218,18 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "solution": "Use a supported extension: .py, .json, .yaml, .yml, .md, .txt, .rst, .adoc, .jsonl.",
             },
             "UNKNOWN_NODE_REF": {
-                "description": "node_ref not found in the current file tree.",
-                "solution": "Re-run preview without node_ref to get valid node_ref values from the current file state.",
+                "description": "node_ref (short_id or legacy alias) not found in the current file tree.",
+                "solution": "Re-run preview without node_ref to get valid integer short_id values from the current file state.",
+            },
+            "REQUIRES_LINE_ADDRESSING": {
+                "description": (
+                    "File has parse errors (is_invalid). node_ref and selector are rejected until "
+                    "syntax is fixed."
+                ),
+                "solution": (
+                    "Use preview_offset and max_chars at file root only, or fix the file and "
+                    "re-preview for integer short_id navigation."
+                ),
             },
             "FILE_STRUCTURE_ERROR": {
                 "description": "File could not be parsed (e.g. invalid JSON or YAML syntax).",
@@ -222,11 +264,12 @@ def get_universal_file_preview_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "Call universal_file_preview before universal_file_edit to obtain valid node_ref values.",
-            "For JSON/YAML: node_ref from preview is a JSON Pointer; pass it as json_pointer in edit operations, not node_id.",
-            "For .md: node_ref is a section slug path from preview; pass it as node_ref in edit operations.",
-            "For .txt/.rst/.adoc: node_ref is a zero-based line index; convert to 1-based start_line = int(node_ref) + 1 for edit.",
-            "For Python: use full_text_max_lines=0 to force CST structured output and get stable UUID node_refs.",
+            "Call universal_file_preview before universal_file_edit to obtain valid integer short_id values.",
+            "Responses always use integer node_ref (short_id); pass the same integer back for drill-down and edit.",
+            "Legacy string aliases (JSON Pointer, MAP UUID4, markdown slug) are accepted on input only.",
+            "Do not use MAP UUID4 from sidecar files — it is internal; preview never returns it.",
+            "When is_invalid=True, use preview_offset/max_chars only; node_ref/selector return REQUIRES_LINE_ADDRESSING.",
+            "Use full_text_max_lines=0 for drilldown-only; default 200 returns full annotated tree on small files.",
             "Pass session_id to preview the draft after edits but before commit.",
             "Use selector='0:N' to cap the response size for large files.",
         ],

@@ -29,14 +29,24 @@ class NodeListTree:
         return self.nodes
 
 
+_FORMAT_HANDLER_SUFFIX_ALIASES: dict[str, str] = {
+    ".pyi": ".py",
+    ".pyw": ".py",
+    ".adoc": ".txt",
+    ".jsonl": ".txt",
+    ".ndjson": ".txt",
+}
+
+
 def resolve_format_handler(source_path: Path) -> FormatHandler:
-    """Return unified FormatHandler for *source_path*, including .pyi/.pyw."""
+    """Return unified FormatHandler for *source_path* (preview extensions included)."""
     ext = source_path.suffix.lower()
     registry = HandlerRegistry.default_registry()
     if ext in registry:
         return registry.resolve(source_path)
-    if ext in (".pyi", ".pyw"):
-        return registry.resolve(source_path.with_suffix(".py"))
+    alias = _FORMAT_HANDLER_SUFFIX_ALIASES.get(ext)
+    if alias is not None:
+        return registry.resolve(source_path.with_suffix(alias))
     raise HandlerNotFoundError(ext)
 
 

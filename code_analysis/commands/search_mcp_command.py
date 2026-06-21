@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import threading
 import time
 import uuid
 from typing import Any, Dict, Optional
@@ -32,12 +33,43 @@ from ..core.search_session.search_profile_log import (
 )
 from ..core.search_session.session import SearchSession, SearchSessionState
 from .base_mcp_command import BaseMCPCommand
+from .command_metadata_helpers import build_command_metadata
 from .project_cross_search_command import ProjectCrossSearchCommand
 from .search_paginated_cross import run_paginated_cross
 
 logger = logging.getLogger(__name__)
 
 _FIRST_BLOCK_WAIT_SECONDS = 30.0
+
+
+def _run_paginated_cross_in_thread(
+    *,
+    params: Dict[str, Any],
+    session: SearchSession,
+    layout: SearchSessionDirectoryLayout,
+    raw_config: Dict[str, Any],
+    search_id: str,
+) -> None:
+    """Run the full paginated search in a dedicated thread + event loop."""
+
+    async def _runner() -> None:
+        try:
+            await run_paginated_cross(
+                command=ProjectCrossSearchCommand(),
+                params=params,
+                session=session,
+                layout=layout,
+                raw_config=raw_config,
+            )
+        except Exception:
+            logger.exception("search background job failed: %s", search_id)
+            shutil.rmtree(layout.root, ignore_errors=True)
+
+    try:
+        asyncio.run(_runner())
+    except Exception:
+        logger.exception("search background thread failed: %s", search_id)
+        shutil.rmtree(layout.root, ignore_errors=True)
 
 
 class SearchMCPCommand(BaseMCPCommand):
@@ -147,11 +179,40 @@ class SearchMCPCommand(BaseMCPCommand):
                     "maximum": 120,
                     "description": "Max seconds to wait for block_1 before returning handoff.",
                 },
+                "file_pattern": {
+                    "type": "string",
+                    "default": "",
+                    "description": (
+                        "Optional project-relative path filter (fnmatch/prefix; same rules as "
+                        "list_project_files file_pattern). Narrows fulltext, semantic, and grep."
+                    ),
+                },
+                "path_filter": {
+                    "type": "string",
+                    "default": "",
+                    "description": (
+                        "Alias of file_pattern for narrowing search scope. When both are set, "
+                        "they must match; file_pattern wins when only one is provided."
+                    ),
+                },
             },
         }
 
+    @staticmethod
+    def _normalize_file_pattern_params(params: Dict[str, Any]) -> None:
+        file_pattern = str(params.get("file_pattern") or "").strip()
+        path_filter = str(params.get("path_filter") or "").strip()
+        if file_pattern and path_filter and file_pattern != path_filter:
+            raise ValidationError(
+                "file_pattern and path_filter disagree; use one or set the same value",
+                field="path_filter",
+                details={"file_pattern": file_pattern, "path_filter": path_filter},
+            )
+        params["file_pattern"] = file_pattern or path_filter
+
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params = super().validate_params(params)
+        self._normalize_file_pattern_params(params)
         query = str(params.get("query") or "").strip()
         if not query:
             raise ValidationError("query must be non-empty", field="query", details={})
@@ -196,29 +257,27 @@ class SearchMCPCommand(BaseMCPCommand):
             first_block_wait_seconds=wait_seconds,
         )
 
-        async def _background() -> None:
-            try:
-                await run_paginated_cross(
-                    command=ProjectCrossSearchCommand(),
-                    params=params,
-                    session=session,
-                    layout=layout,
-                    raw_config=raw_config,
-                )
-            except Exception:
-                logger.exception("search background job failed: %s", search_id)
-                profile.checkpoint("search_background_failed")
-                shutil.rmtree(layout.root, ignore_errors=True)
-
-        task = asyncio.create_task(_background(), name=f"search-{search_id[:8]}")
-        profile.checkpoint("search_background_spawned")
+        background_thread = threading.Thread(
+            target=_run_paginated_cross_in_thread,
+            kwargs={
+                "params": params,
+                "session": session,
+                "layout": layout,
+                "raw_config": raw_config,
+                "search_id": search_id,
+            },
+            name=f"search-{search_id[:8]}",
+            daemon=True,
+        )
+        background_thread.start()
+        profile.checkpoint("search_background_spawned", dedicated_thread=True)
         wait_t0 = time.monotonic()
         first_block_position = await self._wait_for_first_block(
             layout=layout,
-            task=task,
+            background_thread=background_thread,
             timeout_seconds=wait_seconds,
         )
-        search_still_running = not task.done()
+        search_still_running = background_thread.is_alive()
         profile.checkpoint(
             "search_wait_block1_done",
             block1_found=first_block_position is not None,
@@ -253,7 +312,7 @@ class SearchMCPCommand(BaseMCPCommand):
     async def _wait_for_first_block(
         *,
         layout: SearchSessionDirectoryLayout,
-        task: asyncio.Task[None],
+        background_thread: threading.Thread,
         timeout_seconds: float,
     ) -> Optional[int]:
         deadline = time.monotonic() + max(0.0, timeout_seconds)
@@ -261,7 +320,7 @@ class SearchMCPCommand(BaseMCPCommand):
         while True:
             if block_path.is_file():
                 return 1
-            if task.done():
+            if not background_thread.is_alive():
                 return None
             if time.monotonic() >= deadline:
                 return None
@@ -269,43 +328,18 @@ class SearchMCPCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": (
+        return build_command_metadata(
+            cls,
+            detailed_description=(
                 "Unified paginated cross search. Fulltext (BM25) always runs first and "
                 "results stream into blocks under the service state directory. The command "
                 "waits until block_1 exists (or first_block_wait_seconds elapses), then "
                 "returns job_id plus the first page (items, has_more). Optional semantic "
-                "and grep phases continue in the background when enabled."
+                "and grep phases continue in a dedicated background thread (same process) "
+                "and publish further blocks incrementally. Use file_pattern or path_filter "
+                "to narrow hits to a project-relative subtree."
             ),
-            "parameters": {
-                "project_id": {
-                    "description": "Project UUID.",
-                    "type": "string",
-                    "required": True,
-                },
-                "query": {
-                    "description": "Search text.",
-                    "type": "string",
-                    "required": True,
-                },
-                "enable_semantic": {
-                    "description": "Include vector semantic search.",
-                    "type": "boolean",
-                    "default": True,
-                },
-                "enable_grep": {
-                    "description": "Grep unindexed files on disk.",
-                    "type": "boolean",
-                    "default": False,
-                },
-            },
-            "usage_examples": [
+            usage_examples=[
                 {
                     "description": "Fulltext-only quick search",
                     "command": {
@@ -315,6 +349,15 @@ class SearchMCPCommand(BaseMCPCommand):
                         "enable_grep": False,
                     },
                     "explanation": "BM25 only; response includes first items when block_1 is ready.",
+                },
+                {
+                    "description": "Search within a subtree",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "query": "validate_params",
+                        "path_filter": "code_analysis/commands",
+                    },
+                    "explanation": "path_filter is an alias of file_pattern.",
                 },
                 {
                     "description": "Full cross search with pagination",
@@ -327,14 +370,14 @@ class SearchMCPCommand(BaseMCPCommand):
                     "explanation": "Then poll search_get_status and search_get_page by job_id.",
                 },
             ],
-            "error_cases": {
+            error_cases={
                 "VALIDATION_ERROR": {
                     "description": "Missing or invalid parameters.",
                     "message": "Validation failed",
                     "solution": "Provide project_id and non-empty query.",
                 },
             },
-            "return_value": {
+            return_value={
                 "success": {
                     "description": "Paginated search handoff with first result page.",
                     "data": {
@@ -357,10 +400,11 @@ class SearchMCPCommand(BaseMCPCommand):
                     "code": "VALIDATION_ERROR",
                 },
             },
-            "best_practices": [
+            best_practices=[
                 "First response already contains items for block 1 when hits exist.",
                 "Call search_get_page(job_id, block_position=2, ...) for the next page.",
                 "Call search_get_status(job_id) to see phase and block_ready_count.",
                 "Use ordering=relevance after status is completed for score-sorted pages.",
+                "Use file_pattern or path_filter to limit fulltext, semantic, and grep phases.",
             ],
-        }
+        )

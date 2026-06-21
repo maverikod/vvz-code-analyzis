@@ -26,22 +26,39 @@ class TextHandler(FormatHandler):
         allocator = ShortIdAllocator(start=1)
         nodes: List[TreeNode] = []
         in_paragraph = False
+        paragraph_sid: NodeId | None = None
+        paragraph_index: int | None = None
         for i, line in enumerate(content.splitlines(keepends=True), start=1):
             stripped = line.rstrip("\n")
             if stripped == "":
                 in_paragraph = False
+                paragraph_sid = None
+                paragraph_index = None
                 continue
             kind = "paragraph" if not in_paragraph else "line"
-            sid = allocator.allocate()
-            attributes = {"line_no": i, "block_level": kind}
+            sid = NodeId(allocator.allocate())
+            attributes: Dict[str, Any] = {
+                "line_no": i,
+                "start_line": i,
+                "end_line": i,
+                "block_level": kind,
+            }
             if kind == "paragraph":
                 attributes["is_paragraph_start"] = True
+                parent: NodeId | None = None
+                paragraph_sid = sid
+                paragraph_index = len(nodes)
+            else:
+                parent = paragraph_sid
+                if paragraph_index is not None:
+                    nodes[paragraph_index].attributes["end_line"] = i
             nodes.append(
                 TreeNode(
-                    short_id=NodeId(sid),
+                    short_id=sid,
                     kind=kind,
                     content=stripped,
                     attributes=attributes,
+                    parent_short_id=parent,
                 )
             )
             in_paragraph = True

@@ -114,7 +114,7 @@ class JsonFileHandler(BaseFileHandler):
     Structured JSON edits via JSON Pointer / node_id (``json_modify_tree`` semantics).
 
     Mutating persistence uses :func:`~code_analysis.core.json_tree.json_saver.save_json_tree_to_file`
-    (backup, atomic write, ``update_file_data_atomic_batch``). Callers supply ``absolute_path``,
+    (backup, atomic write, ``persist_plain_text_file_metadata``). Callers supply ``absolute_path``,
     and for writes ``database`` + ``root_dir`` resolved from the project.
     """
 
@@ -270,6 +270,11 @@ class JsonFileHandler(BaseFileHandler):
             remove_tree(tid)
 
         if not result.get("success"):
+            err = (
+                (result.get("error") or "").strip()
+                or result.get("error_code")
+                or "save failed"
+            )
             return FileHandlerResult(
                 success=False,
                 handler_id=request.handler_id,
@@ -278,7 +283,7 @@ class JsonFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 dry_run=False,
                 changed=False,
-                message=str(result.get("error", "save failed")),
+                message=str(err),
                 code=str(result.get("error_code", VALIDATION_FAILED)),
                 details={"file_path": request.file_path, **result},
             )
@@ -393,6 +398,11 @@ class JsonFileHandler(BaseFileHandler):
             remove_tree(tid)
 
         if not result.get("success"):
+            err = (
+                (result.get("error") or "").strip()
+                or result.get("error_code")
+                or "replace save failed"
+            )
             return FileHandlerResult(
                 success=False,
                 handler_id=request.handler_id,
@@ -401,7 +411,7 @@ class JsonFileHandler(BaseFileHandler):
                 project_id=request.project_id,
                 dry_run=False,
                 changed=False,
-                message=str(result.get("error", "replace save failed")),
+                message=str(err),
                 code=str(result.get("error_code", VALIDATION_FAILED)),
                 details={"file_path": request.file_path, **result},
             )

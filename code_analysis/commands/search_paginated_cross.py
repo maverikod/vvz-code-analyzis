@@ -2,16 +2,18 @@
 Paginated cross-search backend adapter (T-003/A-007).
 
 Phase-based algorithm:
-  Phase 1 — fulltext (always), flush first block as soon as possible.
-  Phase 2 — semantic when enable_semantic (optional).
-  Phase 3 — grep on index-gap files when enable_grep (optional).
-  The ``search`` command returns after block_1; remaining phases run in background.
+    Phase 1 — fulltext (always), flush first block as soon as possible.
+    Phase 2 — semantic when enable_semantic (optional).
+    Phase 3 — grep on disk when enable_grep (optional).
+    Phases 2 and 3 run in parallel after phase 1. The ``search`` command returns
+    after block_1; remaining phases run in a dedicated background thread.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 
 import time
@@ -68,6 +70,9 @@ from code_analysis.core.structure_extraction.format_registry import (
 )
 from code_analysis.commands.search_mcp_commands_fulltext import FulltextSearchMCPCommand
 from code_analysis.commands.fs_grep_command import FsGrepCommand
+from code_analysis.commands.file_management.relative_path_list_pattern import (
+    relative_path_matches_listing_pattern,
+)
 
 _STRIP_KEYS = frozenset(
     {
@@ -361,9 +366,8 @@ async def run_paginated_cross(
     Findings are written to the buffer immediately after each source completes.
     Assembler is flushed — first block(s) become available to the client.
 
-    Phase 2 (grep/disk): only files not yet indexed (index_gap), only
-    supported extensions. Each pattern's results are written and flushed
-    as they arrive. Runs as an asyncio background task.
+    Phase 2 (grep/disk): fs_grep with skip_indexed_unchanged. Each pattern's
+    results are written and flushed as they arrive.
 
     search_start waits until block_1 exists or all phases complete.
     """
@@ -392,6 +396,13 @@ async def run_paginated_cross(
         grep_patterns = [query]
     hard_timeout = float(params.get("hard_timeout_seconds", 120.0))
     min_score = float(params.get("min_semantic_score", 0.45))
+    file_pattern = str(params.get("file_pattern") or "").strip()
+
+    def _path_matches_filter(file_path: str) -> bool:
+        if not file_pattern:
+            return True
+        rel = str(file_path or "").replace("\\", "/").lstrip("./")
+        return relative_path_matches_listing_pattern(rel, file_pattern)
 
     now = time.time()
     backend_params = {k: v for k, v in params.items() if k not in _STRIP_KEYS}
@@ -518,6 +529,15 @@ async def run_paginated_cross(
                 )
                 return []
             rows = list((result.data or {}).get("results") or [])
+            if file_pattern:
+                rows = [
+                    r
+                    for r in rows
+                    if isinstance(r, dict)
+                    and _path_matches_filter(
+                        str(r.get("file_path") or r.get("path") or "")
+                    )
+                ]
             profile.checkpoint(
                 "semantic_backend_done",
                 backend_sec=round(time.monotonic() - t_be, 4),
@@ -554,6 +574,15 @@ async def run_paginated_cross(
                 )
                 return []
             rows = list((result.data or {}).get("results") or [])
+            if file_pattern:
+                rows = [
+                    r
+                    for r in rows
+                    if isinstance(r, dict)
+                    and _path_matches_filter(
+                        str(r.get("file_path") or r.get("path") or "")
+                    )
+                ]
             profile.checkpoint(
                 "fulltext_backend_done",
                 backend_sec=round(time.monotonic() - t_be, 4),
@@ -591,10 +620,52 @@ async def run_paginated_cross(
                 pattern_index=i,
                 pattern_len=len(pattern),
             )
+            batches_flushed = 0
+
+            def _on_grep_batch(
+                batch: list[dict[str, Any]],
+                *,
+                pattern_index: int = i,
+                grep_pattern: str = pattern,
+            ) -> None:
+                nonlocal batches_flushed
+                filtered = [
+                    m
+                    for m in batch
+                    if not (m.get("file_path") or m.get("relative_path"))
+                    or any(
+                        str(
+                            m.get("file_path") or m.get("relative_path") or ""
+                        ).endswith(ext)
+                        for ext in _SUPPORTED_EXTENSIONS
+                    )
+                ]
+                n_grep = _write_grep_findings(
+                    filtered, f"grep{pattern_index}", grep_pattern
+                )
+                if n_grep <= 0:
+                    return
+                batches_flushed += 1
+                _flush(search_completed=False)
+                profile.checkpoint(
+                    "grep_batch_flushed",
+                    pattern_index=pattern_index,
+                    batch_matches=len(filtered),
+                    written=n_grep,
+                    flush_count=batches_flushed,
+                )
+                log.info(
+                    "[TIMING] phase3 grep batch pattern[%d] written=%d flush=%d",
+                    pattern_index,
+                    n_grep,
+                    batches_flushed,
+                )
+
             try:
                 result = await grep_cmd.execute(
                     project_id=project_id,
                     pattern=pattern,
+                    file_pattern=file_pattern or None,
                     literal=bool(params.get("literal", True)),
                     case_sensitive=bool(params.get("case_sensitive", False)),
                     skip_indexed_unchanged=True,
@@ -607,6 +678,7 @@ async def run_paginated_cross(
                         5.0, hard_timeout - (time.monotonic() - t_g)
                     ),
                     auto_queue_on_inline_timeout=False,
+                    on_match_batch=_on_grep_batch,
                 )
             except Exception as exc:
                 log.warning("[TIMING] phase3 pattern[%d] exception: %s", i, exc)
@@ -628,30 +700,17 @@ async def run_paginated_cross(
                 )
                 continue
 
-            matches = list((result.data or {}).get("matches") or [])
-            filtered = [
-                m
-                for m in matches
-                if not m.get("file_path")
-                or any(
-                    str(m["file_path"]).endswith(ext) for ext in _SUPPORTED_EXTENSIONS
-                )
-            ]
-            n_grep = _write_grep_findings(filtered, f"grep{i}", pattern)
-            _flush(search_completed=False)
             profile.checkpoint(
                 "grep_pattern_done",
                 pattern_index=i,
-                matches=len(filtered),
-                written=n_grep,
+                batches_flushed=batches_flushed,
                 pattern_sec=round(time.monotonic() - t_pat, 4),
             )
             log.info(
-                "[TIMING] phase3 pattern[%d]=%r matches=%d written=%d elapsed=%.3fs",
+                "[TIMING] phase3 pattern[%d]=%r batches_flushed=%d elapsed=%.3fs",
                 i,
                 pattern,
-                len(filtered),
-                n_grep,
+                batches_flushed,
                 time.monotonic() - t_pat,
             )
             if time.monotonic() - t_g >= hard_timeout:
@@ -673,33 +732,9 @@ async def run_paginated_cross(
         )
         _flush(search_completed=True)
 
-    # ------------------------------------------------------------------ #
-    # Phase 1: fulltext (always) — before grep prefilter                 #
-    # ------------------------------------------------------------------ #
-    log.info("[TIMING] phase1_fulltext start")
-    profile.checkpoint("phase1_fulltext_start")
-    t_p1 = time.monotonic()
-    ft_rows = await _run_fulltext()
-    n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
-    profile.checkpoint("phase1_fulltext_buffered", findings=n_ft)
-    _flush(search_completed=False)
-    log.info(
-        "[TIMING] phase1_fulltext done: fulltext=%d elapsed=%.3fs block1=%s",
-        n_ft,
-        time.monotonic() - t_p1,
-        (layout.blocks_dir / "block_1.json").is_file(),
-    )
-    profile.checkpoint(
-        "phase1_fulltext_done",
-        findings=n_ft,
-        phase_sec=round(time.monotonic() - t_p1, 4),
-        block1=(layout.blocks_dir / "block_1.json").is_file(),
-    )
-
-    # ------------------------------------------------------------------ #
-    # Phase 2: semantic (optional)                                        #
-    # ------------------------------------------------------------------ #
-    if enable_semantic and semantic_limit > 0:
+    async def _run_semantic_phase() -> None:
+        if not (enable_semantic and semantic_limit > 0):
+            return
         log.info("[TIMING] phase2_semantic start")
         profile.checkpoint("phase2_semantic_start")
         t_sem = time.monotonic()
@@ -723,18 +758,42 @@ async def run_paginated_cross(
         )
 
     # ------------------------------------------------------------------ #
-    # Phase 3: grep on disk (optional; prefilter only when grep enabled)   #
+    # Phase 1: fulltext (always) — first block for the caller            #
     # ------------------------------------------------------------------ #
-    if enable_grep and grep_patterns:
-        indexed_paths, index_gap_paths = _prefilter_candidates(
-            command, project_id, log, profile
-        )
-        log.info(
-            "[TIMING] prefilter result: indexed=%d index_gap=%d",
-            len(indexed_paths),
-            len(index_gap_paths),
-        )
-        await _run_grep_phase()
+    log.info("[TIMING] phase1_fulltext start")
+    profile.checkpoint("phase1_fulltext_start")
+    t_p1 = time.monotonic()
+    ft_rows = await _run_fulltext()
+    n_ft = _write_indexed_findings(ft_rows, "ft", "fulltext")
+    profile.checkpoint("phase1_fulltext_buffered", findings=n_ft)
+    _flush(search_completed=False)
+    log.info(
+        "[TIMING] phase1_fulltext done: fulltext=%d elapsed=%.3fs block1=%s",
+        n_ft,
+        time.monotonic() - t_p1,
+        (layout.blocks_dir / "block_1.json").is_file(),
+    )
+    profile.checkpoint(
+        "phase1_fulltext_done",
+        findings=n_ft,
+        phase_sec=round(time.monotonic() - t_p1, 4),
+        block1=(layout.blocks_dir / "block_1.json").is_file(),
+    )
+
+    # ------------------------------------------------------------------ #
+    # Phase 2+3: semantic and grep in parallel (optional)                #
+    # ------------------------------------------------------------------ #
+    grep_enabled = enable_grep and bool(grep_patterns)
+    semantic_enabled = enable_semantic and semantic_limit > 0
+    parallel_tasks: list[asyncio.Task[None]] = []
+    if semantic_enabled:
+        parallel_tasks.append(asyncio.create_task(_run_semantic_phase()))
+    if grep_enabled:
+        parallel_tasks.append(asyncio.create_task(_run_grep_phase()))
+    if parallel_tasks:
+        await asyncio.gather(*parallel_tasks)
+        if not grep_enabled:
+            _flush(search_completed=True)
     else:
         log.info("[TIMING] phase3_grep skipped")
         profile.checkpoint("grep_phase_skipped", reason="disabled_or_no_patterns")

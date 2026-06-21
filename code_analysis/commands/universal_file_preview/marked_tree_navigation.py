@@ -38,8 +38,8 @@ from .errors import (
     PreviewError,
     input_error,
 )
-from .handlers.jsonl_handler import JsonLinesFileHandler
 from .marked_tree_loader import (
+    NodeListTree,
     _read_source_text,
     make_preview_tree_loader,
     parse_focus_short_id,
@@ -48,8 +48,9 @@ from .marked_tree_loader import (
 from .models import Block, NavigationResult, Node, NodeKind
 from .node_ref_params import normalize_optional_node_ref
 from .invalid_preview import invalid_source_node
-
-from .tree_temp_preview_focus import looks_like_sidecar_stable_id
+from .preview_addressing import preview_source_is_parseable
+from code_analysis.core.tree_lifecycle.lifecycle import TreeLifecycle
+from code_analysis.core.tree_lifecycle.node_id_map import TreeSections, parse_tree_file
 
 _PYTHON_EXTENSIONS = frozenset({".py", ".pyi", ".pyw"})
 _SCALAR_KINDS = frozenset({"scalar", "string", "number", "boolean", "null"})
@@ -63,35 +64,93 @@ def looks_like_json_pointer_node_ref(node_ref: object) -> bool:
 
 
 def _preview_source_is_parseable(params: dict[str, Any]) -> bool:
-    """Return False when marked-tree loader would fail on broken JSON/YAML source."""
-    preview_path = Path(str(params.get("file_path", "")))
-    if not preview_path.is_file():
-        return True
-    content = _read_source_text(preview_abs_path=preview_path)
-    if not content.strip():
-        return True
-    ext = preview_path.suffix.lower()
-    if ext in _PYTHON_EXTENSIONS:
+    """Return False when structural parse fails — caller must use plain-text fallback."""
+    return preview_source_is_parseable(Path(str(params.get("file_path", ""))))
+
+
+def _preview_handler_id(source_abs: Path) -> str | None:
+    ext = source_abs.suffix.lower()
+    if ext == ".json":
+        return "json"
+    if ext in (".yml", ".yaml"):
+        return "yaml"
+    if ext == ".md":
+        return "markdown"
+    return None
+
+
+def _load_tree_sections_for_preview(params: dict[str, Any]) -> TreeSections | None:
+    """Load MAP/TREE sections from sibling ``.tree`` sidecar (create via lifecycle if needed)."""
+    preview_abs_path = Path(str(params["file_path"]))
+    project_root = params.get("project_root")
+    rel_file_path = params.get("rel_file_path")
+    if project_root is not None and rel_file_path:
         try:
-            import libcst as cst
-
-            cst.parse_module(content)
-            return True
+            TreeLifecycle.from_path(
+                project_root=Path(str(project_root)),
+                file_path=str(rel_file_path),
+            )
         except Exception:
-            return False
+            pass
     try:
-        resolve_format_handler(preview_path).parse_content(preview_path, content)
-        return True
+        handler = resolve_format_handler(preview_abs_path)
+        sidecar = handler.sidecar_path(preview_abs_path.resolve())
+        if not sidecar.is_file():
+            return None
+        return parse_tree_file(sidecar.read_text(encoding="utf-8"))
     except Exception:
-        return False
+        return None
 
 
-def marked_tree_node_ref_is_ready(params: dict[str, Any]) -> bool:
-    """Return True when ``node_ref`` is absent or resolved to integer short_id."""
-    node_ref = normalize_optional_node_ref(params.get("node_ref"))
-    if node_ref is None:
-        return True
-    return str(node_ref).strip().isdigit()
+def normalize_marked_tree_node_ref(params: dict[str, Any]) -> PreviewError | None:
+    """Map API ``node_ref`` to integer short_id string for marked-tree navigation.
+
+    Accepts int, decimal string, MAP UUID4, JSON Pointer, or markdown slug; all
+    resolve to ``short_id`` via the loaded tree file MAP section.
+    """
+    raw = params.get("node_ref")
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        params["node_ref"] = str(raw)
+        return None
+    text = str(raw).strip()
+    if not text:
+        params["node_ref"] = None
+        return None
+    if text.isdigit():
+        params["node_ref"] = text
+        return None
+
+    sections = _load_tree_sections_for_preview(params)
+    if sections is None:
+        return input_error(
+            INPUT_ERROR_UNKNOWN_NODE_REF,
+            f"node_ref {raw!r} requires a tree sidecar; run preview at file root first",
+            details={"node_ref": raw},
+        )
+    preview_abs = Path(str(params["file_path"])).resolve()
+    unmarked = _read_source_text(preview_abs_path=preview_abs)
+    from code_analysis.core.edit_session.edit_operations_adapter import (
+        resolve_node_ref_to_short_id,
+    )
+
+    try:
+        short_id = resolve_node_ref_to_short_id(
+            text,
+            sections,
+            source_abs=preview_abs,
+            unmarked_source=unmarked,
+            handler_id=_preview_handler_id(preview_abs),
+        )
+    except ValueError as exc:
+        return input_error(
+            INPUT_ERROR_UNKNOWN_NODE_REF,
+            str(exc),
+            details={"node_ref": raw},
+        )
+    params["node_ref"] = str(short_id)
+    return None
 
 
 def resolve_session_pointer_node_ref(params: dict[str, Any]) -> None:
@@ -131,34 +190,23 @@ def should_use_marked_tree_navigation(
     params: dict[str, Any],
 ) -> bool:
     """Return True when PreviewNavigation + TreeLifecycle should handle the request."""
+    del handler  # format selection uses HandlerRegistry, not preview FileHandler
     file_path = Path(str(params.get("file_path", "")))
+    if not params.get("project_root") or not params.get("rel_file_path"):
+        return False
     ext = file_path.suffix.lower()
     if ext in _PYTHON_EXTENSIONS:
-        if not params.get("project_root") or not params.get("rel_file_path"):
-            return False
         try:
             resolve_format_handler(file_path)
         except Exception:
             return False
         return True
-
-    if isinstance(handler, JsonLinesFileHandler):
-        return False
-    if params.get("tree_temp_roots") is not None:
-        return False
-    node_ref = params.get("node_ref")
-    if looks_like_sidecar_stable_id(node_ref if isinstance(node_ref, str) else None):
-        return False
-    if looks_like_json_pointer_node_ref(node_ref) and params.get("session_id") is None:
-        return False
     if not _preview_source_is_parseable(params):
         return False
     if isinstance(params.get("selector"), list) and params["selector"]:
         first = params["selector"][0]
-        if isinstance(first, str):
+        if isinstance(first, str) and not str(first).strip().isdigit():
             return False
-    if not params.get("project_root") or not params.get("rel_file_path"):
-        return False
     try:
         resolve_format_handler(file_path)
     except Exception:
@@ -257,19 +305,47 @@ def _document_line_to_short_id(tree: Any) -> dict[int, NodeId]:
         attrs = getattr(node, "attributes", None) or {}
         start = attrs.get("start_line")
         end = attrs.get("end_line")
+        line_no = attrs.get("line_no")
         sid = getattr(node, "short_id", None)
-        if (
-            not isinstance(sid, int)
-            or not isinstance(start, int)
-            or not isinstance(end, int)
-        ):
-            continue
-        if start < 1 or end < start:
+        if not isinstance(sid, int):
             continue
         node_id = NodeId(sid)
-        for line_no in range(start, end + 1):
+        if (
+            isinstance(start, int)
+            and isinstance(end, int)
+            and start >= 1
+            and end >= start
+        ):
+            for line_num in range(start, end + 1):
+                mapping[line_num] = node_id
+            continue
+        if isinstance(line_no, int) and line_no >= 1:
             mapping[line_no] = node_id
     return mapping
+
+
+def _document_below_full_text_threshold(
+    source_text: str,
+    format_key: str,
+    config: PreviewSelectorConfig,
+) -> bool:
+    """True when source line count is strictly below ``full_text_max_lines``."""
+    threshold = config.full_text_max_lines.get(format_key, DEFAULT_FULL_TEXT_MAX_LINES)
+    if threshold <= 0 or not source_text.strip():
+        return False
+    return compute_line_span(source_text) < threshold
+
+
+def _full_tree_block_set(tree: Any) -> list[Any]:
+    """All nodes in short_id order (small-document root view)."""
+    return sorted(
+        list(_iter_all_nodes(tree)),
+        key=lambda n: int(getattr(n, "short_id", 0)),
+    )
+
+
+def _selector_omitted(raw_selector: object) -> bool:
+    return raw_selector is None or raw_selector == "" or raw_selector == []
 
 
 def _root_view_block_set(
@@ -324,28 +400,23 @@ def _enrich_focus_for_root_view(
     focus_node.attributes = attrs
 
 
-def navigate_marked_tree(
+def navigate_degraded_as_text(
     params: dict[str, Any],
     budget: PreviewBudget,
+    *,
+    parse_error: str,
 ) -> NavigationResult | PreviewError:
-    """Run PreviewNavigation with TreeLifecycle-backed tree_loader."""
-    project_root = Path(str(params["project_root"]))
-    rel_file_path = str(params["rel_file_path"])
+    """Preview unparseable source as text format (paragraph/line tree + thresholds)."""
     preview_abs_path = Path(str(params["file_path"]))
-    session_id = params.get("session_id")
-    if session_id is not None:
-        session_id = str(session_id)
+    source_text = _read_source_text(preview_abs_path=preview_abs_path)
+    from code_analysis.tree.handlers.text_handler import TextHandler
 
-    loader = make_preview_tree_loader(
-        project_root=project_root,
-        rel_file_path=rel_file_path,
-        preview_abs_path=preview_abs_path,
-        bound_session_id=session_id,
-    )
-    try:
-        tree = loader(preview_abs_path, session_id)
-    except Exception as exc:
-        invalid = invalid_source_node(str(preview_abs_path), exc)
+    nodes = TextHandler().parse_content(preview_abs_path, source_text)
+    if not nodes:
+        invalid = invalid_source_node(
+            str(preview_abs_path),
+            ValueError(parse_error),
+        )
         return NavigationResult(
             focus_node=invalid,
             total_blocks=0,
@@ -353,6 +424,47 @@ def navigate_marked_tree(
             tree_id=None,
             short_id_refs=True,
         )
+    tree = NodeListTree(nodes)
+
+    def _static_loader(_source_path: Path, _session_id: str | None) -> NodeListTree:
+        return tree
+
+    result = _navigate_loaded_tree(
+        params,
+        budget,
+        tree=tree,
+        loader=_static_loader,
+        preview_abs_path=preview_abs_path,
+        format_key="text",
+        session_id=params.get("session_id"),
+    )
+    if isinstance(result, PreviewError):
+        return result
+    focus = result.focus_node
+    focus.is_invalid = True
+    attrs = dict(focus.attributes or {})
+    attrs["parse_error"] = parse_error
+    focus.attributes = attrs
+    return NavigationResult(
+        focus_node=focus,
+        total_blocks=result.total_blocks,
+        selected_blocks=result.selected_blocks,
+        tree_id=result.tree_id,
+        short_id_refs=result.short_id_refs,
+    )
+
+
+def _navigate_loaded_tree(
+    params: dict[str, Any],
+    budget: PreviewBudget,
+    *,
+    tree: Any,
+    loader: Any,
+    preview_abs_path: Path,
+    format_key: str,
+    session_id: str | None,
+) -> NavigationResult | PreviewError:
+    """Run root/drill preview on an already-loaded marked tree."""
     root_view = normalize_optional_node_ref(params.get("node_ref")) is None
     try:
         focus_short_id = parse_focus_short_id(params.get("node_ref"), tree.nodes)
@@ -364,22 +476,30 @@ def navigate_marked_tree(
         )
 
     raw_selector = params.get("selector")
-    if raw_selector is None:
-        selector: str | list[int] | None = f"0:{budget.preview_lines}"
-    else:
-        selector = raw_selector
-
-    format_key = format_key_from_extension(preview_abs_path.suffix)
     config = PreviewSelectorConfig(
         full_text_max_lines={format_key: budget.full_text_max_lines},
     )
     navigation = PreviewNavigation(tree_loader=loader)
     max_short_id = compute_max_short_id_in_tree(tree)
     source_text = _read_source_text(preview_abs_path=preview_abs_path)
+    small_document = root_view and _document_below_full_text_threshold(
+        source_text,
+        format_key,
+        config,
+    )
+    if small_document and _selector_omitted(raw_selector):
+        selector: str | list[int] | None = None
+    elif raw_selector is None:
+        selector = f"0:{budget.preview_lines}"
+    else:
+        selector = raw_selector
 
     try:
         if root_view:
-            block_set = _root_view_block_set(tree, navigation, focus_short_id)
+            if small_document and _selector_omitted(raw_selector):
+                block_set = _full_tree_block_set(tree)
+            else:
+                block_set = _root_view_block_set(tree, navigation, focus_short_id)
             parsed = PreviewSelector.parse(selector)
             selected = parsed.apply(block_set)
             selected_blocks = [
@@ -446,4 +566,38 @@ def navigate_marked_tree(
         selected_blocks=selected_blocks,
         tree_id=None,
         short_id_refs=True,
+    )
+
+
+def navigate_marked_tree(
+    params: dict[str, Any],
+    budget: PreviewBudget,
+) -> NavigationResult | PreviewError:
+    """Run PreviewNavigation with TreeLifecycle-backed tree_loader."""
+    project_root = Path(str(params["project_root"]))
+    rel_file_path = str(params["rel_file_path"])
+    preview_abs_path = Path(str(params["file_path"]))
+    session_id = params.get("session_id")
+    if session_id is not None:
+        session_id = str(session_id)
+
+    loader = make_preview_tree_loader(
+        project_root=project_root,
+        rel_file_path=rel_file_path,
+        preview_abs_path=preview_abs_path,
+        bound_session_id=session_id,
+    )
+    try:
+        tree = loader(preview_abs_path, session_id)
+    except Exception as exc:
+        return navigate_degraded_as_text(params, budget, parse_error=str(exc))
+    format_key = format_key_from_extension(preview_abs_path.suffix)
+    return _navigate_loaded_tree(
+        params,
+        budget,
+        tree=tree,
+        loader=loader,
+        preview_abs_path=preview_abs_path,
+        format_key=format_key,
+        session_id=session_id,
     )

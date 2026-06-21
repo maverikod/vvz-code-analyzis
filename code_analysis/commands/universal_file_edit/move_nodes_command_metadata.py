@@ -31,7 +31,7 @@ def get_universal_file_move_nodes_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "the same file edit session.\n\n"
             "universal_file_move_nodes fits into the universal file edit workflow:\n"
             "  1. universal_file_open  — open a .py file, get session_id\n"
-            "  2. universal_file_preview — obtain node_ref UUIDs\n"
+            "  2. universal_file_preview — obtain integer short_id values (node_ref)\n"
             "  3. universal_file_move_nodes — move nodes to target position\n"
             "  4. universal_file_write — preview diff; second call commits to disk\n"
             "  5. universal_file_close — release the session\n\n"
@@ -67,35 +67,35 @@ def get_universal_file_move_nodes_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "source_node_ids": {
                 "description": (
-                    "Stable UUIDs of CST nodes to move (from universal_file_preview node_ref). "
-                    "All nodes must exist in the current draft tree. "
+                    "Integer short_id strings from universal_file_preview node_ref (legacy MAP "
+                    "UUID4 also accepted). All nodes must exist in the current draft tree. "
                     "Caller-supplied order is ignored; nodes are moved in source order (by start_line)."
                 ),
                 "type": "array",
                 "required": True,
                 "items": {"type": "string"},
-                "examples": [["<uuid-1>", "<uuid-2>"]],
+                "examples": [["4", "5"]],
             },
             "target_node_id": {
                 "description": (
-                    "Stable UUID of the sibling anchor node. "
+                    "Preview short_id (integer string) of the sibling anchor node. "
                     "Block is inserted before or after this node (controlled by position). "
                     "Mutually exclusive with parent_node_id."
                 ),
                 "type": "string",
                 "required": False,
-                "examples": ["<anchor-uuid>"],
+                "examples": ["7"],
             },
             "parent_node_id": {
                 "description": (
-                    "Stable UUID of the container node. "
+                    "Preview short_id (integer string) of the container node. "
                     "Block is inserted as first or last child (controlled by position). "
                     "Use __root__ for module level. "
                     "Mutually exclusive with target_node_id."
                 ),
                 "type": "string",
                 "required": False,
-                "examples": ["__root__", "<class-uuid>"],
+                "examples": ["__root__", "1"],
             },
             "position": {
                 "description": (
@@ -133,13 +133,13 @@ def get_universal_file_move_nodes_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "session_id": "<from universal_file_open>",
-                    "source_node_ids": ["<uuid-of-helper-func>"],
-                    "target_node_id": "<uuid-of-main-func>",
+                    "source_node_ids": ["4"],
+                    "target_node_id": "7",
                     "position": "before",
                 },
                 "explanation": (
                     "Open .py with universal_file_open, run universal_file_preview to get "
-                    "node_ref UUIDs, then call move_nodes. "
+                    "integer short_id values, then call move_nodes. "
                     "Follow with universal_file_write to commit."
                 ),
             },
@@ -148,7 +148,7 @@ def get_universal_file_move_nodes_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "session_id": "<from universal_file_open>",
-                    "source_node_ids": ["<uuid-1>", "<uuid-2>"],
+                    "source_node_ids": ["2", "3"],
                     "parent_node_id": "__root__",
                     "position": "last",
                 },
@@ -193,7 +193,7 @@ def get_universal_file_move_nodes_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "Call universal_file_preview before universal_file_move_nodes to obtain valid node_ref UUIDs.",
+            "Call universal_file_preview before universal_file_move_nodes to obtain valid integer short_id values.",
             "Use target_node_id + before|after for sibling-relative placement.",
             "Use parent_node_id + first|last (or __root__) for container placement.",
             "Do not supply both target_node_id and parent_node_id in the same call.",

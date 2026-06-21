@@ -241,8 +241,11 @@ class TestJsonSaveTreeCommandPathSafety:
         tree = build_tree_from_data(str(target), {"ok": True}, register=True)
 
         monkeypatch.setattr(
-            "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
-            lambda **kwargs: {"success": True},
+            "code_analysis.core.file_handlers.text_handler.persist_plain_text_file_metadata",
+            lambda **kwargs: {
+                "success": True,
+                "file_id": "53094b18-b8a3-482f-a73d-3a102ecb1fd1",
+            },
         )
 
         cmd = JsonSaveTreeCommand()

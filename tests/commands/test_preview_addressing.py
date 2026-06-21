@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.universal_file_preview import UniversalFilePreviewCommand
+from code_analysis.core.exceptions import ValidationError
 from code_analysis.commands.universal_file_preview.errors import (
     INPUT_ERROR_REQUIRES_IDENTIFIER_ADDRESSING,
     INPUT_ERROR_REQUIRES_LINE_ADDRESSING,
@@ -202,3 +203,35 @@ def test_preview_source_is_parseable_all_formats(tmp_path: Path) -> None:
     assert preview_source_is_parseable(tmp_path / "a.json") is True
     assert preview_source_is_parseable(tmp_path / "b.json") is False
     assert preview_source_is_parseable(tmp_path / "c.txt") is True
+
+
+def test_schema_node_ref_accepts_integer_short_id() -> None:
+    schema = UniversalFilePreviewCommand.get_schema()
+    node_ref = schema["properties"]["node_ref"]
+    assert "oneOf" in node_ref
+    types = {branch.get("type") for branch in node_ref["oneOf"]}
+    assert types == {"integer", "string"}
+
+
+def test_validate_params_accepts_integer_node_ref() -> None:
+    cmd = UniversalFilePreviewCommand()
+    params = cmd.validate_params(
+        {
+            "project_id": _PROJECT_UUID,
+            "file_path": "src/mod.py",
+            "node_ref": 3,
+        }
+    )
+    assert params["node_ref"] == "3"
+
+
+def test_validate_params_rejects_non_positive_integer_node_ref() -> None:
+    cmd = UniversalFilePreviewCommand()
+    with pytest.raises(ValidationError):
+        cmd.validate_params(
+            {
+                "project_id": _PROJECT_UUID,
+                "file_path": "src/mod.py",
+                "node_ref": 0,
+            }
+        )

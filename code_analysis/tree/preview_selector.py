@@ -19,7 +19,14 @@ FORMAT_EXTENSION_MAP: Dict[str, tuple[str, ...]] = {
     "json": (".json",),
     "yaml": (".yaml", ".yml"),
     "markdown": (".md",),
-    "text": (".txt", ".rst"),
+    "text": (".txt", ".rst", ".adoc", ".jsonl", ".ndjson"),
+}
+_EXTENSION_ALIASES: Dict[str, str] = {
+    ".pyi": ".py",
+    ".pyw": ".py",
+    ".adoc": ".txt",
+    ".jsonl": ".txt",
+    ".ndjson": ".txt",
 }
 DEFAULT_THRESHOLDS: Dict[str, int] = {k: 200 for k in FORMAT_EXTENSION_MAP}
 
@@ -124,6 +131,7 @@ def format_key_from_extension(ext: str) -> str:
     normalized = ext.lower()
     if not normalized.startswith("."):
         normalized = f".{normalized}"
+    normalized = _EXTENSION_ALIASES.get(normalized, normalized)
     for format_key, extensions in FORMAT_EXTENSION_MAP.items():
         if normalized in extensions:
             return format_key

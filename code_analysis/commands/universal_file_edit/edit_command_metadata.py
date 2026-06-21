@@ -34,23 +34,25 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  3. universal_file_edit  — apply one or more operations to the in-memory draft\n"
             "  4. universal_file_write — first call: preview diff; second call: commit to disk\n"
             "  5. universal_file_close — release the session\n\n"
-            "Operation shape follows universal_file_preview node_ref (by file type):\n\n"
+            "Operation shape uses integer short_id from universal_file_preview (all formats):\n\n"
             "Python (.py, .pyi, .pyw):\n"
-            "  Operations target CST nodes by stable UUID (node_ref from universal_file_preview).\n"
+            "  Preview returns integer short_id in node_ref. Pass the same integer in node_id,\n"
+            "  target_node_id, or parent_node_id; the server maps short_id to CST stable_id via MAP.\n"
+            "  Legacy MAP UUID4 strings are still accepted on input.\n"
             "  Fields: type, node_id, code_lines (recommended) or code.\n"
             "  type is mapped to action automatically: replace | insert | delete | move.\n"
             "  For insert (container): parent_node_id (__root__ for module level), position first|last.\n"
             "  For insert (sibling-relative): target_node_id, position before|after "
             "(parent_node_id omitted or __root__).\n"
             '  Shorthand: parent_node_id + position {"after": N} (0-based sibling index).\n'
-            "  stable_id (preview node_ref) is preserved across sibling/unrelated ops in one batch;\n"
+            "  stable_id (preview short_id) is preserved across sibling/unrelated ops in one batch;\n"
             "  re-preview only after failure, full parent replace, or when targets are unknown.\n"
             "  Nested functions and class methods are normal sibling targets.\n"
             "  Parent and child in the same batch are rejected (NESTED_BATCH_FORBIDDEN).\n\n"
             "JSON/YAML (.json, .yaml, .yml):\n"
-            "  Operations target document nodes via RFC 6901 JSON Pointer or opaque UUID.\n"
-            "  universal_file_preview returns node_ref as JSON Pointer string (e.g. '/timeout').\n"
-            "  Pass it in json_pointer field, NOT in node_id.\n"
+            "  Preview returns integer short_id in node_ref. Pass the same integer in node_ref or\n"
+            "  json_pointer; the server maps short_id to RFC 6901 JSON Pointer via MAP.\n"
+            "  Legacy JSON Pointer or opaque UUID strings are still accepted on input.\n"
             "  For replace: value (any JSON type — string, number, boolean, null, array, object).\n"
             "  For insert: key (object) or index (array);\n"
             "  omit index (or use position: 'last') to append at end of array.\n"
@@ -61,10 +63,9 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "  Legacy: before_key|after_key, before_node_id|after_node_id, before_json_pointer|after_json_pointer.\n"
             "  parent_json_pointer='' targets the document root object.\n\n"
             "text (.txt, .md, .rst, .adoc, others):\n"
-            "  Operations target line ranges (1-based, inclusive) on the **current draft**.\n"
-            "  For .md: universal_file_preview returns slug-path node_ref (e.g. 'intro.setup');\n"
-            "  pass node_ref instead of start_line/end_line — the server resolves line bounds.\n"
-            "  For .txt/.rst/.adoc: node_ref is a zero-based line index string from preview.\n"
+            "  Preview returns integer short_id (paragraph/line or section tree). Pass the same\n"
+            "  integer in node_ref or target_node_id; the server resolves source line bounds.\n"
+            "  Legacy markdown slug or line-index strings are still accepted on input.\n"
             "  Fields: type, start_line, end_line, content — or type, node_ref, content.\n"
             "  When both node_ref and start_line are present, node_ref wins.\n"
             "  For .md insert: position before|after (default after), or before:<node_ref>|after:<node_ref>.\n"
@@ -164,7 +165,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "operations": [
                         {
                             "type": "replace",
-                            "node_id": "<node_ref UUID from universal_file_preview>",
+                            "node_id": 4,
                             "code_lines": [
                                 "def hello() -> str:",
                                 '    """Say hello."""',
@@ -175,7 +176,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 },
                 "explanation": (
                     "Open .py with universal_file_open, run universal_file_preview to get "
-                    "node_ref UUID of the target node, pass it as node_id. "
+                    "integer short_id of the target node, pass it as node_id. "
                     "Use code_lines (list of strings) for multi-line code."
                 ),
             },
@@ -187,7 +188,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "operations": [
                         {
                             "type": "insert",
-                            "target_node_id": "<alpha-method-uuid>",
+                            "target_node_id": 3,
                             "position": "after",
                             "code_lines": [
                                 "",
@@ -197,7 +198,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         },
                         {
                             "type": "replace",
-                            "node_id": "<beta-method-uuid>",
+                            "node_id": 5,
                             "code_lines": ["def beta(self) -> int:", "    return 42"],
                         },
                     ],
@@ -212,13 +213,11 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "command": {
                     "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "session_id": "<from universal_file_open>",
-                    "operations": [
-                        {"type": "replace", "json_pointer": "/timeout", "value": 60}
-                    ],
+                    "operations": [{"type": "replace", "node_ref": 3, "value": 60}],
                 },
                 "explanation": (
-                    "node_ref from universal_file_preview for JSON/YAML is a JSON Pointer string. "
-                    "Pass it in json_pointer (not node_id). Use value (not content)."
+                    "Preview returns integer short_id in node_ref. Pass the same integer in "
+                    "node_ref or json_pointer (legacy '/timeout' also accepted)."
                 ),
             },
             {
@@ -303,15 +302,14 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "operations": [
                         {
                             "type": "replace",
-                            "start_line": 2,
-                            "end_line": 2,
+                            "node_ref": 2,
                             "content": "Updated.",
                         }
                     ],
                 },
                 "explanation": (
-                    "node_ref from universal_file_preview for text is a zero-based index. "
-                    "Convert to 1-based: start_line = int(node_ref) + 1."
+                    "Pass integer short_id from preview as node_ref; the server resolves line bounds. "
+                    "start_line/end_line (1-based) remain available when node_ref is omitted."
                 ),
             },
         ],
@@ -356,9 +354,9 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 ),
             },
             "UNKNOWN_NODE_REF": {
-                "description": "Text only: node_ref slug or index not found in the current draft.",
+                "description": "Text/marked-tree: preview short_id or legacy alias not found in the current draft.",
                 "message": "Unknown node_ref",
-                "solution": "Re-run universal_file_preview with session_id to refresh node_ref values.",
+                "solution": "Re-run universal_file_preview with session_id to refresh integer short_id values.",
             },
             "LINE_OUT_OF_RANGE": {
                 "description": "Text only: start_line/end_line are outside the current draft bounds.",
@@ -395,8 +393,9 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "best_practices": [
-            "Call universal_file_preview before the first universal_file_edit to obtain node_ref values.",
-            "For Python (sidecar): stable_id from preview is reused across sibling ops in one batch.",
+            "Call universal_file_preview before the first universal_file_edit to obtain integer short_id values.",
+            "Preview responses use integer node_ref; pass the same integer in edit ops (node_id, node_ref, json_pointer).",
+            "For Python (sidecar): short_id is preserved across sibling ops in one batch.",
             "For Python (sidecar): use code_lines (list of strings) for multi-line code to avoid JSON escaping issues.",
             "For Python sibling insert: target_node_id + position before|after (not parent_node_id + before).",
             "For Python: do not combine parent and child node targets in one batch (NESTED_BATCH_FORBIDDEN).",
@@ -405,8 +404,7 @@ def get_universal_file_edit_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "For JSON/YAML array append: omit index, or use position='last', or end parent_json_pointer with '/-'.",
             "For JSON array sibling insert: before_node_id or after_node_id (mutually exclusive with index).",
             "For JSON object sibling insert: before_key or after_key to preserve key order.",
-            "For JSON/YAML (tree-temp): pass node_ref from preview into json_pointer, not node_id.",
-            "For .md: pass slug node_ref from preview; for .txt/.rst/.adoc convert zero-based node_ref to 1-based start_line.",
+            "For text/markdown: pass integer short_id as node_ref; legacy slug/pointer strings still accepted on input.",
             "For text: never reuse line numbers from fulltext_search or an earlier preview after universal_file_edit — re-run universal_file_preview with session_id before each line-targeted edit.",
             "For text: pass anchor_head and anchor_tail together to verify the target range before replace/delete.",
             "For text append: use position='last' without start_line — no need to know the line count.",

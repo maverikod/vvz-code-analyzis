@@ -44,11 +44,6 @@ from .universal_file_preview.errors import (
 )
 
 
-from .universal_file_preview.handlers.json_handler import JsonFileHandler
-
-from .universal_file_preview.handlers.yaml_handler import YamlFileHandler
-
-
 from .universal_file_preview.navigation import navigate
 from .universal_file_preview.node_ref_params import normalize_optional_node_ref
 
@@ -62,16 +57,10 @@ from .universal_file_preview.preview_pagination import apply_preview_pagination
 from .universal_file_preview.response import build_envelope
 
 
-from .universal_file_preview.tree_temp_preview_focus import looks_like_sidecar_stable_id
-
-
+from code_analysis.commands.universal_file_edit.format_group import check_lock
 from code_analysis.commands.universal_file_edit.invalid_write_support import (
     mode_notice_text,
 )
-from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
-    acquire_tree_temp_for_open,
-)
-from code_analysis.commands.universal_file_edit.format_group import check_lock
 
 
 from .universal_file_preview.session import merge_edit_session_into_preview_params
@@ -151,9 +140,30 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "description": "Project-relative path to one file. No globs.",
                 },
                 "node_ref": {
-                    "type": "string",
-                    "description": "StableIdentifier in file handler native "
-                    "format. Omit for file root.",
+                    "description": (
+                        "Drill-down node identifier from a prior preview response. "
+                        "All marked-tree formats return and accept a positive integer "
+                        "``short_id`` (internal TreeNodeUuid lives only in the ``.tree`` "
+                        "MAP section). Legacy string forms (MAP UUID4, JSON Pointer, "
+                        "markdown slug) are resolved to ``short_id`` before navigation. "
+                        "Omit for file root."
+                    ),
+                    "oneOf": [
+                        {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": (
+                                "Marked-tree short_id; canonical round-trip form."
+                            ),
+                        },
+                        {
+                            "type": "string",
+                            "description": (
+                                "Legacy alias resolved via MAP (UUID4, JSON Pointer, "
+                                "markdown slug, or decimal short_id string)."
+                            ),
+                        },
+                    ],
                     "nullable": True,
                 },
                 "selector": {
@@ -186,9 +196,10 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     "type": "integer",
                     "minimum": 0,
                     "description": (
-                        "Python handler: when the file has fewer lines than this "
-                        "threshold, return the entire file as a single text block. "
-                        "Default 200. Set to 0 to disable full-text fallback."
+                        "Per-format source-line threshold. When the file has fewer "
+                        "lines than this value, root preview returns annotated full "
+                        "source on focus and every tree node in blocks. Default 200. "
+                        "Set to 0 to disable (drilldown only)."
                     ),
                     "nullable": True,
                 },
@@ -381,47 +392,6 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                     details=addressing_err.details or {},
                 )
 
-            # Tree-temp Sidecar preview: UUID ``node_ref`` delegates drill-down enumeration
-            # to NavigationProcedure after Sidecar roots are injected.
-            # JSON Pointer ``node_ref`` uses legacy handler navigation on the draft file.
-            nav_kwargs = dict(kwargs)
-            nr_probe = kwargs.get("node_ref")
-            if isinstance(handler, (JsonFileHandler, YamlFileHandler)) and (
-                looks_like_sidecar_stable_id(
-                    nr_probe if isinstance(nr_probe, str) else None
-                )
-            ):
-                tt_roots_payload = None
-                sid_here = kwargs.get("session_id")
-                if sid_here is not None:
-                    from code_analysis.commands.universal_file_edit.session import (  # noqa: PLC0415
-                        get_session as get_edit_session,
-                    )
-
-                    try:
-                        edit_rec = get_edit_session(str(sid_here))
-                        if edit_rec.is_invalid:
-                            tt_roots_payload = None
-                        else:
-                            tt_roots_payload = edit_rec.tree_temp_roots
-                    except ValueError:
-                        tt_roots_payload = None
-                if tt_roots_payload is None:
-                    proj_abs = Path(str(project_root)).resolve()
-                    source_abs_fp = Path(abs_file_path).resolve()
-                    hid = "json" if isinstance(handler, JsonFileHandler) else "yaml"
-                    try:
-                        tt_roots_payload = acquire_tree_temp_for_open(
-                            project_root=proj_abs,
-                            source_abs=source_abs_fp,
-                            handler_id=hid,
-                            raw_source_bytes=source_abs_fp.read_bytes(),
-                        ).roots
-                    except Exception:
-                        tt_roots_payload = None
-                if tt_roots_payload is not None:
-                    nav_kwargs["tree_temp_roots"] = tt_roots_payload
-
             budget = PreviewBudget(
                 preview_lines=int(kwargs["preview_lines"]),
                 value_preview_len=int(kwargs["value_preview_len"]),
@@ -429,6 +399,7 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
                 max_chars=int(kwargs["max_chars"]),
                 preview_offset=int(kwargs["preview_offset"]),
             )
+            nav_kwargs = dict(kwargs)
             nav_kwargs["file_path"] = abs_file_path
             nav_kwargs["project_root"] = project_root
             nav_kwargs["rel_file_path"] = kwargs["file_path"]

@@ -41,6 +41,38 @@ async def test_fs_grep_skips_large_files_before_reading(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fs_grep_on_match_batch_emits_per_file(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "a.txt").write_text("needle one\n", encoding="utf-8")
+    (project_root / "b.txt").write_text("needle two\n", encoding="utf-8")
+    (project_root / "c.txt").write_text("quiet\n", encoding="utf-8")
+
+    batches: list[list[dict]] = []
+
+    def on_batch(batch: list[dict]) -> None:
+        batches.append(list(batch))
+
+    with patch.object(
+        FsGrepCommand, "_resolve_project_root", return_value=project_root
+    ):
+        cmd = FsGrepCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000003",
+            pattern="needle",
+            fast_text_only=True,
+            enrich_blocks=False,
+            on_match_batch=on_batch,
+        )
+
+    assert result.data is not None
+    assert result.data["match_count"] == 2
+    assert len(batches) == 2
+    assert batches[0][0]["relative_path"] == "a.txt"
+    assert batches[1][0]["relative_path"] == "b.txt"
+
+
+@pytest.mark.asyncio
 async def test_fs_grep_streams_matching_lines(tmp_path) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()

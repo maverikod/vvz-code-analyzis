@@ -15,6 +15,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .command_metadata_helpers import finalize_command_metadata
 from ..core.code_quality import type_check_with_mypy
 from ..core.exceptions import ValidationError
 
@@ -233,180 +234,135 @@ class TypeCheckCodeCommand(Command):
         Returns:
             Dictionary with command metadata.
         """
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": (
-                "Static type checking with mypy. Validates file_path, optional config_file; "
-                "auto-detects pyproject.toml in parent dirs. Always runs mypy on the single "
-                "target file (never package-wide). Repo-root config is skipped. Read-only; "
-                "returns success and list of errors. ignore_errors=True treats errors as warnings."
-            ),
-            "parameters": {
-                "file_path": {
-                    "description": (
-                        "Path to Python file to type check. "
-                        "**RECOMMENDED: Use absolute path for reliability.** "
-                        "Relative paths are resolved from current working directory, "
-                        "which may cause issues if working directory changes. "
-                        "File must exist and be readable."
-                    ),
-                    "type": "string",
-                    "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project/src/main.py",
-                        "code_analysis/core/backup_manager.py",
-                        "./src/utils.py",
-                    ],
-                },
-                "config_file": {
-                    "description": (
-                        "Optional path to mypy configuration file (typically pyproject.toml). "
-                        "If not provided, command auto-detects pyproject.toml in parent directories. "
-                        "Repo-root config is skipped so type check stays single-file."
-                    ),
-                    "type": "string",
-                    "required": False,
-                    "examples": [
-                        "/home/user/projects/my_project/pyproject.toml",
-                        "./pyproject.toml",
-                    ],
-                },
-                "ignore_errors": {
-                    "description": (
-                        "If True, treats type errors as warnings. Errors are still returned "
-                        "in the errors list, but success will be True. Useful for gradual "
-                        "type checking adoption or non-blocking checks."
-                    ),
-                    "type": "boolean",
-                    "required": False,
-                    "default": False,
-                    "examples": [False, True],
-                },
-            },
-            "usage_examples": [
-                {
-                    "description": "Type check a Python file",
-                    "command": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                    },
-                    "explanation": (
-                        "Type checks main.py using auto-detected mypy config. "
-                        "Returns all type errors found for that file only."
-                    ),
-                },
-                {
-                    "description": "Type check with explicit config",
-                    "command": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "config_file": "/home/user/projects/my_project/pyproject.toml",
-                    },
-                    "explanation": (
-                        "Type checks main.py using specified mypy config file. "
-                        "Result is still for the single file only."
-                    ),
-                },
-                {
-                    "description": "Type check with errors as warnings",
-                    "command": {
-                        "file_path": "./code_analysis/commands/backup_mcp_commands.py",
-                        "ignore_errors": True,
-                    },
-                    "explanation": (
-                        "Type checks file but treats errors as warnings. "
-                        "Returns success=True even if errors found (errors still in list)."
-                    ),
-                },
-            ],
-            "error_cases": {
-                "FILE_NOT_FOUND": {
-                    "description": "File does not exist",
-                    "example": "file_path='/path/to/nonexistent.py'",
-                    "solution": "Verify file path is correct and file exists",
-                },
-                "NOT_A_FILE": {
-                    "description": "Path is not a file (e.g., directory)",
-                    "example": "file_path='/path/to/directory'",
-                    "solution": "Ensure path points to a file, not a directory",
-                },
-                "CONFIG_NOT_FOUND": {
-                    "description": "Config file specified but not found",
-                    "example": "config_file='/path/to/missing/pyproject.toml'",
-                    "solution": "Verify config file path is correct and file exists",
-                },
-                "INTERNAL_ERROR": {
-                    "description": "Internal error during type checking",
-                    "example": "Unexpected exception in type checking logic",
-                    "solution": "Check logs for details, verify file permissions and mypy installation",
-                },
-            },
-            "return_value": {
-                "success": {
-                    "description": "Type checking completed (may have errors)",
-                    "data": {
-                        "file_path": "Path to type-checked file",
-                        "config_file": "Path to mypy config file used (None if auto-detected or not found)",
-                        "success": (
-                            "True if no type errors found (or ignore_errors=True), "
-                            "False if type errors found and ignore_errors=False"
+        return finalize_command_metadata(
+            cls,
+            {
+                "detailed_description": (
+                    "Static type checking with mypy. Validates file_path, optional config_file; "
+                    "auto-detects pyproject.toml in parent dirs. Always runs mypy on the single "
+                    "target file (never package-wide). Repo-root config is skipped. Read-only; "
+                    "returns success and list of errors. ignore_errors=True treats errors as warnings."
+                ),
+                "usage_examples": [
+                    {
+                        "description": "Type check a Python file",
+                        "command": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                        },
+                        "explanation": (
+                            "Type checks main.py using auto-detected mypy config. "
+                            "Returns all type errors found for that file only."
                         ),
-                        "error": "Error message if type checking failed (None if successful)",
-                        "errors": (
-                            "List of type error strings. Each error follows format: "
-                            "file_path:line:column: error_type: error_message"
+                    },
+                    {
+                        "description": "Type check with explicit config",
+                        "command": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "config_file": "/home/user/projects/my_project/pyproject.toml",
+                        },
+                        "explanation": (
+                            "Type checks main.py using specified mypy config file. "
+                            "Result is still for the single file only."
                         ),
-                        "error_count": "Number of type errors found",
                     },
-                    "example_success": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "config_file": "/home/user/projects/my_project/pyproject.toml",
-                        "success": True,
-                        "error": None,
-                        "errors": [],
-                        "error_count": 0,
+                    {
+                        "description": "Type check with errors as warnings",
+                        "command": {
+                            "file_path": "./code_analysis/commands/backup_mcp_commands.py",
+                            "ignore_errors": True,
+                        },
+                        "explanation": (
+                            "Type checks file but treats errors as warnings. "
+                            "Returns success=True even if errors found (errors still in list)."
+                        ),
                     },
-                    "example_with_errors": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "config_file": "/home/user/projects/my_project/pyproject.toml",
-                        "success": False,
-                        "error": "Found 2 mypy errors",
-                        "errors": [
-                            "src/main.py:15:5: error: Argument 1 to 'process' has incompatible type 'str'; expected 'int'",
-                            "src/main.py:22:10: error: Function is missing a return type annotation",
-                        ],
-                        "error_count": 2,
+                ],
+                "error_cases": {
+                    "FILE_NOT_FOUND": {
+                        "description": "File does not exist",
+                        "example": "file_path='/path/to/nonexistent.py'",
+                        "solution": "Verify file path is correct and file exists",
                     },
-                    "example_ignore_errors": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "config_file": None,
-                        "success": True,
-                        "error": None,
-                        "errors": [
-                            "src/main.py:15:5: error: Argument 1 to 'process' has incompatible type 'str'; expected 'int'",
-                        ],
-                        "error_count": 1,
+                    "NOT_A_FILE": {
+                        "description": "Path is not a file (e.g., directory)",
+                        "example": "file_path='/path/to/directory'",
+                        "solution": "Ensure path points to a file, not a directory",
+                    },
+                    "CONFIG_NOT_FOUND": {
+                        "description": "Config file specified but not found",
+                        "example": "config_file='/path/to/missing/pyproject.toml'",
+                        "solution": "Verify config file path is correct and file exists",
+                    },
+                    "INTERNAL_ERROR": {
+                        "description": "Internal error during type checking",
+                        "example": "Unexpected exception in type checking logic",
+                        "solution": "Check logs for details, verify file permissions and mypy installation",
                     },
                 },
-                "error": {
-                    "description": "Command failed",
-                    "code": "Error code (e.g., FILE_NOT_FOUND, NOT_A_FILE, CONFIG_NOT_FOUND, INTERNAL_ERROR)",
-                    "message": "Human-readable error message",
+                "return_value": {
+                    "success": {
+                        "description": "Type checking completed (may have errors)",
+                        "data": {
+                            "file_path": "Path to type-checked file",
+                            "config_file": "Path to mypy config file used (None if auto-detected or not found)",
+                            "success": (
+                                "True if no type errors found (or ignore_errors=True), "
+                                "False if type errors found and ignore_errors=False"
+                            ),
+                            "error": "Error message if type checking failed (None if successful)",
+                            "errors": (
+                                "List of type error strings. Each error follows format: "
+                                "file_path:line:column: error_type: error_message"
+                            ),
+                            "error_count": "Number of type errors found",
+                        },
+                        "example_success": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "config_file": "/home/user/projects/my_project/pyproject.toml",
+                            "success": True,
+                            "error": None,
+                            "errors": [],
+                            "error_count": 0,
+                        },
+                        "example_with_errors": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "config_file": "/home/user/projects/my_project/pyproject.toml",
+                            "success": False,
+                            "error": "Found 2 mypy errors",
+                            "errors": [
+                                "src/main.py:15:5: error: Argument 1 to 'process' has incompatible type 'str'; expected 'int'",
+                                "src/main.py:22:10: error: Function is missing a return type annotation",
+                            ],
+                            "error_count": 2,
+                        },
+                        "example_ignore_errors": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "config_file": None,
+                            "success": True,
+                            "error": None,
+                            "errors": [
+                                "src/main.py:15:5: error: Argument 1 to 'process' has incompatible type 'str'; expected 'int'",
+                            ],
+                            "error_count": 1,
+                        },
+                    },
+                    "error": {
+                        "description": "Command failed",
+                        "code": "Error code (e.g., FILE_NOT_FOUND, NOT_A_FILE, CONFIG_NOT_FOUND, INTERNAL_ERROR)",
+                        "message": "Human-readable error message",
+                    },
                 },
+                "best_practices": [
+                    "Run type_check_code after adding type hints to validate them",
+                    "Fix all type errors before committing code",
+                    "Use ignore_errors=True for gradual type checking adoption",
+                    "Check error_count field to quickly see if issues exist",
+                    "Review errors list to understand type issues",
+                    "Run type_check_code in CI/CD pipelines to enforce type safety",
+                    "Use config_file for project-specific mypy settings",
+                    "This command always checks a single file; result set is scoped to that file",
+                    "Add type hints incrementally and check as you go",
+                    "Use mypy's strict mode for maximum type safety",
+                ],
             },
-            "best_practices": [
-                "Run type_check_code after adding type hints to validate them",
-                "Fix all type errors before committing code",
-                "Use ignore_errors=True for gradual type checking adoption",
-                "Check error_count field to quickly see if issues exist",
-                "Review errors list to understand type issues",
-                "Run type_check_code in CI/CD pipelines to enforce type safety",
-                "Use config_file for project-specific mypy settings",
-                "This command always checks a single file; result set is scoped to that file",
-                "Add type hints incrementally and check as you go",
-                "Use mypy's strict mode for maximum type safety",
-            ],
-        }
+        )

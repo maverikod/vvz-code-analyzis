@@ -207,9 +207,11 @@ async def test_create_invalid_json_preview_returns_raw_text(
     assert isinstance(result, SuccessResult)
     focus = result.data.get("focus", {})
     assert focus.get("is_invalid") is True
-    assert focus.get("text") == broken
+    assert broken in (focus.get("text") or "")
     assert focus.get("text") != "{}"
     assert focus.get("attributes", {}).get("parse_error")
+    assert result.data.get("blocks")
+    assert focus.get("attributes", {}).get("full_text") is True
 
 
 @pytest.mark.asyncio

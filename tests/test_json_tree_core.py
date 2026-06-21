@@ -143,7 +143,7 @@ def test_reload_tree_from_file(tmp_path: Path) -> None:
 
 
 def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
-    """save_json_tree_to_file writes file and calls DB batch path (mocked)."""
+    """save_json_tree_to_file writes file and syncs files-table metadata (mocked)."""
     root_dir = tmp_path / "proj"
     root_dir.mkdir()
     target = root_dir / "data.json"
@@ -154,28 +154,11 @@ def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
     tid = tree.tree_id
 
     db = MagicMock()
-    db.select = MagicMock(return_value=[])
-    created = MagicMock()
-    created.id = 42
-    db.create_file = MagicMock(return_value=created)
-    db.update_file = MagicMock()
-    db.begin_transaction = MagicMock(return_value="tx1")
-    db.commit_transaction = MagicMock()
-    db.rollback_transaction = MagicMock()
 
-    with (
-        patch(
-            "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
-            return_value={"success": True},
-        ) as ufab,
-        patch(
-            "code_analysis.core.json_tree.json_saver.acquire_file_edit_lock_with_retry",
-            return_value=True,
-        ),
-        patch(
-            "code_analysis.core.json_tree.json_saver.release_file_edit_lock",
-        ),
-    ):
+    with patch(
+        "code_analysis.core.file_handlers.text_handler.persist_plain_text_file_metadata",
+        return_value={"success": True, "file_id": 42},
+    ) as meta_fn:
         result = save_json_tree_to_file(
             tree_id=tid,
             file_path=str(target),
@@ -188,7 +171,7 @@ def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
     assert result["success"] is True
     written = json.loads(target.read_text(encoding="utf-8"))
     assert written == data
-    ufab.assert_called_once()
+    meta_fn.assert_called_once()
 
 
 def test_save_json_tree_to_file_rejects_target_outside_root(tmp_path: Path) -> None:

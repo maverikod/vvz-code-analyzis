@@ -2,7 +2,9 @@
 Preview addressing mode: identifier navigation vs invalid-source line pagination.
 
 Normal (parseable) files: node_ref / selector only.
-Invalid-source fallback: preview_offset / max_chars over raw text only.
+Invalid-source fallback: degraded to text format (paragraph/line tree with
+full_text_max_lines threshold at root); preview_offset / max_chars for envelope
+pagination when the response is still too large.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

@@ -16,12 +16,13 @@ import re
 import threading
 import time
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.progress_tracker import get_progress_tracker_from_context
 from .base_mcp_command import BaseMCPCommand
+from .command_metadata_helpers import finalize_command_metadata
 from ..core.exceptions import ValidationError
 from .fs_grep_budget import (
     GREP_BUDGET_EXCEEDED,
@@ -360,6 +361,7 @@ class FsGrepCommand(BaseMCPCommand):
         context = kwargs.get("context") or {}
         if not isinstance(context, dict):
             context = {}
+        on_match_batch = kwargs.get("on_match_batch")
         enqueue_params = {
             k: v
             for k, v in {
@@ -431,6 +433,7 @@ class FsGrepCommand(BaseMCPCommand):
                 wall_time_budget_s=wall_time_budget_s,
                 context=context,
                 cancel_event=cancel_event,
+                on_match_batch=on_match_batch,
             )
 
         return await run_search_inline_or_queue(
@@ -476,6 +479,7 @@ class FsGrepCommand(BaseMCPCommand):
         wall_time_budget_s: Optional[float],
         context: Dict[str, Any],
         cancel_event: Optional[threading.Event] = None,
+        on_match_batch: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
     ) -> SuccessResult | ErrorResult:
         """Worker: grep with hard timeout; cooperative cancel when inline times out."""
         in_queue = is_queued_search_execution(context=context)
@@ -532,6 +536,7 @@ class FsGrepCommand(BaseMCPCommand):
                     wall_budget,
                     stage_holder,
                     cancel_event,
+                    on_match_batch,
                 ),
                 timeout=hard_limit,
             )
@@ -580,6 +585,7 @@ class FsGrepCommand(BaseMCPCommand):
         wall_budget: float,
         stage_holder: Optional[Dict[str, str]] = None,
         cancel_event: Optional[threading.Event] = None,
+        on_match_batch: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
     ) -> SuccessResult | ErrorResult:
         """Phase-1 fast text scan; optional phase-2 stable block enrichment."""
 
@@ -725,6 +731,47 @@ class FsGrepCommand(BaseMCPCommand):
                     )
 
             _set_stage("line_scan")
+            tree_stats = TreeResolutionStats()
+            enrich_counters = EnrichmentCounters()
+            enrichment_policy = {
+                "ensure_persisted_tree": ensure_persisted_tree,
+                "stable_ids_required": stable_ids_required,
+            }
+            enrich_policy = EnrichmentPolicy(
+                ensure_persisted_tree=ensure_persisted_tree,
+                stable_ids_required=stable_ids_required,
+            )
+            enrich_applied = 0
+
+            def _deliver_file_matches(file_batch: List[Dict[str, Any]]) -> None:
+                nonlocal enrich_applied
+                if on_match_batch is None or not file_batch:
+                    return
+                batch = list(file_batch)
+                if fast_text_only:
+                    for row in batch:
+                        _set_line_only_match(row, "skipped_fast_text_only")
+                    enrich_counters.enrichment_skipped += len(batch)
+                elif enrich_blocks:
+                    remaining = max(0, enrich_max_results - enrich_applied)
+                    if remaining <= 0:
+                        for row in batch:
+                            _set_line_only_match(row, "skipped_budget")
+                        enrich_counters.enrichment_skipped += len(batch)
+                    else:
+                        _set_stage("structure_extraction")
+                        _phase2_enrich_blocks(
+                            project_root=project_root,
+                            matches=batch,
+                            enrich_max_results=remaining,
+                            budget=budget,
+                            policy=enrich_policy,
+                            tree_stats=tree_stats,
+                            counters=enrich_counters,
+                        )
+                        enrich_applied += min(remaining, len(batch))
+                on_match_batch(batch)
+
             matches, scan_stats = _phase1_text_scan_targets(
                 project_root=project_root,
                 scan_targets=scan_targets,
@@ -738,38 +785,32 @@ class FsGrepCommand(BaseMCPCommand):
                 budget=budget,
                 scan_all=scan_all,
                 coverage_by_rel=coverage_by_rel,
+                on_file_matches=(
+                    _deliver_file_matches if on_match_batch is not None else None
+                ),
             )
 
-            tree_stats = TreeResolutionStats()
-            enrich_counters = EnrichmentCounters()
-            enrichment_policy = {
-                "ensure_persisted_tree": ensure_persisted_tree,
-                "stable_ids_required": stable_ids_required,
-            }
-
-            if fast_text_only and matches:
-                for row in matches:
-                    _set_line_only_match(row, "skipped_fast_text_only")
-                budget.add_warning(
-                    GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
-                    "Structural enrichment skipped because fast_text_only=true.",
-                    enrich_max_results=enrich_max_results,
-                )
-                enrich_counters.enrichment_skipped += len(matches)
-            elif enrich_blocks and matches:
-                _set_stage("structure_extraction")
-                _phase2_enrich_blocks(
-                    project_root=project_root,
-                    matches=matches,
-                    enrich_max_results=enrich_max_results,
-                    budget=budget,
-                    policy=EnrichmentPolicy(
-                        ensure_persisted_tree=ensure_persisted_tree,
-                        stable_ids_required=stable_ids_required,
-                    ),
-                    tree_stats=tree_stats,
-                    counters=enrich_counters,
-                )
+            if on_match_batch is None:
+                if fast_text_only and matches:
+                    for row in matches:
+                        _set_line_only_match(row, "skipped_fast_text_only")
+                    budget.add_warning(
+                        GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
+                        "Structural enrichment skipped because fast_text_only=true.",
+                        enrich_max_results=enrich_max_results,
+                    )
+                    enrich_counters.enrichment_skipped += len(matches)
+                elif enrich_blocks and matches:
+                    _set_stage("structure_extraction")
+                    _phase2_enrich_blocks(
+                        project_root=project_root,
+                        matches=matches,
+                        enrich_max_results=enrich_max_results,
+                        budget=budget,
+                        policy=enrich_policy,
+                        tree_stats=tree_stats,
+                        counters=enrich_counters,
+                    )
 
             budget.usage.matches_returned = len(matches)
             budget.usage.files_scanned = scan_stats["files_scanned"]
@@ -845,113 +886,80 @@ class FsGrepCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsGrepCommand"]) -> Dict[str, Any]:
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": (
-                "Two-phase grep: phase-1 streams UTF-8 lines with ``fast_text_only=true`` "
-                "(default, no CST/DB). Optional phase-2 ``enrich_blocks`` resolves block_id "
-                "for the first ``enrich_max_results`` hits only. Sync calls enforce "
-                "wall-time, scanned-file, and match budgets; heavy scans should use "
-                "``use_queue=true`` (command class sets use_queue)."
-            ),
-            "parameters": {
-                "project_id": {
-                    "description": "Project UUID from create_project or list_projects.",
-                    "type": "string",
-                    "required": True,
-                },
-                "pattern": {
-                    "description": "Literal substring or Python regular expression to search.",
-                    "type": "string",
-                    "required": True,
-                },
-                "fast_text_only": {
-                    "description": "Skip structural block resolution during scan (default true).",
-                    "type": "boolean",
-                    "required": False,
-                    "default": True,
-                },
-                "enrich_blocks": {
-                    "description": "Run phase-2 enrichment for first enrich_max_results matches.",
-                    "type": "boolean",
-                    "required": False,
-                    "default": False,
-                },
-                "max_matches": {
-                    "description": "Stop after this many matching lines.",
-                    "type": "integer",
-                    "required": False,
-                    "default": 500,
-                },
-            },
-            "return_value": {
-                "success": {
-                    "description": "Matches, scan stats, grep_budget, warnings.",
-                    "data": {},
-                    "example": {},
-                },
-                "error": {
-                    "description": "Validation, budget timeout, or IO failure.",
-                    "code": "FS_GREP_ERROR",
-                    "message": "Human-readable message",
-                },
-            },
-            "usage_examples": [
-                {
-                    "description": "Fast sync grep (default)",
-                    "command": {
-                        "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
-                        "pattern": "xpath",
-                        "file_pattern": "code_analysis",
-                        "max_matches": 50,
+        return finalize_command_metadata(
+            cls,
+            {
+                "detailed_description": (
+                    "Two-phase grep: phase-1 streams UTF-8 lines with ``fast_text_only=false`` "
+                    "(default). Optional phase-2 ``enrich_blocks`` (default true) resolves block_id "
+                    "for the first ``enrich_max_results`` hits only. Sync calls enforce "
+                    "wall-time, scanned-file, and match budgets; heavy scans should use "
+                    "``use_queue=true`` (command class sets use_queue)."
+                ),
+                "return_value": {
+                    "success": {
+                        "description": "Matches, scan stats, grep_budget, warnings.",
+                        "data": {},
+                        "example": {},
                     },
-                    "explanation": "Returns within sync budgets; block_id null unless enrich_blocks.",
+                    "error": {
+                        "description": "Validation, budget timeout, or IO failure.",
+                        "code": "FS_GREP_ERROR",
+                        "message": "Human-readable message",
+                    },
                 },
-            ],
-            "error_cases": {
-                "INVALID_PATTERN": {
-                    "description": "The pattern is empty or whitespace only.",
-                    "message": "pattern must be non-empty",
-                    "solution": "Pass a non-empty search string.",
+                "usage_examples": [
+                    {
+                        "description": "Fast sync grep (default)",
+                        "command": {
+                            "project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                            "pattern": "xpath",
+                            "file_pattern": "code_analysis",
+                            "max_matches": 50,
+                        },
+                        "explanation": "Returns within sync budgets; block_id null unless enrich_blocks.",
+                    },
+                ],
+                "error_cases": {
+                    "INVALID_PATTERN": {
+                        "description": "The pattern is empty or whitespace only.",
+                        "message": "pattern must be non-empty",
+                        "solution": "Pass a non-empty search string.",
+                    },
+                    "GREP_HARD_TIMEOUT": {
+                        "description": (
+                            "Hard execution timeout exceeded; grep was stopped at the transport boundary."
+                        ),
+                        "message": "fs_grep exceeded hard timeout and was stopped.",
+                        "solution": (
+                            "Narrow file_pattern, reduce scope, or increase hard_timeout_seconds "
+                            "within the allowed maximum."
+                        ),
+                    },
+                    "GREP_TIMEOUT": {
+                        "description": "Sync wall-time budget exceeded at transport layer.",
+                        "message": "fs_grep exceeded sync wall-time budget",
+                        "solution": "Use use_queue=true on call_server.",
+                    },
+                    "GREP_BUDGET_EXCEEDED": {
+                        "description": "Scan stopped due to file/match/time budget (success with warnings).",
+                        "message": "Grep scan stopped early",
+                        "solution": "Narrow file_pattern or use use_queue=true.",
+                    },
+                    "GREP_TOO_MANY_FILES": {
+                        "description": "Too many candidate paths for sync; list was capped.",
+                        "message": "Candidate file list truncated",
+                        "solution": "Use file_pattern or use_queue=true.",
+                    },
                 },
-                "GREP_HARD_TIMEOUT": {
-                    "description": (
-                        "Hard execution timeout exceeded; grep was stopped at the transport boundary."
-                    ),
-                    "message": "fs_grep exceeded hard timeout and was stopped.",
-                    "solution": (
-                        "Narrow file_pattern, reduce scope, or increase hard_timeout_seconds "
-                        "within the allowed maximum."
-                    ),
-                },
-                "GREP_TIMEOUT": {
-                    "description": "Sync wall-time budget exceeded at transport layer.",
-                    "message": "fs_grep exceeded sync wall-time budget",
-                    "solution": "Use use_queue=true on call_server.",
-                },
-                "GREP_BUDGET_EXCEEDED": {
-                    "description": "Scan stopped due to file/match/time budget (success with warnings).",
-                    "message": "Grep scan stopped early",
-                    "solution": "Narrow file_pattern or use use_queue=true.",
-                },
-                "GREP_TOO_MANY_FILES": {
-                    "description": "Too many candidate paths for sync; list was capped.",
-                    "message": "Candidate file list truncated",
-                    "solution": "Use file_pattern or use_queue=true.",
-                },
+                "best_practices": [
+                    "Keep fast_text_only=true for broad sync grep when you do not need block_id.",
+                    "Use enrich_blocks only when you need block_id on a small result set.",
+                    "Heavy scans: call_server(..., use_queue=true) and poll queue_get_job_status.",
+                    "Narrow with file_pattern whenever possible.",
+                ],
             },
-            "best_practices": [
-                "Keep fast_text_only=true for broad sync grep.",
-                "Use enrich_blocks only when you need block_id on a small result set.",
-                "Heavy scans: call_server(..., use_queue=true) and poll queue_get_job_status.",
-                "Narrow with file_pattern whenever possible.",
-            ],
-        }
+        )
 
 
 def _grep_match_source_label(
@@ -1007,6 +1015,7 @@ def _phase1_text_scan_targets(
     budget: FsGrepBudgetState,
     scan_all: bool = False,
     coverage_by_rel: Optional[Dict[str, Any]] = None,
+    on_file_matches: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     matches: List[Dict[str, Any]] = []
     files_scanned = 0
@@ -1039,6 +1048,7 @@ def _phase1_text_scan_targets(
                 continue
 
         files_scanned += 1
+        file_matches: List[Dict[str, Any]] = []
         try:
             text = target.read_content(project_root)
         except ValueError as exc:
@@ -1086,6 +1096,10 @@ def _phase1_text_scan_targets(
                 if target.session_id:
                     row["session_id"] = target.session_id
                 matches.append(row)
+                file_matches.append(row)
+
+        if file_matches and on_file_matches is not None:
+            on_file_matches(file_matches)
 
     return matches, {
         "files_scanned": files_scanned,

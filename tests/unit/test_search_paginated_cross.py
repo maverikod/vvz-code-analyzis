@@ -130,10 +130,6 @@ async def test_run_paginated_cross_publishes_block_from_fulltext(
             "code_analysis.commands.search_paginated_cross.FulltextSearchMCPCommand",
             return_value=ft_mock,
         ),
-        patch(
-            "code_analysis.commands.search_paginated_cross._prefilter_candidates",
-            return_value=([], []),
-        ),
     ):
         pos = await run_paginated_cross(
             command=command,
@@ -165,10 +161,12 @@ async def test_run_paginated_cross_publishes_block_structural_grep(
     command = MagicMock()
     command._resolve_project_root.return_value = tmp_path
     grep_cmd = MagicMock()
-    grep_cmd.execute = AsyncMock(
-        return_value=SuccessResult(
-            data={
-                "matches": [
+
+    async def _grep_execute(**kwargs: object) -> SuccessResult:
+        on_batch = kwargs.get("on_match_batch")
+        if callable(on_batch):
+            on_batch(
+                [
                     {
                         "file_path": "c.py",
                         "evidence": {
@@ -177,9 +175,10 @@ async def test_run_paginated_cross_publishes_block_structural_grep(
                         },
                     }
                 ]
-            }
-        )
-    )
+            )
+        return SuccessResult(data={"matches": []})
+
+    grep_cmd.execute = AsyncMock(side_effect=_grep_execute)
     sem_mock = MagicMock()
     sem_mock.execute = AsyncMock(return_value=SuccessResult(data={"results": []}))
     ft_mock = MagicMock()
@@ -195,17 +194,18 @@ async def test_run_paginated_cross_publishes_block_structural_grep(
             return_value=ft_mock,
         ),
         patch(
-            "code_analysis.commands.search_paginated_cross._prefilter_candidates",
-            return_value=([], []),
-        ),
-        patch(
             "code_analysis.commands.search_paginated_cross.FsGrepCommand",
             return_value=grep_cmd,
         ),
     ):
         pos = await run_paginated_cross(
             command=command,
-            params={"project_id": "pid", "query": "q", "enable_grep": True, "require_structural_grep": True},
+            params={
+                "project_id": "pid",
+                "query": "q",
+                "enable_grep": True,
+                "require_structural_grep": True,
+            },
             session=session,
             layout=layout,
             raw_config={"search_session": {"max_block_size_bytes": 65536}},

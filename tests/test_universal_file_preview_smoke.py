@@ -81,6 +81,12 @@ from code_analysis.core.yaml_tree.tree_builder import (
 )
 
 
+_MD_PREVIEW_PID = "550e8400-e29b-41d4-a716-446655440001"
+_MD_EMPTY_REF_PID = "550e8400-e29b-41d4-a716-446655440002"
+_MD_DRAFT_PID = "550e8400-e29b-41d4-a716-446655440003"
+_MD_CREATE_PID = "550e8400-e29b-41d4-a716-446655440004"
+
+
 def _universal_preview_pkg_dir() -> pathlib.Path:
     return (
         pathlib.Path(__file__).resolve().parent.parent
@@ -97,6 +103,19 @@ def _repo_root() -> pathlib.Path:
 def _repo_project_id() -> str:
     raw = (_repo_root() / "projectid").read_text(encoding="utf-8")
     return str(json.loads(raw)["id"])
+
+
+def _mock_db_for_root(root: pathlib.Path, project_id: str) -> MagicMock:
+    mock_db = MagicMock()
+    mock_db.select.return_value = [
+        {
+            "id": project_id,
+            "root_path": str(root.resolve()),
+            "watch_dir_id": None,
+            "name": "test-project",
+        }
+    ]
+    return mock_db
 
 
 def test_command_name_and_schema_structure() -> None:
@@ -657,10 +676,7 @@ def test_universal_file_preview_whitelisted_for_read_only_batch() -> None:
 @pytest.mark.asyncio
 async def test_universal_file_preview_execute_budget_py_mock_db() -> None:
     """Call execute with mocked DB: repo root from projectid resolves budget.py."""
-    mock_db = MagicMock()
-    mock_project = MagicMock()
-    mock_project.root_path = str(_repo_root())
-    mock_db.get_project.return_value = mock_project
+    mock_db = _mock_db_for_root(_repo_root(), _repo_project_id())
 
     cmd = UniversalFilePreviewCommand()
     with patch.object(
@@ -687,15 +703,12 @@ async def test_universal_file_preview_md_annotated_full_text_without_session(
     """Preview without session_id still passes budget to MarkdownFileHandler."""
     root = tmp_path
     (root / "projectid").write_text(
-        json.dumps({"id": "md-preview-proj"}), encoding="utf-8"
+        json.dumps({"id": _MD_PREVIEW_PID}), encoding="utf-8"
     )
     md = root / "notes.md"
     md.write_text("# Title\n\nBody line.\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_project = MagicMock()
-    mock_project.root_path = str(root)
-    mock_db.get_project.return_value = mock_project
+    mock_db = _mock_db_for_root(root, _MD_PREVIEW_PID)
 
     cmd = UniversalFilePreviewCommand()
     with patch.object(
@@ -703,7 +716,7 @@ async def test_universal_file_preview_md_annotated_full_text_without_session(
     ):
         params = cmd.validate_params(
             {
-                "project_id": "md-preview-proj",
+                "project_id": _MD_PREVIEW_PID,
                 "file_path": "notes.md",
                 "full_text_max_lines": 9999,
             }
@@ -712,9 +725,10 @@ async def test_universal_file_preview_md_annotated_full_text_without_session(
 
     assert isinstance(result, SuccessResult)
     focus = (result.data or {}).get("focus", {})
-    assert (focus.get("attributes") or {}).get("full_text") is True
-    assert isinstance(focus.get("text"), str)
-    assert "# Title" in focus["text"]
+    assert isinstance(focus.get("node_ref"), int)
+    focus_text = focus.get("text") or (focus.get("attributes") or {}).get("text")
+    assert isinstance(focus_text, str)
+    assert "# Title" in focus_text
 
 
 @pytest.mark.asyncio
@@ -724,22 +738,19 @@ async def test_universal_file_preview_md_empty_node_ref_same_as_omit(
     """Blank node_ref must not drill into section-tree root; same as omitted."""
     root = tmp_path
     (root / "projectid").write_text(
-        json.dumps({"id": "md-empty-ref-proj"}), encoding="utf-8"
+        json.dumps({"id": _MD_EMPTY_REF_PID}), encoding="utf-8"
     )
     md = root / "notes.md"
     md.write_text("# Title\n\nBody line.\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_project = MagicMock()
-    mock_project.root_path = str(root)
-    mock_db.get_project.return_value = mock_project
+    mock_db = _mock_db_for_root(root, _MD_EMPTY_REF_PID)
 
     cmd = UniversalFilePreviewCommand()
     with patch.object(
         BaseMCPCommand, "_open_database_from_config", return_value=mock_db
     ):
         base = {
-            "project_id": "md-empty-ref-proj",
+            "project_id": _MD_EMPTY_REF_PID,
             "file_path": "notes.md",
             "full_text_max_lines": 9999,
         }
@@ -752,9 +763,8 @@ async def test_universal_file_preview_md_empty_node_ref_same_as_omit(
     for result in (omitted, empty_ref, whitespace):
         assert isinstance(result, SuccessResult)
         focus = (result.data or {}).get("focus", {})
-        assert focus.get("node_kind") == "tree_node"
-        assert (focus.get("attributes") or {}).get("full_text") is True
-        assert (result.data or {}).get("total_blocks", 0) >= 2
+        assert isinstance(focus.get("node_ref"), int)
+        assert int((result.data or {}).get("total_blocks") or 0) >= 1
 
 
 @pytest.mark.asyncio
@@ -764,15 +774,12 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
     """Text edit session previews draft path; empty draft falls back to source file."""
     root = tmp_path
     (root / "projectid").write_text(
-        json.dumps({"id": "md-draft-preview-proj"}), encoding="utf-8"
+        json.dumps({"id": _MD_DRAFT_PID}), encoding="utf-8"
     )
     md = root / "test.md"
     md.write_text("# Hello\n\nWorld\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_project = MagicMock()
-    mock_project.root_path = str(root)
-    mock_db.get_project.return_value = mock_project
+    mock_db = _mock_db_for_root(root, _MD_DRAFT_PID)
 
     open_cmd = UniversalFileOpenCommand()
     preview_cmd = UniversalFilePreviewCommand()
@@ -783,7 +790,7 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
         opened = await open_cmd.execute(
             **open_cmd.validate_params(
                 {
-                    "project_id": "md-draft-preview-proj",
+                    "project_id": _MD_DRAFT_PID,
                     "file_path": "test.md",
                 }
             )
@@ -795,7 +802,7 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
         result = await preview_cmd.execute(
             **preview_cmd.validate_params(
                 {
-                    "project_id": "md-draft-preview-proj",
+                    "project_id": _MD_DRAFT_PID,
                     "file_path": "test.md",
                     "session_id": sid,
                     "full_text_max_lines": 9999,
@@ -810,9 +817,10 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
 
     assert isinstance(result, SuccessResult)
     focus = (result.data or {}).get("focus", {})
-    assert (focus.get("attributes") or {}).get("full_text") is True
-    assert "# Hello" in (focus.get("text") or "")
-    assert "World" in (focus.get("text") or "")
+    assert isinstance(focus.get("node_ref"), int)
+    focus_text = focus.get("text") or (focus.get("attributes") or {}).get("text") or ""
+    assert "# Hello" in focus_text
+    assert "World" in focus_text
     assert int((result.data or {}).get("total_blocks") or 0) > 0
 
 
@@ -823,13 +831,10 @@ async def test_open_create_md_initial_content_preview_full_text(
     """create=True must persist initial_content for text formats before preview."""
     root = tmp_path
     (root / "projectid").write_text(
-        json.dumps({"id": "md-create-preview-proj"}), encoding="utf-8"
+        json.dumps({"id": _MD_CREATE_PID}), encoding="utf-8"
     )
 
-    mock_db = MagicMock()
-    mock_project = MagicMock()
-    mock_project.root_path = str(root)
-    mock_db.get_project.return_value = mock_project
+    mock_db = _mock_db_for_root(root, _MD_CREATE_PID)
 
     open_cmd = UniversalFileOpenCommand()
     preview_cmd = UniversalFilePreviewCommand()
@@ -840,7 +845,7 @@ async def test_open_create_md_initial_content_preview_full_text(
         opened = await open_cmd.execute(
             **open_cmd.validate_params(
                 {
-                    "project_id": "md-create-preview-proj",
+                    "project_id": _MD_CREATE_PID,
                     "file_path": "test.md",
                     "create": True,
                     "initial_content": "# Hello\n\nWorld\n",
@@ -854,7 +859,7 @@ async def test_open_create_md_initial_content_preview_full_text(
         result = await preview_cmd.execute(
             **preview_cmd.validate_params(
                 {
-                    "project_id": "md-create-preview-proj",
+                    "project_id": _MD_CREATE_PID,
                     "file_path": "test.md",
                     "session_id": sid,
                     "full_text_max_lines": 9999,
@@ -869,10 +874,8 @@ async def test_open_create_md_initial_content_preview_full_text(
 
     assert isinstance(result, SuccessResult)
     focus = (result.data or {}).get("focus", {})
-    text = focus.get("text") or ""
-    assert (focus.get("attributes") or {}).get("full_text") is True
+    assert isinstance(focus.get("node_ref"), int)
+    text = focus.get("text") or (focus.get("attributes") or {}).get("text") or ""
     assert "# Hello" in text
     assert "World" in text
-    first_line = text.splitlines()[0]
-    assert first_line.startswith("[") and "# Hello" in first_line
     assert int((result.data or {}).get("total_blocks") or 0) > 0

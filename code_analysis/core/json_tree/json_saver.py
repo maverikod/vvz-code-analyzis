@@ -1,5 +1,5 @@
 """
-Save JSON tree to file with backup and DB file_data update (non-CST path).
+Save JSON tree to file with backup and DB file metadata update (non-CST path).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -10,18 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..backup_manager import BackupManager
-from ..database_client.file_data_batch import update_file_data_atomic_batch
-from ..database_client.objects.base import BaseObject
-from ..database_client.objects.file import File
-from ..database.file_edit_lock import (
-    acquire_file_edit_lock_with_retry,
-    release_file_edit_lock,
-)
 from ..file_lock import file_lock
 from ..path_normalization import normalize_path_simple
 from .tree_builder import get_tree
@@ -31,6 +23,49 @@ logger = logging.getLogger(__name__)
 
 def _serialize_document(root_data: Any) -> str:
     return json.dumps(root_data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _format_error(exc: BaseException) -> str:
+    msg = str(exc).strip()
+    if msg:
+        return msg
+    return type(exc).__name__
+
+
+def _rollback_written_file(
+    *,
+    target_path: Path,
+    root_dir: Path,
+    backup_uuid: Optional[str],
+    backup_manager: Optional[BackupManager],
+    existed_before: bool,
+) -> None:
+    """Undo filesystem effects after a failed save (best effort)."""
+    if backup_uuid and backup_manager and target_path.exists():
+        try:
+            rel_path = str(target_path.relative_to(root_dir))
+        except ValueError:
+            rel_path = str(target_path)
+        restore_success, restore_message = backup_manager.restore_file(
+            rel_path, backup_uuid
+        )
+        if restore_success:
+            logger.info("json_save_tree restored from backup: %s", restore_message)
+        else:
+            logger.error(
+                "json_save_tree backup restore failed: %s",
+                restore_message,
+            )
+        return
+    if not existed_before and target_path.exists():
+        try:
+            target_path.unlink()
+            logger.info(
+                "json_save_tree removed newly created file after failure: %s",
+                target_path,
+            )
+        except OSError as ex:
+            logger.warning("Failed to remove file after failed save: %s", ex)
 
 
 def save_json_tree_to_file(
@@ -43,9 +78,11 @@ def save_json_tree_to_file(
     create_parent_dirs: bool = True,
 ) -> Dict[str, Any]:
     """
-    Atomic write (.tmp + replace), optional backup, File row + update_file_data_atomic_batch.
+    Atomic write (.tmp + replace), optional backup, files-table metadata only.
 
-    Mirrors write_project_text_lines DB path (AST batch over file contents), not sync_file_to_db_atomic.
+    JSON is not Python source: metadata sync uses ``persist_plain_text_file_metadata``
+    (no AST/CST/entity batch indexing).
+
     Git commits are handled by the MCP command layer (commit_after_write / config).
     """
     tree = get_tree(tree_id)
@@ -88,6 +125,7 @@ def save_json_tree_to_file(
     backup_uuid: Optional[str] = None
     backup_manager: Optional[BackupManager] = None
     temp_file: Optional[Path] = None
+    existed_before = target_path.exists()
 
     rel_lock_path = str(target_path.relative_to(root_dir))
     with file_lock(
@@ -98,12 +136,8 @@ def save_json_tree_to_file(
         file_path=rel_lock_path,
     ):
         try:
-            if backup and target_path.exists():
+            if backup and existed_before:
                 backup_manager = BackupManager(root_dir)
-                try:
-                    rel_path = str(target_path.relative_to(root_dir))
-                except ValueError:
-                    rel_path = str(target_path)
                 backup_uuid = backup_manager.create_backup(
                     target_path,
                     command="json_save_tree",
@@ -120,142 +154,61 @@ def save_json_tree_to_file(
             temp_file = None
 
             normalized_path = normalize_path_simple(str(target_path))
-            lines_count = len(source_code.splitlines()) if source_code else 0
-            stripped = source_code.lstrip()
-            has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
-            last_modified_timestamp = target_path.stat().st_mtime
-            last_modified = datetime.fromtimestamp(last_modified_timestamp)
+            from ..file_handlers.text_handler import persist_plain_text_file_metadata
 
-            existing = database.select(
-                "files",
-                where={
-                    "path": normalized_path,
-                    "project_id": project_id,
-                },
+            meta = persist_plain_text_file_metadata(
+                database=database,
+                project_id=project_id,
+                absolute_path=target_path,
+                normalized_path=normalized_path,
+                source_code=source_code,
             )
-
-            transaction_id = database.begin_transaction()
-            try:
-                if existing:
-                    file_record = existing[0]
-                    file_obj = File(
-                        id=file_record["id"],
-                        project_id=project_id,
-                        path=normalized_path,
-                        lines=lines_count,
-                        last_modified=last_modified,
-                        has_docstring=has_docstring,
-                    )
-                    database.update_file(file_obj)
-                    file_id = file_obj.id
-                    if not acquire_file_edit_lock_with_retry(
-                        database, file_id, transaction_id=transaction_id
-                    ):
-                        database.rollback_transaction(transaction_id)
-                        return {
-                            "success": False,
-                            "file_path": str(target_path),
-                            "backup_uuid": backup_uuid,
-                            "error": (
-                                "File is being edited by another live process (file edit lock). "
-                                "Try again shortly."
-                            ),
-                            "error_code": "FILE_EDIT_LOCKED",
-                        }
-                else:
-                    file_obj = File(
-                        project_id=project_id,
-                        path=normalized_path,
-                        lines=lines_count,
-                        last_modified=last_modified,
-                        has_docstring=has_docstring,
-                    )
-                    created = database.create_file(file_obj)
-                    file_id = created.id
-                    if not acquire_file_edit_lock_with_retry(
-                        database, file_id, transaction_id=transaction_id
-                    ):
-                        database.rollback_transaction(transaction_id)
-                        return {
-                            "success": False,
-                            "file_path": str(target_path),
-                            "backup_uuid": backup_uuid,
-                            "error": (
-                                "File is being edited by another live process (file edit lock). "
-                                "Try again shortly."
-                            ),
-                            "error_code": "FILE_EDIT_LOCKED",
-                        }
-
-                if file_id is None:
-                    raise RuntimeError(
-                        "file_id missing after create/update file record"
-                    )
-                assert isinstance(file_id, int)
-
-                file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
-                update_result = update_file_data_atomic_batch(
-                    database=database,
-                    file_id=str(file_id),
-                    project_id=project_id,
-                    source_code=source_code,
-                    file_path=str(target_path),
-                    file_mtime=file_mtime,
-                    transaction_id=transaction_id,
-                    skip_file_edit_lock=True,
+            if not meta.get("success"):
+                _rollback_written_file(
+                    target_path=target_path,
+                    root_dir=root_dir,
+                    backup_uuid=backup_uuid,
+                    backup_manager=backup_manager,
+                    existed_before=existed_before,
                 )
-                if not update_result.get("success"):
-                    database.rollback_transaction(transaction_id)
-                    return {
-                        "success": False,
-                        "file_path": str(target_path),
-                        "backup_uuid": backup_uuid,
-                        "error": update_result.get(
-                            "error", "update_file_data_atomic_batch failed"
-                        ),
-                        "error_code": "UPDATE_FILE_DATA_ERROR",
-                    }
-
-                release_file_edit_lock(database, file_id, transaction_id=transaction_id)
-                database.commit_transaction(transaction_id)
-
-                tree.file_path = str(target_path)
-
+                err = (
+                    meta.get("error")
+                    or meta.get("error_code")
+                    or "Failed to update file metadata"
+                )
                 return {
-                    "success": True,
+                    "success": False,
                     "file_path": str(target_path),
-                    "file_id": file_id,
                     "backup_uuid": backup_uuid,
-                    "update_result": update_result,
+                    "error": str(err),
+                    "error_code": meta.get("error_code", "UPDATE_FILE_DATA_ERROR"),
+                    "metadata_result": meta,
                 }
-            except Exception:
-                database.rollback_transaction(transaction_id)
-                raise
+
+            tree.file_path = str(target_path)
+
+            return {
+                "success": True,
+                "file_path": str(target_path),
+                "file_id": meta.get("file_id"),
+                "backup_uuid": backup_uuid,
+                "metadata_result": meta,
+            }
 
         except Exception as e:
-            if backup_uuid and backup_manager and target_path.exists():
-                try:
-                    rel_path = str(target_path.relative_to(root_dir))
-                except ValueError:
-                    rel_path = str(target_path)
-                restore_success, restore_message = backup_manager.restore_file(
-                    rel_path, backup_uuid
-                )
-                if restore_success:
-                    logger.info(
-                        "json_save_tree restored from backup: %s", restore_message
-                    )
-                else:
-                    logger.error(
-                        "json_save_tree backup restore failed: %s",
-                        restore_message,
-                    )
+            _rollback_written_file(
+                target_path=target_path,
+                root_dir=root_dir,
+                backup_uuid=backup_uuid,
+                backup_manager=backup_manager,
+                existed_before=existed_before,
+            )
             logger.exception("json_save_tree failed: %s", e)
             return {
                 "success": False,
                 "file_path": str(target_path),
                 "backup_uuid": backup_uuid,
-                "error": str(e),
+                "error": _format_error(e),
                 "error_code": "JSON_SAVE_ERROR",
             }
         finally:

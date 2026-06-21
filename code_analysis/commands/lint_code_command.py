@@ -15,6 +15,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .command_metadata_helpers import finalize_command_metadata
 from ..core.code_quality import lint_with_flake8
 from ..core.exceptions import ValidationError
 
@@ -186,185 +187,144 @@ class LintCodeCommand(Command):
         Returns:
             Dictionary with command metadata.
         """
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": (
-                "The lint_code command lints Python code using Flake8, a tool that checks "
-                "code style, programming errors, and complexity. It identifies issues like "
-                "unused imports, undefined variables, style violations, and more.\n\n"
-                "Operation flow:\n"
-                "1. Validates file_path exists and is a file\n"
-                "2. Attempts to lint using Flake8 library API\n"
-                "3. If Flake8 library not available or fails, falls back to subprocess\n"
-                "4. Collects all linting errors and warnings\n"
-                "5. Returns success status and list of errors\n\n"
-                "Linting Behavior:\n"
-                "- Checks code style (PEP 8 compliance)\n"
-                "- Detects programming errors (undefined names, unused imports, etc.)\n"
-                "- Checks code complexity\n"
-                "- Default max line length is 88 characters\n"
-                "- Can ignore specific error codes via ignore parameter\n"
-                "- File is not modified (read-only analysis)\n\n"
-                "Flake8 Error Categories:\n"
-                "- E: PEP 8 errors (indentation, whitespace, etc.)\n"
-                "- W: PEP 8 warnings (line length, etc.)\n"
-                "- F: Pyflakes errors (undefined names, unused imports, etc.)\n"
-                "- C: McCabe complexity warnings\n"
-                "- N: Naming convention violations\n\n"
-                "Use cases:\n"
-                "- Check code quality before committing\n"
-                "- Find programming errors (undefined variables, unused imports)\n"
-                "- Enforce code style standards\n"
-                "- Identify code complexity issues\n"
-                "- Validate code in CI/CD pipelines\n\n"
-                "Important notes:\n"
-                "- File is not modified (linting is read-only)\n"
-                "- Returns list of all errors found\n"
-                "- success=True means no errors found\n"
-                "- success=False means errors were found (check errors list)\n"
-                "- Can ignore specific error codes if needed\n"
-                "- Requires Flake8 to be installed\n"
-                "- PYTHONPATH is sanitized to avoid import conflicts"
-            ),
-            "parameters": {
-                "file_path": {
-                    "description": (
-                        "Path to Python file to lint. If root_dir is provided, interpreted "
-                        "relative to project root (e.g. 'hello_cli.py' -> root_dir/hello_cli.py). "
-                        "Otherwise absolute path or relative to current working directory."
-                    ),
-                    "type": "string",
-                    "required": True,
-                    "examples": [
-                        "hello_cli.py",
-                        "/home/user/projects/my_project/src/main.py",
-                    ],
-                },
-                "root_dir": {
-                    "description": (
-                        "Optional project root directory. When provided, file_path is resolved "
-                        "relative to this directory."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
-                "ignore": {
-                    "description": (
-                        "Optional list of Flake8 error codes to ignore. "
-                        "Common codes: E501 (line too long), W503 (line break before binary operator), "
-                        "F401 (imported but unused). See Flake8 documentation for full list."
-                    ),
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "required": False,
-                    "examples": [
-                        ["E501"],
-                        ["E501", "W503"],
-                        ["F401", "F811"],
-                    ],
-                },
-            },
-            "usage_examples": [
-                {
-                    "description": "Lint a Python file",
-                    "command": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                    },
-                    "explanation": (
-                        "Lints main.py and returns all errors found. "
-                        "Check success field and errors list in response."
-                    ),
-                },
-                {
-                    "description": "Lint with ignored error codes",
-                    "command": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "ignore": ["E501", "W503"],
-                    },
-                    "explanation": (
-                        "Lints main.py but ignores line length (E501) and "
-                        "line break before operator (W503) errors."
-                    ),
-                },
-                {
-                    "description": "Check code quality before commit",
-                    "command": {
-                        "file_path": "./code_analysis/commands/backup_mcp_commands.py",
-                    },
-                    "explanation": (
-                        "Lints backup_mcp_commands.py to find any code quality issues "
-                        "before committing changes."
-                    ),
-                },
-            ],
-            "error_cases": {
-                "FILE_NOT_FOUND": {
-                    "description": "File does not exist",
-                    "example": "file_path='/path/to/nonexistent.py'",
-                    "solution": "Verify file path is correct and file exists",
-                },
-                "NOT_A_FILE": {
-                    "description": "Path is not a file (e.g., directory)",
-                    "example": "file_path='/path/to/directory'",
-                    "solution": "Ensure path points to a file, not a directory",
-                },
-                "INTERNAL_ERROR": {
-                    "description": "Internal error during linting",
-                    "example": "Unexpected exception in linting logic",
-                    "solution": "Check logs for details, verify file permissions",
-                },
-            },
-            "return_value": {
-                "success": {
-                    "description": "Linting completed (may have errors)",
-                    "data": {
-                        "file_path": "Path to linted file",
-                        "success": "True if no errors found, False if errors found",
-                        "error": "Error message if linting failed (None if successful)",
-                        "errors": (
-                            "List of error strings. Each error follows format: "
-                            "file_path:line:column: error_code error_message"
+        return finalize_command_metadata(
+            cls,
+            {
+                "detailed_description": (
+                    "The lint_code command lints Python code using Flake8, a tool that checks "
+                    "code style, programming errors, and complexity. It identifies issues like "
+                    "unused imports, undefined variables, style violations, and more.\n\n"
+                    "Operation flow:\n"
+                    "1. Validates file_path exists and is a file\n"
+                    "2. Attempts to lint using Flake8 library API\n"
+                    "3. If Flake8 library not available or fails, falls back to subprocess\n"
+                    "4. Collects all linting errors and warnings\n"
+                    "5. Returns success status and list of errors\n\n"
+                    "Linting Behavior:\n"
+                    "- Checks code style (PEP 8 compliance)\n"
+                    "- Detects programming errors (undefined names, unused imports, etc.)\n"
+                    "- Checks code complexity\n"
+                    "- Default max line length is 88 characters\n"
+                    "- Can ignore specific error codes via ignore parameter\n"
+                    "- File is not modified (read-only analysis)\n\n"
+                    "Flake8 Error Categories:\n"
+                    "- E: PEP 8 errors (indentation, whitespace, etc.)\n"
+                    "- W: PEP 8 warnings (line length, etc.)\n"
+                    "- F: Pyflakes errors (undefined names, unused imports, etc.)\n"
+                    "- C: McCabe complexity warnings\n"
+                    "- N: Naming convention violations\n\n"
+                    "Use cases:\n"
+                    "- Check code quality before committing\n"
+                    "- Find programming errors (undefined variables, unused imports)\n"
+                    "- Enforce code style standards\n"
+                    "- Identify code complexity issues\n"
+                    "- Validate code in CI/CD pipelines\n\n"
+                    "Important notes:\n"
+                    "- File is not modified (linting is read-only)\n"
+                    "- Returns list of all errors found\n"
+                    "- success=True means no errors found\n"
+                    "- success=False means errors were found (check errors list)\n"
+                    "- Can ignore specific error codes if needed\n"
+                    "- Requires Flake8 to be installed\n"
+                    "- PYTHONPATH is sanitized to avoid import conflicts"
+                ),
+                "usage_examples": [
+                    {
+                        "description": "Lint a Python file",
+                        "command": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                        },
+                        "explanation": (
+                            "Lints main.py and returns all errors found. "
+                            "Check success field and errors list in response."
                         ),
-                        "error_count": "Number of errors found",
                     },
-                    "example_success": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "success": True,
-                        "error": None,
-                        "errors": [],
-                        "error_count": 0,
+                    {
+                        "description": "Lint with ignored error codes",
+                        "command": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "ignore": ["E501", "W503"],
+                        },
+                        "explanation": (
+                            "Lints main.py but ignores line length (E501) and "
+                            "line break before operator (W503) errors."
+                        ),
                     },
-                    "example_with_errors": {
-                        "file_path": "/home/user/projects/my_project/src/main.py",
-                        "success": False,
-                        "error": "Found 3 flake8 errors",
-                        "errors": [
-                            "src/main.py:10:1: F401 'os' imported but unused",
-                            "src/main.py:25:80: E501 line too long (120 > 88 characters)",
-                            "src/main.py:42:5: F841 local variable 'x' is assigned to but never used",
-                        ],
-                        "error_count": 3,
+                    {
+                        "description": "Check code quality before commit",
+                        "command": {
+                            "file_path": "./code_analysis/commands/backup_mcp_commands.py",
+                        },
+                        "explanation": (
+                            "Lints backup_mcp_commands.py to find any code quality issues "
+                            "before committing changes."
+                        ),
+                    },
+                ],
+                "error_cases": {
+                    "FILE_NOT_FOUND": {
+                        "description": "File does not exist",
+                        "example": "file_path='/path/to/nonexistent.py'",
+                        "solution": "Verify file path is correct and file exists",
+                    },
+                    "NOT_A_FILE": {
+                        "description": "Path is not a file (e.g., directory)",
+                        "example": "file_path='/path/to/directory'",
+                        "solution": "Ensure path points to a file, not a directory",
+                    },
+                    "INTERNAL_ERROR": {
+                        "description": "Internal error during linting",
+                        "example": "Unexpected exception in linting logic",
+                        "solution": "Check logs for details, verify file permissions",
                     },
                 },
-                "error": {
-                    "description": "Command failed",
-                    "code": "Error code (e.g., FILE_NOT_FOUND, NOT_A_FILE, INTERNAL_ERROR)",
-                    "message": "Human-readable error message",
+                "return_value": {
+                    "success": {
+                        "description": "Linting completed (may have errors)",
+                        "data": {
+                            "file_path": "Path to linted file",
+                            "success": "True if no errors found, False if errors found",
+                            "error": "Error message if linting failed (None if successful)",
+                            "errors": (
+                                "List of error strings. Each error follows format: "
+                                "file_path:line:column: error_code error_message"
+                            ),
+                            "error_count": "Number of errors found",
+                        },
+                        "example_success": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "success": True,
+                            "error": None,
+                            "errors": [],
+                            "error_count": 0,
+                        },
+                        "example_with_errors": {
+                            "file_path": "/home/user/projects/my_project/src/main.py",
+                            "success": False,
+                            "error": "Found 3 flake8 errors",
+                            "errors": [
+                                "src/main.py:10:1: F401 'os' imported but unused",
+                                "src/main.py:25:80: E501 line too long (120 > 88 characters)",
+                                "src/main.py:42:5: F841 local variable 'x' is assigned to but never used",
+                            ],
+                            "error_count": 3,
+                        },
+                    },
+                    "error": {
+                        "description": "Command failed",
+                        "code": "Error code (e.g., FILE_NOT_FOUND, NOT_A_FILE, INTERNAL_ERROR)",
+                        "message": "Human-readable error message",
+                    },
                 },
+                "best_practices": [
+                    "Run lint_code after format_code to check for remaining issues",
+                    "Fix all errors before committing code",
+                    "Use ignore parameter sparingly - only for legitimate cases",
+                    "Check error_count field to quickly see if issues exist",
+                    "Review errors list to understand what needs fixing",
+                    "Run lint_code in CI/CD pipelines to enforce code quality",
+                    "Address F errors (Pyflakes) first - they indicate real bugs",
+                    "Use ignore for style preferences, not for hiding real issues",
+                ],
             },
-            "best_practices": [
-                "Run lint_code after format_code to check for remaining issues",
-                "Fix all errors before committing code",
-                "Use ignore parameter sparingly - only for legitimate cases",
-                "Check error_count field to quickly see if issues exist",
-                "Review errors list to understand what needs fixing",
-                "Run lint_code in CI/CD pipelines to enforce code quality",
-                "Address F errors (Pyflakes) first - they indicate real bugs",
-                "Use ignore for style preferences, not for hiding real issues",
-            ],
-        }
+        )

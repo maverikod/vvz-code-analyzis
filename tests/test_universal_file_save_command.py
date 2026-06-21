@@ -325,15 +325,11 @@ class TestUniversalFileSaveRouting:
                 return_value=target,
             ),
             patch(
-                "code_analysis.core.json_tree.json_saver.acquire_file_edit_lock_with_retry",
-                return_value=True,
-            ),
-            patch(
-                "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
-                return_value={"success": True},
-            ),
-            patch(
-                "code_analysis.core.json_tree.json_saver.release_file_edit_lock",
+                "code_analysis.core.file_handlers.text_handler.persist_plain_text_file_metadata",
+                return_value={
+                    "success": True,
+                    "file_id": "978e605f-04a5-42f5-8fbc-0d29cab5718a",
+                },
             ),
             patch(
                 "code_analysis.commands.universal_file_save_command.save_command.commit_after_write",

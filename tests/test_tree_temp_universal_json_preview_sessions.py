@@ -47,16 +47,21 @@ def _ensure_project_root(tmp: Path) -> None:
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
-            '{"id": "00000000-0000-0000-0000-000000000004"}\n',
+            f'{{"id": "{_PID}"}}\n',
             encoding="utf-8",
         )
 
 
-def _db(tmp: Path) -> MagicMock:
+def _db(tmp: Path, project_id: str = _PID) -> MagicMock:
     m = MagicMock()
-    p = MagicMock()
-    p.root_path = str(tmp.resolve())
-    m.get_project.return_value = p
+    m.select.return_value = [
+        {
+            "id": project_id,
+            "root_path": str(tmp.resolve()),
+            "watch_dir_id": None,
+            "name": "test-project",
+        }
+    ]
     return m
 
 
@@ -75,6 +80,18 @@ def _normalize_pointer(pointer: str) -> str:
     if pointer in ("", "/"):
         return "/"
     return pointer if pointer.startswith("/") else f"/{pointer}"
+
+
+def _short_id_for_pointer(*, source_path: Path, pointer: str) -> int:
+    handler = HandlerRegistry.default_registry().resolve(source_path)
+    source_text = source_path.read_text(encoding="utf-8")
+    nodes = handler.parse_content(source_path, source_text)
+    want = _normalize_pointer(pointer)
+    for node in nodes:
+        jp = str(node.attributes.get("json_pointer", ""))
+        if jp == want or (want == "/" and jp in ("", "/")):
+            return int(node.short_id)
+    raise KeyError(want)
 
 
 def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) -> str:
@@ -165,7 +182,7 @@ async def _hydrate(tmp: Path) -> None:
     await _open_write_commit_close(tmp, _REL)
 
 
-async def _preview(tmp: Path, node_ref: str | None) -> SuccessResult:
+async def _preview(tmp: Path, node_ref: str | int | None) -> SuccessResult:
     cmd = UniversalFilePreviewCommand()
     raw: dict[str, Any] = {"project_id": _PID, "file_path": _REL}
     if node_ref is not None:
@@ -181,18 +198,15 @@ async def test_scalar_stable_id_resolves_container_children_matching_parent_prev
     tmp_path: Path,
 ) -> None:
     await _hydrate(tmp_path)
-    acq = _preview_acquisition(tmp_path, _REL)
-    svc_uuid = _stable_id_in_forest(acq.roots, "/svc")
-    scalar_uuid = _stable_id_in_forest(acq.roots, "/svc/env")
+    source = (tmp_path / _REL).resolve()
+    svc_sid = _short_id_for_pointer(source_path=source, pointer="/svc")
+    scalar_sid = _short_id_for_pointer(source_path=source, pointer="/svc/env")
 
-    with (
-        patch.object(
-            BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
-        ),
-        patch(_PREVIEW_ACQUIRE_PATCH, return_value=acq),
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
     ):
-        pr_par = await _preview(tmp_path, svc_uuid)
-        pr_sc = await _preview(tmp_path, scalar_uuid)
+        pr_par = await _preview(tmp_path, svc_sid)
+        pr_sc = await _preview(tmp_path, scalar_sid)
     b1 = cast(list[dict[str, Any]], (pr_par.data or {}).get("blocks") or [])
     b2 = cast(list[dict[str, Any]], (pr_sc.data or {}).get("blocks") or [])
     p_set = _ids(b1)
@@ -230,29 +244,25 @@ async def test_root_scalar_json_preview_equivalent_without_ref(tmp_path: Path) -
         await cl.execute(**cl.validate_params({"project_id": _PID, "session_id": sid}))
     sc = _sidecar_path(tmp_path, rel)
     assert sc.is_file()
-    acq = _preview_acquisition(tmp_path, rel)
-    root_uuid = _stable_id_in_forest(acq.roots, "/")
+    root_sid = _short_id_for_pointer(source_path=p.resolve(), pointer="/")
     cmd = UniversalFilePreviewCommand()
-    with (
-        patch.object(
-            BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
-        ),
-        patch(_PREVIEW_ACQUIRE_PATCH, return_value=acq),
+    with patch.object(
+        BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp_path)
     ):
         a = await cmd.execute(
             **cmd.validate_params({"project_id": _PID, "file_path": rel})
         )
         b = await cmd.execute(
             **cmd.validate_params(
-                {"project_id": _PID, "file_path": rel, "node_ref": root_uuid}
+                {"project_id": _PID, "file_path": rel, "node_ref": root_sid}
             )
         )
     assert isinstance(a, SuccessResult) and isinstance(b, SuccessResult)
     fa = cast(dict[str, Any], a.data["focus"])
     fb = cast(dict[str, Any], b.data["focus"])
     assert fa.get("node_kind") == "scalar"
-    assert fb.get("type") == "tree_sidecar_focus"
-    assert isinstance(fb.get("node_ref"), str) and len(str(fb.get("node_ref"))) >= 32
+    assert isinstance(fb.get("node_ref"), int)
+    assert fb.get("node_ref") == root_sid
 
 
 @pytest.mark.asyncio

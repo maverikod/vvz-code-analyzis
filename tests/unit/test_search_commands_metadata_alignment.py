@@ -37,6 +37,8 @@ _PAGINATED_CROSS_PARAMS = frozenset(
         "case_sensitive",
         "hard_timeout_seconds",
         "first_block_wait_seconds",
+        "file_pattern",
+        "path_filter",
     }
 )
 

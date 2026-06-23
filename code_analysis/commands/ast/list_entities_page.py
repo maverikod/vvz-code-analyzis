@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-_CST_WHERE = "{alias}.cst_node_id IS NOT NULL AND trim({alias}.cst_node_id) != ''"
+# Entity-listing predicate (kept as a per-alias template so callers are unchanged).
+# Historically this required a populated ``cst_node_id``, but that column is NULL
+# for every indexed entity across all projects (the indexer never populates it),
+# so the requirement made ``list_code_entities`` return empty everywhere. Relaxed
+# to a tautology: entities are listed regardless; ``cst_node_id`` is still selected
+# in the output (null when absent), so CST-editing consumers still receive it once
+# the indexer populates it. See TZ-CA-INDEX-INTEGRITY-001.
+_CST_WHERE = "1=1"
 
 
 def _file_filter_sql(column: str, file_id: Optional[Any]) -> tuple[str, List[Any]]:

@@ -107,7 +107,7 @@ CREATE TEMP TABLE {TBL_FILE_MODULES} (
         (
             f"""
 INSERT INTO {TBL_FILE_MODULES} (file_id, mod_key)
-SELECT f.id, {mod_key}
+SELECT CAST(f.id AS TEXT), {mod_key}
 FROM files f
 WHERE f.project_id = ?
   AND {WHERE_FILES_ACTIVE_F}
@@ -137,13 +137,16 @@ CREATE TEMP TABLE {TBL_IMPORT_EDGES} (
         (
             f"""
 INSERT INTO {TBL_IMPORT_EDGES} (file_from, file_to)
-SELECT DISTINCT i.file_id, fm.file_id
+SELECT DISTINCT CAST(i.file_id AS TEXT), fm.file_id
 FROM imports i
 INNER JOIN files f ON f.id = i.file_id
 INNER JOIN {TBL_FILE_MODULES} fm ON fm.mod_key = ({target_key})
 WHERE f.project_id = ?
   AND {WHERE_FILES_ACTIVE_F}
-  AND i.file_id <> fm.file_id
+  -- fm.file_id is TEXT (temp table); imports.file_id is UUID. CAST so the
+  -- self-loop filter is text<>text — PostgreSQL has no uuid<>text operator
+  -- (SQLite's dynamic typing tolerated the mismatch).
+  AND CAST(i.file_id AS TEXT) <> fm.file_id
 """.strip(),
             (project_id,),
         ),

@@ -77,7 +77,8 @@ def test_step1_creates_indexes_and_excludes_self_loops() -> None:
     assert "CREATE INDEX idx_integrity_ie_from" in sql_blob
     assert "CREATE INDEX idx_integrity_ie_to" in sql_blob
     assert "CREATE INDEX idx_integrity_fm_mod" in sql_blob
-    assert "i.file_id <> fm.file_id" in sql_blob
+    # self-loop filter casts the UUID side to TEXT (PostgreSQL has no uuid<>text)
+    assert "CAST(i.file_id AS TEXT) <> fm.file_id" in sql_blob
     assert ops[-1][1] == ("proj-uuid",)
 
 

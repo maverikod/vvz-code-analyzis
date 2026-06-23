@@ -116,6 +116,34 @@ def _log_startup_diagnostics(
         log_dir,
         f"hypercorn: mTLS/SSL={'enabled' if ssl_enabled else 'disabled'}",
     )
+    _log_quality_tools_selfcheck(log_dir)
+
+
+def _log_quality_tools_selfcheck(log_dir: Path) -> None:
+    """Boot self-check (A-IMG.5): probe the five quality tools via the server
+    interpreter, record versions in the startup log, and log loudly on any miss.
+    """
+    boot_logger = logging.getLogger(__name__)
+    try:
+        from code_analysis.core.code_quality import quality_tool_report
+
+        report = quality_tool_report()
+        present = {t: v["version"] for t, v in report.items() if v["available"]}
+        missing = sorted(t for t, v in report.items() if not v["available"])
+        append_server_startup_log(
+            log_dir,
+            f"quality_tools: present={present} missing={missing or 'none'}",
+        )
+        if missing:
+            boot_logger.error(
+                "[QUALITY_TOOLS] MISSING from server interpreter: %s — "
+                "comprehensive_analysis checks for these will hard-fail when requested",
+                missing,
+            )
+        else:
+            boot_logger.info("[QUALITY_TOOLS] all present: %s", present)
+    except Exception as exc:  # self-check must never block startup
+        append_server_startup_log(log_dir, f"quality_tools: self-check failed: {exc}")
 
 
 def main() -> None:

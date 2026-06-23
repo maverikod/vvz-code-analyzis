@@ -110,9 +110,30 @@ class HealthCommand(Command):
                     "commands": {"registered_count": len(registry.get_all_commands())},
                     "proxy_registration": get_proxy_registration_status(),
                     "queue_dependencies": dep,
+                    "quality_tools": self._quality_tools_health(),
                 },
             }
         )
+
+    @staticmethod
+    def _quality_tools_health() -> Dict[str, Any]:
+        """Availability + pinned versions of the code-quality tools (A-IMG.4).
+
+        Surfaces flake8/mypy/black/isort/bandit status so a missing or stale tool
+        is visible from ``health`` without shelling into the container.
+        """
+        try:
+            from code_analysis.core.code_quality import quality_tool_report
+
+            report = quality_tool_report()
+            missing = sorted(t for t, v in report.items() if not v.get("available"))
+            return {
+                "status": "ok" if not missing else "degraded",
+                "missing": missing,
+                "tools": report,
+            }
+        except Exception as exc:  # never let health fail on the probe
+            return {"status": "unknown", "error": str(exc)}
 
     @staticmethod
     def _safe_get_queue_config() -> Dict[str, Any]:

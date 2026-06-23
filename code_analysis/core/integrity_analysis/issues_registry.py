@@ -77,11 +77,16 @@ def register_circular_import_issues(
     path_map = file_id_to_path or {}
     count = 0
     for cycle in cycles:
-        if len(cycle) < 3:
+        # find_cycles returns SCC node lists (no repeated closing node), so a
+        # genuine 2-file cycle a<->b is [a, b] (length 2). Only single-node
+        # self-loops (length 1) are dropped. (The old SQL path-form repeated the
+        # closing node, hence the previous len<3 threshold — wrong for SCCs.)
+        if len(cycle) < 2:
             continue
         anchor = cycle[0]
         path_labels = [path_map.get(fid, fid) for fid in cycle]
-        desc = "Circular import: " + " -> ".join(path_labels)
+        # Show the closure for readability: a -> b -> a.
+        desc = "Circular import: " + " -> ".join([*path_labels, path_labels[0]])
         issue = Issue(
             file_id=anchor,
             project_id=project_id,

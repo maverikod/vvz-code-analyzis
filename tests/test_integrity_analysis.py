@@ -96,6 +96,11 @@ def test_parametrized_statements_have_no_literal_percent() -> None:
     flat_params = [p for _, params in ops for p in params]
     assert "%/__init__.py" in flat_params
     assert "%.py" in flat_params
+    # No ';' or line comments: the batch executor splits statements on ';', so a
+    # stray ';' (even inside a '--' comment) corrupts the statement stream.
+    for sql, _ in ops:
+        assert ";" not in sql, f"';' in batch statement: {sql!r}"
+        assert "--" not in sql, f"line comment in batch statement: {sql!r}"
 
 
 def test_step3_rejects_f0_equals_f1() -> None:

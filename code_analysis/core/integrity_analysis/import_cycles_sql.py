@@ -143,9 +143,6 @@ INNER JOIN files f ON f.id = i.file_id
 INNER JOIN {TBL_FILE_MODULES} fm ON fm.mod_key = ({target_key})
 WHERE f.project_id = ?
   AND {WHERE_FILES_ACTIVE_F}
-  -- fm.file_id is TEXT (temp table); imports.file_id is UUID. CAST so the
-  -- self-loop filter is text<>text — PostgreSQL has no uuid<>text operator
-  -- (SQLite's dynamic typing tolerated the mismatch).
   AND CAST(i.file_id AS TEXT) <> fm.file_id
 """.strip(),
             (project_id,),

@@ -20,6 +20,11 @@ ExecStartPre=/usr/lib/casmgr-server/.venv/bin/python /usr/lib/casmgr-server/scri
 ExecStart=/usr/lib/casmgr-server/.venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --daemon
 Restart=on-failure
 RestartSec=10s
+# Cap the graceful-stop wait. The daemon hard-exits once its server loop ends,
+# so a clean stop is fast; this bounds the SIGKILL fallback if shutdown ever
+# hangs, instead of letting the unit linger for the 90s default and end in a
+# 'failed (timeout)' state.
+TimeoutStopSec=30s
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal

@@ -49,6 +49,7 @@ from ..project_ignore_policy import (
 
 from ..docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from ..docs_indexing_eligibility import is_docs_markdown_eligible
+from ..fs_permissions import is_readable_dir, log_walk_error
 from ..settings_manager import get_settings
 
 logger = logging.getLogger(__name__)
@@ -359,7 +360,10 @@ def _scan_tree_into_files(
 
     try:
         for dirpath, dirnames, filenames in os.walk(
-            walk_resolved, topdown=True, followlinks=False
+            walk_resolved,
+            topdown=True,
+            followlinks=False,
+            onerror=lambda err: log_walk_error(err, log=logger),
         ):
             dir_path = Path(dirpath)
             current_project_root = _best_project_root_for_path(
@@ -387,6 +391,11 @@ def _scan_tree_into_files(
                     project_root=current_project_root,
                     docs_indexing=docs_indexing,
                 )
+            ]
+            # Of the directories we would actually descend into, drop any we
+            # cannot read/traverse (logs a [FS_PERM] error and skips).
+            dirnames[:] = [
+                d for d in dirnames if is_readable_dir(dir_path / d, log=logger)
             ]
 
             for name in filenames:
@@ -430,6 +439,13 @@ def _scan_tree_into_files(
                     except Exception as e:
                         logger.debug(f"Error normalizing path for {item}: {e}")
                         continue
+                except PermissionError as e:
+                    logger.error(
+                        "[FS_PERM] no permission to read file, skipping: %s (%s)",
+                        item,
+                        e,
+                    )
+                    continue
                 except OSError as e:
                     logger.debug(f"Error accessing file {item}: {e}")
                     continue
@@ -520,6 +536,8 @@ def iter_watch_dir_project_scans(
 
     for child in children:
         if not child.is_dir():
+            continue
+        if not is_readable_dir(child, log=logger):
             continue
         try:
             child_resolved = child.resolve()

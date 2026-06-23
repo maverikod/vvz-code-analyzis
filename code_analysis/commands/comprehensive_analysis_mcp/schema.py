@@ -72,6 +72,34 @@ def get_schema(cls: Any) -> Dict[str, Any]:
                 "description": "Check code with mypy type checker",
                 "default": True,
             },
+            "check_black": {
+                "type": "boolean",
+                "description": (
+                    "Check code formatting with black (--check; reports drift, "
+                    "never rewrites). Opt-in; requires black in the server image."
+                ),
+                "default": False,
+            },
+            "check_isort": {
+                "type": "boolean",
+                "description": (
+                    "Check import ordering with isort (--check-only). Opt-in; "
+                    "requires isort in the server image."
+                ),
+                "default": False,
+            },
+            "check_bandit": {
+                "type": "boolean",
+                "description": (
+                    "Scan for security issues with bandit. Opt-in; requires "
+                    "bandit in the server image."
+                ),
+                "default": False,
+            },
+            "bandit_config_file": {
+                "type": "string",
+                "description": "Optional path to a bandit config file (-c).",
+            },
             "check_docstrings": {
                 "type": "boolean",
                 "description": "Check for missing docstrings (files, classes, methods)",

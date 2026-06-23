@@ -58,6 +58,10 @@ async def run_batch(
     check_duplicates = ctx["check_duplicates"]
     check_flake8 = ctx["check_flake8"]
     check_mypy = ctx["check_mypy"]
+    check_black = ctx.get("check_black", False)
+    check_isort = ctx.get("check_isort", False)
+    check_bandit = ctx.get("check_bandit", False)
+    bandit_config = ctx.get("bandit_config")
     check_docstrings = ctx["check_docstrings"]
     duplicate_min_lines = ctx["duplicate_min_lines"]
     duplicate_min_similarity = ctx["duplicate_min_similarity"]
@@ -98,6 +102,9 @@ async def run_batch(
     all_duplicates: List[Dict[str, Any]] = []
     all_flake8_errors: List[Dict[str, Any]] = []
     all_mypy_errors: List[Dict[str, Any]] = []
+    all_black_findings: List[Dict[str, Any]] = []
+    all_isort_findings: List[Dict[str, Any]] = []
+    all_bandit_findings: List[Dict[str, Any]] = []
     all_missing_docstrings: List[Dict[str, Any]] = []
     file_records: List[Dict[str, Any]] = []
 
@@ -134,6 +141,9 @@ async def run_batch(
         "duplicates": 0.0,
         "flake8": 0.0,
         "mypy": 0.0,
+        "black": 0.0,
+        "isort": 0.0,
+        "bandit": 0.0,
         "docstrings": 0.0,
         "read_file": 0.0,
         "save": 0.0,
@@ -325,6 +335,10 @@ async def run_batch(
                 duplicate_min_lines,
                 duplicate_min_similarity,
                 set_step_desc=set_step_desc,
+                check_black=check_black,
+                check_isort=check_isort,
+                check_bandit=check_bandit,
+                bandit_config=bandit_config,
             )
             all_placeholders.extend(file_results["placeholders"])
             all_stubs.extend(file_results["stubs"])
@@ -333,6 +347,9 @@ async def run_batch(
             all_duplicates.extend(file_results["duplicates"])
             all_flake8_errors.extend(file_results["flake8_errors"])
             all_mypy_errors.extend(file_results["mypy_errors"])
+            all_black_findings.extend(file_results.get("black_findings", []))
+            all_isort_findings.extend(file_results.get("isort_findings", []))
+            all_bandit_findings.extend(file_results.get("bandit_findings", []))
             all_missing_docstrings.extend(file_results["missing_docstrings"])
 
             if file_project_id:
@@ -419,6 +436,9 @@ async def run_batch(
     results["duplicates"] = all_duplicates
     results["flake8_errors"] = all_flake8_errors
     results["mypy_errors"] = all_mypy_errors
+    results["black_findings"] = all_black_findings
+    results["isort_findings"] = all_isort_findings
+    results["bandit_findings"] = all_bandit_findings
     results["missing_docstrings"] = all_missing_docstrings
 
     if check_long_files:

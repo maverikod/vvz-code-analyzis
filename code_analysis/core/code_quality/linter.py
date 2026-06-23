@@ -30,21 +30,20 @@ def _lint_with_subprocess(
     file_path: Path, ignore: Optional[List[str]] = None
 ) -> Tuple[bool, Optional[str], List[str]]:
     """Run flake8 in a subprocess with timeout and sanitized environment."""
-    import os
     import subprocess
 
+    from .tool_runtime import module_missing, sanitized_env, tool_command
+
     try:
-        cmd = ["flake8", "--max-line-length=88", str(file_path)]
+        # Resolve flake8 via the server interpreter (python -m flake8), never a
+        # bare PATH binary — see tool_runtime for the PATH-drift rationale.
+        cmd = tool_command("flake8", "--max-line-length=88", str(file_path))
         if ignore:
             cmd.extend(["--ignore", ",".join(ignore)])
 
-        # IMPORTANT:
-        # This project contains a package named `code_analysis.commands.ast`, which can
-        # shadow the standard library `ast` module if PYTHONPATH is polluted (the server
-        # injects command paths into PYTHONPATH for child processes). Flake8 imports
-        # stdlib `ast`, so we must sanitize PYTHONPATH for this subprocess.
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
+        # Sanitize PYTHONPATH so the project's `code_analysis.commands.ast`
+        # package cannot shadow the stdlib `ast` module flake8 imports.
+        env = sanitized_env()
 
         result = subprocess.run(
             cmd,
@@ -53,6 +52,10 @@ def _lint_with_subprocess(
             timeout=30,
             env=env,
         )
+
+        if module_missing(result.stderr, "flake8"):
+            logger.warning("Flake8 module not importable from server interpreter")
+            return (False, "Flake8 not installed", [])
 
         if result.returncode == 0:
             logger.debug(f"No flake8 errors found in {file_path}")

@@ -28,6 +28,8 @@ class FakeDB:
     def execute(self, sql, params=None):
         if "FROM imports" in sql:
             key = "imports"
+        elif "FROM usages" in sql:
+            key = "usages"
         elif "FROM classes" in sql:
             key = "classes"
         elif "FROM methods" in sql:
@@ -123,6 +125,35 @@ def test_cycles_end_to_end(tmp_path):
     )
     assert data["cycles_found"] == 1
     assert set(data["cycles"][0]) == {"pkg/sub/a.py", "pkg/sub/b.py"}
+
+
+def test_dead_code_end_to_end(tmp_path):
+    # Sub-tree pkg/sub with two functions; one is dead (no callers), one is live.
+    _write(tmp_path, "pkg/sub/a.py", "def live_fn():\n    return 1\n\ndef dead_fn():\n    return 2\n")
+    _write(tmp_path, "pkg/other.py", "x = 1\n")
+    files = [
+        {"id": "1", "path": str(tmp_path / "pkg/sub/a.py"), "relative_path": "pkg/sub/a.py", "tree_checksum": "x"},
+        {"id": "2", "path": str(tmp_path / "pkg/other.py"), "relative_path": "pkg/other.py", "tree_checksum": "x"},
+    ]
+    functions = [
+        {"file_id": "1", "name": "live_fn", "line": 1, "end_line": 2},
+        {"file_id": "1", "name": "dead_fn", "line": 4, "end_line": 5},
+    ]
+    # live_fn is called from a production file outside the sub-tree; dead_fn never.
+    usages = [{"target_name": "live_fn", "file_id": "2"}]
+    db = FakeDB({"files": files, "functions": functions, "usages": usages, "imports": [], "leases": []})
+
+    data = analyze_tree_json(
+        db=db, project_id=PROJECT_ID, project_root=tmp_path, roots=["pkg/sub/"],
+        mode="dead_code", include_stdlib=False, with_verdict=False, limit=50000,
+    )
+    assert data["mode"] == "dead_code"
+    s = data["summary"]
+    assert s["total_symbols"] == 2
+    assert s["live"] == 1 and s["unused"] == 1
+    by_name = {r["name"]: r["classification"] for r in data["symbols"]}
+    assert by_name == {"live_fn": "live", "dead_fn": "unused"}
+    assert [r["name"] for r in data["removable"]] == ["dead_fn"]
 
 
 def test_dot_and_markdown_formats(tmp_path):

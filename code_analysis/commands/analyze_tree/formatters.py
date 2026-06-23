@@ -61,6 +61,17 @@ def format_dot(data: dict) -> str:
             for a, b in zip(ring, ring[1:]):
                 lines.append(f"  {_q(a)} -> {_q(b)} [color=red,penwidth=2];")
 
+    elif mode == "dead_code":
+        # Edge from each removable symbol's file to the symbol, colored by bucket.
+        color = {"unused": "red", "import_only": "orange", "test_only": "gray"}
+        for sym in data.get("removable", []):
+            node = f"{sym['file']}::{sym['name']}"
+            c = color.get(sym["classification"], "black")
+            lines.append(
+                f"  {_q(sym['file'])} -> {_q(node)} "
+                f"[color={c},label={_q(sym['classification'])}];"
+            )
+
     lines.append("}")
     return "\n".join(lines)
 
@@ -146,6 +157,31 @@ def format_markdown(data: dict) -> str:
         for i, cycle in enumerate(data.get("cycles", []), 1):
             chain = " → ".join(f"`{p}`" for p in cycle)
             lines.append(f"{i}. {chain} → (back to start)")
+
+    elif mode == "dead_code":
+        s = data.get("summary", {})
+        lines.append(
+            f"Symbols: {s.get('total_symbols', 0)} · removable: "
+            f"{s.get('removable_count', 0)} (unused {s.get('unused', 0)}, "
+            f"import_only {s.get('import_only', 0)}, test_only {s.get('test_only', 0)}) · "
+            f"live {s.get('live', 0)}"
+        )
+        lines.append("")
+        lines.append("## Removable (no production caller)")
+        for sym in data.get("removable", []):
+            qual = f"{sym['class_name']}.{sym['name']}" if sym.get("class_name") else sym["name"]
+            detail = ""
+            if sym["classification"] == "test_only":
+                detail = f" — used by {len(sym['test_callers'])} test file(s)"
+            elif sym["classification"] == "import_only":
+                detail = f" — imported by {', '.join('`'+i+'`' for i in sym['importers'])}"
+            lines.append(
+                f"- `{sym['file']}` {sym['kind']} **{qual}** "
+                f"(L{sym.get('line')}) — _{sym['classification']}_{detail}"
+            )
+        if data.get("note"):
+            lines.append("")
+            lines.append(f"> {data['note']}")
 
     return "\n".join(lines)
 

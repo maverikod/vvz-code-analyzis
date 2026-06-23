@@ -27,7 +27,7 @@ from .service import analyze_tree_json
 
 logger = logging.getLogger(__name__)
 
-MODES = ("package_boundary", "dependencies", "structure", "cycles")
+MODES = ("package_boundary", "dependencies", "structure", "cycles", "dead_code")
 FORMATS = ("json", "dot", "markdown")
 DEFAULT_LIMIT = 50000
 
@@ -73,7 +73,8 @@ class AnalyzeTreeMCPCommand(BaseMCPCommand):
                     "description": (
                         "Analysis lens: 'package_boundary' (extraction), "
                         "'dependencies' (relation graph), 'structure' (composition), "
-                        "or 'cycles' (circular imports)."
+                        "'cycles' (circular imports), or 'dead_code' (per-symbol "
+                        "unused/import_only/test_only/live classification)."
                     ),
                     "enum": list(MODES),
                 },
@@ -221,7 +222,10 @@ class AnalyzeTreeMCPCommand(BaseMCPCommand):
                 "callers to replace), and an optional extraction verdict.\n"
                 "- dependencies: plain relation graph (internal vs external); no cycles.\n"
                 "- structure: composition (modules/classes/functions); no quality scoring.\n"
-                "- cycles: circular-import chains within the sub-tree, with cycles_found.\n\n"
+                "- cycles: circular-import chains within the sub-tree, with cycles_found.\n"
+                "- dead_code: per-symbol classification unused / import_only / test_only / "
+                "live (semantic dead code an AST lint misses); 'removable' lists everything "
+                "with no production caller. Name-based matching; trust the staleness block.\n\n"
                 "Out of scope (use the dedicated commands): complexity, long files, "
                 "size scoring → comprehensive_analysis / analyze_complexity / "
                 "list_long_files."

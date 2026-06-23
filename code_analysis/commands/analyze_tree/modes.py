@@ -271,6 +271,91 @@ def mode_cycles(core: CoreData) -> dict:
     }
 
 
+def is_test_path(rel: str) -> bool:
+    """Heuristic: is ``rel`` a test file/dir (so its usages are 'test', not production)?"""
+    low = rel.lower().replace("\\", "/")
+    parts = low.split("/")
+    if any(p in ("test", "tests") for p in parts[:-1]):
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base.endswith("_test.py")
+
+
+def mode_dead_code(core: CoreData) -> dict:
+    """Classify every symbol defined under the roots by inbound usage.
+
+    Buckets (precedence: production caller wins):
+    - ``live``        — at least one production (non-test) file uses it
+    - ``test_only``   — used only by test files, no production caller
+    - ``import_only`` — imported somewhere but never used/called anywhere
+    - ``unused``      — no usage and no import anywhere
+
+    Usage matching is by symbol NAME (the index granularity), so identically
+    named symbols in different files share attribution — this errs toward
+    ``live`` and never toward a false ``unused`` (safe for a removal gate).
+    Accuracy depends on a current usage/entity index (see the ``staleness`` block).
+    """
+    inputs = core.dead_code_inputs or {}
+    symbols = inputs.get("symbols", [])
+    usage_by_name: dict = inputs.get("usage_by_name", {})
+    import_by_name: dict = inputs.get("import_by_name", {})
+
+    results: list[dict] = []
+    counts = {"live": 0, "test_only": 0, "import_only": 0, "unused": 0}
+    for sym in symbols:
+        name = sym["name"]
+        own_file = sym["file"]
+        # Count ALL usages incl. same-file: an internal helper used only within
+        # its own module is still LIVE for a pre-extraction gate (removing it
+        # would break the module). Self-references are the safe direction — they
+        # never produce a false 'unused'.
+        callers = list(usage_by_name.get(name, []))
+        importers = [i for i in import_by_name.get(name, []) if i != own_file]
+        prod_callers = [c for c in callers if not is_test_path(c)]
+        test_callers = [c for c in callers if is_test_path(c)]
+        if prod_callers:
+            classification = "live"
+        elif test_callers:
+            classification = "test_only"
+        elif importers:
+            classification = "import_only"
+        else:
+            classification = "unused"
+        counts[classification] += 1
+        results.append(
+            {
+                "name": name,
+                "kind": sym["kind"],
+                "class_name": sym.get("class_name"),
+                "file": own_file,
+                "line": sym.get("line"),
+                "classification": classification,
+                "production_callers": prod_callers,
+                "test_callers": test_callers,
+                "importers": sorted(importers),
+            }
+        )
+
+    # Stable, useful ordering: dead first (unused, import_only, test_only), then live.
+    order = {"unused": 0, "import_only": 1, "test_only": 2, "live": 3}
+    results.sort(key=lambda r: (order[r["classification"]], r["file"], r["line"] or 0))
+    removable = [r for r in results if r["classification"] != "live"]
+    return {
+        "symbols": results,
+        "removable": removable,
+        "summary": {
+            "total_symbols": len(results),
+            **counts,
+            "removable_count": len(removable),
+        },
+        "note": (
+            "Usage matching is by symbol name; identically-named symbols share "
+            "attribution (errs toward 'live'). Trust requires a current usage index "
+            "— see the staleness block."
+        ),
+    }
+
+
 def run_mode(
     mode: str,
     core: CoreData,
@@ -281,6 +366,8 @@ def run_mode(
     parameterize_seeds: Optional[tuple[str, ...]] = None,
 ) -> dict:
     """Dispatch to the selected mode post-processor."""
+    if mode == "dead_code":
+        return mode_dead_code(core)
     if mode == "package_boundary":
         return mode_package_boundary(
             core,

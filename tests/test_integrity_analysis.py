@@ -77,7 +77,8 @@ def test_step1_creates_indexes_and_excludes_self_loops() -> None:
     assert "CREATE INDEX idx_integrity_ie_from" in sql_blob
     assert "CREATE INDEX idx_integrity_ie_to" in sql_blob
     assert "CREATE INDEX idx_integrity_fm_mod" in sql_blob
-    assert "i.file_id <> fm.file_id" in sql_blob
+    # self-loop filter casts the UUID side to TEXT (PostgreSQL has no uuid<>text)
+    assert "CAST(i.file_id AS TEXT) <> fm.file_id" in sql_blob
     assert ops[-1][1] == ("proj-uuid",)
 
 
@@ -95,6 +96,11 @@ def test_parametrized_statements_have_no_literal_percent() -> None:
     flat_params = [p for _, params in ops for p in params]
     assert "%/__init__.py" in flat_params
     assert "%.py" in flat_params
+    # No ';' or line comments: the batch executor splits statements on ';', so a
+    # stray ';' (even inside a '--' comment) corrupts the statement stream.
+    for sql, _ in ops:
+        assert ";" not in sql, f"';' in batch statement: {sql!r}"
+        assert "--" not in sql, f"line comment in batch statement: {sql!r}"
 
 
 def test_step3_rejects_f0_equals_f1() -> None:

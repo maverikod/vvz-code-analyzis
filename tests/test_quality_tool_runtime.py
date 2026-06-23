@@ -60,3 +60,39 @@ def test_is_tool_available_false_on_oserror(monkeypatch):
 
     monkeypatch.setattr(tr, "run_quality_tool", boom)
     assert tr.is_tool_available("mypy") is False
+
+
+def test_tool_version_parses_varied_banners(monkeypatch):
+    tr.reset_availability_cache()
+    banners = {
+        "flake8": "7.3.0 (mccabe: 0.7.0) CPython 3.12",
+        "mypy": "mypy 1.20.2 (compiled: yes)",
+        "black": "python -m black, 25.12.0 (compiled: yes)",
+        "isort": "\n      isort\n                    VERSION 6.1.0\n",
+        "bandit": "__main__.py 1.9.4",
+    }
+
+    def fake_run(tool, args, *, timeout=60):
+        return _fake_proc(returncode=0, stdout=banners[tool])
+
+    monkeypatch.setattr(tr, "run_quality_tool", fake_run)
+    assert tr.tool_version("flake8") == "7.3.0"
+    assert tr.tool_version("mypy") == "1.20.2"
+    assert tr.tool_version("black") == "25.12.0"
+    assert tr.tool_version("isort") == "6.1.0"
+    assert tr.tool_version("bandit") == "1.9.4"
+
+
+def test_quality_tool_report_shape(monkeypatch):
+    tr.reset_availability_cache()
+
+    def fake_run(tool, args, *, timeout=60):
+        if tool == "bandit":
+            return _fake_proc(1, "", "No module named bandit")
+        return _fake_proc(0, stdout=f"{tool} 1.2.3")
+
+    monkeypatch.setattr(tr, "run_quality_tool", fake_run)
+    report = tr.quality_tool_report()
+    assert set(report) == set(tr.QUALITY_TOOL_MODULES)
+    assert report["flake8"] == {"available": True, "version": "1.2.3"}
+    assert report["bandit"] == {"available": False, "version": None}

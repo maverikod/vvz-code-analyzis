@@ -14,7 +14,9 @@ from .security import check_with_bandit
 from .tool_runtime import (
     QUALITY_TOOL_MODULES,
     is_tool_available,
+    quality_tool_report,
     reset_availability_cache,
+    tool_version,
 )
 from .type_checker import type_check_with_mypy
 
@@ -27,5 +29,7 @@ __all__ = [
     "check_with_bandit",
     "QUALITY_TOOL_MODULES",
     "is_tool_available",
+    "tool_version",
+    "quality_tool_report",
     "reset_availability_cache",
 ]

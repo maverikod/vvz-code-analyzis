@@ -116,6 +116,43 @@ def test_boundary_end_to_end(tmp_path):
     assert verdicts["pkg/core/exc.py"] == "pull_in"
 
 
+def test_staleness_rebuilt_and_skipped_active_session(tmp_path):
+    """N-1 (in motion): a file whose on-disk content diverges from its DB
+    tree_checksum lands in staleness.rebuilt; if an active edit-session lease
+    holds it, it lands in skipped_active_session instead — and analysis still
+    succeeds either way."""
+    _write(tmp_path, "pkg/sub/a.py", "x = 1\n")  # real content, real sha
+    _write(tmp_path, "pkg/sub/b.py", "y = 2\n")
+    a_sha = compute_content_checksum((tmp_path / "pkg/sub/a.py").read_text())
+    files = [
+        # a.py: DB checksum matches disk -> sha_match
+        {"id": "1", "path": str(tmp_path / "pkg/sub/a.py"), "relative_path": "pkg/sub/a.py", "tree_checksum": a_sha},
+        # b.py: DB checksum diverges from disk -> rebuilt (unless a lease holds it)
+        {"id": "2", "path": str(tmp_path / "pkg/sub/b.py"), "relative_path": "pkg/sub/b.py", "tree_checksum": "DIVERGED"},
+    ]
+
+    # No lease: b.py diverged -> rebuilt
+    db = FakeDB({"files": files, "imports": [], "leases": []})
+    data = analyze_tree_json(
+        db=db, project_id=PROJECT_ID, project_root=tmp_path, roots=["pkg/sub/"],
+        mode="package_boundary", include_stdlib=False, with_verdict=False, limit=50000,
+    )
+    counts = data["staleness"]["counts"]
+    assert counts[st.SHA_MATCH] == 1 and counts[st.REBUILT] == 1
+    assert "pkg/sub/b.py" in data["staleness"]["rebuilt"]
+    assert data["internal_files"] == ["pkg/sub/a.py", "pkg/sub/b.py"]  # analysis still succeeds
+
+    # Active edit-session lease on b.py: diverged -> skipped_active_session (not rebuilt)
+    db2 = FakeDB({"files": files, "imports": [], "leases": [{"file_path": "pkg/sub/b.py"}]})
+    data2 = analyze_tree_json(
+        db=db2, project_id=PROJECT_ID, project_root=tmp_path, roots=["pkg/sub/"],
+        mode="package_boundary", include_stdlib=False, with_verdict=False, limit=50000,
+    )
+    c2 = data2["staleness"]["counts"]
+    assert c2[st.SKIPPED_ACTIVE_SESSION] == 1 and c2[st.REBUILT] == 0
+    assert "pkg/sub/b.py" in data2["staleness"]["skipped_active_session"]
+
+
 def test_cycles_end_to_end(tmp_path):
     db = _build_project(tmp_path)
     # add b→? no; a→b? a imports pkg.sub.b, b imports pkg.sub.a → cycle

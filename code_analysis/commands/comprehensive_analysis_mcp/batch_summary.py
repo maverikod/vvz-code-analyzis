@@ -11,7 +11,28 @@ __all__ = [
     "build_batch_summary",
     "build_single_file_summary",
     "mypy_diagnostic_counts",
+    "quality_findings_counts",
 ]
+
+# Opt-in quality tools whose findings are stored as ``<tool>_findings`` lists.
+_QUALITY_FINDING_TOOLS = ("black", "isort", "bandit")
+
+
+def quality_findings_counts(results: Dict[str, Any]) -> Dict[str, int]:
+    """Summary counters for black/isort/bandit findings.
+
+    Produces ``total_<tool>_findings`` (sum of per-file error_count) and
+    ``files_with_<tool>_findings`` (number of files with any finding) for each
+    opt-in tool. Always returns all keys (zero when the check did not run).
+    """
+    counts: Dict[str, int] = {}
+    for tool in _QUALITY_FINDING_TOOLS:
+        rows = results.get(f"{tool}_findings") or []
+        counts[f"total_{tool}_findings"] = sum(
+            int(r.get("error_count") or 0) for r in rows
+        )
+        counts[f"files_with_{tool}_findings"] = len(rows)
+    return counts
 
 
 def mypy_diagnostic_counts(
@@ -105,6 +126,7 @@ def build_batch_summary(
         "files_skipped_up_to_date": files_skipped_up_to_date,
         "files_skipped_unreadable_or_missing": files_skipped_unreadable_or_missing,
     }
+    summary.update(quality_findings_counts(results))
     integrity = results.get("project_integrity") or {}
     if integrity:
         summary = _merge_project_integrity_summary(summary, integrity)

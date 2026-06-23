@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...core.duplicate_detector import DuplicateDetector
+from .batch_summary import quality_findings_counts
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ def analyze_one_file_in_batch(
     duplicate_min_lines: int,
     duplicate_min_similarity: float,
     set_step_desc: Optional[Callable[[str], None]] = None,
+    check_black: bool = False,
+    check_isort: bool = False,
+    check_bandit: bool = False,
+    bandit_config: Optional[Path] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Any]:
     """
     Run all analysis checks for one file in batch mode.
@@ -56,6 +61,9 @@ def analyze_one_file_in_batch(
         "duplicates": [],
         "flake8_errors": [],
         "mypy_errors": [],
+        "black_findings": [],
+        "isort_findings": [],
+        "bandit_findings": [],
         "missing_docstrings": [],
     }
 
@@ -142,6 +150,36 @@ def analyze_one_file_in_batch(
         else:
             file_results["mypy_errors"] = []
 
+    if check_black:
+        if set_step_desc:
+            set_step_desc("black")
+        t0 = time.perf_counter()
+        black_result = analyzer.check_black(full_path)
+        timings_sec["black"] = timings_sec.get("black", 0.0) + (time.perf_counter() - t0)
+        if not black_result["success"]:
+            black_result["file_path"] = file_path_str
+            file_results["black_findings"] = [black_result]
+
+    if check_isort:
+        if set_step_desc:
+            set_step_desc("isort")
+        t0 = time.perf_counter()
+        isort_result = analyzer.check_isort(full_path)
+        timings_sec["isort"] = timings_sec.get("isort", 0.0) + (time.perf_counter() - t0)
+        if not isort_result["success"]:
+            isort_result["file_path"] = file_path_str
+            file_results["isort_findings"] = [isort_result]
+
+    if check_bandit:
+        if set_step_desc:
+            set_step_desc("bandit")
+        t0 = time.perf_counter()
+        bandit_result = analyzer.check_bandit(full_path, bandit_config)
+        timings_sec["bandit"] = timings_sec.get("bandit", 0.0) + (time.perf_counter() - t0)
+        if not bandit_result["success"]:
+            bandit_result["file_path"] = file_path_str
+            file_results["bandit_findings"] = [bandit_result]
+
     if check_docstrings:
         if set_step_desc:
             set_step_desc("docstrings")
@@ -170,6 +208,7 @@ def analyze_one_file_in_batch(
         ),
         "files_with_mypy_errors": len(file_results.get("mypy_errors", [])),
         "total_missing_docstrings": len(file_results["missing_docstrings"]),
+        **quality_findings_counts(file_results),
     }
 
     file_project_id = proj_id or file_record.get("project_id")

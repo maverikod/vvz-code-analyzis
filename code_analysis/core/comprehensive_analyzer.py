@@ -21,6 +21,19 @@ from ..core.constants import DEFAULT_MAX_FILE_LINES, PLACEHOLDER_PATTERNS
 logger = logging.getLogger(__name__)
 
 
+def _tool_available_from_message(error_message: Optional[str]) -> bool:
+    """Infer tool availability from a quality-helper message.
+
+    Helpers signal an absent tool with a ``"<Tool> not installed"`` message; any
+    other (or no) message means the tool ran. The authoritative availability
+    gate is the up-front probe in the command (``is_tool_available``); this flag
+    is informational for per-file results.
+    """
+    if not error_message:
+        return True
+    return "not installed" not in error_message.lower()
+
+
 class ComprehensiveAnalyzer:
     """
     Comprehensive code analyzer combining multiple analysis types.
@@ -457,6 +470,7 @@ class ComprehensiveAnalyzer:
             "error_message": error_msg,
             "errors": errors,
             "error_count": len(errors) if errors else 0,
+            "tool_available": _tool_available_from_message(error_msg),
         }
 
     def check_mypy(
@@ -483,6 +497,48 @@ class ComprehensiveAnalyzer:
             "error_message": error_msg,
             "errors": errors,
             "error_count": len(errors) if errors else 0,
+            "tool_available": _tool_available_from_message(error_msg),
+        }
+
+    def check_black(self, file_path: Path) -> Dict[str, Any]:
+        """Check a file for black formatting drift (read-only ``--check``)."""
+        from ..core.code_quality import check_with_black
+
+        success, error_msg, errors = check_with_black(file_path)
+        return {
+            "success": success,
+            "error_message": error_msg,
+            "errors": errors,
+            "error_count": len(errors) if errors else 0,
+            "tool_available": _tool_available_from_message(error_msg),
+        }
+
+    def check_isort(self, file_path: Path) -> Dict[str, Any]:
+        """Check a file for import-order drift (read-only ``--check-only``)."""
+        from ..core.code_quality import check_with_isort
+
+        success, error_msg, errors = check_with_isort(file_path)
+        return {
+            "success": success,
+            "error_message": error_msg,
+            "errors": errors,
+            "error_count": len(errors) if errors else 0,
+            "tool_available": _tool_available_from_message(error_msg),
+        }
+
+    def check_bandit(
+        self, file_path: Path, config_file: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """Scan a file for security findings with bandit."""
+        from ..core.code_quality import check_with_bandit
+
+        success, error_msg, errors = check_with_bandit(file_path, config_file)
+        return {
+            "success": success,
+            "error_message": error_msg,
+            "errors": errors,
+            "error_count": len(errors) if errors else 0,
+            "tool_available": _tool_available_from_message(error_msg),
         }
 
     def find_missing_docstrings(

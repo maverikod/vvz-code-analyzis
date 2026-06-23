@@ -16,6 +16,8 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .tool_runtime import module_missing, sanitized_env, tool_command
+
 logger = logging.getLogger(__name__)
 
 # Mypy line format: path:line:column: severity: message or path:line: severity: message
@@ -223,7 +225,9 @@ def _type_check_with_subprocess(
             effective_config = config_for_single_file or config_file
             if config_for_single_file is not None:
                 tmp_config = config_for_single_file
-            cmd = ["mypy", str(target_file), "--config-file", str(effective_config)]
+            cmd = tool_command(
+                "mypy", str(target_file), "--config-file", str(effective_config)
+            )
             cwd = str(config_file.parent.resolve())
         else:
             # No config: use minimal config that excludes .venv/venv so mypy
@@ -236,10 +240,11 @@ def _type_check_with_subprocess(
             ) as f:
                 f.write(_MYPY_EXCLUDE_VENV_CONFIG)
                 tmp_config = Path(f.name)
-            cmd = ["mypy", str(target_file), "--config-file", str(tmp_config)]
+            cmd = tool_command(
+                "mypy", str(target_file), "--config-file", str(tmp_config)
+            )
 
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
+        env = sanitized_env()
 
         result = subprocess.run(
             cmd,
@@ -249,6 +254,15 @@ def _type_check_with_subprocess(
             env=env,
             cwd=cwd,
         )
+
+        if module_missing(result.stderr, "mypy"):
+            if tmp_config is not None:
+                try:
+                    tmp_config.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            logger.warning("Mypy module not importable from server interpreter")
+            return (False, "Mypy not installed", [])
 
         if tmp_config is not None:
             try:
@@ -341,9 +355,8 @@ def type_check_project_with_mypy(
             f.write(_MYPY_EXCLUDE_VENV_CONFIG)
             config_path = f.name
     try:
-        cmd = ["mypy", str(project_path), "--config-file", config_path]
-        env = os.environ.copy()
-        env.pop("PYTHONPATH", None)
+        cmd = tool_command("mypy", str(project_path), "--config-file", config_path)
+        env = sanitized_env()
         result = subprocess.run(
             cmd,
             capture_output=True,

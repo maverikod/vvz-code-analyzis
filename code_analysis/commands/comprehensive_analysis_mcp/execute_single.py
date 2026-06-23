@@ -16,7 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.duplicate_detector import DuplicateDetector
 from ..base_mcp_command import BaseMCPCommand
-from .batch_summary import _merge_project_integrity_summary
+from .batch_summary import _merge_project_integrity_summary, quality_findings_counts
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,10 @@ async def run_single_file(
     check_duplicates = ctx["check_duplicates"]
     check_flake8 = ctx["check_flake8"]
     check_mypy = ctx["check_mypy"]
+    check_black = ctx.get("check_black", False)
+    check_isort = ctx.get("check_isort", False)
+    check_bandit = ctx.get("check_bandit", False)
+    bandit_config = ctx.get("bandit_config")
     check_docstrings = ctx["check_docstrings"]
     duplicate_min_lines = ctx["duplicate_min_lines"]
     duplicate_min_similarity = ctx["duplicate_min_similarity"]
@@ -214,6 +218,30 @@ async def run_single_file(
             results["mypy_errors"].append(mypy_result)
         log_timing("single_mypy", t0)
 
+    if check_black:
+        t0 = time.perf_counter()
+        black_result = analyzer.check_black(file_path_obj)
+        if not black_result["success"]:
+            black_result["file_path"] = rel_path
+            results["black_findings"].append(black_result)
+        log_timing("single_black", t0)
+
+    if check_isort:
+        t0 = time.perf_counter()
+        isort_result = analyzer.check_isort(file_path_obj)
+        if not isort_result["success"]:
+            isort_result["file_path"] = rel_path
+            results["isort_findings"].append(isort_result)
+        log_timing("single_isort", t0)
+
+    if check_bandit:
+        t0 = time.perf_counter()
+        bandit_result = analyzer.check_bandit(file_path_obj, bandit_config)
+        if not bandit_result["success"]:
+            bandit_result["file_path"] = rel_path
+            results["bandit_findings"].append(bandit_result)
+        log_timing("single_bandit", t0)
+
     if check_docstrings:
         t0 = time.perf_counter()
         missing_docstrings = analyzer.find_missing_docstrings(
@@ -248,6 +276,7 @@ async def run_single_file(
                 ),
                 "files_with_mypy_errors": len(results.get("mypy_errors", [])),
                 "total_missing_docstrings": len(results["missing_docstrings"]),
+                **quality_findings_counts(results),
             }
             db.save_comprehensive_analysis_results(
                 file_id=file_id,
@@ -316,6 +345,7 @@ async def run_single_file(
         "files_analyzed": 1,
         "files_skipped": 0,
         "files_total": 1,
+        **quality_findings_counts(results),
     }
     integrity = results.get("project_integrity") or {}
     if integrity:

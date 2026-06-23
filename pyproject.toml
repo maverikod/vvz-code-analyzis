@@ -30,6 +30,15 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "pgvector>=0.2.5",
     "dulwich>=1.2.4",
+    # Code-quality tools: the server RUNS these (lint_code, type_check_code,
+    # comprehensive_analysis), resolved via `python -m <tool>`, so they must be
+    # in the runtime venv/image, not just dev. Pinned (major-bounded) for
+    # reproducible rebuilds. See TZ-CA-QUALITY-TOOLS-001.
+    "flake8>=7.0,<8",
+    "mypy>=1.8,<2",
+    "black>=24.0,<26",
+    "isort>=5.13,<7",
+    "bandit>=1.7,<2",
 ]
 # PostgreSQL logical backup (backup_database / restore_database) also needs OS binaries
 # pg_dump and pg_restore (e.g. Debian/Ubuntu: apt install postgresql-client). Pip cannot
@@ -44,9 +53,8 @@ dev = [
     "pytest-timeout>=2.4",
     "pytest-cov>=7.0",
     "anyio>=4.0",
-    "black>=24.0",
-    "flake8>=7.0",
-    "mypy>=1.8",
+    # black / flake8 / mypy moved to runtime dependencies (the server runs them);
+    # isort / bandit added there too. Kept out of dev to avoid divergent pins.
 ]
 
 [tool.setuptools.packages.find]

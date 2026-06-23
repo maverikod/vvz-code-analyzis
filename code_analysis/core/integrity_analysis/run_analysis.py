@@ -16,7 +16,9 @@ from code_analysis.core.integrity_analysis.eligibility import (
 )
 from code_analysis.core.integrity_analysis.import_cycles_sql import (
     DEFAULT_MAX_CHAIN_DEPTH,
-    fetch_import_cycles,
+)
+from code_analysis.core.integrity_analysis.import_cycles_resolver import (
+    fetch_import_cycles_resolver,
 )
 from code_analysis.core.integrity_analysis.issues_registry import (
     clear_integrity_issues,
@@ -78,14 +80,15 @@ def run_integrity_analysis_for_project(
 
     if check_circular_imports:
         try:
-            cycles = fetch_import_cycles(
+            cycles = fetch_import_cycles_resolver(
                 database,
                 project_id,
+                project_root,
                 max_depth=max_import_chain_depth,
             )
         except Exception as exc:
             logger.exception(
-                "Circular import SQL batch failed for project %s: %s",
+                "Resolver circular-import detection failed for project %s: %s",
                 project_id,
                 exc,
             )

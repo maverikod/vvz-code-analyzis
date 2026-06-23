@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from code_analysis.core.fs_permissions import is_readable_file, is_writable_dir
+
 logger = logging.getLogger(__name__)
 
 WATCH_DIR_SETTINGS_FILENAME = "settings.json"
@@ -94,6 +96,8 @@ def load_watch_dir_settings(watch_dir: Path) -> WatchDirSettings:
     path = _settings_path(watch_dir)
     if not path.is_file():
         return default_watch_dir_settings()
+    if not is_readable_file(path, log=logger):
+        return default_watch_dir_settings()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -106,20 +110,45 @@ def load_watch_dir_settings(watch_dir: Path) -> WatchDirSettings:
     return WatchDirSettings(deleted=deleted, ignore_patterns=ignore_patterns)
 
 
-def write_watch_dir_settings(watch_dir: Path, settings: WatchDirSettings) -> None:
-    """Atomically write ``settings.json`` under ``watch_dir``."""
-    watch_dir.mkdir(parents=True, exist_ok=True)
+def write_watch_dir_settings(watch_dir: Path, settings: WatchDirSettings) -> bool:
+    """Atomically write ``settings.json`` under ``watch_dir``.
+
+    Returns ``True`` on success. When ``watch_dir`` is not writable by the
+    current process (e.g. a root-owned watch directory under an unprivileged
+    service account), this logs a ``[FS_PERM]`` error and returns ``False``
+    instead of raising, so one inaccessible watch directory does not abort the
+    whole settings sync / reload cycle.
+    """
+    try:
+        watch_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error(
+            "[FS_PERM] cannot create watch directory %s: %s; skipping settings write",
+            watch_dir,
+            exc,
+        )
+        return False
+    if not is_writable_dir(watch_dir, log=logger):
+        return False
     path = _settings_path(watch_dir)
     payload = {
         "deleted": settings.deleted,
         "ignore_patterns": list(settings.ignore_patterns),
     }
     text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=".settings.",
-        suffix=".json",
-        dir=str(watch_dir),
-    )
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".settings.",
+            suffix=".json",
+            dir=str(watch_dir),
+        )
+    except OSError as exc:
+        logger.error(
+            "[FS_PERM] cannot create settings temp file in %s: %s; skipping",
+            watch_dir,
+            exc,
+        )
+        return False
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -127,6 +156,10 @@ def write_watch_dir_settings(watch_dir: Path, settings: WatchDirSettings) -> Non
             handle.flush()
             os.fsync(handle.fileno())
         tmp_path.replace(path)
+        return True
+    except OSError as exc:
+        logger.error("Failed to write %s: %s; skipping", path, exc)
+        return False
     finally:
         if tmp_path.exists():
             try:

@@ -16,7 +16,7 @@ import os
 import signal
 import sys
 import threading
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from code_analysis.core.constants import DEFAULT_SHUTDOWN_GRACE_TIMEOUT
 
@@ -71,8 +71,13 @@ def register_cleanup_handlers(
     main_logger: Any,
     *,
     heartbeat_stop: Optional[threading.Event] = None,
-) -> None:
-    """Register cleanup_workers on atexit and SIGTERM/SIGINT/SIGHUP."""
+) -> Callable[[], None]:
+    """Register cleanup_workers on atexit and SIGTERM/SIGINT/SIGHUP.
+
+    Returns the idempotent ``cleanup_workers`` callable so the caller can run
+    the same worker-shutdown sequence explicitly (e.g. before a hard exit when
+    the server loop ends) without waiting for the atexit/signal path.
+    """
     cleanup_lock = threading.Lock()
     cleanup_started = False
     shutdown_logged = False
@@ -168,3 +173,5 @@ def register_cleanup_handlers(
         SHUTDOWN_LOG_TAG,
         os.getpid(),
     )
+
+    return cleanup_workers

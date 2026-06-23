@@ -23,7 +23,11 @@ from code_analysis.main_app_factory import (
     create_app_with_events,
     setup_main_logger_file_handler,
 )
-from code_analysis.main_cleanup import log_daemon_shutdown, register_cleanup_handlers
+from code_analysis.main_cleanup import (
+    _flush_log_handlers,
+    log_daemon_shutdown,
+    register_cleanup_handlers,
+)
 from code_analysis.main_config import (
     apply_global_config,
     ensure_storage_and_load_app_config,
@@ -211,7 +215,7 @@ def main() -> None:
         except Exception:
             pass
 
-    register_cleanup_handlers(
+    cleanup_workers = register_cleanup_handlers(
         worker_manager,
         app_config,
         main_logger,
@@ -257,10 +261,16 @@ def main() -> None:
         server_port,
         os.getpid(),
     )
+    exit_code = 0
     try:
         engine.run_server(app, server_config)
         main_logger.info("Hypercorn run_server returned (server loop ended normally)")
-    except Exception as e:
+    except SystemExit as e:
+        # Our signal handler raises SystemExit(0) on a graceful stop.
+        code = e.code
+        exit_code = code if isinstance(code, int) else (0 if code is None else 1)
+    except BaseException as e:  # noqa: BLE001 - daemon must always force a clean exit
+        exit_code = 1
         append_server_startup_log(
             server_log_dir_from_config_data(app_config, config_path),
             f"hypercorn: run_server failed: {e}",
@@ -270,10 +280,34 @@ def main() -> None:
             e,
             exc_info=True,
         )
-        raise
     finally:
         log_daemon_shutdown(main_logger, "main_server_loop_ended")
         main_logger.info("main() exiting after server loop")
+        # The server loop has ended; finalize and hard-exit promptly.
+        #
+        # After Hypercorn returns, lingering non-daemon threads or
+        # multiprocessing joins can block normal interpreter shutdown
+        # (threading._shutdown()), so atexit handlers never run and the daemon
+        # heartbeat keeps ticking. systemd then waits out TimeoutStopSec and
+        # SIGKILLs the process, marking the unit failed (Result: timeout).
+        #
+        # Stop the heartbeat, run the idempotent worker cleanup, flush logs,
+        # then os._exit() so stop/restart is fast and the unit ends cleanly.
+        # exit_code is non-zero on an abnormal loop exit so Restart=on-failure
+        # still applies.
+        try:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+        except Exception:
+            pass
+        try:
+            cleanup_workers()
+        except Exception:
+            main_logger.error(
+                "cleanup_workers() during shutdown failed", exc_info=True
+            )
+        _flush_log_handlers()
+        os._exit(exit_code)
 
 
 if __name__ == "__main__":

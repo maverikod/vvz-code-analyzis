@@ -20,6 +20,9 @@ from code_analysis.core.integrity_analysis.import_cycles_sql import (
 from code_analysis.core.integrity_analysis.import_cycles_resolver import (
     fetch_import_cycles_resolver,
 )
+from code_analysis.core.integrity_analysis.entity_index_check import (
+    check_entity_index,
+)
 from code_analysis.core.integrity_analysis.issues_registry import (
     clear_integrity_issues,
     register_circular_import_issues,
@@ -75,6 +78,17 @@ def run_integrity_analysis_for_project(
     missing: List[Dict[str, Any]] = []
     cycles: List[List[str]] = []
 
+    # Entity-index self-check (C-1): loud signal if files exist but entity rows == 0.
+    entity_index = check_entity_index(database, project_id)
+    if not entity_index["ok"]:
+        logger.error(
+            "[ENTITY_INDEX] desync for project %s: files=%s but entities=0 "
+            "(functions/classes/methods all empty) — entity-path commands "
+            "(list_code_entities/get_code_entity_info) will be unreliable; reindex needed",
+            project_id,
+            entity_index["files"],
+        )
+
     if check_missing_files:
         missing = find_missing_indexed_files(database, project_id, project_root)
 
@@ -117,4 +131,6 @@ def run_integrity_analysis_for_project(
         "circular_imports": [[path_map.get(fid, fid) for fid in c] for c in cycles],
         "circular_imports_count": cycle_count,
         "max_import_chain_depth": max_import_chain_depth,
+        "entity_index": entity_index,
+        "entity_index_ok": entity_index["ok"],
     }

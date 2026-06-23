@@ -148,4 +148,9 @@ def _merge_project_integrity_summary(
         integrity.get("circular_imports_count") or 0
     )
     summary["integrity_issues_cleared"] = int(integrity.get("cleared_issues") or 0)
+    # Entity-index self-check (C-1): surface loudly in the summary.
+    if "entity_index_ok" in integrity:
+        summary["entity_index_ok"] = bool(integrity.get("entity_index_ok"))
+        ei = integrity.get("entity_index") or {}
+        summary["entity_index_entities"] = int(ei.get("entities") or 0)
     return summary

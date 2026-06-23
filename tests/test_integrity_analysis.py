@@ -81,6 +81,22 @@ def test_step1_creates_indexes_and_excludes_self_loops() -> None:
     assert ops[-1][1] == ("proj-uuid",)
 
 
+def test_parametrized_statements_have_no_literal_percent() -> None:
+    """Regression: a literal ``%`` in a parametrized statement makes psycopg treat
+    ``%/`` / ``%.`` as an invalid placeholder ("only '%s','%b','%t' allowed").
+    LIKE patterns must be bound as parameters, so no parametrized SQL may contain
+    a bare ``%``.
+    """
+    ops = build_step1_create_edges_sql("proj-uuid")
+    for sql, params in ops:
+        if params:
+            assert "%" not in sql, f"literal % in parametrized statement: {sql!r}"
+    # The init/.py LIKE patterns must instead appear as bound parameters.
+    flat_params = [p for _, params in ops for p in params]
+    assert "%/__init__.py" in flat_params
+    assert "%.py" in flat_params
+
+
 def test_step3_rejects_f0_equals_f1() -> None:
     sql, _ = build_step3_select_cycles_sql(4)
     assert "f0 <> f1" in sql

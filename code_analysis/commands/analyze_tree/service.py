@@ -255,6 +255,10 @@ def build_core(
         core.structure_by_file = _load_structure(
             db, project_id, internal_set, rel_by_file_id
         )
+    if mode == "dead_code":
+        core.dead_code_inputs = _load_dead_code(
+            db, project_id, internal_set, rel_by_file_id
+        )
     return core
 
 
@@ -328,6 +332,122 @@ def _load_structure(
             {"name": _rv(row, "name"), "line": _rv(row, "line"), "end_line": _rv(row, "end_line")}
         )
     return out
+
+
+def _load_dead_code(
+    db: Any,
+    project_id: str,
+    internal_set: set[str],
+    rel_by_file_id: dict[str, str],
+) -> dict:
+    """Gather symbols defined under the roots plus project-wide usage/import maps.
+
+    Classification (production vs test, bucketing) is done in the pure
+    ``mode_dead_code`` post-processor; this only collects raw inputs:
+    - ``symbols``: classes/functions/methods defined in sub-tree files
+    - ``usage_by_name``: symbol name -> sorted list of rel paths that USE it
+      (a call/reference, from the ``usages`` index, project-wide)
+    - ``import_by_name``: symbol name -> sorted list of rel paths that IMPORT it
+    Matching is by name (the index granularity); see mode note on collisions.
+    """
+    symbols: list[dict] = []
+
+    cls_res = db.execute(
+        """
+        SELECT c.id, c.file_id, c.name, c.line
+        FROM classes c
+        JOIN files f ON f.id = c.file_id
+        WHERE f.project_id = ?
+        """,
+        (project_id,),
+    )
+    cls_rows = cls_res.get("data", []) if isinstance(cls_res, dict) else (cls_res or [])
+    class_name_by_id: dict[str, str] = {}
+    class_rel_by_id: dict[str, str] = {}
+    for row in cls_rows:
+        rel = rel_by_file_id.get(str(_rv(row, "file_id")))
+        class_name_by_id[str(_rv(row, "id"))] = str(_rv(row, "name"))
+        if rel:
+            class_rel_by_id[str(_rv(row, "id"))] = rel
+        if rel in internal_set:
+            symbols.append(
+                {"kind": "class", "name": _rv(row, "name"), "file": rel,
+                 "line": _rv(row, "line"), "class_name": None}
+            )
+
+    fn_res = db.execute(
+        """
+        SELECT fn.file_id, fn.name, fn.line
+        FROM functions fn
+        JOIN files f ON f.id = fn.file_id
+        WHERE f.project_id = ?
+        """,
+        (project_id,),
+    )
+    fn_rows = fn_res.get("data", []) if isinstance(fn_res, dict) else (fn_res or [])
+    for row in fn_rows:
+        rel = rel_by_file_id.get(str(_rv(row, "file_id")))
+        if rel in internal_set:
+            symbols.append(
+                {"kind": "function", "name": _rv(row, "name"), "file": rel,
+                 "line": _rv(row, "line"), "class_name": None}
+            )
+
+    m_res = db.execute(
+        """
+        SELECT m.class_id, m.name, m.line
+        FROM methods m
+        JOIN classes c ON c.id = m.class_id
+        JOIN files f ON f.id = c.file_id
+        WHERE f.project_id = ?
+        """,
+        (project_id,),
+    )
+    m_rows = m_res.get("data", []) if isinstance(m_res, dict) else (m_res or [])
+    for row in m_rows:
+        cid = str(_rv(row, "class_id"))
+        rel = class_rel_by_id.get(cid)
+        if rel in internal_set:
+            symbols.append(
+                {"kind": "method", "name": _rv(row, "name"), "file": rel,
+                 "line": _rv(row, "line"), "class_name": class_name_by_id.get(cid)}
+            )
+
+    def _name_map(sql: str, name_col: str) -> dict[str, list[str]]:
+        res = db.execute(sql, (project_id,))
+        rows = res.get("data", []) if isinstance(res, dict) else (res or [])
+        acc: dict[str, set[str]] = {}
+        for row in rows:
+            nm = _rv(row, name_col)
+            rel = rel_by_file_id.get(str(_rv(row, "file_id")))
+            if nm and rel:
+                acc.setdefault(str(nm), set()).add(rel)
+        return {k: sorted(v) for k, v in acc.items()}
+
+    usage_by_name = _name_map(
+        """
+        SELECT u.target_name AS target_name, u.file_id AS file_id
+        FROM usages u
+        JOIN files f ON f.id = u.file_id
+        WHERE f.project_id = ?
+        """,
+        "target_name",
+    )
+    import_by_name = _name_map(
+        """
+        SELECT i.name AS name, i.file_id AS file_id
+        FROM imports i
+        JOIN files f ON f.id = i.file_id
+        WHERE f.project_id = ?
+        """,
+        "name",
+    )
+
+    return {
+        "symbols": symbols,
+        "usage_by_name": usage_by_name,
+        "import_by_name": import_by_name,
+    }
 
 
 def analyze_tree_json(

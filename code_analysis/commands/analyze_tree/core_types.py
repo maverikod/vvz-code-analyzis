@@ -43,3 +43,5 @@ class CoreData:
     truncated: bool = False
     # Filled only for the structure mode (rel_path → composition dict).
     structure_by_file: dict[str, dict] = field(default_factory=dict)
+    # Filled only for the dead_code mode: raw symbol/usage/import inputs.
+    dead_code_inputs: dict = field(default_factory=dict)

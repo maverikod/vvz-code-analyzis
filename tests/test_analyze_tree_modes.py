@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from code_analysis.commands.analyze_tree.core_types import CoreData, Edge
 from code_analysis.commands.analyze_tree.modes import (
     classify_verdict,
+    is_test_path,
     run_mode,
 )
 
@@ -123,6 +124,77 @@ def test_verdict_classification():
     assert classify_verdict("pkg/core/backup_manager.py") == "keep_in_server"
     assert classify_verdict("pkg/core/config.py") == "parameterize"
     assert classify_verdict("pkg/core/exceptions.py") == "pull_in"
+
+
+def test_is_test_path():
+    assert is_test_path("tests/test_x.py") is True
+    assert is_test_path("pkg/test/helper.py") is True
+    assert is_test_path("pkg/sub/test_markers.py") is True
+    assert is_test_path("pkg/sub/markers_test.py") is True
+    assert is_test_path("pkg/sub/markers.py") is False
+    # 'test' only as a path segment, not substring of a name
+    assert is_test_path("pkg/contest/markers.py") is False
+
+
+def _dead_core(inputs):
+    c = _core([])
+    c.dead_code_inputs = inputs
+    return c
+
+
+def test_dead_code_classification():
+    inputs = {
+        "symbols": [
+            # D-1 shape: prod import, no prod call, called only by tests
+            {"kind": "function", "name": "append_persisted_node_ids",
+             "file": "pkg/sub/markers.py", "line": 5, "class_name": None},
+            {"kind": "function", "name": "build_marker_path",
+             "file": "pkg/sub/markers.py", "line": 20, "class_name": None},
+            {"kind": "function", "name": "orphan",
+             "file": "pkg/sub/markers.py", "line": 40, "class_name": None},
+            {"kind": "function", "name": "imported_never_called",
+             "file": "pkg/sub/markers.py", "line": 60, "class_name": None},
+        ],
+        "usage_by_name": {
+            "append_persisted_node_ids": ["tests/test_markers.py"],   # test only
+            "build_marker_path": ["pkg/sub/other.py"],                # production
+        },
+        "import_by_name": {
+            "append_persisted_node_ids": ["pkg/sub/tree_modifier.py", "tests/test_markers.py"],
+            "imported_never_called": ["pkg/sub/consumer.py"],
+        },
+    }
+    data = run_mode("dead_code", _dead_core(inputs))
+    s = data["summary"]
+    assert s["total_symbols"] == 4
+    assert (s["live"], s["test_only"], s["import_only"], s["unused"]) == (1, 1, 1, 1)
+    assert s["removable_count"] == 3
+
+    by_name = {r["name"]: r["classification"] for r in data["symbols"]}
+    assert by_name["build_marker_path"] == "live"
+    assert by_name["append_persisted_node_ids"] == "test_only"
+    assert by_name["imported_never_called"] == "import_only"
+    assert by_name["orphan"] == "unused"
+
+    # D-1: its production importer (the dead import) is surfaced
+    d1 = next(r for r in data["symbols"] if r["name"] == "append_persisted_node_ids")
+    assert "pkg/sub/tree_modifier.py" in d1["importers"]
+    assert "build_marker_path" not in {r["name"] for r in data["removable"]}
+
+
+def test_dead_code_self_file_usage_is_live():
+    # A symbol used within its own (production) module is LIVE for a pre-extraction
+    # gate — removing it would break the module. Safe direction, no false 'unused'.
+    inputs = {
+        "symbols": [
+            {"kind": "function", "name": "helper", "file": "pkg/sub/a.py",
+             "line": 1, "class_name": None},
+        ],
+        "usage_by_name": {"helper": ["pkg/sub/a.py"]},
+        "import_by_name": {},
+    }
+    data = run_mode("dead_code", _dead_core(inputs))
+    assert data["symbols"][0]["classification"] == "live"
 
 
 def test_unknown_mode_raises():

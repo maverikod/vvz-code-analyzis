@@ -17,6 +17,7 @@ from code_analysis.core.search_session.cleaner import register_search_session_cl
 from code_analysis.core.search_session.http_routes import register_search_job_routes
 from code_analysis.main_app_events import register_startup_shutdown_events
 from code_analysis.main_server_presentation import resolve_server_presentation
+from code_analysis.jsonrpc_route_compat import patch_jsonrpc_routes_request_body
 from code_analysis.openapi_mcp_proxy_compat import patch_app_openapi_for_mcp_proxy
 
 
@@ -39,6 +40,7 @@ def create_app_with_events(
     register_startup_shutdown_events(app, app_config, worker_manager)
     app.state.worker_manager = worker_manager
     patch_app_openapi_for_mcp_proxy(app)
+    patch_jsonrpc_routes_request_body(app)
     from code_analysis.core.storage_paths import (
         load_raw_config,
         resolve_search_sessions_root,

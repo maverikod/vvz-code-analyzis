@@ -7,13 +7,23 @@ which makes ``_map_type`` use the list as a dict key and raises
 ``TypeError: unhashable type: 'list'``, so registration fails with
 "returned no commands via get_methods()".
 
+Concurrent ``GET /openapi.json`` calls used to invoke CustomOpenAPIGenerator on
+every request (no lock, no cache). That race could corrupt POST /api/jsonrpc body
+validation (HTTP 422 with app config in Pydantic ``input``). Generation is now
+serialized and cached per app instance.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
 
+import copy
+import threading
 from typing import Any
+
+_openapi_lock = threading.Lock()
+_cached_openapi_by_app: dict[int, dict[str, Any]] = {}
 
 
 def normalize_openapi_types_for_mcp_proxy(obj: Any) -> Any:
@@ -35,12 +45,32 @@ def normalize_openapi_types_for_mcp_proxy(obj: Any) -> Any:
     return obj
 
 
+def invalidate_openapi_cache(app: Any | None = None) -> None:
+    """Drop cached OpenAPI schema (all apps, or one app after command reload)."""
+    with _openapi_lock:
+        if app is None:
+            _cached_openapi_by_app.clear()
+        else:
+            _cached_openapi_by_app.pop(id(app), None)
+        if app is not None and hasattr(app, "openapi_schema"):
+            app.openapi_schema = None
+
+
 def patch_app_openapi_for_mcp_proxy(app: Any) -> None:
-    """Wrap ``app.openapi`` so returned schema is safe for MCP Proxy get_methods()."""
+    """Wrap ``app.openapi``: thread-safe cache + MCP Proxy type normalization."""
     orig = app.openapi
 
     def _wrapped() -> Any:
-        schema = orig()
-        return normalize_openapi_types_for_mcp_proxy(schema)
+        app_id = id(app)
+        with _openapi_lock:
+            cached = _cached_openapi_by_app.get(app_id)
+            if cached is not None:
+                return copy.deepcopy(cached)
+            schema = orig()
+            normalized = normalize_openapi_types_for_mcp_proxy(schema)
+            stored = copy.deepcopy(normalized)
+            _cached_openapi_by_app[app_id] = stored
+            app.openapi_schema = stored
+            return copy.deepcopy(stored)
 
     app.openapi = _wrapped

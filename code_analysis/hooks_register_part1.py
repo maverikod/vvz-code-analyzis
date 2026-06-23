@@ -211,6 +211,16 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
+        from .commands.analyze_tree import AnalyzeTreeMCPCommand
+
+        reg.register(AnalyzeTreeMCPCommand, "custom")
+        logger.info("✅ Registered analyze_tree command")
+    except ImportError as e:
+        logger.warning("Failed to import analyze_tree command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register analyze_tree command: %s", e, exc_info=True)
+
+    try:
         from .commands.code_mapper_mcp_commands import (
             ListErrorsByCategoryMCPCommand,
             ListLongFilesMCPCommand,

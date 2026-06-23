@@ -30,13 +30,27 @@ DEFAULT_MAX_CHAIN_DEPTH = 10
 SqlPair = Tuple[str, tuple[Any, ...]]
 
 
+# LIKE patterns are bound as parameters, never inlined: a literal ``%`` in the
+# SQL text makes psycopg (PostgreSQL backend) treat ``%/`` / ``%.`` as an invalid
+# parameter placeholder and raise "only '%s','%b','%t' are allowed as
+# placeholders". As a bound value the ``%`` is data, not a placeholder, and the
+# same statement stays valid on SQLite.
+LIKE_INIT_PY = "%/__init__.py"
+LIKE_DOT_PY = "%.py"
+
+
 def _path_to_mod_key_sql(path_expr: str) -> str:
-    """SQL expression: project-relative ``.py`` path -> dotted module key."""
+    """SQL expression: project-relative ``.py`` path -> dotted module key.
+
+    Contains one ``LIKE ?`` placeholder; the caller must supply ``LIKE_INIT_PY``
+    as the corresponding positional parameter (first, since this expression sits
+    in the SELECT list ahead of the WHERE clause).
+    """
     return f"""
 REPLACE(
   REPLACE(
     CASE
-      WHEN {path_expr} LIKE '%/__init__.py' THEN
+      WHEN {path_expr} LIKE ? THEN
         SUBSTR({path_expr}, 1, LENGTH({path_expr}) - 12)
       ELSE
         SUBSTR({path_expr}, 1, LENGTH({path_expr}) - 3)
@@ -96,10 +110,12 @@ INSERT INTO {TBL_FILE_MODULES} (file_id, mod_key)
 SELECT f.id, {mod_key}
 FROM files f
 WHERE f.project_id = ?
-  AND {WHERE_FILES_ACTIVE_F.replace("f.", "f.")}
-  AND ({path_expr}) LIKE '%.py'
+  AND {WHERE_FILES_ACTIVE_F}
+  AND ({path_expr}) LIKE ?
 """.strip(),
-            (project_id,),
+            # Param order = appearance order: mod_key's LIKE (SELECT) first,
+            # then project_id (WHERE), then the trailing ``.py`` LIKE.
+            (LIKE_INIT_PY, project_id, LIKE_DOT_PY),
         ),
         (
             f"""

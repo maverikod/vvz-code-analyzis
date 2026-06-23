@@ -37,19 +37,27 @@ def test_is_valid_uuid4_rejects_invalid() -> None:
     assert _is_valid_uuid4("0" * 36) is False
 
 
-def test_normalize_entities_includes_only_valid_cst_node_id() -> None:
-    """Only rows with valid UUID4 cst_node_id are returned; each has file_path and cst_node_id."""
+def test_normalize_entities_keeps_rows_regardless_of_cst_node_id() -> None:
+    """All rows with a file_path are kept; cst_node_id is normalized to a valid
+    UUID4 or None (a missing/invalid cst_node_id no longer drops the entity —
+    TZ-CA-INDEX-INTEGRITY-001). Rows without a file_path are still excluded."""
     valid_id = str(uuid.uuid4())
     rows = [
         {"id": 1, "name": "Foo", "file_path": "src/foo.py", "line": 10, "cst_node_id": valid_id},
         {"id": 2, "name": "Bar", "file_path": "src/bar.py", "line": 20, "cst_node_id": None},
         {"id": 3, "name": "Baz", "file_path": "src/baz.py", "line": 30, "cst_node_id": ""},
         {"id": 4, "name": "Qux", "file_path": "src/qux.py", "line": 40, "cst_node_id": "invalid"},
+        {"id": 5, "name": "NoPath", "line": 50, "cst_node_id": valid_id},  # dropped: no file_path
     ]
     entities = _normalize_entities(rows)
-    assert len(entities) == 1
-    assert entities[0]["file_path"] == "src/foo.py"
-    assert entities[0]["cst_node_id"] == valid_id
+    assert len(entities) == 4
+    by_name = {e["name"]: e for e in entities}
+    assert "NoPath" not in by_name
+    assert by_name["Foo"]["cst_node_id"] == valid_id
+    # missing / empty / invalid all normalize to None, but the entity is kept
+    assert by_name["Bar"]["cst_node_id"] is None
+    assert by_name["Baz"]["cst_node_id"] is None
+    assert by_name["Qux"]["cst_node_id"] is None
 
 
 def test_normalize_entities_empty_input() -> None:

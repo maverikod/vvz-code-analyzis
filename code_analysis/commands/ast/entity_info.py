@@ -30,16 +30,24 @@ def _is_valid_uuid4(value: Optional[str]) -> bool:
 
 
 def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return entities with file_path and a valid UUID4 cst_node_id."""
+    """Return entities that have a file_path, normalizing ``cst_node_id``.
+
+    A missing/invalid ``cst_node_id`` no longer drops the entity: that column is
+    NULL for every indexed entity across all projects (the indexer doesn't
+    populate it), and discarding on it made ``get_code_entity_info`` return
+    ENTITY_NOT_FOUND for symbols that plainly exist. We keep the row and expose
+    ``cst_node_id`` as a valid UUID4 string or ``None``. See
+    TZ-CA-INDEX-INTEGRITY-001.
+    """
     entities: List[Dict[str, Any]] = []
     for row in rows:
         if not row.get("file_path"):
             continue
         raw_cst_node_id = row.get("cst_node_id")
         cst_node_id = raw_cst_node_id if isinstance(raw_cst_node_id, str) else None
-        if not _is_valid_uuid4(cst_node_id):
-            continue
-        entities.append(dict(row))
+        normalized = dict(row)
+        normalized["cst_node_id"] = cst_node_id if _is_valid_uuid4(cst_node_id) else None
+        entities.append(normalized)
     return entities
 
 

@@ -96,18 +96,7 @@ def strip_persisted_node_ids(source: str) -> tuple[str, PersistedNodeIds]:
     return logical_source, persisted
 
 
-def append_persisted_node_ids(
-    source: str,
-    metadata_map: Dict[str, TreeNodeMetadata],
-    root_node_id: str | None,
-) -> str:
-    """Append a trailing marker block that persists UUID4 identifiers."""
-    logical_source, _ = strip_persisted_node_ids(source)
-    normalized_source = logical_source.rstrip("\n")
-    marker_block = render_marker_block(metadata_map, root_node_id)
-    if not normalized_source:
-        return marker_block
-    return f"{normalized_source}\n\n{marker_block}"
+
 def _flatten_path_to_uuid(
     metadata_map: Dict[str, TreeNodeMetadata],
     root_node_id: str | None,

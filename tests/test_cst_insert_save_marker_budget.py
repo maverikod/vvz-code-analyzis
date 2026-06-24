@@ -24,7 +24,7 @@ from code_analysis.core.cst_tree.node_id_markers import (
     MARKERS_VERSION,
     MARKERS_VERSION_V2,
     MARKER_PREFIX,
-    append_persisted_node_ids,
+    render_marker_block,
     strip_persisted_node_ids,
 )
 from code_analysis.core.cst_tree.tree_builder import (
@@ -109,9 +109,8 @@ def test_v2_marker_block_fixed_small_line_overhead(tmp_path) -> None:
         logical_lines = len(tree.module.code.splitlines())
         n_nodes = len(tree.metadata_map)
         assert n_nodes > 80
-        persisted = append_persisted_node_ids(
-            tree.module.code, tree.metadata_map, tree.root_node_id
-        )
+        _marker = render_marker_block(tree.metadata_map, tree.root_node_id)
+        persisted = tree.module.code.rstrip("\n") + "\n\n" + _marker
         total_lines = len(persisted.splitlines())
         assert MARKERS_VERSION_V2 in persisted
         assert total_lines <= logical_lines + 12

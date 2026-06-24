@@ -25,7 +25,7 @@ from .models import (
     TreeOperationType,
 )
 
-from .node_id_markers import append_persisted_node_ids, strip_persisted_node_ids
+from .node_id_markers import strip_persisted_node_ids
 from .node_stable_id import logical_source_from_module
 from .tree_builder import _build_tree_index, get_tree
 

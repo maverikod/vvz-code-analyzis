@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
-from code_analysis.core.cst_tree.node_id_markers import append_persisted_node_ids
+from code_analysis.core.cst_tree.node_id_markers import render_marker_block
 from code_analysis.core.cst_tree.tree_builder import (
     _attach_disk_snapshot,
     create_tree_from_code,
@@ -109,9 +109,8 @@ def test_replay_operations_match_module_code_after_modify(tmp_path: Path) -> Non
     path = tmp_path / "m.py"
     logical = "x = 1\n"
     seed = create_tree_from_code(str(path), logical)
-    marked_source = append_persisted_node_ids(
-        logical.rstrip("\n"), seed.metadata_map, seed.root_node_id
-    )
+    _marker = render_marker_block(seed.metadata_map, seed.root_node_id)
+    marked_source = logical.rstrip("\n") + "\n\n" + _marker
     remove_tree(seed.tree_id)
     path.write_text(marked_source, encoding="utf-8")
 
@@ -181,9 +180,8 @@ def test_assert_replay_matches_cst_replay_mismatch(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     logical = "x = 1\n"
     seed = create_tree_from_code(str(path), logical)
-    marked_source = append_persisted_node_ids(
-        logical.rstrip("\n"), seed.metadata_map, seed.root_node_id
-    )
+    _marker = render_marker_block(seed.metadata_map, seed.root_node_id)
+    marked_source = logical.rstrip("\n") + "\n\n" + _marker
     remove_tree(seed.tree_id)
     path.write_text(marked_source, encoding="utf-8")
 

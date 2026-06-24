@@ -18,7 +18,7 @@ from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
 from code_analysis.core.cst_tree.node_id_markers import (
     MARKERS_BEGIN,
     MARKERS_END,
-    append_persisted_node_ids,
+    render_marker_block,
     strip_persisted_node_ids,
 )
 from code_analysis.core.cst_tree.models import CSTTree
@@ -95,11 +95,8 @@ def test_marker_block_round_trip_keeps_clean_source() -> None:
     source = '"""Doc."""\n\nx = 1\n'
     tree = create_tree_from_code("/tmp/example.py", source)
 
-    persisted_source = append_persisted_node_ids(
-        source,
-        tree.metadata_map,
-        tree.root_node_id,
-    )
+    _marker = render_marker_block(tree.metadata_map, tree.root_node_id)
+    persisted_source = source.rstrip("\n") + "\n\n" + _marker
     clean_source, persisted_node_ids = strip_persisted_node_ids(persisted_source)
 
     assert MARKERS_BEGIN in persisted_source
@@ -251,9 +248,8 @@ def test_sync_with_marked_source_writes_same_root_node_id() -> None:
     clean = '"""Doc."""\n\ndef foo() -> int:\n    return 1\n'
     path = "/tmp/sync_align.py"
     tree = create_tree_from_code(path, clean)
-    source_with_markers = append_persisted_node_ids(
-        clean, tree.metadata_map, tree.root_node_id
-    )
+    _marker = render_marker_block(tree.metadata_map, tree.root_node_id)
+    source_with_markers = clean.rstrip("\n") + "\n\n" + _marker
     tree2 = create_tree_from_code(path, source_with_markers)
     assert (
         tree.root_node_id == tree2.root_node_id

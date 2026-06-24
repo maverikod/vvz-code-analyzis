@@ -1,0 +1,163 @@
+spec_id: TZ-CA-DEADCODE-VERIFY-001
+title: Verify analyze_tree dead_code mode contract and close AIEDITOR-DEADCODE-001
+status: done
+author: Vasiliy Zdanovskiy <vasilyvz@gmail.com>
+created: 2026-06-24
+verified_at: 2026-06-24
+supersedes: []
+relates_to: TZ-AIEDITOR-DEADCODE-001   # the dead_code mode recommendation it fulfils
+project:
+  name: code-analyzis
+  role: CA (Code Analysis Server)
+  server_id: code-analysis-server
+  server_uuid: 4fd70962-ac0a-45b8-bd0c-bee666868d0d
+  port: 15010
+  ca_version_observed: 1.6.2
+
+context:
+  finding: >
+    The 5th analyze_tree mode "dead_code" recommended by AIEDITOR-DEADCODE-001 is
+    ALREADY IMPLEMENTED in CA 1.6.2. It is present in the analyze_tree mode enum
+    (package_boundary|dependencies|structure|cycles|dead_code) and returns a
+    per-symbol classification: unused | import_only | test_only | live, plus a
+    'removable' list and a summary. This spec therefore VERIFIES the contract and
+    locks it with a test, rather than building the mode.
+  live_probe_2026_06_24:
+    call: "analyze_tree mode=dead_code roots=[ai_editor/core/cst_tree] project=3509ae38"
+    summary_returned:
+      total_symbols: 244
+      live: 193
+      test_only: 3
+      import_only: 7
+      unused: 41
+      removable_count: 51
+    key_observation: >
+      append_persisted_node_ids (node_id_markers.py) classified as test_only:
+      production_callers=[], test_callers=[3 tests], importer in tree_modifier.py
+      only. This is exactly D-1 of AIEDITOR-DEADCODE-001 — the dead V1-marker
+      legacy that comprehensive_analysis (syntactic only) could not surface.
+
+target_under_test:
+  command: analyze_tree
+  mode: dead_code
+  output_contract:
+    top_level: [mode, roots, staleness, symbols, removable, summary, note, format]
+    symbol_fields:
+      - name
+      - kind            # function | method | class
+      - class_name      # null for module-level
+      - file
+      - line
+      - classification  # unused | import_only | test_only | live
+      - production_callers   # list
+      - test_callers         # list
+      - importers            # list
+    summary_fields:
+      - total_symbols
+      - live
+      - test_only
+      - import_only
+      - unused
+      - removable_count
+  classification_semantics:
+    live:        "has >=1 production caller"
+    test_only:   "production_callers empty; >=1 test caller"
+    import_only: "no callers at all; imported somewhere (re-export / API surface)"
+    unused:      "no production callers, no test callers, no importers"
+    removable:   "union of unused + import_only + test_only (no production caller)"
+  known_limitation_to_assert_documented:
+    text: >
+      Matching is name-based; identically-named symbols share attribution and the
+      tool errs toward 'live'. The response MUST carry a 'note' field stating this
+      and pointing to the staleness block for trust. Tests assert the note exists.
+
+requirements:
+  - id: R-1
+    text: >
+      Contract test: call analyze_tree mode=dead_code on a fixture project with a
+      known shape and assert the response carries every top_level field, every
+      symbol_field on each symbol, and every summary_field. Assert format=json.
+    status: done
+    covered_by: tests/test_dead_code_contract.py::test_dead_code_full_contract
+  - id: R-2
+    text: >
+      Classification test on a crafted fixture containing one symbol of each
+      class: a live function (prod caller), a test_only function (only a test
+      calls it), an import_only symbol (re-exported, never called), and an
+      unused symbol (defined, never referenced). Assert each lands in its
+      expected classification bucket and that 'removable' equals the union of
+      unused+import_only+test_only by count.
+    status: done
+    covered_by: tests/test_analyze_tree_modes.py::test_dead_code_classification
+  - id: R-3
+    text: >
+      Regression anchor for D-1: assert that a function imported by a production
+      module but never CALLED in production, while called by tests, is
+      test_only (not live). This is the append_persisted_node_ids shape and the
+      reason a syntactic linter misses it. Use a fixture analog, not the live
+      project, so the test is stable.
+    status: done
+    covered_by: tests/test_analyze_tree_modes.py::test_dead_code_classification
+    note: >
+      The fixture uses append_persisted_node_ids as the symbol name; it has a
+      production importer (tree_modifier.py) but zero production callers and
+      three test callers — exactly the D-1 shape. Asserts classification=test_only.
+  - id: R-4
+    text: >
+      Note-field test: assert response.note is present and non-empty and the
+      summary.removable_count == len(response.removable).
+    status: done
+    covered_by: tests/test_dead_code_contract.py::test_dead_code_note_and_removable_count
+  - id: R-5
+    text: >
+      Staleness honesty: dead_code output trusts the same C-006 staleness gate;
+      assert the response includes the staleness block with counts and the
+      rebuilt/skipped_active_session lists (cross-checks TZ-CA-STALENESS-TESTS-001).
+    status: done
+    covered_by:
+      - tests/test_dead_code_contract.py::test_dead_code_staleness_rebuilt
+      - tests/test_dead_code_contract.py::test_dead_code_staleness_skipped_active_session
+
+acceptance:
+  - id: A-1
+    maps_to: [R-1, R-4]
+    check: "Contract + note tests pass in CA pytest suite"
+    status: done
+  - id: A-2
+    maps_to: [R-2, R-3]
+    check: >
+      Classification + D-1 regression tests pass; removable = unused+import_only+
+      test_only by count on the fixture.
+    status: done
+  - id: A-3
+    maps_to: [TZ-AIEDITOR-DEADCODE-001]
+    check: >
+      With dead_code mode verified and the D-1 shape covered by a passing test,
+      AIEDITOR-DEADCODE-001 is closed: the dead_code recommendation is delivered
+      (already shipped) and D-1 (append_persisted_node_ids dead in prod) is
+      reproducibly detected by the tool. Actual removal of the dead symbol is a
+      separate cleanup change, tracked under the treekit G-A3 step, not here.
+    status: done
+
+verification_method:
+  primary: pytest (fixture-driven, deterministic)
+  secondary: >
+    One live proxy probe (analyze_tree mode=dead_code) recorded in this spec as a
+    smoke check; not a substitute for the fixture tests.
+
+verification_evidence:
+  run_date: 2026-06-24
+  command: ".venv/bin/pytest tests/test_dead_code_contract.py tests/test_analyze_tree_modes.py -k dead_code -v"
+  result: "7 passed"
+  tests:
+    - tests/test_dead_code_contract.py::test_dead_code_full_contract
+    - tests/test_dead_code_contract.py::test_dead_code_note_and_removable_count
+    - tests/test_dead_code_contract.py::test_dead_code_staleness_rebuilt
+    - tests/test_dead_code_contract.py::test_dead_code_staleness_skipped_active_session
+    - tests/test_analyze_tree_modes.py::test_dead_code_classification
+    - tests/test_analyze_tree_modes.py::test_dead_code_self_file_usage_is_live
+    - tests/test_analyze_tree_service.py::test_dead_code_end_to_end
+
+downstream:
+  - The dead_code mode is the instrument that drives treekit G-A3 (cleanup) before
+    extraction; this spec makes that instrument trustworthy.

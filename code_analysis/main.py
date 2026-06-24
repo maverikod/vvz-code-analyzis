@@ -182,7 +182,14 @@ def main() -> None:
 
     logging.raiseExceptions = False
     try:
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        # Ignore SIGPIPE (the CPython default). This is a long-running daemon:
+        # a write to a client/transport socket that the peer has closed must
+        # raise a catchable BrokenPipeError on that connection, NOT kill the
+        # whole server. SIG_DFL (terminate) is only correct for CLI tools in a
+        # shell pipe — it previously let a slow command + client disconnect take
+        # the server down via signal=PIPE (TZ-CA-VECTORIZATION-WORKER-OVERFLOW
+        # log analysis).
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
     except Exception:
         pass
 

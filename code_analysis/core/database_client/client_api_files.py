@@ -171,7 +171,18 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         project = self.get_project(project_id)
         if not project:
             raise ValueError(f"Project {project_id} not found")
-        root = Path(project.root_path).resolve()
+        raw_root = getattr(project, "root_path", None)
+        # A project whose root cannot be resolved on disk yields an empty (or
+        # relative) root_path. Path("").resolve() would silently collapse to the
+        # server's working directory (/usr/lib/casmgr-server) and every file would
+        # fail "not within project root" against the install dir. Fail loudly with
+        # the real cause instead (startup reconciliation purges such orphans).
+        if not raw_root or not Path(raw_root).is_absolute():
+            raise ValueError(
+                f"Project {project_id} root_path is unresolved "
+                f"({raw_root!r}); cannot index files for it"
+            )
+        root = Path(raw_root).resolve()
         relative_path_str = relative_path_for_project(abs_path, root)
         watch_dir_id = getattr(project, "watch_dir_id", None)
         _now = sql_julian_timestamp_now_expr(self)

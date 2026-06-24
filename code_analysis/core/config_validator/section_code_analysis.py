@@ -165,6 +165,26 @@ def validate_code_analysis_section_impl(
                         suggestion="Set backoff_multiplier to 1 or higher",
                     )
                 )
+            if backoff_multiplier is not None and backoff_multiplier > 10:
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.worker.circuit_breaker.backoff_multiplier must be <= 10",
+                        section="code_analysis",
+                        key="worker.circuit_breaker.backoff_multiplier",
+                        suggestion="Set backoff_multiplier to 10 or lower",
+                    )
+                )
+            if max_backoff is not None and max_backoff > 3600:
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.worker.circuit_breaker.max_backoff must be <= 3600 (1 hour)",
+                        section="code_analysis",
+                        key="worker.circuit_breaker.max_backoff",
+                        suggestion="Set max_backoff to 3600 or lower",
+                    )
+                )
 
         batch_processor = worker.get("batch_processor")
         if batch_processor and isinstance(batch_processor, dict):

@@ -27,6 +27,10 @@ from .processing_db_connect import ensure_database_connection
 
 logger = logging.getLogger(__name__)
 
+# Hard ceiling on poll interval: guards int()/range() from OverflowError when
+# get_backoff_delay() returns infinity or a value too large for C ssize_t.
+_MAX_POLL_INTERVAL = 3600
+
 
 async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
     """
@@ -236,46 +240,56 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     cycle_duration,
                 )
 
-            actual_poll_interval = poll_interval
-            if self.svo_client_manager:
-                circuit_state = self.svo_client_manager.get_circuit_state()
-                state_str = (
-                    getattr(circuit_state, "state", circuit_state)
-                    if circuit_state is not None
-                    else "closed"
-                )
-                if state_str == "open":
-                    backoff_delay = self.svo_client_manager.get_backoff_delay()
-                    if backoff_delay > poll_interval:
-                        actual_poll_interval = int(backoff_delay)
-                        logger.debug(
-                            "Circuit breaker is OPEN, increasing poll interval "
-                            "to %ss (backoff: %.1fs)",
-                            actual_poll_interval,
-                            backoff_delay,
-                        )
-            if cycle_activity:
-                actual_poll_interval = min(actual_poll_interval, 2)
+            try:
+                actual_poll_interval = poll_interval
+                if self.svo_client_manager:
+                    circuit_state = self.svo_client_manager.get_circuit_state()
+                    state_str = (
+                        getattr(circuit_state, "state", circuit_state)
+                        if circuit_state is not None
+                        else "closed"
+                    )
+                    if state_str == "open":
+                        backoff_delay = self.svo_client_manager.get_backoff_delay()
+                        if backoff_delay > poll_interval:
+                            actual_poll_interval = int(
+                                min(backoff_delay, _MAX_POLL_INTERVAL)
+                            )
+                            logger.debug(
+                                "Circuit breaker is OPEN, increasing poll interval "
+                                "to %ss (backoff: %.1fs)",
+                                actual_poll_interval,
+                                backoff_delay,
+                            )
+                if cycle_activity:
+                    actual_poll_interval = min(actual_poll_interval, 2)
 
-            write_worker_status(
-                getattr(self, "status_file_path", None),
-                STATUS_OPERATION_IDLE,
-                current_file=None,
-                extra={
-                    "phase": "sleeping",
-                    "next_cycle_in_s": actual_poll_interval,
-                },
-            )
-            if not self._stop_event.is_set():
-                logger.debug(
-                    "[CYCLE #%s] Sleeping %ss before next cycle",
-                    cycle_count,
-                    actual_poll_interval,
+                write_worker_status(
+                    getattr(self, "status_file_path", None),
+                    STATUS_OPERATION_IDLE,
+                    current_file=None,
+                    extra={
+                        "phase": "sleeping",
+                        "next_cycle_in_s": actual_poll_interval,
+                    },
                 )
-                for _ in range(actual_poll_interval):
-                    if self._stop_event.is_set():
-                        break
-                    await asyncio.sleep(1)
+                if not self._stop_event.is_set():
+                    logger.debug(
+                        "[CYCLE #%s] Sleeping %ss before next cycle",
+                        cycle_count,
+                        actual_poll_interval,
+                    )
+                    for _ in range(actual_poll_interval):
+                        if self._stop_event.is_set():
+                            break
+                        await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(
+                    "[CYCLE #%s] Error in poll-interval tail: %s — continuing to next cycle",
+                    cycle_count,
+                    e,
+                    exc_info=True,
+                )
 
     finally:
         if database is not None:

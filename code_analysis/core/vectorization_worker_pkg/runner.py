@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -448,16 +449,42 @@ def run_vectorization_worker(
                 await svo_client_manager.close()
                 logger.info("SVOClientManager closed")
 
+    _MAX_RESTART_ATTEMPTS = 5
+    _RESTART_BASE_DELAY = 5.0
+    _RESTART_MAX_DELAY = 300.0
+    restart_count = 0
     try:
-        result = asyncio.run(_run_worker_with_svo())
-        return result
-    except KeyboardInterrupt:
-        logger.info("Vectorization worker interrupted by signal")
-        worker.stop()
-        return {"processed": 0, "errors": 0, "interrupted": True}
-    except Exception as e:
-        logger.error(f"Error in vectorization worker: {e}", exc_info=True)
-        return {"processed": 0, "errors": 1}
+        while True:
+            try:
+                result = asyncio.run(_run_worker_with_svo())
+                return result
+            except KeyboardInterrupt:
+                logger.info("Vectorization worker interrupted by signal")
+                worker.stop()
+                return {"processed": 0, "errors": 0, "interrupted": True}
+            except Exception as e:
+                restart_count += 1
+                if restart_count > _MAX_RESTART_ATTEMPTS:
+                    logger.error(
+                        "Vectorization worker failed %s times without recovery, giving up: %s",
+                        restart_count,
+                        e,
+                        exc_info=True,
+                    )
+                    return {"processed": 0, "errors": 1}
+                delay = min(
+                    _RESTART_BASE_DELAY * (2.0 ** (restart_count - 1)),
+                    _RESTART_MAX_DELAY,
+                )
+                logger.error(
+                    "Error in vectorization worker (attempt %s/%s): %s — restarting in %.1fs",
+                    restart_count,
+                    _MAX_RESTART_ATTEMPTS,
+                    e,
+                    delay,
+                    exc_info=True,
+                )
+                time.sleep(delay)
     finally:
         # Remove PID file only if it contains this process's PID (do not remove another process's file)
         if pid_file_path:

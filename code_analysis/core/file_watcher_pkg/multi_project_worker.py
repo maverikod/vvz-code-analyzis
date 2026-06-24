@@ -85,6 +85,8 @@ class MultiProjectFileWatcherWorker:
 
         self._stop_event = multiprocessing.Event()
         self._pid = os.getpid()
+        # One-time startup DB/disk reconciliation guard (runs before first scan).
+        self._startup_reconciled = False
 
     def stop(self) -> None:
         """Stop the worker."""
@@ -429,6 +431,30 @@ class MultiProjectFileWatcherWorker:
                 "No watch_dirs in config; file watcher idle until configured"
             )
             return False
+
+        # One-time startup reconciliation MUST run before initialize_watch_dirs and
+        # before any scanning: build the watch_dir->project->id table, stop the
+        # server on duplicate ids, purge orphan projects, then mark missing files.
+        if not self._startup_reconciled:
+            from .startup_reconciliation import (
+                StartupReconciliationFatal,
+                run_startup_reconciliation,
+            )
+
+            self._startup_reconciled = True
+            try:
+                await run_startup_reconciliation(database, self.watch_dirs)
+            except StartupReconciliationFatal:
+                # Duplicate ids: server stop already requested inside reconciliation.
+                # Stop this worker too and skip the cycle (do not enter reconnect loop).
+                self.stop()
+                return False
+            except Exception as recon_e:
+                logger.error(
+                    "Startup reconciliation failed (continuing with init): %s",
+                    recon_e,
+                    exc_info=True,
+                )
 
         try:
             self._initialize_watch_dirs(database)

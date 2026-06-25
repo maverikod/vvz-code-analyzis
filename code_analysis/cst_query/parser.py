@@ -104,6 +104,14 @@ class _ParsedPseudo:
 class _ToAst(Transformer):
     """Lark transformer: converts parse tree into CSTQuery AST nodes."""
 
+    def __init__(self) -> None:
+        # Terminal callbacks (STRING/BAREWORD quote-stripping, INT, ...) only run
+        # when tokens are visited. lark>=1.x defaults visit_tokens=True, but older
+        # lark (0.7.x) defaults to False, which left predicate values quoted
+        # (value=="'test'" instead of "test"). Set it explicitly so the transform
+        # is correct regardless of the installed lark version.
+        super().__init__(visit_tokens=True)
+
     def NAME(self, t: Token) -> str:  # noqa: N802
         return str(t)
 

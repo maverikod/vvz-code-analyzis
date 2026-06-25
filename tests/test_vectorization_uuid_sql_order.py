@@ -34,12 +34,12 @@ def test_base_chunks_queries_use_created_at_order() -> None:
     assert "ORDER BY cc.created_at, cc.id" in src2
 
 
-def test_batch_processor_reembed_select_orders_chunks_newest_first() -> None:
-    """Worker hot-path: re-embed chunk batch uses DESC created_at (fresh chunks first)."""
+def test_batch_processor_chunk_only_select_orders_chunks_by_file_position() -> None:
+    """Chunk-only vectorization processes each file in ordinal order."""
     from code_analysis.core.vectorization_worker_pkg import batch_processor
 
-    src = inspect.getsource(batch_processor.process_chunks_missing_embedding_params)
-    assert "ORDER BY cc.created_at DESC, cc.id DESC" in src
+    src = inspect.getsource(batch_processor.process_chunk_only_files)
+    assert "ORDER BY cc.ordinal ASC, cc.id ASC" in src
 
 
 def test_batch_processor_embedding_ready_orders_chunks_newest_first() -> None:

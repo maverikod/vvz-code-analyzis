@@ -1,8 +1,8 @@
 """
 Per-cycle project processing for vectorization worker.
 
-Runs the "for project in projects" loop: re-embed, chunking query,
-assign vector_id, and returns deltas and step timings.
+Runs the "for project in projects" loop: chunking query, chunk-only
+embedding fill, assign vector_id, and returns deltas and step timings.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -22,7 +22,6 @@ from ..worker_status_file import (
 )
 from .batch_processor import (
     process_chunk_only_files,
-    process_chunks_missing_embedding_params,
     process_embedding_ready_chunks,
 )
 from .timing_log import log_operation_timing
@@ -46,7 +45,8 @@ async def process_projects_in_cycle(
     total_errors: int,
 ) -> Tuple[int, int, bool, float, float, float, float, int]:
     """
-    Process each project in the cycle: re-embed, chunking, assign vector_id.
+    Process each project in the cycle: chunking, chunk-only embedding fill,
+    assign vector_id.
 
     Returns:
         (total_processed_delta, total_errors_delta, cycle_activity,
@@ -100,71 +100,6 @@ async def process_projects_in_cycle(
             original_project_id = getattr(worker, "project_id", None)
             worker.faiss_manager = faiss_manager
             worker.project_id = project_id
-
-            # Project-cycle Step 0: re-embed chunks missing embedding_model / embedding_vector
-            t0_step0 = time.time()
-            write_worker_status(
-                getattr(worker, "status_file_path", None),
-                "reembed",
-                current_file=None,
-                extra={"project_id": project_id},
-            )
-            logger.info(
-                "[PROJECT_CYCLE STEP 0] existing chunks embedding params project_id=%s",
-                project_id,
-            )
-            try:
-                try:
-                    fill_count, fill_errors = (
-                        await process_chunks_missing_embedding_params(worker, database)
-                    )
-                    logger.info(
-                        "[PROJECT_CYCLE STEP 0] done filled=%s errors=%s project_id=%s",
-                        fill_count,
-                        fill_errors,
-                        project_id,
-                    )
-                    if fill_count or fill_errors:
-                        logger.info(
-                            "Filled missing embedding params: %s updated, %s errors",
-                            fill_count,
-                            fill_errors,
-                        )
-                    if fill_count > 0:
-                        logger.info(
-                            "[PROJECT_CYCLE STEP 0] post-fill FAISS/vector_id "
-                            "process_embedding_ready_chunks project_id=%s",
-                            project_id,
-                        )
-                        step5_processed, step5_errors = (
-                            await process_embedding_ready_chunks(worker, database)
-                        )
-                        logger.info(
-                            "[PROJECT_CYCLE STEP 0] post-fill embedding_ready "
-                            "processed=%s errors=%s project_id=%s",
-                            step5_processed,
-                            step5_errors,
-                            project_id,
-                        )
-                        if step5_processed or step5_errors:
-                            logger.info(
-                                "After fill: added to FAISS and set vector_id: "
-                                "%s chunks, %s errors",
-                                step5_processed,
-                                step5_errors,
-                            )
-                except Exception as e:
-                    logger.error(
-                        "[PROJECT_CYCLE STEP 0] existing chunks embedding params failed "
-                        "project_id=%s stage=reembed_or_post_fill: %s",
-                        project_id,
-                        e,
-                        exc_info=True,
-                    )
-            finally:
-                cycle_step0_s += time.time() - t0_step0
-                worker.faiss_manager = original_faiss_manager
-                worker.project_id = original_project_id
 
             # Project-cycle Step 1: docstring chunking candidates
             write_worker_status(

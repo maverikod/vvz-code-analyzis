@@ -1,8 +1,9 @@
 """
-Project-cycle stage behavior (Step 0 re-embed, Step 1 chunking, Step 2 FAISS/vector_id).
+Project-cycle stage behavior (Step 1 chunking, Step 1.5 chunk-only embedding,
+Step 2 FAISS/vector_id).
 
-Mocks cover step-11 scenarios: Step 0 empty or failure must not skip Step 1;
-per-project isolation; ordered processing across projects.
+Mocks cover stage continuity, per-project isolation, and ordered processing
+across projects after removal of the legacy Step 0 re-embed path.
 """
 
 from __future__ import annotations
@@ -95,8 +96,8 @@ def _sqlite_worker_env():
 
 
 @pytest.mark.asyncio
-async def test_step0_empty_result_step1_still_runs(tmp_path: Path) -> None:
-    """Step 0 returns no work; Step 1 chunking query and request still run."""
+async def test_step1_runs_and_chunk_only_stage_is_invoked(tmp_path: Path) -> None:
+    """Step 1 chunking query/request runs, then Step 1.5 chunk-only vectorization."""
     db = _sqlite_full_schema_client(tmp_path)
     db_path = tmp_path / _CYCLE_DB_NAME
     try:
@@ -115,7 +116,7 @@ async def test_step0_empty_result_step1_still_runs(tmp_path: Path) -> None:
         with (
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
-                "process_chunks_missing_embedding_params",
+                "process_chunk_only_files",
                 new_callable=AsyncMock,
                 return_value=(0, 0),
             ),
@@ -155,10 +156,10 @@ async def test_step0_empty_result_step1_still_runs(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_step0_exception_logged_step1_continues(
+async def test_chunk_only_exception_logged_step2_continues(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Step 0 raises; log names stage + project_id; Step 1 chunking still invoked."""
+    """Step 1.5 raises; log names stage + project_id; Step 2 still runs."""
     import logging
 
     caplog.set_level(logging.ERROR)
@@ -177,18 +178,18 @@ async def test_step0_exception_logged_step1_continues(
         worker._stop_event.is_set.return_value = False
 
         req = AsyncMock(return_value=1)
+        ready = AsyncMock(return_value=(0, 0))
         with (
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
-                "process_chunks_missing_embedding_params",
+                "process_chunk_only_files",
                 new_callable=AsyncMock,
-                side_effect=RuntimeError("simulated step0 failure"),
+                side_effect=RuntimeError("simulated chunk_only failure"),
             ),
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
                 "process_embedding_ready_chunks",
-                new_callable=AsyncMock,
-                return_value=(0, 0),
+                ready,
             ),
             patch.object(worker, "_request_chunking_for_files", req),
         ):
@@ -210,19 +211,20 @@ async def test_step0_exception_logged_step1_continues(
             )
 
         req.assert_awaited_once()
+        ready.assert_awaited_once()
         err_text = caplog.text
-        assert "[PROJECT_CYCLE STEP 0]" in err_text
-        assert "existing chunks embedding params failed" in err_text
+        assert "[PROJECT_CYCLE STEP 1.5]" in err_text
+        assert "chunk_only vectorization failed" in err_text
         assert project_id in err_text
     finally:
         db.disconnect()
 
 
 @pytest.mark.asyncio
-async def test_step0_failure_on_first_project_does_not_block_second(
+async def test_chunk_only_failure_on_first_project_does_not_block_second(
     tmp_path: Path,
 ) -> None:
-    """Two projects: Step 0 fails for the first only; second still completes Step 0."""
+    """Two projects: Step 1.5 fails for the first only; second still chunks."""
     db = _sqlite_full_schema_client(tmp_path)
     db_path = tmp_path / _CYCLE_DB_NAME
     try:
@@ -247,9 +249,9 @@ async def test_step0_failure_on_first_project_does_not_block_second(
         with (
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
-                "process_chunks_missing_embedding_params",
+                "process_chunk_only_files",
                 new_callable=AsyncMock,
-                side_effect=[RuntimeError("first project step0"), (0, 0)],
+                side_effect=[RuntimeError("first project chunk_only"), (0, 0)],
             ),
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
@@ -315,7 +317,7 @@ async def test_step1_failure_on_first_project_second_still_chunks(
         with (
             patch(
                 "code_analysis.core.vectorization_worker_pkg.processing_cycle_projects."
-                "process_chunks_missing_embedding_params",
+                "process_chunk_only_files",
                 new_callable=AsyncMock,
                 return_value=(0, 0),
             ),

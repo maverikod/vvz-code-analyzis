@@ -1,8 +1,5 @@
 """PostgreSQL driver: SQLite DML adaptation for execute_batch."""
 
-import inspect
-import re
-
 import pytest
 
 from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
@@ -212,15 +209,7 @@ def test_build_code_chunk_upsert_batch_adapts_to_postgres_without_syntax_error()
     assert len(params) == 19
 
 
-def test_process_chunks_missing_embedding_params_sql_uses_having_count() -> None:
-    """PostgreSQL rejects HAVING on SELECT alias ``cnt``; use COUNT(cc.id) instead."""
-    src = inspect.getsource(batch_processor.process_chunks_missing_embedding_params)
-    assert "HAVING cnt > 0" not in src
-    assert "HAVING COUNT(cc.id) > 0" in src
-    # file-count query must not rely on SQLite-only alias in HAVING
-    m = re.search(
-        r"HAVING\s+COUNT\s*\(\s*cc\.id\s*\)\s*>\s*0",
-        src,
-        flags=re.IGNORECASE,
-    )
-    assert m is not None
+def test_legacy_reembed_worker_path_removed() -> None:
+    """Chunk-only vectorization owns embedding fill; legacy SVO re-embed is gone."""
+    legacy_name = "process_chunks" + "_missing_embedding_params"
+    assert not hasattr(batch_processor, legacy_name)

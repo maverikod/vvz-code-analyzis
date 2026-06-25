@@ -95,7 +95,13 @@ def get_tables_core() -> Dict[str, Any]:
                 },
             ],
             "foreign_keys": [],
-            "unique_constraints": [],
+            # Composite PK is (server_instance_id, id), but a watch directory id is
+            # a globally-unique UUID by design (the watch dir is the top of the
+            # chain; project/file copies may live inside, but the dir id is unique).
+            # Declare id UNIQUE so single-column FKs that reference watch_dirs(id)
+            # (e.g. files.watch_dir_id) are valid on PostgreSQL and pass SQLite
+            # foreign_keys=ON checks.
+            "unique_constraints": [{"columns": ["id"]}],
             "check_constraints": [],
         },
         "watch_dir_paths": {

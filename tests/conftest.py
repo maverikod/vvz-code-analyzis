@@ -63,106 +63,15 @@ def rpc_server_with_schema(tmp_path):
     db_path = tmp_path / "test.db"
     socket_path = str(tmp_path / "test.sock")
 
-    # Create driver and full schema
+    # Create driver and the FULL production schema (single source of truth).
+    # Hardcoded per-table DDL drifted from schema_definition (e.g. missing the
+    # server_instance_id partition column), so use sync_schema instead.
+    from code_analysis.core.database.schema_definition import get_schema_definition
+
     driver = create_driver("sqlite", {"path": str(db_path)})
-
-    # Create projects table
-    driver.execute(
-        """
-        CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            root_path TEXT UNIQUE NOT NULL,
-            name TEXT,
-            comment TEXT,
-            watch_dir_id TEXT,
-            deleted BOOLEAN DEFAULT 0,
-            processing_paused BOOLEAN DEFAULT 0,
-            created_at REAL DEFAULT (julianday('now')),
-            updated_at REAL DEFAULT (julianday('now'))
-        )
-        """
-    )
-
-    # Create files table (one project, path unique per project)
-    driver.execute(
-        """
-        CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL,
-            watch_dir_id TEXT,
-            path TEXT NOT NULL,
-            relative_path TEXT,
-            lines INTEGER,
-            last_modified REAL,
-            has_docstring INTEGER DEFAULT 0,
-            deleted INTEGER DEFAULT 0,
-            original_path TEXT,
-            version_dir TEXT,
-            created_at REAL DEFAULT (julianday('now')),
-            updated_at REAL DEFAULT (julianday('now')),
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            UNIQUE(project_id, path)
-        )
-        """
-    )
-
-    # Create ast_trees table
-    driver.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ast_trees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            project_id TEXT NOT NULL,
-            ast_json TEXT NOT NULL,
-            ast_hash TEXT NOT NULL,
-            file_mtime REAL NOT NULL DEFAULT 0,
-            created_at REAL DEFAULT (julianday('now')),
-            updated_at REAL DEFAULT (julianday('now')),
-            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            UNIQUE(file_id, ast_hash)
-        )
-        """
-    )
-
-    # Create cst_trees table
-    driver.execute(
-        """
-        CREATE TABLE IF NOT EXISTS cst_trees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
-            project_id TEXT NOT NULL,
-            cst_code TEXT NOT NULL,
-            cst_hash TEXT NOT NULL,
-            file_mtime REAL NOT NULL DEFAULT 0,
-            created_at REAL DEFAULT (julianday('now')),
-            updated_at REAL DEFAULT (julianday('now')),
-            FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            UNIQUE(file_id, cst_hash)
-        )
-        """
-    )
-
-    # Create vector_index table
-    driver.execute(
-        """
-        CREATE TABLE IF NOT EXISTS vector_index (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL,
-            entity_type TEXT NOT NULL,
-            entity_id INTEGER NOT NULL,
-            vector_id INTEGER NOT NULL,
-            vector_dim INTEGER NOT NULL,
-            embedding_model TEXT,
-            created_at REAL DEFAULT (julianday('now')),
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            UNIQUE(project_id, entity_type, entity_id)
-        )
-        """
-    )
-
-    # execute() commits after each statement
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    driver.sync_schema(get_schema_definition(), str(backup_dir))
 
     # Start RPC server
     request_queue = RequestQueue()

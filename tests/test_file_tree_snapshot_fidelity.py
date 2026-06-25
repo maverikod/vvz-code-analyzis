@@ -86,9 +86,12 @@ def test_db(temp_dir):
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
     """Project row and projectid file."""
+    from code_analysis.core.server_instance import get_server_instance_id
+
     test_db._execute(
-        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-        (project_id, str(temp_dir), temp_dir.name),
+        "INSERT INTO projects (id, server_instance_id, root_path, name, updated_at) "
+        "VALUES (?, ?, ?, ?, julianday('now'))",
+        (project_id, get_server_instance_id(), str(temp_dir), temp_dir.name),
     )
     test_db._commit()
     (temp_dir / "projectid").write_text(

@@ -1,0 +1,101 @@
+module_git_integration:
+  path: code_analysis/core/git_integration.py
+  functions:
+  - name: get_git_commit_on_write_from_config
+    lines:
+    - 26
+    - 46
+  - name: is_git_repository
+    lines:
+    - 49
+    - 60
+    note: Used by every git command to confirm repo root.
+  - name: is_git_available
+    lines:
+    - 63
+    - 83
+  - name: create_git_commit
+    lines:
+    - 86
+    - 157
+    signature: create_git_commit(root_dir, path, msg) returns (ok, error)
+  - name: create_git_commit_paths
+    lines:
+    - 160
+    - 228
+    signature: create_git_commit_paths(root_dir, paths, msg) returns (ok, error)
+  - name: commit_after_write
+    lines:
+    - 231
+    - 264
+    signature: 'commit_after_write(root_dir, paths, command_name, commit_message_override=None,
+      config_data=None) returns (ok, error)
+
+      '
+    observed_behaviour:
+    - Returns true,None when code_analysis.git_commit_on_write is falsy in config_data.
+      No-op is config-gated.
+    - When committing, message is commit_message_override OR a server-generated default
+      built from command_name and file name.
+    - Delegates to create_git_commit (1 path) or create_git_commit_paths.
+write_path:
+  command: project_file_transfer_upload_save
+  note: 'Same pipeline as universal_file_save. Client facade upload/upload_new; unlock
+    maps to unlock_after_write. This is the attach point for commit-on-write.
+
+    '
+project_root_resolution:
+  module: code_analysis/core/project_root_path.py
+  function: resolve_project_root_absolute_str
+  note: 'Resolves (root_path_stored, watch_dir_id) to an absolute root. Watch-relative
+    segment under watch_dir_paths.absolute_path; legacy absolute root_path supported;
+    fallback scan of all watch dirs with projectid match; empty or ambiguous result
+    is possible and must be treated as refusal by git ops.
+
+    '
+path_confinement:
+  helpers:
+  - resolve_under_project_root
+  - _normalize_relative_file_path
+  existing_returns: INVALID_FILE_PATH or VALIDATION_ERROR
+  git_block_requirement: 'Git block must emit GIT_PATH_OUTSIDE_PROJECT, not reuse
+    these helpers as-is (they return INVALID_FILE_PATH). Wrap or reimplement.
+
+    '
+venv_write_guard:
+  helper: reject_if_write_under_project_venv
+  codes:
+  - SITE_PACKAGES_DELETE_FORBIDDEN
+  - INSTALLED_PACKAGE_PATH_DELETE_FORBIDDEN
+  note: Cross-cutting write protection; commit-on-write and git writes must respect
+    it.
+save_command_variants:
+  risk: Unification must touch ALL variants; editing one leaves another on old semantics.
+  variants:
+  - path: code_analysis/commands/universal_file_save_command.py
+    execute_line: 223
+  - path: code_analysis/commands/universal_file_save_command/save_command.py
+    execute_line: 183
+  - path: code_analysis/commands/universal_file_save_command/__init__.py
+    note: imports commit_after_write
+  verified: 'Both execute methods carry identical signature including commit_message,
+    dry_run, backup, content, tree_id; neither has commit_on_write yet; both call
+    commit_after_write. Sequence- resolve_handler, backup, write, changed-detection,
+    commit_after_write.
+
+    '
+config_validation:
+  pattern: BaseMCPCommand._get_raw_config / load_raw_config + config_validator
+  note: 'New code_analysis.git / code_analysis.github sections validate via the existing
+    config_validator and are read via the same config path; do not invent parallel
+    validation.
+
+    '
+commit_after_write_callers:
+  count_sites: 56
+  count_commands: 21
+  note: 'Verified via find_usages. All pass commit_message_override=None today. Each
+    must be refactored to accept and forward an explicit commit_message under the
+    U2-a unification (MRS C-025).
+
+    '

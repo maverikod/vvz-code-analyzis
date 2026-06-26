@@ -1,0 +1,412 @@
+meta:
+  plan: git-spec
+  level: 2
+  artifact: machine_spec
+  source_spec: docs/plans/git-spec/source_spec.md
+  derived_from: TZ-CA-GIT-COMMANDS-002
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+concepts:
+- concept_id: C-001
+  name: CapabilityBlock
+  definition: One of three independently configurable and independently failing capability
+    blocks the system adds.
+  properties:
+    members:
+    - git_block
+    - github_block
+    - commit_on_write_behaviour
+    separable: true
+    independent_config: true
+    independent_failure: true
+  source_labels:
+  - '{a1b2}'
+  - '{c3d4}'
+- concept_id: C-002
+  name: LayerBoundary
+  definition: The boundary that confines the git block to the filesystem and the github
+    block to the HTTP API, never touching the internal driver-database chain.
+  properties:
+    git_block_layer: filesystem_subprocess_git
+    github_block_layer: github_http_api
+    forbidden_touch: command_to_driver_to_database_chain
+  source_labels:
+  - '{c3d4}'
+- concept_id: C-003
+  name: LockOpacity
+  definition: The invariant that the server never interprets lock reason and decides
+    commit solely from write-call parameters.
+  properties:
+    server_interprets_lock_reason: false
+    commit_decision_source: write_call_parameters_only
+    commit_and_unlock_independent: true
+  source_labels:
+  - '{e5f6}'
+  - '{g7h8}'
+- concept_id: C-004
+  name: CommitIntentFlag
+  definition: The explicit per-write flag that, when set, produces a commit after
+    a changed write and otherwise never commits.
+  properties:
+    type: boolean
+    default: false
+    effect_when_set: commit_after_persist_if_changed
+    effect_when_unset: never_commit
+  source_labels:
+  - '{i9j0}'
+- concept_id: C-005
+  name: CommitMessage
+  definition: The mandatory non-empty caller-supplied text validated before any commit
+    occurs, with no server-generated default anywhere.
+  properties:
+    required_when: any_commit_occurs
+    scope: all_writers_that_commit
+    type: string
+    non_empty_after_strip: true
+    validation_timing: before_write
+    on_invalid: reject_without_writing
+    forbidden_without_intent: true
+    server_generated_default: forbidden_everywhere
+    supplied_by: write_initiator
+  source_labels:
+  - '{k1l2}'
+  - '{m3n4}'
+- concept_id: C-006
+  name: NoOpOnUnchanged
+  definition: The rule that a commit-intent write whose content is unchanged succeeds
+    without a commit and is not an error.
+  properties:
+    condition: intent_set_and_message_valid_and_content_unchanged
+    outcome: write_succeeds_no_commit
+    is_error: false
+    reported_as: committed_false_changed_false_reason_no_changes
+  source_labels:
+  - '{o5p6}'
+- concept_id: C-007
+  name: CommitNeverPushes
+  definition: The invariant that a commit produced on write never pushes, leaving
+    remote propagation a separate manual operation.
+  properties:
+    push_on_commit_on_write: never
+    remote_propagation: manual_separate_operation
+  source_labels:
+  - '{q7r8}'
+- concept_id: C-008
+  name: CommitIdentity
+  definition: The commit author identity taken from project git configuration rather
+    than from the writer or lock holder.
+  properties:
+    source: project_git_config
+    not_from:
+    - writer
+    - lock_holder
+  source_labels:
+  - '{s9t0}'
+- concept_id: C-009
+  name: GitReadOps
+  definition: The read-only git inspection operations that resolve and confirm the
+    repository before reporting structured results.
+  properties:
+    operations:
+    - status
+    - log
+    - diff
+    - branch
+    - show
+    - remote
+    - blame
+    queue: false
+    confirms_repo_is_git: true
+    distinct_outcomes:
+    - GIT_NOT_A_REPO
+    - GIT_NOT_AVAILABLE
+    paths: project_relative
+  source_labels:
+  - '{u1v2}'
+  - '{w3x4}'
+- concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree or history
+    without contacting a remote.
+  properties:
+    operations:
+    - add
+    - commit
+    - switch
+    - restore
+    - branch_create
+    - branch_delete
+    - stash
+    - reset
+    - merge
+    - cherry_pick
+    - revert
+    - tag
+    queue: false
+    contacts_remote: false
+  source_labels:
+  - '{y5z6}'
+  - '{e1f2}'
+- concept_id: C-011
+  name: HardResetGuard
+  definition: The guard that makes a hard reset require explicit destructive mode
+    and explicit confirmation, otherwise reporting only.
+  properties:
+    destructive: true
+    requires:
+    - explicit_mode_hard
+    - explicit_confirm
+    without_confirm: dry_run_report_only
+  source_labels:
+  - '{a7b8}'
+- concept_id: C-012
+  name: LocalOpsNotProtectedGated
+  definition: The rule that local merge and cherry-pick are not protected-branch gated,
+    their only remote route being push.
+  properties:
+    applies_to:
+    - merge
+    - cherry_pick
+    protected_branch_gate: false
+    only_remote_route: push
+  source_labels:
+  - '{c9d0}'
+- concept_id: C-013
+  name: RevertIsInverseCommit
+  definition: The behaviour that revert creates a new inverse commit without rewriting
+    history, safe on protected branches.
+  properties:
+    rewrites_history: false
+    safe_on_protected: true
+  source_labels:
+  - '{e1f2}'
+- concept_id: C-014
+  name: GitRemoteOps
+  definition: The remote git operations that require remote configuration and fail
+    fast when it is absent while local and read operations still work.
+  properties:
+    operations:
+    - fetch
+    - pull
+    - push
+    queue: true
+    requires_remote_config: true
+    when_unconfigured: GIT_REMOTE_NOT_CONFIGURED
+    local_and_read_still_work: true
+  source_labels:
+  - '{g3h4}'
+- concept_id: C-015
+  name: PullSemantics
+  definition: The pull behaviour defaulting to fast-forward-only, not combining ff-only
+    with rebase, and leaving a clean tree on conflict.
+  properties:
+    default: ff_only
+    rebase_requested: ff_only_not_applied
+    mutually_exclusive:
+    - ff_only
+    - rebase
+    on_unclean_tree_state: clean
+    on_unclean_outcome: GIT_CONFLICT
+  source_labels:
+  - '{i5j6}'
+- concept_id: C-016
+  name: PushGuards
+  definition: The push guards that reject protected-branch and force pushes unless
+    explicit override and policy permit, with dry-run performing no remote write.
+  properties:
+    protected_branch: reject_unless_override_and_policy
+    protected_outcome: GIT_PROTECTED_BRANCH
+    force_push: reject_unless_config_allows_and_explicit
+    force_outcome: GIT_FORCE_PUSH_DISABLED
+    dry_run: no_remote_write
+  source_labels:
+  - '{k7l8}'
+- concept_id: C-017
+  name: GitSshAuth
+  definition: The SSH authentication mechanism using a per-operation invocation of
+    exactly one configured key with pinned known hosts and strict checking.
+  properties:
+    mechanism: per_operation_ssh_command
+    key_count: exactly_one_configured
+    identities_only: true
+    known_hosts: pinned
+    strict_host_key_checking: true
+    mutates_global_config: false
+    requires_agent: false
+    key_bytes_in_config: false
+    key_referenced_by: path
+    config_section: code_analysis.git
+  source_labels:
+  - '{m9n0}'
+  - '{o1p2}'
+- concept_id: C-018
+  name: GithubBlock
+  definition: The minimal sufficient set of GitHub HTTP API operations for an operator
+    cycle, excluding second-tier capabilities until needed.
+  properties:
+    operations:
+    - repo_get
+    - repo_list
+    - pr_list
+    - pr_get
+    - pr_create
+    - pr_merge
+    - issue_list
+    - issue_create
+    - issue_comment
+    - release_create
+    layer: github_http_api
+    set_policy: minimal_sufficient
+    excludes_until_needed:
+    - pr_review
+    - pr_files
+    - issue_update
+    - release_list
+    - workflows
+  source_labels:
+  - '{q3r4}'
+- concept_id: C-019
+  name: GithubPrMergeGuard
+  definition: The guard that gates pull-request merge behind explicit configuration
+    permission and a protected-base check.
+  properties:
+    bypasses_local_protected_gate: true
+    requires_config_permission: allow_pr_merge
+    when_disabled: GITHUB_PR_MERGE_DISABLED
+    protected_base: reject_unless_override_and_policy
+    protected_outcome: GITHUB_PROTECTED_BRANCH
+  source_labels:
+  - '{s5t6}'
+- concept_id: C-020
+  name: GithubTokenAuth
+  definition: The GitHub authentication mechanism using a personal access token referenced
+    by path, failing fast when unconfigured.
+  properties:
+    mechanism: personal_access_token
+    token_bytes_in_config: false
+    token_referenced_by: path
+    config_section: code_analysis.github
+    when_unconfigured: GITHUB_NOT_CONFIGURED
+  source_labels:
+  - '{u7v8}'
+- concept_id: C-021
+  name: OwnershipInvariant
+  definition: The invariant that all operations run as the unprivileged server user
+    so created objects retain its ownership without any chown.
+  properties:
+    runs_as: unprivileged_server_user
+    never_as: privileged_user
+    result: server_user_ownership_no_chown
+  source_labels:
+  - '{w9x0}'
+- concept_id: C-022
+  name: PathConfinement
+  definition: The invariant confining every path parameter to the project root and
+    rejecting outside paths, while revision identifiers are exempt.
+  properties:
+    path_params: confined_to_project_root
+    outside_root: GIT_PATH_OUTSIDE_PROJECT
+    refs_confined: false
+  source_labels:
+  - '{y1z2}'
+- concept_id: C-023
+  name: RemoteTimeout
+  definition: The invariant bounding remote git and github operations by a configured
+    timeout with no in-operation retry.
+  properties:
+    bounded_by: configured_timeout
+    on_exceed: distinct_timeout_outcome
+    in_operation_retry: false
+  source_labels:
+  - '{a3b4}'
+- concept_id: C-024
+  name: ImplicitTriggerRemoval
+  definition: The breaking migration that removes the prior message-only commit trigger
+    so a message without intent is now rejected.
+  properties:
+    removed: message_only_implies_commit
+    after_change: message_without_intent_rejected
+    breaking: true
+    old_caller: fails_loudly
+  source_labels:
+  - '{c5d6}'
+- concept_id: C-025
+  name: UnifiedCommitContract
+  definition: The contract that every writer producing a commit accepts and forwards
+    an explicit non-empty message, with the server default generator removed.
+  properties:
+    applies_to: every_writer_that_commits
+    invariant: no_commit_without_explicit_non_empty_commit_message_from_initiator
+    message_param: required_field_where_commit_occurs
+    remove_server_default_generator: true
+    writer_count: 21
+  source_labels:
+  - '{k1l2}'
+  - '{m3n4}'
+  - '{c5d6}'
+- concept_id: C-026
+  name: ProjectRootResolution
+  definition: The resolution rule deriving the repository root from the watched-directory
+    id and project id, refusing on empty or ambiguous results.
+  properties:
+    identified_by:
+    - watch_dir_id
+    - project_id
+    resolved_relative_to: watched_directory
+    root_is: project_folder_under_watch_dir_absolute_path
+    never_free_absolute_from_caller: true
+    absolute_path: legacy_form_only
+    ambiguous_or_empty: refuse_no_guess
+    same_root_governs:
+    - git_ops
+    - commit_on_write
+  source_labels:
+  - '{j3k4}'
+  - '{w3x4}'
+- concept_id: C-027
+  name: VenvWriteGuard
+  definition: The cross-cutting protection that rejects writes under virtual-environment
+    and installed-package directories, not bypassed by the git block.
+  properties:
+    protected_locations:
+    - project_virtualenv_dir
+    - installed_package_dirs
+    reject_writes_under: true
+    git_block_bypasses: false
+    applies_to:
+    - commit_on_write
+    - git_add
+    - git_restore
+    - any_working_tree_write
+  source_labels:
+  - '{d7e8}'
+- concept_id: C-028
+  name: DistinctFromEditSessionGit
+  definition: The separation establishing the project-scoped git block as parallel
+    to and independent of the pre-existing edit-session git facility.
+  properties:
+    project_scoped_git_operates_on: registered_project_working_tree
+    edit_session_git_operates_on: temporary_per_edit_session_repository
+    parallel_independent: true
+    neither_replaces_nor_alters_edit_session_facility: true
+  source_labels:
+  - '{f9g0}'
+- concept_id: C-029
+  name: ReservedCommandPrefix
+  definition: The naming rule placing every project-scoped git command under a reserved
+    prefix disjoint from the edit-session git commands.
+  properties:
+    prefix: git_
+    disjoint_from: session_git_commands
+    prevents:
+    - name_collision
+    - routing_collision
+  source_labels:
+  - '{h1i2}'
+relations:
+- from_concept: C-014
+  to_concept: C-017
+  type: depends_on
+- from_concept: C-018
+  to_concept: C-020
+  type: depends_on

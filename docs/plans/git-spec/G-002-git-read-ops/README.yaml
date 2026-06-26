@@ -1,0 +1,20 @@
+step_id: G-002
+name: Project-scoped git read operations
+description: 'The read-only git inspection operations on a registered project repository:
+  working-tree status, commit history, differences between revisions or the index,
+  branch enumeration, single-commit inspection, remote enumeration, and per-line attribution.
+  Every operation resolves the repository root before acting, confirms the root is
+  a git repository, and reports a distinct clear outcome when git is unavailable or
+  the root is not a repository. Paths exchanged with git operations are project-relative.
+  These operations do not mutate the working tree or history and do not contact a
+  remote.'
+concepts:
+- C-009
+relations: []
+source_labels:
+- '{u1v2}'
+- '{w3x4}'
+depends_on:
+- G-006
+tactical_steps: []
+status: draft

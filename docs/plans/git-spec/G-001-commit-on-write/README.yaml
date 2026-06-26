@@ -1,0 +1,38 @@
+step_id: G-001
+name: Commit-on-write behaviour
+description: 'The commit-on-write capability attached to the existing project file
+  write path. A write carries an explicit commit-intent flag; when set, a commit is
+  produced after the content is persisted and only if the content changed, with a
+  mandatory non-empty caller-supplied message. The lock reason is opaque to the server:
+  the commit decision derives solely from write-call parameters, never from lock state.
+  A commit produced on write never pushes. The commit author identity is taken from
+  project git configuration. The prior implicit message-only commit trigger is removed,
+  so a message without intent is rejected; every writer that produces a commit now
+  accepts and forwards an explicit non-empty message, and the server-side default
+  message generator is removed.
+
+  '
+concepts:
+- C-003
+- C-004
+- C-005
+- C-006
+- C-007
+- C-008
+- C-024
+- C-025
+relations: []
+source_labels:
+- '{e5f6}'
+- '{g7h8}'
+- '{i9j0}'
+- '{k1l2}'
+- '{m3n4}'
+- '{o5p6}'
+- '{q7r8}'
+- '{s9t0}'
+- '{c5d6}'
+depends_on:
+- G-006
+tactical_steps: []
+status: draft

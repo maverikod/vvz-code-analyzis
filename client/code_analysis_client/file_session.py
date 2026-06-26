@@ -40,6 +40,7 @@ class SessionNotFoundError(ClientValidationError):
 
 
 def _unwrap(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Unwrap command result payloads and map missing sessions to SessionNotFoundError."""
     return unwrap_command_result(
         data,
         session_not_found_type=SessionNotFoundError,
@@ -47,6 +48,7 @@ def _unwrap(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _require_non_empty(value: str, *, field: str) -> str:
+    """Return stripped text or raise ClientValidationError for an empty field."""
     text = str(value or "").strip()
     if not text:
         raise ClientValidationError(f"{field} is required", field=field)
@@ -90,6 +92,7 @@ def _validate_upload_selector(
 
 
 def _lock_mode_from_flag(lock: bool) -> str:
+    """Convert a boolean lock flag into the server lock_mode value."""
     return "full" if lock else "none"
 
 
@@ -111,6 +114,7 @@ class FileSessionClient:
     __slots__ = ("_client",)
 
     def __init__(self, client: CodeAnalysisAsyncClient) -> None:
+        """Store the underlying async client used to call session commands."""
         self._client = client
 
     async def create_session(

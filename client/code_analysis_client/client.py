@@ -228,10 +228,13 @@ class CodeAnalysisAsyncClient:
         )
 
     async def close(self) -> None:
+        """Close the underlying JSON-RPC transport."""
         await self._rpc.close()
 
     async def __aenter__(self) -> CodeAnalysisAsyncClient:
+        """Enter async context manager and return this client."""
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the client when leaving an async context manager block."""
         await self.close()

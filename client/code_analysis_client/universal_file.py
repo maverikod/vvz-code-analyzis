@@ -29,6 +29,7 @@ class UniversalFileClient:
     __slots__ = ("_client",)
 
     def __init__(self, client: CodeAnalysisAsyncClient) -> None:
+        """Store the async client used for universal file workflow commands."""
         self._client = client
 
     async def open(

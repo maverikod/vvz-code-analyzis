@@ -15,6 +15,7 @@ class ClientValidationError(ValueError):
         field: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize validation error with optional field and details payload."""
         super().__init__(message)
         self.field = field
         self.details = details or {}

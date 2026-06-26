@@ -13,12 +13,14 @@ from typing import Any, Mapping
 
 
 def _expand_path(value: Any) -> str | None:
+    """Expand a non-empty filesystem path value to an absolute string."""
     if value is None or value == "":
         return None
     return str(Path(str(value)).expanduser().resolve())
 
 
 def _ssl_paths_from_section(ssl_section: Any) -> dict[str, str]:
+    """Extract and normalize TLS path fields from a config SSL section."""
     if not isinstance(ssl_section, dict):
         return {}
     out: dict[str, str] = {}
@@ -38,6 +40,7 @@ def _ssl_paths_from_section(ssl_section: Any) -> dict[str, str]:
 
 
 def _network_from_server_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return host, port, and protocol settings from a server config dict."""
     server = config.get("server", {})
     if not isinstance(server, dict):
         server = {}

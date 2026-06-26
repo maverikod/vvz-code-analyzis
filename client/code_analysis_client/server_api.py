@@ -231,6 +231,7 @@ def assert_transfer_facade_complete() -> None:
 
 
 def _command_registered(get_command: Callable[[str], object], name: str) -> bool:
+    """Return True when ``get_command`` can resolve a command name."""
     try:
         get_command(name)
         return True

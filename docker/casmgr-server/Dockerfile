@@ -32,6 +32,8 @@ WORKDIR /opt/casmgr-server
 COPY pyproject.toml ./
 COPY code_analysis ./code_analysis
 COPY casmgr_entry ./casmgr_entry
+RUN mkdir -p /usr/share/info
+COPY packaging/info/casmgr-server.info /usr/share/info/casmgr-server.info
 
 RUN pip install --no-cache-dir -e ".[postgres-backup]"
 

@@ -19,6 +19,7 @@ class ValidatedCommandsProxy:
     __slots__ = ("_client",)
 
     def __init__(self, client: CodeAnalysisAsyncClient) -> None:
+        """Store the client used for schema lookup and validated command calls."""
         object.__setattr__(self, "_client", client)
 
     def clear_schema_cache(self) -> None:
@@ -47,10 +48,12 @@ class ValidatedCommandsProxy:
         return cast(Dict[str, Any], await self._client.call_validated(command, merged))
 
     def __getattr__(self, name: str) -> Any:
+        """Return an async validated-call wrapper for an arbitrary command name."""
         if name.startswith("_"):
             raise AttributeError(name)
 
         async def _bound(**kw: Any) -> Dict[str, Any]:
+            """Execute the dynamically selected command with validated keyword params."""
             return cast(Dict[str, Any], await self._client.call_validated(name, kw))
 
         _bound.__name__ = name

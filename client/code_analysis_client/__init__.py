@@ -64,6 +64,7 @@ __all__ = [
 
 
 def _read_package_version() -> str:
+    """Read installed client version from version.txt or package metadata."""
     vf = Path(__file__).resolve().parent / "version.txt"
     if vf.is_file():
         return vf.read_text(encoding="utf-8").strip()

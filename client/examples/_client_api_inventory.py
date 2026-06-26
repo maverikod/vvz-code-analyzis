@@ -101,6 +101,7 @@ EXAMPLE_MODULE_NAMES: tuple[str, ...] = (
 
 
 def _load_example_module(examples_dir: Path, name: str):
+    """Import one example module by filename from the examples directory."""
     path = examples_dir / f"{name}.py"
     if not path.is_file():
         raise FileNotFoundError(path)

@@ -17,6 +17,7 @@ from pathlib import Path
 
 
 def _find_repo_root(start: Path) -> Path | None:
+    """Return nearest repository root that contains the server manager CLI."""
     for base in [start, *start.parents]:
         marker = base / "code_analysis" / "cli" / "server_manager_cli.py"
         if marker.is_file():
@@ -25,6 +26,7 @@ def _find_repo_root(start: Path) -> Path | None:
 
 
 def main() -> None:
+    """Prepare import path and delegate execution to the casmgr CLI entrypoint."""
     here = Path(__file__).resolve()
     root = _find_repo_root(here.parent)
     if root is not None:

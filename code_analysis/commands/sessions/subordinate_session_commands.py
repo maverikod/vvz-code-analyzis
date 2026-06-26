@@ -33,10 +33,12 @@ from code_analysis.core.subordinate_sessions import (
 
 
 def _invalid_params_result(exc: ValueError) -> ErrorResult:
+    """Convert validation errors into the command error shape."""
     return ErrorResult(code="INVALID_PARAMS", message=str(exc))
 
 
 def _default_server_uuid(command: BaseMCPCommand) -> str:
+    """Read the configured server instance UUID for subordinate links."""
     raw_config = command._get_raw_config()
     return str(raw_config.get("registration", {}).get("instance_uuid", "") or "")
 
@@ -57,6 +59,7 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for creating subordinate links."""
         schema = composite_key_schema(include_comment=True)
         schema["properties"]["server_uuid"][
             "description"
@@ -79,6 +82,7 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
         server_uuid: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Create a subordinate session link for a parent session."""
         _ = kwargs
         server = server_uuid or _default_server_uuid(self)
         if not server:
@@ -106,6 +110,7 @@ class SubordinateSessionCreateCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return extended metadata for subordinate_session_create."""
         return get_subordinate_session_create_metadata(cls)
 
 
@@ -122,6 +127,7 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for fetching one subordinate link."""
         schema = composite_key_schema()
         return {
             "type": "object",
@@ -136,6 +142,7 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
         server_uuid: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Fetch one subordinate session link by composite key."""
         _ = kwargs
         database = self._open_database_from_config()
         try:
@@ -158,6 +165,7 @@ class SubordinateSessionGetCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return extended metadata for subordinate_session_get."""
         return get_subordinate_session_get_metadata(cls)
 
 
@@ -174,6 +182,7 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for updating a subordinate link."""
         schema = composite_key_schema(include_comment=True)
         return {
             "type": "object",
@@ -189,6 +198,7 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
         comment: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Update the comment stored on a subordinate session link."""
         _ = kwargs
         database = self._open_database_from_config()
         try:
@@ -206,6 +216,7 @@ class SubordinateSessionUpdateCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return extended metadata for subordinate_session_update."""
         return get_subordinate_session_update_metadata(cls)
 
 
@@ -222,6 +233,7 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for deleting a subordinate link."""
         schema = composite_key_schema()
         return {
             "type": "object",
@@ -236,6 +248,7 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
         server_uuid: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Delete one subordinate session link by composite key."""
         _ = kwargs
         database = self._open_database_from_config()
         try:
@@ -252,6 +265,7 @@ class SubordinateSessionDeleteCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return extended metadata for subordinate_session_delete."""
         return get_subordinate_session_delete_metadata(cls)
 
 
@@ -268,6 +282,7 @@ class SubordinateSessionListCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for listing subordinate links."""
         return {
             "type": "object",
             "properties": {
@@ -290,6 +305,7 @@ class SubordinateSessionListCommand(BaseMCPCommand):
         server_uuid: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """List subordinate session links matching optional filters."""
         _ = kwargs
         database = self._open_database_from_config()
         try:
@@ -304,4 +320,5 @@ class SubordinateSessionListCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return extended metadata for subordinate_session_list."""
         return get_subordinate_session_list_metadata(cls)

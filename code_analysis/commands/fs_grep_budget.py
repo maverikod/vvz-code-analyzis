@@ -41,6 +41,8 @@ QUEUED_MAX_RESPONSE_BYTES = 8_000_000
 
 @dataclass
 class FsGrepBudgetLimits:
+    """Static scan limits for one fs_grep execution mode."""
+
     mode: Literal["sync", "full"]
     max_wall_seconds: float
     max_files_scanned: int
@@ -49,6 +51,7 @@ class FsGrepBudgetLimits:
     max_response_bytes: int
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable representation of the limits."""
         return {
             "mode": self.mode,
             "max_wall_seconds": self.max_wall_seconds,
@@ -61,6 +64,8 @@ class FsGrepBudgetLimits:
 
 @dataclass
 class FsGrepBudgetUsage:
+    """Runtime counters collected while fs_grep scans candidate files."""
+
     wall_seconds: float = 0.0
     candidate_files: int = 0
     files_scanned: int = 0
@@ -69,6 +74,7 @@ class FsGrepBudgetUsage:
     exceed_reason: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return usage counters in API response form."""
         return {
             "wall_seconds": round(self.wall_seconds, 3),
             "candidate_files": self.candidate_files,
@@ -81,6 +87,8 @@ class FsGrepBudgetUsage:
 
 @dataclass
 class FsGrepBudgetState:
+    """Mutable scan budget state shared across fs_grep phases."""
+
     limits: FsGrepBudgetLimits
     usage: FsGrepBudgetUsage = field(default_factory=FsGrepBudgetUsage)
     warnings: List[Dict[str, Any]] = field(default_factory=list)
@@ -88,19 +96,23 @@ class FsGrepBudgetState:
     should_cancel: Optional[Callable[[], bool]] = None
 
     def deadline(self) -> Optional[float]:
+        """Return the monotonic wall-clock deadline for the scan."""
         return self._started_at + self.limits.max_wall_seconds
 
     def remaining_wall_seconds(self) -> float:
+        """Return seconds left before the cooperative scan deadline."""
         end = self.deadline()
         if end is None:
             return self.limits.max_wall_seconds
         return max(0.0, end - time.monotonic())
 
     def mark_exceeded(self, reason: str) -> None:
+        """Record that the scan exceeded its cooperative budget."""
         self.usage.budget_exceeded = True
         self.usage.exceed_reason = reason
 
     def should_stop_scan(self, *, matches_count: int, files_scanned: int) -> bool:
+        """Return true when the scan should stop for budget or cancellation."""
         if self.should_cancel is not None and self.should_cancel():
             self.mark_exceeded("inline_timeout_cancel")
             return True
@@ -118,14 +130,17 @@ class FsGrepBudgetState:
         return False
 
     def finalize(self) -> None:
+        """Capture final wall-clock usage after scanning completes."""
         self.usage.wall_seconds = time.monotonic() - self._started_at
 
     def add_warning(self, code: str, message: str, **extra: Any) -> None:
+        """Append a structured warning to the response metadata."""
         row: Dict[str, Any] = {"code": code, "message": message}
         row.update(extra)
         self.warnings.append(row)
 
     def budget_warning(self) -> Dict[str, Any]:
+        """Build the standard warning returned after early budget stop."""
         return {
             "code": GREP_BUDGET_EXCEEDED,
             "message": (
@@ -142,6 +157,7 @@ def limits_for_sync(
     max_matches: int,
     grep_sync_max_wall_seconds: Optional[float] = None,
 ) -> FsGrepBudgetLimits:
+    """Build conservative fs_grep limits for inline execution."""
     wall = (
         float(grep_sync_max_wall_seconds)
         if grep_sync_max_wall_seconds is not None
@@ -158,6 +174,7 @@ def limits_for_sync(
 
 
 def limits_for_queue(*, max_matches: int) -> FsGrepBudgetLimits:
+    """Build expanded fs_grep limits for queued execution."""
     return FsGrepBudgetLimits(
         mode="full",
         max_wall_seconds=QUEUED_MAX_WALL_SECONDS,
@@ -174,6 +191,7 @@ def resolve_execution_mode(
     budget: FsGrepBudgetState,
     candidate_files: int,
 ) -> ExecutionMode:
+    """Choose sync, queued, or queued-recommended execution for this scan."""
     if in_queue:
         return "queued"
     if budget.usage.budget_exceeded or candidate_files > SYNC_MAX_CANDIDATE_FILES:
@@ -182,6 +200,7 @@ def resolve_execution_mode(
 
 
 def clamp_hard_timeout_seconds(value: float) -> float:
+    """Clamp a requested hard timeout to the supported range."""
     return max(HARD_TIMEOUT_MIN_SECONDS, min(HARD_TIMEOUT_MAX_SECONDS, float(value)))
 
 
@@ -202,6 +221,7 @@ def cap_candidate_paths(
     paths: List[Any],
     budget: FsGrepBudgetState,
 ) -> List[Any]:
+    """Trim candidate paths to the budget cap and record a warning if needed."""
     budget.usage.candidate_files = len(paths)
     if len(paths) <= budget.limits.max_candidate_files:
         return paths

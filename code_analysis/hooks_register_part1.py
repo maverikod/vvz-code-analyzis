@@ -204,6 +204,24 @@ def register_commands_part1(reg: registry) -> None:
         )
 
     try:
+        from .commands.comprehensive_analysis_results_mcp import (
+            ComprehensiveAnalysisResultsMCPCommand,
+        )
+
+        reg.register(ComprehensiveAnalysisResultsMCPCommand, "custom")
+        logger.info("✅ Registered get_comprehensive_analysis_results command")
+    except ImportError as e:
+        logger.warning(
+            "Failed to import get_comprehensive_analysis_results command: %s", e
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to register get_comprehensive_analysis_results command: %s",
+            e,
+            exc_info=True,
+        )
+
+    try:
         from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
 
         reg.register(UpdateIndexesMCPCommand, "custom")

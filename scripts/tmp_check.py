@@ -12,7 +12,7 @@ files = [
 ]
 for f in files:
     r = subprocess.run(
-        ['grep', '-n', 'def metadata\|def get_schema\|class.*Command',
+        ['grep', '-n', r'def metadata\|def get_schema\|class.*Command',
          f'/home/vasilyvz/projects/tools/code_analysis/{f}'],
         capture_output=True, text=True
     )

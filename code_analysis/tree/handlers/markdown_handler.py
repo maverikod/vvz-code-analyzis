@@ -29,6 +29,7 @@ _VALID_POSITIONS = frozenset({"before", "after", "first_child", "last_child"})
 
 
 def _classify_block_content(content: str) -> tuple[str, Dict[str, Any]]:
+    """Infer the tree node kind and attributes for one Markdown block."""
     stripped = content.strip()
     if not stripped:
         return "paragraph", {"level": 0}
@@ -45,6 +46,7 @@ def _classify_block_content(content: str) -> tuple[str, Dict[str, Any]]:
 
 
 def _validate_block_content(content: str) -> None:
+    """Reject empty or unparsable Markdown block content."""
     if not content.strip():
         raise ValueError("new_content must not be empty or whitespace-only")
     tokens = _MD.parse(content)
@@ -55,6 +57,7 @@ def _validate_block_content(content: str) -> None:
 
 
 def _parse_blocks(marked_text: str) -> List[TreeNode]:
+    """Parse marker-delimited Markdown text into flat tree nodes."""
     matches = list(_MARKER_RE.finditer(marked_text))
     if not matches:
         return []
@@ -77,6 +80,7 @@ def _parse_blocks(marked_text: str) -> List[TreeNode]:
 
 
 def _serialize_blocks(nodes: List[TreeNode]) -> str:
+    """Serialize flat Markdown tree nodes back to marked source text."""
     if not nodes:
         return ""
     parts: List[str] = []
@@ -91,6 +95,7 @@ def _serialize_blocks(nodes: List[TreeNode]) -> str:
 
 
 def _find_short_id(nodes: List[TreeNode], short_id: NodeId) -> TreeNode:
+    """Return the node with short_id or raise UnknownNodeIdError."""
     for node in nodes:
         if node.short_id == short_id:
             return node
@@ -98,6 +103,7 @@ def _find_short_id(nodes: List[TreeNode], short_id: NodeId) -> TreeNode:
 
 
 def _find_index(nodes: List[TreeNode], short_id: NodeId) -> int:
+    """Return the list index for short_id or raise UnknownNodeIdError."""
     for idx, node in enumerate(nodes):
         if node.short_id == short_id:
             return idx
@@ -107,6 +113,7 @@ def _find_index(nodes: List[TreeNode], short_id: NodeId) -> int:
 def _resolve_insert_index(
     nodes: List[TreeNode], anchor_short_id: NodeId, position: str
 ) -> int:
+    """Resolve an insert position around an anchor block."""
     if position not in _VALID_POSITIONS:
         raise ValueError(f"invalid position: {position!r}")
     anchor_idx = _find_index(nodes, anchor_short_id)
@@ -118,6 +125,7 @@ def _resolve_insert_index(
 def _resolve_move_insert_index(
     nodes: List[TreeNode], anchor_short_id: NodeId, position: str
 ) -> int:
+    """Resolve the destination index for a move operation."""
     if position not in _VALID_POSITIONS:
         raise ValueError(f"invalid position: {position!r}")
     anchor_idx = _find_index(nodes, anchor_short_id)
@@ -127,7 +135,10 @@ def _resolve_move_insert_index(
 
 
 class MarkdownHandler(FormatHandler):
+    """Format handler for marker-based Markdown block editing."""
+
     def parse_content(self, file_path: Path, content: str) -> List[TreeNode]:
+        """Parse Markdown source into editable block nodes."""
         if content == "":
             return []
         allocator = ShortIdAllocator(1)
@@ -161,6 +172,7 @@ class MarkdownHandler(FormatHandler):
         return nodes
 
     def mark(self, content: str) -> str:
+        """Insert stable short-id comments before editable Markdown blocks."""
         allocator = ShortIdAllocator(1)
         tokens = _MD.parse(content)
         lines = content.splitlines(keepends=True)
@@ -180,9 +192,11 @@ class MarkdownHandler(FormatHandler):
         return "".join(result)
 
     def unmark(self, marked_text: str) -> str:
+        """Remove short-id marker comments from Markdown source text."""
         return _MARKER_RE.sub("", marked_text)
 
     def sidecar_path(self, source_abs: Path) -> Path:
+        """Return the sidecar path used for this source file."""
         return source_abs.parent / (source_abs.name + ".tree")
 
     def op_insert(
@@ -193,6 +207,7 @@ class MarkdownHandler(FormatHandler):
         new_content: str,
         next_free: int,
     ) -> str:
+        """Insert a new Markdown block relative to an anchor block."""
         if next_free < 1:
             raise ValueError("next_free must be >= 1")
         _validate_block_content(new_content)
@@ -215,12 +230,14 @@ class MarkdownHandler(FormatHandler):
         return _serialize_blocks(nodes)
 
     def op_delete(self, marked_text: str, short_id: NodeId) -> str:
+        """Delete the block identified by short_id."""
         nodes = _parse_blocks(marked_text)
         idx = _find_index(nodes, short_id)
         nodes.pop(idx)
         return _serialize_blocks(nodes)
 
     def op_replace(self, marked_text: str, short_id: NodeId, new_content: str) -> str:
+        """Replace the full Markdown block identified by short_id."""
         _validate_block_content(new_content)
         nodes = _parse_blocks(marked_text)
         node = _find_short_id(nodes, short_id)
@@ -238,6 +255,7 @@ class MarkdownHandler(FormatHandler):
         return _serialize_blocks(nodes)
 
     def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        """Return the block text used as payload for move operations."""
         nodes = _parse_blocks(marked_text)
         node = _find_short_id(nodes, short_id)
         return node.content.rstrip("\n")
@@ -249,6 +267,7 @@ class MarkdownHandler(FormatHandler):
         anchor_short_id: NodeId,
         position: str,
     ) -> str:
+        """Move one Markdown block relative to another block."""
         next_free = self.peak_short_id_in_marked(marked_text) + 1
         return self.op_move_via_delete_insert(
             marked_text,
@@ -261,6 +280,7 @@ class MarkdownHandler(FormatHandler):
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]
     ) -> str:
+        """Merge updated attributes into the selected Markdown block node."""
         nodes = _parse_blocks(marked_text)
         node = _find_short_id(nodes, short_id)
         node.attributes.update(attributes)
@@ -269,6 +289,7 @@ class MarkdownHandler(FormatHandler):
     def op_edit_content(
         self, marked_text: str, short_id: NodeId, new_content: str
     ) -> str:
+        """Edit the content of a leaf Markdown block in place."""
         nodes = _parse_blocks(marked_text)
         node = _find_short_id(nodes, short_id)
         if node.kind not in _LEAF_KINDS:

@@ -16,6 +16,7 @@ from code_analysis.core.search_session.xpath_filter import (
 
 
 def _sample_tree_ref() -> TreeRepresentationRef:
+    """Return sample tree ref."""
     return TreeRepresentationRef(
         file_path="src/app.py",
         sidecar_path=Path("/tmp/app.tree"),
@@ -25,6 +26,7 @@ def _sample_tree_ref() -> TreeRepresentationRef:
 
 
 def test_compile_xpath_like_rejects_empty_query() -> None:
+    """Verify test compile xpath like rejects empty query."""
     with pytest.raises(ValueError, match="must not be empty"):
         compile_xpath_like("")
     with pytest.raises(ValueError, match="must not be empty"):
@@ -32,11 +34,13 @@ def test_compile_xpath_like_rejects_empty_query() -> None:
 
 
 def test_compile_xpath_like_normalizes_whitespace() -> None:
+    """Verify test compile xpath like normalizes whitespace."""
     compiled = compile_xpath_like("  class[name='Foo']  ")
     assert compiled.normalized_query == "class[name='Foo']"
 
 
 def test_filter_tree_nodes_delegates_to_node_loader() -> None:
+    """Verify test filter tree nodes delegates to node loader."""
     tree_ref = _sample_tree_ref()
     expected = [
         TreeNodeMatch(
@@ -49,6 +53,7 @@ def test_filter_tree_nodes_delegates_to_node_loader() -> None:
     calls: list[TreeRepresentationRef] = []
 
     def loader(ref: TreeRepresentationRef) -> list[TreeNodeMatch]:
+        """Return loader."""
         calls.append(ref)
         return expected
 

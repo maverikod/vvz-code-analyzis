@@ -41,6 +41,7 @@ def _rows() -> List[Dict[str, str]]:
     ids=lambda r: f"{r['suffix']}->{r['handler_id']}",
 )
 def test_resolve_handler_matches_list_handler_mappings(row: Dict[str, str]) -> None:
+    """Verify test resolve handler matches list handler mappings."""
     suffix, handler_id = row["suffix"], row["handler_id"]
     for op in sorted(OPERATIONS):
         assert resolve_handler(f"dir/file{suffix}", op) == handler_id
@@ -61,6 +62,7 @@ def test_handler_suffix_groups_match_product_contract() -> None:
 
 
 def test_unknown_suffix_fails_closed() -> None:
+    """Verify test unknown suffix fails closed."""
     with pytest.raises(RegistryError) as exc:
         resolve_handler("file.unknown", "read")
     err = exc.value
@@ -70,6 +72,7 @@ def test_unknown_suffix_fails_closed() -> None:
 
 
 def test_pyproject_toml_unsupported_extension() -> None:
+    """Verify test pyproject toml unsupported extension."""
     with pytest.raises(RegistryError) as exc:
         resolve_handler("pyproject.toml", "read")
     err = exc.value
@@ -78,6 +81,7 @@ def test_pyproject_toml_unsupported_extension() -> None:
 
 
 def test_missing_suffix_fails_before_handler_resolution() -> None:
+    """Verify test missing suffix fails before handler resolution."""
     with pytest.raises(RegistryError) as exc:
         validate_supported("README", "read")
     assert exc.value.code == "UNSUPPORTED_FILE_EXTENSION"
@@ -85,6 +89,7 @@ def test_missing_suffix_fails_before_handler_resolution() -> None:
 
 
 def test_unsupported_operation_error_details() -> None:
+    """Verify test unsupported operation error details."""
     with pytest.raises(RegistryError) as exc:
         validate_supported("README.md", "patch")
     err = exc.value
@@ -94,11 +99,13 @@ def test_unsupported_operation_error_details() -> None:
 
 
 def test_get_handler_schema_text_read() -> None:
+    """Verify test get handler schema text read."""
     schema = get_handler_schema(HANDLER_TEXT, "read")
     assert schema["type"] == "object"
     assert "properties" in schema
 
 
 def test_unsupported_suffix_not_listed_in_discovery() -> None:
+    """Verify test unsupported suffix not listed in discovery."""
     known = {r["suffix"] for r in list_handler_mappings()}
     assert ".toml" not in known

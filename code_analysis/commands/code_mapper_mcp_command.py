@@ -239,7 +239,10 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         def make_heartbeat_cb(
                             i: int, total: int
                         ) -> Callable[[str], None]:
+                            """Build a callback that reports indexing phase for one file."""
+
                             def cb(phase: str) -> None:
+                                """Update progress tracker text for the current indexing phase."""
                                 if progress_tracker:
                                     pct = int((i + 1) / total * 100)
                                     progress_tracker.set_description(

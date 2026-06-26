@@ -45,18 +45,21 @@ def _fetchone(
     *,
     transaction_id: str | None = None,
 ):
+    """Return fetchone."""
     r = client.execute(sql, params, transaction_id=transaction_id)
     rows = r.get("data") or []
     return rows[0] if rows else None
 
 
 def test_begin_transaction_returns_id(ipc_client: DatabaseClient) -> None:
+    """Verify test begin transaction returns id."""
     tid = ipc_client.begin_transaction()
     assert isinstance(tid, str) and len(tid) > 0
     ipc_client.commit_transaction(tid)
 
 
 def test_commit_transaction(ipc_client: DatabaseClient) -> None:
+    """Verify test commit transaction."""
     tid = ipc_client.begin_transaction()
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
@@ -70,6 +73,7 @@ def test_commit_transaction(ipc_client: DatabaseClient) -> None:
 
 
 def test_rollback_transaction(ipc_client: DatabaseClient) -> None:
+    """Verify test rollback transaction."""
     tid = ipc_client.begin_transaction()
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
@@ -93,16 +97,19 @@ def test_two_separate_transactions_allowed(ipc_client: DatabaseClient) -> None:
 
 
 def test_commit_without_transaction_fails(ipc_client: DatabaseClient) -> None:
+    """Verify test commit without transaction fails."""
     with pytest.raises(RPCResponseError):
         ipc_client.commit_transaction("00000000-0000-0000-0000-000000000099")
 
 
 def test_rollback_without_transaction_fails(ipc_client: DatabaseClient) -> None:
+    """Verify test rollback without transaction fails."""
     with pytest.raises(RPCResponseError):
         ipc_client.rollback_transaction("00000000-0000-0000-0000-000000000099")
 
 
 def test_transaction_isolation(ipc_client: DatabaseClient) -> None:
+    """Verify test transaction isolation."""
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("outside-id", "/outside/path"),
@@ -137,6 +144,7 @@ def test_transaction_isolation(ipc_client: DatabaseClient) -> None:
 
 
 def test_begin_commit_rollback_roundtrip(ipc_client: DatabaseClient) -> None:
+    """Verify test begin commit rollback roundtrip."""
     tid = ipc_client.begin_transaction()
     ipc_client.commit_transaction(tid)
     tid2 = ipc_client.begin_transaction()

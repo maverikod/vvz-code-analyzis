@@ -436,6 +436,7 @@ class CreateTextFileMCPCommand(BaseMCPCommand):
                 if not meta.get("success"):
 
                     def _restore(rel: str, uuid_: str) -> None:
+                        """Restore the previous file contents from a backup entry."""
                         bm_r = BackupManager(root_dir)
                         bm_r.restore_file(rel, uuid_)
 

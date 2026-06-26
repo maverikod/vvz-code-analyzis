@@ -17,6 +17,7 @@ TREE_NODE_TYPES: frozenset[str] = frozenset(
 
 
 def _optional_str(field_name: str, raw: object) -> Optional[str]:
+    """Return optional str."""
     if raw is None:
         return None
     if not isinstance(raw, str):

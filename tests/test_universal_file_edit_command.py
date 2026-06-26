@@ -34,6 +34,7 @@ from code_analysis.commands.universal_file_edit.write_command import (
 
 
 def test_normalized_cst_modify_operation_maps_type_to_action() -> None:
+    """Verify test normalized cst modify operation maps type to action."""
     op = {"type": "replace", "node_id": "00000000-0000-4000-8000-000000000001"}
     normalized = _normalized_cst_modify_operation(op)
     assert normalized["action"] == "replace"
@@ -41,6 +42,7 @@ def test_normalized_cst_modify_operation_maps_type_to_action() -> None:
 
 
 def test_validate_replace_snippet_via_module_accepts_assignment() -> None:
+    """Verify test validate replace snippet via module accepts assignment."""
     op = {
         "type": "replace",
         "node_id": "00000000-0000-4000-8000-000000000001",
@@ -52,6 +54,7 @@ def test_validate_replace_snippet_via_module_accepts_assignment() -> None:
 
 
 def test_validate_replace_snippet_via_module_dedents_indented_code_lines() -> None:
+    """Verify test validate replace snippet via module dedents indented code lines."""
     op = {
         "type": "replace",
         "node_id": "00000000-0000-4000-8000-000000000001",
@@ -64,6 +67,7 @@ def test_validate_replace_snippet_via_module_dedents_indented_code_lines() -> No
 
 
 def test_validate_replace_snippet_via_module_no_double_newlines() -> None:
+    """Verify test validate replace snippet via module no double newlines."""
     op = {
         "type": "replace",
         "node_id": "00000000-0000-4000-8000-000000000001",
@@ -79,6 +83,7 @@ def test_validate_replace_snippet_via_module_no_double_newlines() -> None:
 
 
 def test_validate_replace_snippet_rejects_compound_clause_header() -> None:
+    """Verify test validate replace snippet rejects compound clause header."""
     op = {
         "type": "replace",
         "node_id": "00000000-0000-4000-8000-000000000001",
@@ -89,6 +94,7 @@ def test_validate_replace_snippet_rejects_compound_clause_header() -> None:
 
 
 def test_replace_simple_statement_in_nested_elif_branch(tmp_path) -> None:
+    """Verify test replace simple statement in nested elif branch."""
     path = tmp_path / "nested_elif.py"
     path.write_text(
         "def create():\n"
@@ -182,6 +188,7 @@ def test_replace_stable_id_in_elif_body_matches_preview_line(tmp_path) -> None:
 
 
 def test_replace_simple_statement_in_for_and_try_bodies(tmp_path) -> None:
+    """Verify test replace simple statement in for and try bodies."""
     for_loop_source = (
         "def run():\n" "    for item in items:\n" "        process(item)\n"
     )
@@ -221,18 +228,21 @@ def test_replace_simple_statement_in_for_and_try_bodies(tmp_path) -> None:
 
 
 def test_normalized_cst_modify_operation_prefers_explicit_action() -> None:
+    """Verify test normalized cst modify operation prefers explicit action."""
     op = {"type": "insert", "action": "delete", "node_id": "x"}
     normalized = _normalized_cst_modify_operation(op)
     assert normalized["action"] == "delete"
 
 
 def test_universal_file_write_command_inherits_base_mcp_command() -> None:
+    """Verify test universal file write command inherits base mcp command."""
     assert issubclass(UniversalFileWriteCommand, BaseMCPCommand)
     assert hasattr(UniversalFileWriteCommand, "run")
     assert UniversalFileWriteCommand.name == "universal_file_write"
 
 
 def test_normalized_cst_modify_operation_leaves_op_without_type_unchanged() -> None:
+    """Verify test normalized cst modify operation leaves op without type unchanged."""
     op = {"node_id": "00000000-0000-4000-8000-000000000001"}
     normalized = _normalized_cst_modify_operation(op)
     assert "action" not in normalized
@@ -241,6 +251,7 @@ def test_normalized_cst_modify_operation_leaves_op_without_type_unchanged() -> N
 def test_resolve_stable_to_span_allows_second_edit_after_tree_rebuild(
     tmp_path,
 ) -> None:
+    """Verify test resolve stable to span allows second edit after tree rebuild."""
     path = tmp_path / "sample.py"
     path.write_text(
         "def foo():\n    return 1\n",
@@ -332,6 +343,7 @@ class Foo:
 def _function_stable_ids_by_name(
     tree_id: str, names: tuple[str, ...]
 ) -> dict[str, str]:
+    """Return function stable ids by name."""
     tree = get_tree(tree_id)
     assert tree is not None
     root_id = tree.root_node_id

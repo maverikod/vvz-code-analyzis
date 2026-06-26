@@ -26,6 +26,7 @@ from code_analysis.tree.sibling_convention import sibling_tree_path
 
 
 def test_sidecar_path_next_to_py(tmp_path: Path) -> None:
+    """Verify test sidecar path next to py."""
     p = tmp_path / "pkg" / "mod.py"
     assert (
         sibling_tree_path(p.resolve()) == (tmp_path / "pkg" / "mod.py.tree").resolve()
@@ -33,6 +34,7 @@ def test_sidecar_path_next_to_py(tmp_path: Path) -> None:
 
 
 def test_verify_sidecar_sha(tmp_path: Path) -> None:
+    """Verify test verify sidecar sha."""
     path = tmp_path / "a.py"
     src = "x = 1\n"
     path.write_text(src, encoding="utf-8")
@@ -46,6 +48,7 @@ def test_verify_sidecar_sha(tmp_path: Path) -> None:
 
 
 def test_write_read_roundtrip(tmp_path: Path) -> None:
+    """Verify test write read roundtrip."""
     path = tmp_path / "b.py"
     src = "def f():\n    return 2\n"
     path.write_text(src, encoding="utf-8")
@@ -63,6 +66,7 @@ def test_write_read_roundtrip(tmp_path: Path) -> None:
 
 
 def test_render_parse_roundtrip_dict() -> None:
+    """Verify test render parse roundtrip dict."""
     payload = {
         "format_version": 1,
         "source_sha256": "a" * 64,
@@ -78,6 +82,7 @@ def test_render_parse_roundtrip_dict() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="chown not supported on Windows")
 def test_write_sidecar_atomic_matches_source_owner(tmp_path: Path) -> None:
+    """Verify test write sidecar atomic matches source owner."""
     path = tmp_path / "owner.py"
     path.write_text("x = 1\n", encoding="utf-8")
     tree = create_tree_from_code(str(path), "x = 1\n")
@@ -94,6 +99,7 @@ def test_write_sidecar_atomic_matches_source_owner(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="chown not supported on Windows")
 def test_atomic_write_sibling_tree_file_applies_chown(tmp_path: Path) -> None:
+    """Verify test atomic write sibling tree file applies chown."""
     source = tmp_path / "data.json"
     source.write_text("{}", encoding="utf-8")
     sidecar = sibling_tree_path(source.resolve())
@@ -108,6 +114,7 @@ def test_atomic_write_sibling_tree_file_applies_chown(tmp_path: Path) -> None:
 
 
 def test_match_file_owner_noop_on_windows(tmp_path: Path) -> None:
+    """Verify test match file owner noop on windows."""
     target = tmp_path / "t.tree"
     target.write_text("x", encoding="utf-8")
     reference = tmp_path / "s.py"

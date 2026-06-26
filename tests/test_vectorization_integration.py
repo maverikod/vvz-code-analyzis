@@ -39,6 +39,7 @@ def _get_or_create_project(
     name: str | None = None,
     project_id: str | None = None,
 ) -> str:
+    """Return get or create project."""
     rp = str(Path(root_path).resolve())
     rows = client.select("projects", where={"root_path": rp})
     if rows:
@@ -51,6 +52,7 @@ def _get_or_create_project(
 def _get_files_needing_chunking(
     db: DatabaseClient, project_id: str, limit: int = 10
 ) -> list[dict]:
+    """Return get files needing chunking."""
     sql = (
         """
                 SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring

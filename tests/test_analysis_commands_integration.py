@@ -76,8 +76,7 @@ def shared_db_with_vast_srv(tmp_path):
     socket_path = str(tmp_path / "analysis_commands.sock")
     driver = create_driver("sqlite", {"path": str(db_path)})
 
-    driver.execute(
-        """
+    driver.execute("""
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
             root_path TEXT UNIQUE NOT NULL,
@@ -88,10 +87,8 @@ def shared_db_with_vast_srv(tmp_path):
             created_at REAL DEFAULT (julianday('now')),
             updated_at REAL DEFAULT (julianday('now'))
         )
-        """
-    )
-    driver.execute(
-        """
+        """)
+    driver.execute("""
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id TEXT NOT NULL,
@@ -109,8 +106,7 @@ def shared_db_with_vast_srv(tmp_path):
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
             UNIQUE(project_id, path)
         )
-        """
-    )
+        """)
     for schema in (
         {
             "name": "watch_dirs",
@@ -416,6 +412,7 @@ async def test_semantic_search_limit_respected(
 
 
 def test_dedupe_log_files_by_resolved_path() -> None:
+    """Verify test dedupe log files by resolved path."""
     from code_analysis.commands.log_viewer_mcp_commands.list_worker_logs import (
         _dedupe_log_files_by_resolved_path,
     )

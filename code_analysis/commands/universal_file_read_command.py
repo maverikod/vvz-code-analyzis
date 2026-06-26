@@ -57,6 +57,7 @@ def _normalize_line_range(
 
 
 def _success_from_handler(fr: FileHandlerResult) -> SuccessResult:
+    """Return success from handler."""
     data: Dict[str, Any] = {
         "success": True,
         "handler_id": fr.handler_id,
@@ -69,6 +70,7 @@ def _success_from_handler(fr: FileHandlerResult) -> SuccessResult:
 
 
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
+    """Return error from handler."""
     return ErrorResult(
         message=fr.message or fr.code,
         code=fr.code or "VALIDATION_FAILED",
@@ -98,6 +100,7 @@ class UniversalFileReadCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "title": "universal_file_read",
@@ -168,6 +171,7 @@ class UniversalFileReadCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileReadCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         from .command_metadata_helpers import (
             build_command_metadata,
             parameters_from_schema,
@@ -219,6 +223,7 @@ class UniversalFileReadCommand(BaseMCPCommand):
         end_line: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Execute the command."""
         try:
             params: Dict[str, Any] = {
                 "project_id": project_id,

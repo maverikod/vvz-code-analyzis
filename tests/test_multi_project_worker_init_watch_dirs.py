@@ -20,6 +20,7 @@ from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 def test_watch_dir_id_str_normalizes_uuid_to_same_string_as_config() -> None:
+    """Verify test watch dir id str normalizes uuid to same string as config."""
     u = UUID("550e8400-e29b-41d4-a716-446655440000")
     s = "550e8400-e29b-41d4-a716-446655440000"
     assert _watch_dir_id_str(u) == _watch_dir_id_str(s)
@@ -28,10 +29,12 @@ def test_watch_dir_id_str_normalizes_uuid_to_same_string_as_config() -> None:
 
 
 def test_watch_dir_id_str_empty_for_none() -> None:
+    """Verify test watch dir id str empty for none."""
     assert _watch_dir_id_str(None) == ""
 
 
 def _write_projectid(project_dir: Path, project_id: str) -> None:
+    """Return write projectid."""
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "projectid").write_text(
         json.dumps({"id": project_id, "description": "test"}, indent=4) + "\n",

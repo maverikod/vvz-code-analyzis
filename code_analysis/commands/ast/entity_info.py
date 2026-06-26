@@ -46,7 +46,9 @@ def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         raw_cst_node_id = row.get("cst_node_id")
         cst_node_id = raw_cst_node_id if isinstance(raw_cst_node_id, str) else None
         normalized = dict(row)
-        normalized["cst_node_id"] = cst_node_id if _is_valid_uuid4(cst_node_id) else None
+        normalized["cst_node_id"] = (
+            cst_node_id if _is_valid_uuid4(cst_node_id) else None
+        )
         entities.append(normalized)
     return entities
 
@@ -64,6 +66,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -105,6 +108,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
         target_class: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         params: Dict[str, Any] = {
             "project_id": project_id,
             "entity_type": entity_type,

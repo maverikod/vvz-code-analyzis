@@ -34,6 +34,7 @@ class _CrudAlignedRpcFacade(SqliteLegacyRpcFacade):
     """``crud.add_file`` / ``get_file_by_path`` expect dict-shaped ``get_project``."""
 
     def get_project(self, project_id: str):
+        """Return get project."""
         p = self._client.get_project(project_id)
         if p is None:
             return None
@@ -46,6 +47,7 @@ class _CrudAlignedRpcFacade(SqliteLegacyRpcFacade):
 
 
 def _insert_project_facade(db, root: Path, name: str, project_id: str) -> None:
+    """Return insert project facade."""
     db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(root.resolve()), name),
@@ -53,6 +55,7 @@ def _insert_project_facade(db, root: Path, name: str, project_id: str) -> None:
 
 
 def _venv_client_path(root: Path) -> Path:
+    """Return venv client path."""
     rel = Path(".venv/lib/python3.12/site-packages/mcp_proxy_adapter/core/client.py")
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +64,7 @@ def _venv_client_path(root: Path) -> Path:
 
 
 def _write_projectid(project_root: Path, project_id: str) -> None:
+    """Return write projectid."""
     (project_root / "projectid").write_text(
         json.dumps({"id": project_id, "description": "test"}),
         encoding="utf-8",
@@ -69,6 +73,7 @@ def _write_projectid(project_root: Path, project_id: str) -> None:
 
 @pytest.fixture
 def sqlite_db(tmp_path: Path):
+    """Return sqlite db."""
     client = sqlite_inprocess_database_client(
         tmp_path / "cross.db", backup_dir=tmp_path / "backups"
     )

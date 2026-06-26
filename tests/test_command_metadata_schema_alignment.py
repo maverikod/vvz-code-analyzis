@@ -47,10 +47,12 @@ SAMPLE_COMMANDS: tuple[tuple[Type[Any], CommandMetaFn], ...] = (
 
 
 def _resolve_metadata(meta_fn: CommandMetaFn) -> Dict[str, Any]:
+    """Return resolve metadata."""
     return meta_fn()
 
 
 def test_sample_commands_schema_use_project_id_not_root_dir() -> None:
+    """Verify test sample commands schema use project id not root dir."""
     for cmd_cls, _ in SAMPLE_COMMANDS:
         schema = cmd_cls.get_schema()
         props = schema.get("properties") or {}
@@ -59,6 +61,7 @@ def test_sample_commands_schema_use_project_id_not_root_dir() -> None:
 
 
 def test_sample_commands_metadata_has_no_root_dir_drift() -> None:
+    """Verify test sample commands metadata has no root dir drift."""
     for cmd_cls, meta_fn in SAMPLE_COMMANDS:
         schema = cmd_cls.get_schema()
         props = schema.get("properties") or {}
@@ -89,6 +92,7 @@ def test_sample_commands_metadata_has_no_root_dir_drift() -> None:
 
 
 def test_sample_commands_metadata_examples_match_schema_keys() -> None:
+    """Verify test sample commands metadata examples match schema keys."""
     for cmd_cls, meta_fn in SAMPLE_COMMANDS:
         schema = cmd_cls.get_schema()
         props = set((schema.get("properties") or {}).keys())

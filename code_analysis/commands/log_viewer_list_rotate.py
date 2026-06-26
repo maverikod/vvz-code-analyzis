@@ -49,11 +49,13 @@ class ListLogsByIdCommand:
         config_dir: Path,
         include_paths: bool = False,
     ):
+        """Store configuration used to resolve logs by stable identifier."""
         self.config_data = config_data
         self.config_dir = Path(config_dir)
         self.include_paths = include_paths
 
     async def execute(self) -> Dict[str, Any]:
+        """Return configured logs and optional resolved filesystem paths."""
         logs = get_logs_by_id(
             self.config_data, self.config_dir, include_paths=self.include_paths
         )
@@ -72,10 +74,12 @@ class ListLogFilesCommand:
         log_dirs: Optional[List[str]] = None,
         worker_type: Optional[str] = None,
     ):
+        """Store log directories and optional worker-type filter."""
         self.log_dirs = [Path(d) for d in log_dirs] if log_dirs else []
         self.worker_type = worker_type
 
     def _detect_worker_type(self, filename: str) -> str:
+        """Infer the worker category from a log filename."""
         filename_lower = filename.lower()
         if "file_watcher" in filename_lower:
             return "file_watcher"
@@ -94,6 +98,7 @@ class ListLogFilesCommand:
         return "unknown"
 
     async def execute(self) -> Dict[str, Any]:
+        """Scan configured directories and return deduplicated log files."""
         result = {
             "log_files": [],
             "total_files": 0,
@@ -180,13 +185,16 @@ class RotateLogsCommand:
     """Manually rotate a log file: rename current to .1, .1 to .2, etc., create new empty log."""
 
     def __init__(self, log_path: str, backup_count: int = 5):
+        """Store the target log path and number of rotated backups."""
         self.log_path = Path(log_path)
         self.backup_count = backup_count
 
     def _rotation_path(self, n: int) -> Path:
+        """Return the numbered backup path for one rotation generation."""
         return Path(str(self.log_path) + "." + str(n))
 
     async def execute(self) -> Dict[str, Any]:
+        """Rotate the log file and create a fresh empty current log."""
         result: Dict[str, Any] = {
             "log_path": str(self.log_path),
             "backup_count": self.backup_count,

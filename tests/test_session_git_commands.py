@@ -40,6 +40,7 @@ INITIAL_JSON = '{"value": 1}\n'
 
 @pytest.fixture
 def mutated_json_session(tmp_path: Path) -> Generator[EditSession, None, None]:
+    """Return mutated json session."""
     source = tmp_path / REL
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text(INITIAL_JSON, encoding="utf-8")
@@ -69,6 +70,7 @@ def mutated_json_session(tmp_path: Path) -> Generator[EditSession, None, None]:
 async def test_session_git_log_returns_commits(
     mutated_json_session: EditSession,
 ) -> None:
+    """Verify test session git log returns commits."""
     cmd = SessionGitLogCommand()
     res = await cmd.execute(
         project_id=PROJECT_ID,
@@ -87,6 +89,7 @@ async def test_session_git_log_returns_commits(
 async def test_session_git_diff_tree_mode(
     mutated_json_session: EditSession,
 ) -> None:
+    """Verify test session git diff tree mode."""
     commits = mutated_json_session.session_repo.log()
     rev_new = commits[0].hash
     rev_old = commits[1].hash
@@ -107,6 +110,7 @@ async def test_session_git_diff_tree_mode(
 async def test_session_git_diff_source_mode(
     mutated_json_session: EditSession,
 ) -> None:
+    """Verify test session git diff source mode."""
     rev_a = mutated_json_session.session_repo.log()[-1].hash
     res = await SessionGitDiffCommand().execute(
         project_id=PROJECT_ID,
@@ -120,6 +124,7 @@ async def test_session_git_diff_source_mode(
 
 @pytest.mark.asyncio
 async def test_session_git_show(mutated_json_session: EditSession) -> None:
+    """Verify test session git show."""
     rev = mutated_json_session.session_repo.log()[0].hash
     res = await SessionGitShowCommand().execute(
         project_id=PROJECT_ID,
@@ -133,6 +138,7 @@ async def test_session_git_show(mutated_json_session: EditSession) -> None:
 
 @pytest.mark.asyncio
 async def test_session_git_status(mutated_json_session: EditSession) -> None:
+    """Verify test session git status."""
     res = await SessionGitStatusCommand().execute(
         project_id=PROJECT_ID,
         session_id=mutated_json_session.session_id,
@@ -143,6 +149,7 @@ async def test_session_git_status(mutated_json_session: EditSession) -> None:
 
 @pytest.mark.asyncio
 async def test_missing_session_id_errors() -> None:
+    """Verify test missing session id errors."""
     bogus = "00000000-0000-4000-8000-000000000099"
     rev = "a" * 40
     cases = [

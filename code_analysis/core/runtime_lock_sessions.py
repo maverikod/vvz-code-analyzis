@@ -65,12 +65,14 @@ def lease_mode_to_public(mode: str) -> str:
 
 
 def _execute(database: Any, sql: str, params: tuple[Any, ...] = ()) -> Any:
+    """Return execute."""
     return database.execute(sql, params)
 
 
 def _select_one(
     database: Any, sql: str, params: tuple[Any, ...] = ()
 ) -> Optional[Dict[str, Any]]:
+    """Return select one."""
     result = database.execute(sql, params)
     data = result.get("data") if isinstance(result, dict) else None
     if isinstance(data, list) and data:
@@ -80,6 +82,7 @@ def _select_one(
 
 
 def _commit_best_effort(database: Any) -> None:
+    """Return commit best effort."""
     commit = getattr(database, "commit", None)
     if callable(commit):
         try:

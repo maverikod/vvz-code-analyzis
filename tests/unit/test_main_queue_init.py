@@ -8,6 +8,7 @@ from code_analysis.main_queue_init import init_queue_manager_before_workers
 
 
 def test_init_queue_manager_skipped_when_disabled() -> None:
+    """Verify test init queue manager skipped when disabled."""
     with patch(
         "code_analysis.main_queue_init.asyncio.run",
     ) as mock_run:

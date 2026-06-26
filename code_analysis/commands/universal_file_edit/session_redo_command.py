@@ -40,10 +40,12 @@ class SessionRedoCommand(BaseMCPCommand):
 
     @staticmethod
     def get_name() -> str:
+        """Return get name."""
         return "session_redo"
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -56,6 +58,7 @@ class SessionRedoCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["SessionRedoCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": "session_redo",
             "description": (
@@ -66,9 +69,7 @@ class SessionRedoCommand(BaseMCPCommand):
                 "project_id": {"type": "string", "required": True},
                 "session_id": {"type": "string", "required": True},
             },
-            "examples": [
-                {"command": {"project_id": "<uuid>", "session_id": "<uuid>"}}
-            ],
+            "examples": [{"command": {"project_id": "<uuid>", "session_id": "<uuid>"}}],
         }
 
     async def execute(  # type: ignore[override]
@@ -77,6 +78,7 @@ class SessionRedoCommand(BaseMCPCommand):
         session_id: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         _ = project_id, kwargs
         try:
             session = get_session(session_id)

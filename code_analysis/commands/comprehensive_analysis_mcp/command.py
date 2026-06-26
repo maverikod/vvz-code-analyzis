@@ -197,6 +197,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         analysis_logger.propagate = False  # Don't propagate to root logger
 
         def log_timing(phase: str, t0: float) -> float:
+            """Log elapsed time for a phase and return a fresh timer baseline."""
             elapsed = time.perf_counter() - t0
             analysis_logger.info("[TIMING] phase=%s elapsed_sec=%.4f", phase, elapsed)
             return time.perf_counter()

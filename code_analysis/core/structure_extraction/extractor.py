@@ -190,6 +190,7 @@ def _preview_block(
     start_col: Optional[int] = None,
     end_col: Optional[int] = None,
 ) -> StructureBlock:
+    """Return preview block."""
     return StructureBlock(
         block_id=block_id or "",
         node_ref=node_ref,
@@ -216,6 +217,7 @@ def _extract_python_blocks(
     stable_ids_required: bool,
     tree_stats: TreeResolutionStats | None,
 ) -> tuple[List[StructureBlock], List[StructureWarning], bool]:
+    """Return extract python blocks."""
     abs_path = Path(file_path).resolve()
     meta, warnings, stats = resolve_python_metadata_stable(
         abs_path,
@@ -269,6 +271,7 @@ def _line_map_from_pointers(
     line_for_pointer,
     pointer_attr: str,
 ) -> dict[int, tuple[str, str, str, str]]:
+    """Return line map from pointers."""
     lines = source.splitlines()
     if not lines:
         return {}
@@ -301,6 +304,7 @@ def _line_map_from_pointers(
 def _extract_json_blocks(
     file_path: str, content: str, *, include_text: bool
 ) -> tuple[List[StructureBlock], bool]:
+    """Return extract json blocks."""
     data = json.loads(content)
     tree = build_tree_from_data(str(Path(file_path).resolve()), data)
     line_map = _line_map_from_pointers(
@@ -315,6 +319,7 @@ def _extract_json_blocks(
 def _extract_yaml_blocks(
     file_path: str, content: str, *, include_text: bool
 ) -> tuple[List[StructureBlock], bool]:
+    """Return extract yaml blocks."""
     import yaml
 
     data = yaml.safe_load(content)
@@ -334,6 +339,7 @@ def _blocks_from_pointer_line_map(
     line_map: dict[int, tuple[str, str, str, str]],
     include_text: bool,
 ) -> List[StructureBlock]:
+    """Return blocks from pointer line map."""
     if not line_map:
         return []
     by_pointer: dict[str, tuple[int, int, str, str]] = {}
@@ -372,6 +378,7 @@ def _blocks_from_pointer_line_map(
 def _extract_markdown_blocks(
     file_path: str, content: str, *, include_text: bool
 ) -> tuple[List[StructureBlock], bool]:
+    """Return extract markdown blocks."""
     from markdown_it import MarkdownIt
 
     tokens = list(_iter_md_block_tokens(MarkdownIt().parse(content)))

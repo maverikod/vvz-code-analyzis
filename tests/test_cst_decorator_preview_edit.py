@@ -9,6 +9,7 @@ from code_analysis.core.cst_tree.tree_modifier import modify_tree
 
 
 def test_preview_lists_decorators_under_function(tmp_path) -> None:
+    """Verify test preview lists decorators under function."""
     from code_analysis.tree.handlers.python_handler import PythonHandler
 
     src = (
@@ -35,6 +36,7 @@ def test_preview_lists_decorators_under_function(tmp_path) -> None:
 
 
 def test_replace_functiondef_preserves_decorators_without_at_in_code() -> None:
+    """Verify test replace functiondef preserves decorators without at in code."""
     src = (
         "class C:\n"
         "    @classmethod\n"
@@ -113,6 +115,7 @@ def test_replace_functiondef_preserves_decorator_stable_id_after_rebuild() -> No
 
 
 def test_replace_functiondef_preserves_decorator_stable_id() -> None:
+    """Verify test replace functiondef preserves decorator stable id."""
     src = (
         "class Dog:\n"
         "    @classmethod\n"
@@ -161,6 +164,7 @@ def test_replace_functiondef_preserves_decorator_stable_id() -> None:
 
 
 def test_build_tree_operations_replace_defaults_replace_all_child_nodes_false() -> None:
+    """Verify test build tree operations replace defaults replace all child nodes false."""
     src = "def x():\n    pass\n"
     tree = create_tree_from_code("/tmp/_decor_ops_build.py", src)
     try:

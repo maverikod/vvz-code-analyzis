@@ -18,6 +18,7 @@ from code_analysis.core.project_pip_logging import (
 def test_write_project_pip_session_log_creates_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test write project pip session log creates file."""
     cfg = tmp_path / "config.json"
     cfg.write_text('{"server": {"log_dir": "logs"}}', encoding="utf-8")
     monkeypatch.setattr(
@@ -59,6 +60,7 @@ def test_write_project_pip_session_log_creates_file(
 def test_write_project_pip_session_log_surfaces_write_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test write project pip session log surfaces write error."""
     cfg = tmp_path / "config.json"
     cfg.write_text('{"server": {"log_dir": "logs"}}', encoding="utf-8")
     monkeypatch.setattr(

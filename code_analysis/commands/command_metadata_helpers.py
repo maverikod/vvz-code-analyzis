@@ -197,6 +197,7 @@ def build_command_metadata(
 
 
 def _schema_properties(schema: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the object properties mapping from a JSON schema."""
     props = schema.get("properties") or {}
     return props if isinstance(props, dict) else {}
 
@@ -205,6 +206,7 @@ def _default_usage_examples(
     cls: Type[Any],
     schema: Mapping[str, Any],
 ) -> List[Dict[str, Any]]:
+    """Build a minimal usage example from common schema parameter names."""
     props = _schema_properties(schema)
     command: Dict[str, Any] = {}
     if "project_id" in props:
@@ -331,6 +333,7 @@ def wrap_command_metadata_class(cmd_cls: Type[Any]) -> Type[Any]:
 
     @classmethod  # type: ignore[misc]
     def metadata(cls: Type[Any]) -> Dict[str, Any]:
+        """Return finalized metadata for the wrapped command class."""
         raw = original.__func__(cls) if hasattr(original, "__func__") else original(cls)  # type: ignore[call-arg]
         return finalize_command_metadata(cls, raw if isinstance(raw, dict) else {})
 

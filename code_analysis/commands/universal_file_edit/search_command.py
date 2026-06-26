@@ -62,6 +62,7 @@ class UniversalFileSearchCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -128,6 +129,7 @@ class UniversalFileSearchCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileSearchCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         return cast(Dict[str, Any], get_universal_file_search_metadata(cls))
 
     async def execute(  # type: ignore[override]
@@ -136,6 +138,7 @@ class UniversalFileSearchCommand(BaseMCPCommand):
         session_id: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         _ = project_id
         search_type: str = kwargs.get("search_type", "xpath")
         query: Optional[str] = kwargs.get("query")

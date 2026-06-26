@@ -26,6 +26,7 @@ class QASleepCommand(Command):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for total duration and heartbeat interval."""
         return {
             "type": "object",
             "properties": {
@@ -48,6 +49,7 @@ class QASleepCommand(Command):
 
     @classmethod
     def metadata(cls: type["QASleepCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for the QA sleep command."""
         from code_analysis.commands.zero_arg_commands_metadata import (
             qa_sleep_command_metadata,
         )
@@ -81,6 +83,7 @@ class QASleepCommand(Command):
     async def execute(
         self, seconds: float = 30.0, tick_seconds: float = 0.5, **kwargs: Any
     ) -> SuccessResult | ErrorResult:
+        """Sleep asynchronously in heartbeat-sized steps and report elapsed time."""
         params: Dict[str, Any] = {
             "seconds": seconds,
             "tick_seconds": tick_seconds,

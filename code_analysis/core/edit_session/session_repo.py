@@ -34,6 +34,8 @@ SESSION_COMMIT_IDENTITY: bytes = b"Code Analysis EditSession <edit@local>"
 
 @dataclass(frozen=True)
 class SessionCommit:
+    """Represent SessionCommit."""
+
     hash: str
     message: str
     timestamp: int
@@ -51,6 +53,7 @@ class SessionRepo:
         source_abs: Path,
         repo: Repo,
     ) -> None:
+        """Initialize the instance."""
         self._repo_dir = repo_dir
         self._source_name = source_name
         self._tree_name = tree_name
@@ -110,6 +113,7 @@ class SessionRepo:
         return sha.decode("ascii")
 
     def log(self) -> List[SessionCommit]:
+        """Return log."""
         commits: List[SessionCommit] = []
         for entry in self._repo.get_walker():
             commit = entry.commit
@@ -123,9 +127,11 @@ class SessionRepo:
         return commits
 
     def show_tree(self, *, rev: str) -> bytes:
+        """Return show tree."""
         return self._blob_bytes_at_commit(rev=rev, name=self._tree_name)
 
     def show_source(self, *, rev: str) -> bytes:
+        """Return show source."""
         return self._blob_bytes_at_commit(rev=rev, name=self._source_name)
 
     def status_is_clean(self) -> bool:
@@ -156,6 +162,7 @@ class SessionRepo:
         return False
 
     def _try_blob_bytes_at_commit(self, *, rev: str, name: str) -> bytes | None:
+        """Return try blob bytes at commit."""
         try:
             return self._blob_bytes_at_commit(rev=rev, name=name)
         except KeyError:
@@ -205,6 +212,7 @@ class SessionRepo:
         source_path.write_text(clean, encoding="utf-8")
 
     def _blob_bytes_at_commit(self, *, rev: str, name: str) -> bytes:
+        """Return blob bytes at commit."""
         commit = cast(Commit, self._repo[rev.encode("ascii")])
         tree = cast(Tree, self._repo[commit.tree])
         try:

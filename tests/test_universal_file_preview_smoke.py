@@ -80,7 +80,6 @@ from code_analysis.core.yaml_tree.tree_builder import (
     remove_tree as remove_yaml_tree,
 )
 
-
 _MD_PREVIEW_PID = "550e8400-e29b-41d4-a716-446655440001"
 _MD_EMPTY_REF_PID = "550e8400-e29b-41d4-a716-446655440002"
 _MD_DRAFT_PID = "550e8400-e29b-41d4-a716-446655440003"
@@ -88,6 +87,7 @@ _MD_CREATE_PID = "550e8400-e29b-41d4-a716-446655440004"
 
 
 def _universal_preview_pkg_dir() -> pathlib.Path:
+    """Return universal preview pkg dir."""
     return (
         pathlib.Path(__file__).resolve().parent.parent
         / "code_analysis"
@@ -97,15 +97,18 @@ def _universal_preview_pkg_dir() -> pathlib.Path:
 
 
 def _repo_root() -> pathlib.Path:
+    """Return repo root."""
     return pathlib.Path(__file__).resolve().parent.parent
 
 
 def _repo_project_id() -> str:
+    """Return repo project id."""
     raw = (_repo_root() / "projectid").read_text(encoding="utf-8")
     return str(json.loads(raw)["id"])
 
 
 def _mock_db_for_root(root: pathlib.Path, project_id: str) -> MagicMock:
+    """Return mock db for root."""
     mock_db = MagicMock()
     mock_db.select.return_value = [
         {
@@ -199,6 +202,7 @@ def test_merge_edit_session_injects_tree_id_for_sidecar(tmp_path) -> None:
 
 
 def test_merge_edit_session_unknown_session_id_returns_error() -> None:
+    """Verify test merge edit session unknown session id returns error."""
     bogus = "00000000-0000-4000-8000-000000000099"
     out = merge_edit_session_into_preview_params(
         {"file_path": "a.py", "session_id": bogus}
@@ -251,6 +255,7 @@ def test_resolve_session_md_ignores_stale_tree_id(tmp_path) -> None:
 
 
 def test_python_marked_tree_preview_valid_syntax(tmp_path) -> None:
+    """Verify test python marked tree preview valid syntax."""
     path = tmp_path / "t.py"
     path.write_text("x = 1\n", encoding="utf-8")
     budget = PreviewBudget(
@@ -277,6 +282,7 @@ def test_python_marked_tree_preview_valid_syntax(tmp_path) -> None:
 
 
 def test_python_marked_tree_class_methods_in_blocks(tmp_path) -> None:
+    """Verify test python marked tree class methods in blocks."""
     src = '''\
 class Outer:
     def one(self) -> None:
@@ -314,6 +320,7 @@ class Outer:
 
 
 def test_text_handler_open_root_lines_kind(tmp_path) -> None:
+    """Verify test text handler open root lines kind."""
     path = tmp_path / "t.md"
     path.write_text("single line\n", encoding="utf-8")
     result = TextFileHandler().open_root(str(path), None)
@@ -322,6 +329,7 @@ def test_text_handler_open_root_lines_kind(tmp_path) -> None:
 
 
 def test_json_handler_open_root_mapping_kind(tmp_path) -> None:
+    """Verify test json handler open root mapping kind."""
     path = tmp_path / "t.json"
     path.write_text('{"a": 1}', encoding="utf-8")
     result = JsonFileHandler().open_root(str(path), None)
@@ -388,12 +396,14 @@ def test_resolve_session_finds_yaml_tree_session(tmp_path) -> None:
 
 
 def test_list_yaml_blocks_command_registered_name() -> None:
+    """Verify test list yaml blocks command registered name."""
     from code_analysis.commands.list_yaml_blocks_command import ListYamlBlocksCommand
 
     assert ListYamlBlocksCommand.name == "list_yaml_blocks"
 
 
 def test_yaml_handler_open_root_mapping_kind(tmp_path) -> None:
+    """Verify test yaml handler open root mapping kind."""
     pytest.importorskip("yaml")
     path = tmp_path / "t.yaml"
     path.write_text("a: 1\n", encoding="utf-8")
@@ -403,6 +413,7 @@ def test_yaml_handler_open_root_mapping_kind(tmp_path) -> None:
 
 
 def test_yaml_handler_open_root_scalar_int(tmp_path) -> None:
+    """Verify test yaml handler open root scalar int."""
     pytest.importorskip("yaml")
     path = tmp_path / "scalar.yaml"
     path.write_text("42\n", encoding="utf-8")
@@ -413,6 +424,7 @@ def test_yaml_handler_open_root_scalar_int(tmp_path) -> None:
 
 
 def test_yaml_handler_open_root_scalar_string(tmp_path) -> None:
+    """Verify test yaml handler open root scalar string."""
     pytest.importorskip("yaml")
     path = tmp_path / "scalar.yaml"
     path.write_text("hi\n", encoding="utf-8")
@@ -423,6 +435,7 @@ def test_yaml_handler_open_root_scalar_string(tmp_path) -> None:
 
 
 def test_yaml_handler_open_root_sequence(tmp_path) -> None:
+    """Verify test yaml handler open root sequence."""
     pytest.importorskip("yaml")
     path = tmp_path / "seq.yaml"
     path.write_text("[1, 2]\n", encoding="utf-8")
@@ -432,6 +445,7 @@ def test_yaml_handler_open_root_sequence(tmp_path) -> None:
 
 
 def test_yaml_handler_invalid_yaml_returns_invalid_source_node(tmp_path) -> None:
+    """Verify test yaml handler invalid yaml returns invalid source node."""
     pytest.importorskip("yaml")
     path = tmp_path / "bad.yaml"
     path.write_text("key: [\n", encoding="utf-8")
@@ -444,6 +458,7 @@ def test_yaml_handler_invalid_yaml_returns_invalid_source_node(tmp_path) -> None
 
 
 def test_yaml_handler_resolve_node_ref_mapping_key(tmp_path) -> None:
+    """Verify test yaml handler resolve node ref mapping key."""
     pytest.importorskip("yaml")
     path = tmp_path / "map.yaml"
     path.write_text("key: 7\n", encoding="utf-8")
@@ -460,6 +475,7 @@ def test_yaml_handler_resolve_node_ref_mapping_key(tmp_path) -> None:
 def test_yaml_handler_drill_down_small_mapping_annotated_full_text(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Verify test yaml handler drill down small mapping annotated full text."""
     pytest.importorskip("yaml")
     big_block = "\n".join(f"  filler_{i}: {i}" for i in range(30))
     path = tmp_path / "nested.yaml"
@@ -486,6 +502,7 @@ def test_yaml_handler_drill_down_small_mapping_annotated_full_text(
 def test_yaml_handler_drill_down_large_mapping_stays_structural(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Verify test yaml handler drill down large mapping stays structural."""
     pytest.importorskip("yaml")
     big_block = "\n".join(f"  filler_{i}: {i}" for i in range(30))
     path = tmp_path / "nested.yaml"
@@ -507,6 +524,7 @@ def test_yaml_handler_drill_down_large_mapping_stays_structural(
 def test_json_handler_drill_down_small_mapping_annotated_full_text(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Verify test json handler drill down small mapping annotated full text."""
     big_lines = ",\n".join(f'    "filler_{i}": {i}' for i in range(30))
     path = tmp_path / "nested.json"
     path.write_text(
@@ -541,6 +559,7 @@ def test_json_handler_drill_down_small_mapping_annotated_full_text(
 def test_json_handler_drill_down_large_mapping_stays_structural(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Verify test json handler drill down large mapping stays structural."""
     big_lines = ",\n".join(f'    "filler_{i}": {i}' for i in range(30))
     path = tmp_path / "nested.json"
     path.write_text(
@@ -568,6 +587,7 @@ def test_json_handler_drill_down_large_mapping_stays_structural(
 
 
 def test_yaml_handler_resolve_unknown_path_unknown_node_ref(tmp_path) -> None:
+    """Verify test yaml handler resolve unknown path unknown node ref."""
     pytest.importorskip("yaml")
     path = tmp_path / "map.yaml"
     path.write_text("a: 1\n", encoding="utf-8")
@@ -596,6 +616,7 @@ def test_yaml_handler_resolve_pointer_escape_in_key(tmp_path) -> None:
 
 
 def test_jsonl_handler_open_root_lines_kind(tmp_path) -> None:
+    """Verify test jsonl handler open root lines kind."""
     path = tmp_path / "t.jsonl"
     path.write_text('{"x":1}\n', encoding="utf-8")
     result = JsonLinesFileHandler().open_root(str(path), None)
@@ -636,6 +657,7 @@ def test_jsonl_handler_resolve_node_ref_json_object_mapping_child(tmp_path) -> N
 
 
 def test_jsonl_handler_resolve_invalid_json_line_file_structure_error(tmp_path) -> None:
+    """Verify test jsonl handler resolve invalid json line file structure error."""
     path = tmp_path / "bad.jsonl"
     path.write_text("not valid json\n", encoding="utf-8")
     h = JsonLinesFileHandler()
@@ -646,6 +668,7 @@ def test_jsonl_handler_resolve_invalid_json_line_file_structure_error(tmp_path) 
 
 
 def test_jsonl_handler_resolve_node_ref_out_of_range_unknown_ref(tmp_path) -> None:
+    """Verify test jsonl handler resolve node ref out of range unknown ref."""
     path = tmp_path / "one.jsonl"
     path.write_text("{}\n", encoding="utf-8")
     h = JsonLinesFileHandler()
@@ -658,6 +681,7 @@ def test_jsonl_handler_resolve_node_ref_out_of_range_unknown_ref(tmp_path) -> No
 
 
 def test_jsonl_handler_resolve_non_integer_node_ref_unknown(tmp_path) -> None:
+    """Verify test jsonl handler resolve non integer node ref unknown."""
     path = tmp_path / "t.jsonl"
     path.write_text("{}\n", encoding="utf-8")
     h = JsonLinesFileHandler()
@@ -773,9 +797,7 @@ async def test_universal_file_preview_md_full_text_empty_draft_reads_original(
 ) -> None:
     """Text edit session previews draft path; empty draft falls back to source file."""
     root = tmp_path
-    (root / "projectid").write_text(
-        json.dumps({"id": _MD_DRAFT_PID}), encoding="utf-8"
-    )
+    (root / "projectid").write_text(json.dumps({"id": _MD_DRAFT_PID}), encoding="utf-8")
     md = root / "test.md"
     md.write_text("# Hello\n\nWorld\n", encoding="utf-8")
 

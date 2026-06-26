@@ -25,6 +25,7 @@ from code_analysis.core.refactorer_pkg.extractor import SuperclassExtractor
 
 
 def _fetchone(client: DatabaseClient, sql: str, params: Optional[tuple] = None) -> Any:
+    """Return fetchone."""
     r = client.execute(sql, params or ())
     rows = r.get("data") or []
     return rows[0] if rows else None

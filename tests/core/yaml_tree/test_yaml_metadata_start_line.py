@@ -9,6 +9,7 @@ from code_analysis.core.yaml_tree.tree_builder import build_yaml_tree_from_text
 
 
 def _meta_by_pointer(tree, pointer: str):
+    """Return meta by pointer."""
     for meta in tree.metadata_map.values():
         if meta.yaml_pointer == pointer:
             return meta
@@ -16,6 +17,7 @@ def _meta_by_pointer(tree, pointer: str):
 
 
 def test_build_yaml_tree_populates_start_line_for_mapping_keys() -> None:
+    """Verify test build yaml tree populates start line for mapping keys."""
     pytest.importorskip("yaml")
     source = """root:
   alpha: 1
@@ -32,6 +34,7 @@ other: 9
 
 
 def test_build_yaml_tree_populates_start_line_for_sequence_elements() -> None:
+    """Verify test build yaml tree populates start line for sequence elements."""
     pytest.importorskip("yaml")
     lines = ["concepts:"]
     for i in range(12):
@@ -55,6 +58,7 @@ def test_build_yaml_tree_populates_start_line_for_sequence_elements() -> None:
 
 
 def test_alias_node_uses_alias_occurrence_line() -> None:
+    """Verify test alias node uses alias occurrence line."""
     pytest.importorskip("yaml")
     source = """defaults: &def
   name: x

@@ -41,6 +41,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {

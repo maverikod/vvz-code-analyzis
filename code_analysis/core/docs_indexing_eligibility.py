@@ -44,6 +44,7 @@ class DocsMarkdownEligibilityVerdict:
 
 
 def _normalize_listing_pattern(raw: str) -> str:
+    """Return normalize listing pattern."""
     s = str(raw).strip().replace("\\", "/")
     if s.startswith("./"):
         s = s[2:]
@@ -51,6 +52,7 @@ def _normalize_listing_pattern(raw: str) -> str:
 
 
 def _pattern_has_fnmatch_magic(pattern: str) -> bool:
+    """Return pattern has fnmatch magic."""
     return any(ch in pattern for ch in "*?[]")
 
 
@@ -99,6 +101,7 @@ def normalize_project_relative_posix(
 
 
 def _literal_prefix_before_magic(pattern: str) -> str:
+    """Return literal prefix before magic."""
     pat = _normalize_listing_pattern(pattern)
     for i, c in enumerate(pat):
         if c in "*?[":
@@ -120,6 +123,7 @@ def _pattern_confined_to_doc_roots(pattern: str, roots: Sequence[str]) -> bool:
 
 
 def _under_any_root(rel: str, roots: Sequence[str]) -> bool:
+    """Return under any root."""
     for r in roots:
         if rel == r or rel.startswith(r + "/"):
             return True
@@ -144,6 +148,7 @@ def _scope_ok(rel: str, roots: Sequence[str], include: Sequence[str]) -> bool:
 def _coerce_docs_indexing(
     docs_indexing: Union[Mapping[str, Any], Any, None],
 ) -> Optional[Mapping[str, Any]]:
+    """Return coerce docs indexing."""
     if docs_indexing is None:
         return None
     if hasattr(docs_indexing, "model_dump"):

@@ -15,11 +15,13 @@ from code_analysis.core.exceptions import ValidationError
 
 @pytest.fixture
 def cmd() -> FindDuplicatesMCPCommand:
+    """Return cmd."""
     return FindDuplicatesMCPCommand()
 
 
 @pytest.fixture
 def base_params() -> dict[str, object]:
+    """Return base params."""
     return {"project_id": str(uuid.uuid4())}
 
 
@@ -27,6 +29,7 @@ def test_validate_params_accepts_thresholds_in_range(
     cmd: FindDuplicatesMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts thresholds in range."""
     with patch.object(BaseMCPCommand, "_validate_project_id_exists", return_value=None):
         out = cmd.validate_params(
             {**base_params, "min_similarity": 0.8, "semantic_threshold": 0.85}
@@ -41,6 +44,7 @@ def test_validate_params_rejects_min_similarity_out_of_range(
     base_params: dict[str, object],
     min_similarity: float,
 ) -> None:
+    """Verify test validate params rejects min similarity out of range."""
     with patch.object(BaseMCPCommand, "_validate_project_id_exists", return_value=None):
         with pytest.raises(ValidationError, match="min_similarity") as exc_info:
             cmd.validate_params({**base_params, "min_similarity": min_similarity})
@@ -53,6 +57,7 @@ def test_validate_params_rejects_semantic_threshold_out_of_range(
     base_params: dict[str, object],
     semantic_threshold: float,
 ) -> None:
+    """Verify test validate params rejects semantic threshold out of range."""
     with patch.object(BaseMCPCommand, "_validate_project_id_exists", return_value=None):
         with pytest.raises(ValidationError, match="semantic_threshold") as exc_info:
             cmd.validate_params(
@@ -66,6 +71,7 @@ async def test_execute_rejects_min_similarity_out_of_range_at_entry(
     cmd: FindDuplicatesMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test execute rejects min similarity out of range at entry."""
     with patch.object(BaseMCPCommand, "_validate_project_id_exists", return_value=None):
         result = await cmd.execute(**{**base_params, "min_similarity": 1.5})
     assert isinstance(result, ErrorResult)

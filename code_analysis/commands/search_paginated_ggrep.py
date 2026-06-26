@@ -109,9 +109,11 @@ def _make_block_assembler(
     layout: SearchSessionDirectoryLayout,
     raw_config: dict[str, Any],
 ) -> BlockAssembler:
+    """Return make block assembler."""
     policy = load_session_ttl_policy(raw_config)
 
     def _append_index(position: int, completeness: str) -> None:
+        """Return append index."""
         block_path = layout.blocks_dir / f"block_{position}.json"
         size = block_path.stat().st_size if block_path.is_file() else 0
         append_block_entry(
@@ -122,7 +124,10 @@ def _make_block_assembler(
         )
 
     def _update_metrics(metrics: dict[str, int]) -> None:
+        """Return update metrics."""
+
         def mutator(m: SearchSessionManifest) -> SearchSessionManifest:
+            """Return mutator."""
             nxt = dict(m.metrics)
             nxt["produced_results"] = nxt.get("produced_results", 0) + int(
                 metrics.get("produced_results", 0)

@@ -26,6 +26,7 @@ from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 @pytest.fixture
 def coord_db(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return coord db."""
     db_path = tmp_path / "wsd.db"
     backup_dir = tmp_path / "backups"
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
@@ -46,6 +47,7 @@ def coord_db(tmp_path: Path) -> Iterator[DatabaseClient]:
 
 
 def _create_projectid(root: Path, pid: str) -> None:
+    """Return create projectid."""
     (root / "projectid").write_text(
         json.dumps({"id": pid, "description": "wsd test"}),
         encoding="utf-8",
@@ -55,6 +57,7 @@ def _create_projectid(root: Path, pid: str) -> None:
 def test_partition_excludes_soft_deleted_project_by_id(
     coord_db: DatabaseClient, tmp_path: Path
 ) -> None:
+    """Verify test partition excludes soft deleted project by id."""
     watch = tmp_path / "watch"
     watch.mkdir()
     proj_a = watch / "proj_a"

@@ -69,6 +69,7 @@ def _preview_source_is_parseable(params: dict[str, Any]) -> bool:
 
 
 def _preview_handler_id(source_abs: Path) -> str | None:
+    """Return preview handler id."""
     ext = source_abs.suffix.lower()
     if ext == ".json":
         return "json"
@@ -215,6 +216,7 @@ def should_use_marked_tree_navigation(
 
 
 def _kind_to_node_kind(kind: str) -> NodeKind:
+    """Return kind to node kind."""
     normalized = (kind or "").lower()
     if normalized in _SCALAR_KINDS:
         return NodeKind.SCALAR
@@ -254,6 +256,7 @@ def _scalar_display_value(node: Any) -> str | None:
 
 
 def _tree_node_to_preview_node(node: Any) -> Node:
+    """Return tree node to preview node."""
     attrs = dict(getattr(node, "attributes", None) or {})
     kind = str(getattr(node, "kind", "") or "")
     short_id = int(getattr(node, "short_id"))
@@ -273,6 +276,7 @@ def _tree_node_to_preview_node(node: Any) -> Node:
 
 
 def _preview_block_record_to_block(record: Any) -> Block:
+    """Return preview block record to block."""
     sid = int(record.short_id)
     kind = str(record.type_label or "")
     summary: dict[str, Any] = {
@@ -300,6 +304,7 @@ def _document_level_blocks(tree: Any) -> list[Any]:
 
 
 def _document_line_to_short_id(tree: Any) -> dict[int, NodeId]:
+    """Return document line to short id."""
     mapping: dict[int, NodeId] = {}
     for node in _iter_all_nodes(tree):
         attrs = getattr(node, "attributes", None) or {}
@@ -345,6 +350,7 @@ def _full_tree_block_set(tree: Any) -> list[Any]:
 
 
 def _selector_omitted(raw_selector: object) -> bool:
+    """Return selector omitted."""
     return raw_selector is None or raw_selector == "" or raw_selector == []
 
 
@@ -427,6 +433,7 @@ def navigate_degraded_as_text(
     tree = NodeListTree(nodes)
 
     def _static_loader(_source_path: Path, _session_id: str | None) -> NodeListTree:
+        """Return static loader."""
         return tree
 
     result = _navigate_loaded_tree(

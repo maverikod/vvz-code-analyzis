@@ -24,6 +24,7 @@ from code_analysis.tree.handlers.text_handler import TextHandler
 
 
 def test_text_uses_paragraph_line_tree_modes() -> None:
+    """Verify test text uses paragraph line tree modes."""
     assert (
         text_uses_paragraph_line_tree(Path("a.txt"), session_is_invalid=False) is True
     )
@@ -37,6 +38,7 @@ def test_text_uses_paragraph_line_tree_modes() -> None:
 
 
 def test_paragraph_line_block_range_spans_continuation_lines(tmp_path: Path) -> None:
+    """Verify test paragraph line block range spans continuation lines."""
     draft = tmp_path / "note.txt"
     draft.write_text("Alpha one\nAlpha two\n\nBeta\n", encoding="utf-8")
     bounds = resolve_text_block_line_range(
@@ -48,6 +50,7 @@ def test_paragraph_line_block_range_spans_continuation_lines(tmp_path: Path) -> 
 
 
 def test_flat_line_index_for_jsonl(tmp_path: Path) -> None:
+    """Verify test flat line index for jsonl."""
     draft = tmp_path / "events.jsonl"
     draft.write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
     bounds = resolve_text_block_line_range(
@@ -59,6 +62,7 @@ def test_flat_line_index_for_jsonl(tmp_path: Path) -> None:
 
 
 def test_text_handler_move_via_delete_insert_preserves_content() -> None:
+    """Verify test text handler move via delete insert preserves content."""
     handler = TextHandler()
     source = "First line\nSecond line\n\nThird block\n"
     marked = handler.mark(source)
@@ -70,6 +74,7 @@ def test_text_handler_move_via_delete_insert_preserves_content() -> None:
 
 
 def test_expand_text_move_to_delete_insert(tmp_path: Path) -> None:
+    """Verify test expand text move to delete insert."""
     draft = tmp_path / "note.txt"
     draft.write_text("Alpha one\nAlpha two\n\nThird block\n", encoding="utf-8")
     session = MagicMock()

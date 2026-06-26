@@ -29,6 +29,8 @@ from code_analysis.core.tree_temp.tree_node import TreeNode
 
 
 class SidecarWriteIntent(str, Enum):
+    """Represent SidecarWriteIntent."""
+
     NONE = "none"
     CREATE = "create"
     REPLACE = "replace"
@@ -36,6 +38,8 @@ class SidecarWriteIntent(str, Enum):
 
 @dataclass(frozen=True)
 class TreeTempOpenAcquisition:
+    """Represent TreeTempOpenAcquisition."""
+
     roots: List[TreeNode]
     source_sha256: str
     sidecar_path: Path
@@ -61,6 +65,7 @@ def parse_source_bytes_to_roots(handler_id: str, raw: bytes) -> List[TreeNode]:
 def _read_trees_sidecar_optional(
     sidecar_path: Path,
 ) -> Optional[Tuple[str, List[TreeNode]]]:
+    """Return read trees sidecar optional."""
     if not sidecar_path.exists():
         return None
     try:

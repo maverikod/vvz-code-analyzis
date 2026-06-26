@@ -17,7 +17,11 @@ for p in (_CLIENT, _EXAMPLES):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from _common import chdir_repo_root, default_config_path, ensure_client_package_on_path  # noqa: E402
+from _common import (
+    chdir_repo_root,
+    default_config_path,
+    ensure_client_package_on_path,
+)  # noqa: E402
 
 ensure_client_package_on_path()
 chdir_repo_root()
@@ -31,6 +35,7 @@ PREFIX = f"undo_smoke_live_{uuid.uuid4().hex[:8]}"
 
 
 def _inner(resp: dict[str, Any]) -> dict[str, Any]:
+    """Return inner."""
     if resp.get("success") is not True:
         raise RuntimeError(resp)
     data = resp.get("data")
@@ -38,6 +43,7 @@ def _inner(resp: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _close(client: CodeAnalysisAsyncClient, session_id: str) -> None:
+    """Return close."""
     await client.call(
         "universal_file_close",
         {"project_id": PROJECT_ID, "session_id": session_id},
@@ -56,12 +62,15 @@ async def _flow(
     read_value: Callable[[str], Any],
     expected: list[Any],
     branch_expected: Any,
-    resolve_edits: Callable[
-        [str],
-        Awaitable[tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]],
-    ]
-    | None = None,
+    resolve_edits: (
+        Callable[
+            [str],
+            Awaitable[tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]],
+        ]
+        | None
+    ) = None,
 ) -> None:
+    """Return flow."""
     open_params: dict[str, Any] = {
         "project_id": PROJECT_ID,
         "file_path": file_path,
@@ -98,9 +107,9 @@ async def _flow(
             )
         )
         draft_text = str(preview.get("focus", {}).get("text") or "")
-        assert read_value(draft_text) == expected[-1], (
-            f"{label}: after edits expected {expected[-1]!r}, got {draft_text!r}"
-        )
+        assert (
+            read_value(draft_text) == expected[-1]
+        ), f"{label}: after edits expected {expected[-1]!r}, got {draft_text!r}"
 
         _inner(
             await client.call(
@@ -195,6 +204,7 @@ async def _flow(
 async def _scalar_ref(
     client: CodeAnalysisAsyncClient, session_id: str, file_path: str, pointer: str
 ) -> int:
+    """Return scalar ref."""
     preview = _inner(
         await client.call(
             "universal_file_preview",
@@ -219,6 +229,7 @@ async def _scalar_ref(
 
 
 async def main() -> int:
+    """Run the command-line entry point."""
     config = default_config_path()
     async with CodeAnalysisAsyncClient.from_server_config_path(config) as client:
         json_path = f"{PREFIX}/counter.json"
@@ -367,6 +378,7 @@ async def main() -> int:
             fn_stable = str(preview0["focus"]["attributes"]["internal_node_id"])
 
             async def py_replace(n: int) -> None:
+                """Return py replace."""
                 _inner(
                     await client.call(
                         "universal_file_edit",
@@ -399,7 +411,10 @@ async def main() -> int:
                     },
                 )
             )
-            assert int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1)) == 3
+            assert (
+                int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1))
+                == 3
+            )
 
             _inner(
                 await client.call(
@@ -417,7 +432,10 @@ async def main() -> int:
                     },
                 )
             )
-            assert int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1)) == 2
+            assert (
+                int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1))
+                == 2
+            )
 
             _inner(
                 await client.call(
@@ -435,7 +453,10 @@ async def main() -> int:
                     },
                 )
             )
-            assert int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1)) == 1
+            assert (
+                int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1))
+                == 1
+            )
 
             _inner(
                 await client.call(
@@ -453,7 +474,10 @@ async def main() -> int:
                     },
                 )
             )
-            assert int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1)) == 2
+            assert (
+                int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1))
+                == 2
+            )
 
             await py_replace(99)
             preview = _inner(
@@ -466,7 +490,10 @@ async def main() -> int:
                     },
                 )
             )
-            assert int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1)) == 99
+            assert (
+                int(re.search(r"return\s+(\d+)", preview["focus"]["text"]).group(1))
+                == 99
+            )
 
             redo_resp = await client.call(
                 "session_redo",
@@ -474,7 +501,9 @@ async def main() -> int:
             )
             assert redo_resp.get("success") is False
             err = redo_resp.get("error") or {}
-            assert (err.get("code") if isinstance(err, dict) else None) == "NOTHING_TO_REDO"
+            assert (
+                err.get("code") if isinstance(err, dict) else None
+            ) == "NOTHING_TO_REDO"
 
             print("OK  python")
         finally:

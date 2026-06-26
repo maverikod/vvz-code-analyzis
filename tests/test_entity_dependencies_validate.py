@@ -19,6 +19,7 @@ from code_analysis.core.exceptions import ValidationError
 def cmd_class(
     request: pytest.FixtureRequest,
 ) -> Type[GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand]:
+    """Return cmd class."""
     return cast(
         Type[GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand],
         request.param,
@@ -29,6 +30,7 @@ def cmd_class(
 def cmd(
     cmd_class: Type[GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand],
 ) -> GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand:
+    """Return cmd."""
     return cmd_class()
 
 
@@ -36,6 +38,7 @@ def cmd(
 def base_params(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
 ) -> dict[str, object]:
+    """Return base params."""
     entity_type = "function" if cmd.name == "get_entity_dependencies" else "class"
     return {"project_id": str(uuid.uuid4()), "entity_type": entity_type}
 
@@ -44,6 +47,7 @@ def test_validate_params_accepts_string_entity_id(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts string entity id."""
     entity_id = str(uuid.uuid4())
     out = cmd.validate_params({**base_params, "entity_id": entity_id})
     assert out["entity_id"] == entity_id
@@ -53,6 +57,7 @@ def test_validate_params_accepts_integer_entity_id(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts integer entity id."""
     out = cmd.validate_params({**base_params, "entity_id": 42})
     assert out["entity_id"] == 42
 
@@ -61,6 +66,7 @@ def test_validate_params_accepts_entity_name_without_entity_id(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts entity name without entity id."""
     out = cmd.validate_params({**base_params, "entity_name": "my_func"})
     assert out["entity_name"] == "my_func"
 
@@ -81,6 +87,7 @@ def test_validate_params_rejects_invalid_entity_id_types(
     base_params: dict[str, object],
     entity_id: Any,
 ) -> None:
+    """Verify test validate params rejects invalid entity id types."""
     with pytest.raises(ValidationError, match="entity_id") as exc_info:
         cmd.validate_params({**base_params, "entity_id": entity_id})
     assert exc_info.value.field == "entity_id"
@@ -92,6 +99,7 @@ def test_validate_params_rejects_blank_entity_id_without_entity_name(
     base_params: dict[str, object],
     entity_id: str,
 ) -> None:
+    """Verify test validate params rejects blank entity id without entity name."""
     with pytest.raises(ValidationError, match="entity_id") as exc_info:
         cmd.validate_params({**base_params, "entity_id": entity_id})
     assert exc_info.value.field == "entity_id"
@@ -101,6 +109,7 @@ def test_validate_params_requires_entity_id_or_entity_name(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params requires entity id or entity name."""
     with pytest.raises(ValidationError, match="entity_id or entity_name") as exc_info:
         cmd.validate_params(base_params)
     assert exc_info.value.field == "entity_id"
@@ -110,6 +119,7 @@ def test_validate_params_rejects_unknown_param(
     cmd: GetEntityDependenciesMCPCommand | GetEntityDependentsMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params rejects unknown param."""
     with pytest.raises(ValidationError):
         cmd.validate_params(
             {**base_params, "entity_id": str(uuid.uuid4()), "__unknown_param__": True}
@@ -128,6 +138,7 @@ def test_normalize_entity_id_param_accepts_valid_values(
     normalizer_input: Any,
     expected: Any,
 ) -> None:
+    """Verify test normalize entity id param accepts valid values."""
     assert _normalize_entity_id_param(normalizer_input, command_name="test") == expected
 
 
@@ -138,5 +149,6 @@ def test_normalize_entity_id_param_accepts_valid_values(
 def test_normalize_entity_id_param_rejects_invalid_types(
     normalizer_input: Any,
 ) -> None:
+    """Verify test normalize entity id param rejects invalid types."""
     with pytest.raises(ValidationError, match="entity_id"):
         _normalize_entity_id_param(normalizer_input, command_name="test")

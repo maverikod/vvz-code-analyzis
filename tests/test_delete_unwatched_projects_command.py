@@ -20,6 +20,7 @@ from code_analysis.commands.delete_unwatched_projects_command import (
 
 
 def _write_projectid(project_dir: Path, pid: str) -> None:
+    """Return write projectid."""
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "projectid").write_text(
         json.dumps({"id": pid, "description": "t"}), encoding="utf-8"
@@ -68,9 +69,7 @@ async def test_invalid_sibling_projectid_skipped_discovery_ok(tmp_path: Path) ->
     bad = watch / "bad"
     _write_projectid(good, pid)
     bad.mkdir()
-    (bad / "projectid").write_text(
-        json.dumps({"id": "not-a-uuid"}), encoding="utf-8"
-    )
+    (bad / "projectid").write_text(json.dumps({"id": "not-a-uuid"}), encoding="utf-8")
 
     db = MagicMock()
     db.execute.return_value = [
@@ -136,6 +135,7 @@ async def test_deletion_success_true_despite_discovery_warnings(
 
 @pytest.mark.asyncio
 async def test_success_false_when_clear_raises(tmp_path: Path) -> None:
+    """Verify test success false when clear raises."""
     watch = tmp_path / "watch"
     watch.mkdir()
 
@@ -187,4 +187,6 @@ async def test_disk_outside_watch_dirs_reason(tmp_path: Path) -> None:
         server_root_dir=None,
     )
     result = await cmd.execute()
-    assert result["projects_kept"][0]["reason"] == "exists_on_disk_but_not_in_watch_dirs"
+    assert (
+        result["projects_kept"][0]["reason"] == "exists_on_disk_but_not_in_watch_dirs"
+    )

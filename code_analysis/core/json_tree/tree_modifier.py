@@ -31,10 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 def _deep_json_value(value: Any) -> Any:
+    """Return deep json value."""
     return json.loads(json.dumps(value))
 
 
 def _pointer_for_node(tree: JSONTree, node_id: str) -> str:
+    """Return pointer for node."""
     p = tree.pointer_by_id.get(node_id)
     if p is None:
         raise KeyError(f"Unknown node_id: {node_id}")
@@ -72,6 +74,7 @@ def modify_tree(tree_id: str, operations: List[Dict[str, Any]]) -> JSONTree:
 
 
 def _resolve_pointer(tree: JSONTree, op: Dict[str, Any]) -> str:
+    """Return resolve pointer."""
     if "json_pointer" in op:
         return str(op["json_pointer"])
     if op.get("node_id"):
@@ -80,6 +83,7 @@ def _resolve_pointer(tree: JSONTree, op: Dict[str, Any]) -> str:
 
 
 def _resolve_parent_pointer(tree: JSONTree, op: Dict[str, Any]) -> str:
+    """Return resolve parent pointer."""
     if "parent_json_pointer" in op:
         return str(op["parent_json_pointer"])
     if op.get("parent_node_id"):
@@ -88,6 +92,7 @@ def _resolve_parent_pointer(tree: JSONTree, op: Dict[str, Any]) -> str:
 
 
 def _op_replace(tree: JSONTree, op: Dict[str, Any]) -> None:
+    """Return op replace."""
     pointer = _resolve_pointer(tree, op)
     if "value" not in op:
         raise ValueError("replace requires value")
@@ -99,6 +104,7 @@ def _op_replace(tree: JSONTree, op: Dict[str, Any]) -> None:
 
 
 def _op_delete(tree: JSONTree, op: Dict[str, Any]) -> None:
+    """Return op delete."""
     pointer = _resolve_pointer(tree, op)
     if pointer == ROOT_POINTER:
         raise ValueError("Cannot delete root document")
@@ -111,6 +117,7 @@ def _array_insert_index_from_sibling(
     before_node_id: Optional[str],
     after_node_id: Optional[str],
 ) -> int:
+    """Return array insert index from sibling."""
     sibling_id = before_node_id if before_node_id is not None else after_node_id
     if sibling_id is None:
         raise ValueError("before_node_id or after_node_id required")
@@ -153,6 +160,7 @@ def _coalesce_insert_pointer_sibling_ids(tree: JSONTree, op: Dict[str, Any]) -> 
 
 
 def _validate_insert_sibling_options(op: Dict[str, Any], parent_kind: str) -> None:
+    """Return validate insert sibling options."""
     before_nid = op.get("before_node_id")
     after_nid = op.get("after_node_id")
     idx = op.get("index")
@@ -178,6 +186,7 @@ def _validate_insert_sibling_options(op: Dict[str, Any], parent_kind: str) -> No
 
 
 def _op_insert(tree: JSONTree, op: Dict[str, Any]) -> None:
+    """Return op insert."""
     if "value" not in op:
         raise ValueError("insert requires value")
     coalesce_tree_temp_insert_position(op)

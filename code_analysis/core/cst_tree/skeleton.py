@@ -5,31 +5,23 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
-
 
 
 import ast
 
 
-
 from typing import Any, Dict, List, Optional
 
 
-
 from .models import CSTTree, TreeNodeMetadata
-
-
 
 BODY_PLACEHOLDER_COMMENT = (
     "# Implementation hidden; request node by node_id for full code"
 )
 
 
-
 VISIBLE_KINDS = {"module", "import", "class", "function", "method"}
-
 
 
 def build_declarative_overview(tree: CSTTree) -> tuple[str, List[Dict[str, Any]]]:
@@ -52,7 +44,6 @@ def build_declarative_overview(tree: CSTTree) -> tuple[str, List[Dict[str, Any]]
         outline_nodes=outline_nodes,
     )
     return ("\n".join(lines) + ("\n" if lines else ""), outline_nodes)
-
 
 
 def skeleton_from_tree(tree: CSTTree) -> str:
@@ -89,6 +80,7 @@ def build_node_declarative_overview(
         outline_nodes=outline_nodes,
     )
     return ("\n".join(lines) + ("\n" if lines else ""), outline_nodes)
+
 
 def _append_node_overview(
     tree: CSTTree,
@@ -185,7 +177,6 @@ def _append_node_overview(
         lines.append(f"{'    ' * (depth + 1)}{BODY_PLACEHOLDER_COMMENT}")
 
 
-
 def _append_visible_descendants(
     tree: CSTTree,
     node_id: str,
@@ -223,6 +214,7 @@ def _append_visible_descendants(
             outline_nodes=outline_nodes,
         )
 
+
 def _build_signature(metadata: TreeNodeMetadata, code: str) -> str:
     """Build a short signature line for a node including its stable_id prefix.
 
@@ -257,16 +249,15 @@ def _build_signature(metadata: TreeNodeMetadata, code: str) -> str:
     return f"{prefix}{header}"
 
 
-
 def _format_docstring(docstring: str) -> List[str]:
+    """Return format docstring."""
     return ['"""', *docstring.splitlines(), '"""']
 
 
-
 def _indent_block(lines: List[str], depth: int) -> List[str]:
+    """Return indent block."""
     prefix = "    " * depth
     return [f"{prefix}{line}" for line in lines]
-
 
 
 def _outline_entry(
@@ -274,14 +265,15 @@ def _outline_entry(
     depth: int,
     signature: str,
 ) -> Dict[str, Any]:
+    """Return outline entry."""
     data = metadata.to_dict()
     data["depth"] = depth
     data["signature"] = signature
     return data
 
 
-
 def _extract_docstring(code: str) -> Optional[str]:
+    """Return extract docstring."""
     try:
         parsed = ast.parse(code)
     except SyntaxError:

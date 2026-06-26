@@ -111,6 +111,7 @@ def fetch_all_watch_dir_absolute_paths(database: Any) -> List[tuple[str, str]]:
     params: tuple[Any, ...] = (sid,)
 
     def _rows_from_result(result: Any) -> List[Dict[str, Any]]:
+        """Return rows from result."""
         if isinstance(result, list):
             return [r for r in result if isinstance(r, dict)]
         if isinstance(result, dict):
@@ -373,6 +374,7 @@ def find_project_id_by_resolved_absolute_root(
     want = normalize_path_simple(absolute_root)
 
     def _fetchone(sql: str, params: tuple[Any, ...]) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         gf = getattr(database, "_fetchone", None)
         if callable(gf):
             r = gf(sql, params)
@@ -398,6 +400,7 @@ def find_project_id_by_resolved_absolute_root(
         return None
 
     def _fetchall(sql: str, params: tuple[Any, ...]) -> List[Dict[str, Any]]:
+        """Return fetchall."""
         gf = getattr(database, "_fetchall", None)
         if callable(gf):
             rows = gf(sql, params)

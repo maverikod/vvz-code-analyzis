@@ -90,11 +90,13 @@ class PostgreSQLOperations:
     """Thread-safe CRUD for PostgreSQL driver."""
 
     def __init__(self, connection: Any, schema_tables: Dict[str, Any]) -> None:
+        """Initialize the instance."""
         self.conn = connection
         self._schema_tables = schema_tables
         self._lock = threading.Lock()
 
     def _returning_column(self, table_name: str) -> str:
+        """Return returning column."""
         t = self._schema_tables.get(table_name, {})
         for c in t.get("columns", []):
             if c.get("primary_key"):
@@ -102,6 +104,7 @@ class PostgreSQLOperations:
         return "id"
 
     def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
+        """Return insert."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 
@@ -133,6 +136,7 @@ class PostgreSQLOperations:
     def update(
         self, table_name: str, where: Dict[str, Any], data: Dict[str, Any]
     ) -> int:
+        """Return update."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 
@@ -163,6 +167,7 @@ class PostgreSQLOperations:
                 raise DriverOperationError(f"Failed to update rows: {e}") from e
 
     def delete(self, table_name: str, where: Dict[str, Any]) -> int:
+        """Return delete."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 
@@ -191,6 +196,7 @@ class PostgreSQLOperations:
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        """Return select."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 

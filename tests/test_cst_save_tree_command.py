@@ -59,29 +59,37 @@ class TestCstSaveTreeTransientConnectRefusalRecovery:
         call_count = 0
 
         def open_db(*args, **kwargs):
+            """Return open db."""
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
                 raise DBConnectionError("connection refused")
             return mock_db
 
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            side_effect=open_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
-        ) as mock_save:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                side_effect=open_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
+            ) as mock_save,
+        ):
             mock_save.return_value = _success_result(str(out_py))
-            with patch(
-                "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
-            ), patch(
-                "code_analysis.commands.cst_save_tree_command.commit_after_write",
-                return_value=(True, None),
+            with (
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
+                ),
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.commit_after_write",
+                    return_value=(True, None),
+                ),
             ):
                 cmd = CSTSaveTreeCommand()
                 result = await cmd.execute(
@@ -109,23 +117,30 @@ class TestCstSaveTreeTransientConnectRefusedInSaveResult:
             "error": "Failed to sync file to DB: [Errno 111] Connection refused",
             "file_path": str(out_py),
         }
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
-        ) as mock_save:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
+            ) as mock_save,
+        ):
             mock_save.side_effect = [refused, refused, _success_result(str(out_py))]
-            with patch(
-                "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
-            ), patch(
-                "code_analysis.commands.cst_save_tree_command.commit_after_write",
-                return_value=(True, None),
+            with (
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
+                ),
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.commit_after_write",
+                    return_value=(True, None),
+                ),
             ):
                 cmd = CSTSaveTreeCommand()
                 result = await cmd.execute(
@@ -151,6 +166,7 @@ class TestCstSaveTreeTransientDbLockRecovery:
         save_call_count = 0
 
         async def save_mock(*args, **kwargs):
+            """Return save mock."""
             nonlocal save_call_count
             save_call_count += 1
             if save_call_count <= 2:
@@ -161,19 +177,24 @@ class TestCstSaveTreeTransientDbLockRecovery:
                 }
             return _success_result(str(out_py))
 
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
-        ) as mock_save:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
+            ) as mock_save,
+        ):
 
             def sync_save(*args, **kwargs):
+                """Return sync save."""
                 import asyncio
 
                 return asyncio.get_event_loop().run_until_complete(
@@ -194,11 +215,14 @@ class TestCstSaveTreeTransientDbLockRecovery:
                 },
                 _success_result(str(out_py)),
             ]
-            with patch(
-                "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
-            ), patch(
-                "code_analysis.commands.cst_save_tree_command.commit_after_write",
-                return_value=(True, None),
+            with (
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
+                ),
+                patch(
+                    "code_analysis.commands.cst_save_tree_command.commit_after_write",
+                    return_value=(True, None),
+                ),
             ):
                 cmd = CSTSaveTreeCommand()
                 result = await cmd.execute(
@@ -245,17 +269,21 @@ class TestCstSaveTreeRetryBudgetExhaustion:
             "error": "database is locked",
             "file_path": str(out_py),
         }
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
-            return_value=lock_result,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
+                return_value=lock_result,
+            ),
         ):
             cmd = CSTSaveTreeCommand()
             result = await cmd.execute(
@@ -280,17 +308,21 @@ class TestCstSaveTreeRetryBudgetExhaustion:
             "error": "Failed to sync file to DB: connection refused",
             "file_path": str(out_py),
         }
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
-            return_value=refused,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
+                return_value=refused,
+            ),
         ):
             cmd = CSTSaveTreeCommand()
             result = await cmd.execute(
@@ -335,21 +367,25 @@ class TestCstSaveTreeNonTransientFastFail:
         """Save result with non-lock error returns immediately (no retry)."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=out_py,
-        ), patch(
-            "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
-            return_value={
-                "success": False,
-                "error": "FOREIGN KEY constraint failed",
-                "file_path": str(out_py),
-            },
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
+                return_value={
+                    "success": False,
+                    "error": "FOREIGN KEY constraint failed",
+                    "file_path": str(out_py),
+                },
+            ),
         ):
             cmd = CSTSaveTreeCommand()
             result = await cmd.execute(

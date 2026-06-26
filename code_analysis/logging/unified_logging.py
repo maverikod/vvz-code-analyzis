@@ -47,6 +47,7 @@ def install_unified_record_factory() -> None:
     old_factory = logging.getLogRecordFactory()
 
     def _factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        """Return factory."""
         return old_factory(*args, **kwargs)
 
     logging.setLogRecordFactory(_factory)
@@ -60,6 +61,7 @@ class UnifiedFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        """Return format."""
         _set_importance_if_missing(record)
         return super().format(record)
 

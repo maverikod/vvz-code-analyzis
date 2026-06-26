@@ -13,6 +13,7 @@ from code_analysis.core.search_session.tree_representation import TreeRepresenta
 
 
 def _tree_ref() -> TreeRepresentationRef:
+    """Return tree ref."""
     return TreeRepresentationRef(
         file_path="src/example.py",
         sidecar_path=Path("/tmp/example.tree"),
@@ -22,6 +23,7 @@ def _tree_ref() -> TreeRepresentationRef:
 
 
 def _preview_ref() -> PreviewReference:
+    """Return preview ref."""
     return PreviewReference(
         file_path="src/example.py",
         node_id="node-1",
@@ -31,6 +33,7 @@ def _preview_ref() -> PreviewReference:
 
 
 def test_timed_out_rejected() -> None:
+    """Verify test timed out rejected."""
     verdict = qualify_structural_evidence(
         phase_outcome=PhaseOutcome.timed_out,
         tree_ref=_tree_ref(),
@@ -44,6 +47,7 @@ def test_timed_out_rejected() -> None:
 
 
 def test_classic_line_without_preview_rejected() -> None:
+    """Verify test classic line without preview rejected."""
     verdict = qualify_structural_evidence(
         phase_outcome=PhaseOutcome.completed,
         tree_ref=_tree_ref(),
@@ -57,6 +61,7 @@ def test_classic_line_without_preview_rejected() -> None:
 
 
 def test_valid_structural_accepted() -> None:
+    """Verify test valid structural accepted."""
     preview = _preview_ref()
     verdict = qualify_structural_evidence(
         phase_outcome=PhaseOutcome.completed,

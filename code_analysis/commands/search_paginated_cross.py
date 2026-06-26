@@ -217,7 +217,10 @@ def _make_block_assembler(
     *,
     on_block_published: Callable[[int, int, int], None] | None = None,
 ) -> BlockAssembler:
+    """Return make block assembler."""
+
     def _append_index(position: int, completeness: str) -> None:
+        """Return append index."""
         block_path = layout.blocks_dir / f"block_{position}.json"
         size = block_path.stat().st_size if block_path.is_file() else 0
         append_block_entry(
@@ -228,7 +231,10 @@ def _make_block_assembler(
         )
 
     def _update_metrics(metrics: dict[str, int]) -> None:
+        """Return update metrics."""
+
         def mutator(m: SearchSessionManifest) -> SearchSessionManifest:
+            """Return mutator."""
             nxt = dict(m.metrics)
             nxt["produced_results"] = nxt.get("produced_results", 0) + int(
                 metrics.get("produced_results", 0)
@@ -399,6 +405,7 @@ async def run_paginated_cross(
     file_pattern = str(params.get("file_pattern") or "").strip()
 
     def _path_matches_filter(file_path: str) -> bool:
+        """Return path matches filter."""
         if not file_pattern:
             return True
         rel = str(file_path or "").replace("\\", "/").lstrip("./")
@@ -431,6 +438,7 @@ async def run_paginated_cross(
         max_results_per_block = None
 
     def _on_block_published(position: int, item_count: int, size_bytes: int) -> None:
+        """Return on block published."""
         profile.checkpoint(
             "assembler_block_published",
             block_position=position,
@@ -447,6 +455,7 @@ async def run_paginated_cross(
     idx = 0
 
     def _flush(search_completed: bool = False) -> None:
+        """Return flush."""
         buffer_bytes = buffer.total_bytes()
         t_flush = time.monotonic()
         published = assembler.run_until_idle(search_completed=search_completed)
@@ -472,6 +481,7 @@ async def run_paginated_cross(
         prefix: str,
         source: _IndexedSource,
     ) -> int:
+        """Return write indexed findings."""
         nonlocal idx
         written = 0
         for raw in raw_list:
@@ -488,6 +498,7 @@ async def run_paginated_cross(
         prefix: str,
         pattern: str,
     ) -> int:
+        """Return write grep findings."""
         nonlocal idx
         written = 0
         for raw in raw_list:
@@ -508,6 +519,7 @@ async def run_paginated_cross(
         return written
 
     async def _run_semantic() -> List[dict[str, Any]]:
+        """Return run semantic."""
         if semantic_limit <= 0:
             return []
         profile.checkpoint("semantic_backend_start", limit=min(semantic_limit, 100))
@@ -554,6 +566,7 @@ async def run_paginated_cross(
             return []
 
     async def _run_fulltext() -> List[dict[str, Any]]:
+        """Return run fulltext."""
         if fulltext_limit <= 0:
             return []
         profile.checkpoint("fulltext_backend_start", limit=fulltext_limit)
@@ -599,6 +612,7 @@ async def run_paginated_cross(
             return []
 
     async def _run_grep_phase() -> None:
+        """Return run grep phase."""
         if not grep_patterns:
             log.info("[TIMING] phase3_grep skipped: no patterns")
             profile.checkpoint("grep_phase_skipped", reason="no_patterns")
@@ -628,6 +642,7 @@ async def run_paginated_cross(
                 pattern_index: int = i,
                 grep_pattern: str = pattern,
             ) -> None:
+                """Return on grep batch."""
                 nonlocal batches_flushed
                 filtered = [
                     m
@@ -733,6 +748,7 @@ async def run_paginated_cross(
         _flush(search_completed=True)
 
     async def _run_semantic_phase() -> None:
+        """Return run semantic phase."""
         if not (enable_semantic and semantic_limit > 0):
             return
         log.info("[TIMING] phase2_semantic start")

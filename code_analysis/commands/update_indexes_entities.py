@@ -57,6 +57,7 @@ def _flatten_assign_target_names(target: ast.AST) -> list[str]:
 
 
 def _names_from_assign_like(node: ast.AST) -> list[str]:
+    """Return names from assign like."""
     if isinstance(node, ast.AnnAssign):
         return _flatten_assign_target_names(node.target)
     if isinstance(node, ast.Assign):

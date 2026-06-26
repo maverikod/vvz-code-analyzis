@@ -17,15 +17,20 @@ from code_analysis.core.integrity_analysis.import_cycles_resolver import (
 
 
 class FakeDB:
+    """Represent FakeDB."""
+
     def __init__(self, tables):
+        """Initialize the instance."""
         self._t = tables
 
     def execute(self, sql, params=None):
+        """Execute the command."""
         key = "imports" if "FROM imports" in sql else "files"
         return {"data": list(self._t.get(key, []))}
 
 
 def test_resolver_finds_cycle_from_bare_module_imports(tmp_path):
+    """Verify test resolver finds cycle from bare module imports."""
     files = [
         {"id": "fa", "path": "/r/pkg/a.py", "relative_path": "pkg/a.py"},
         {"id": "fb", "path": "/r/pkg/b.py", "relative_path": "pkg/b.py"},
@@ -47,6 +52,7 @@ def test_resolver_finds_cycle_from_bare_module_imports(tmp_path):
 
 
 def test_resolver_no_false_cycle(tmp_path):
+    """Verify test resolver no false cycle."""
     files = [
         {"id": "fa", "path": "/r/pkg/a.py", "relative_path": "pkg/a.py"},
         {"id": "fb", "path": "/r/pkg/b.py", "relative_path": "pkg/b.py"},

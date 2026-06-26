@@ -17,6 +17,8 @@ SqlParamPair = Tuple[str, Sequence[Any]]
 
 
 class LogicalWriteProgramV1(TypedDict, total=False):
+    """Represent LogicalWriteProgramV1."""
+
     batches: list[list[SqlParamPair]]
     defer_constraints: bool
     operation_name: str

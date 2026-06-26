@@ -47,6 +47,7 @@ class FileChangeProcessor:
         watch_dirs: List[Path],
         version_dir: Optional[str] = None,
     ) -> None:
+        """Initialize the instance."""
         self.database = database
         self.watch_dirs = watch_dirs
         self.version_dir = version_dir

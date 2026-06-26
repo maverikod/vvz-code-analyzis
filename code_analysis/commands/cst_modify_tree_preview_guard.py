@@ -92,6 +92,7 @@ def diff_span_exceeds_guard(
     intervals = [enclosing_guard_line_span(tree, nid) for nid in replace_node_ids]
 
     def _covers(line: int) -> bool:
+        """Return whether a changed line is inside any expanded guard interval."""
         for lo, hi in intervals:
             lo2 = max(1, lo - slack_lines)
             hi2 = hi + slack_lines

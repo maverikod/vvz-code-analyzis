@@ -44,10 +44,12 @@ PARENT_ID = "11111111-1111-4111-8111-111111111111"
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_session_view_command() -> None:
+    """Return register session view command."""
     hooks.execute_custom_commands_hooks(registry)
 
 
 def test_format_project_presentation_name_and_comment() -> None:
+    """Verify test format project presentation name and comment."""
     label = format_project_presentation(
         project_id="pid",
         project_name="demo",
@@ -57,6 +59,7 @@ def test_format_project_presentation_name_and_comment() -> None:
 
 
 def test_resolve_server_presentation_for_local_uuid() -> None:
+    """Verify test resolve server presentation for local uuid."""
     cfg = {
         "registration": {"instance_uuid": SERVER_UUID},
         "server_presentation": {
@@ -75,6 +78,7 @@ def test_resolve_server_presentation_for_local_uuid() -> None:
 
 
 def test_resolve_server_presentation_foreign_uuid_is_none() -> None:
+    """Verify test resolve server presentation foreign uuid is none."""
     assert (
         resolve_server_presentation_for_uuid(
             "99999999-9999-4999-8999-999999999999",
@@ -86,6 +90,7 @@ def test_resolve_server_presentation_foreign_uuid_is_none() -> None:
 
 
 def test_build_session_view_with_locks_and_subordinates() -> None:
+    """Verify test build session view with locks and subordinates."""
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:
@@ -145,6 +150,7 @@ def test_build_session_view_with_locks_and_subordinates() -> None:
 
 @pytest.mark.asyncio
 async def test_session_view_command_execute() -> None:
+    """Verify test session view command execute."""
     payload = {
         "session_id": PARENT_ID,
         "locked_files_by_project": [],
@@ -186,5 +192,6 @@ async def test_session_view_command_execute() -> None:
 
 
 def test_session_view_registered() -> None:
+    """Verify test session view registered."""
     cls = registry.get_command("session_view")
     assert cls is SessionViewCommand

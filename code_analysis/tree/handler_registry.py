@@ -16,6 +16,7 @@ class HandlerNotFoundError(KeyError):
     """Raised when no FormatHandler is registered for a file extension."""
 
     def __init__(self, extension: str) -> None:
+        """Initialize the instance."""
         super().__init__(f"No FormatHandler registered for extension {extension!r}")
         self.extension: str = extension
 

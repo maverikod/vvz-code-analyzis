@@ -356,9 +356,12 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         )
 
         class _ClientTrashAdapter:
+            """Represent ClientTrashAdapter."""
+
             __slots__ = ("_client", "_priority")
 
             def __init__(self, client: Any, priority: int) -> None:
+                """Initialize the instance."""
                 self._client = client
                 self._priority = priority
 
@@ -368,6 +371,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
                 params: Optional[tuple] = None,
                 transaction_id: Optional[str] = None,
             ) -> Any:
+                """Execute the command."""
                 return self._client.execute(
                     sql,
                     params,
@@ -380,6 +384,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
                 operations: List[Tuple[str, Optional[Union[tuple, list]]]],
                 transaction_id: Optional[str] = None,
             ) -> List[Dict[str, Any]]:
+                """Return execute batch."""
                 return self._client.execute_batch(
                     operations,
                     transaction_id=transaction_id,

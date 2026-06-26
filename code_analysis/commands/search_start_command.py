@@ -106,6 +106,7 @@ class SearchStartCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base: Dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
@@ -172,6 +173,7 @@ class SearchStartCommand(BaseMCPCommand):
         return cast(Dict[str, Any], merge_pagination_schema(base))
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return validate params."""
         params = super().validate_params(params)
         search_type = params.get("search_type")
         if search_type not in SEARCH_TYPES:
@@ -184,6 +186,7 @@ class SearchStartCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         try:
             params = self.validate_params(
                 {k: v for k, v in kwargs.items() if k != "context"}
@@ -205,6 +208,7 @@ class SearchStartCommand(BaseMCPCommand):
         params: Dict[str, Any],
         search_type: str,
     ) -> SuccessResult | ErrorResult:
+        """Return execute legacy."""
         if search_type == "tree_query":
             raise NotImplementedError(
                 "tree_query legacy backend is not implemented yet"
@@ -219,6 +223,7 @@ class SearchStartCommand(BaseMCPCommand):
         params: Dict[str, Any],
         search_type: str,
     ) -> dict:
+        """Return execute paginated."""
         storage = self._get_shared_storage()
         config_dir = storage.config_dir
         search_id = str(uuid.uuid4())
@@ -383,6 +388,7 @@ class SearchStartCommand(BaseMCPCommand):
         layout: SearchSessionDirectoryLayout,
         params: Dict[str, Any],
     ) -> Optional[int]:
+        """Return paginated backend cross."""
         from .search_paginated_cross import run_paginated_cross
 
         return await run_paginated_cross(
@@ -400,6 +406,7 @@ class SearchStartCommand(BaseMCPCommand):
         layout: SearchSessionDirectoryLayout,
         params: Dict[str, Any],
     ) -> Optional[int]:
+        """Return paginated backend tree query."""
         raise NotImplementedError(
             "Paginated search_start backend 'tree_query' is not implemented yet"
         )
@@ -488,7 +495,10 @@ class SearchStartCommand(BaseMCPCommand):
         layout: SearchSessionDirectoryLayout,
         max_block_size_bytes: int,
     ) -> BlockAssembler:
+        """Return create block assembler."""
+
         def append_index_entry(position: int, completeness: str) -> None:
+            """Return append index entry."""
             block_path = layout.blocks_dir / f"block_{position}.json"
             size_bytes = block_path.stat().st_size if block_path.is_file() else 0
             append_block_entry(
@@ -499,7 +509,10 @@ class SearchStartCommand(BaseMCPCommand):
             )
 
         def update_manifest_metrics(metrics: dict[str, int]) -> None:
+            """Return update manifest metrics."""
+
             def mutator(current: SearchSessionManifest) -> SearchSessionManifest:
+                """Return mutator."""
                 next_metrics = dict(current.metrics)
                 next_metrics["produced_results"] = next_metrics.get(
                     "produced_results", 0
@@ -526,6 +539,7 @@ class SearchStartCommand(BaseMCPCommand):
 
     @staticmethod
     def _grep_pattern_from_params(params: Dict[str, Any]) -> str:
+        """Return grep pattern from params."""
         query = params.get("query")
         if isinstance(query, str) and query.strip():
             return query.strip()
@@ -541,6 +555,7 @@ class SearchStartCommand(BaseMCPCommand):
 
     @staticmethod
     def _backend_params(params: Dict[str, Any], search_type: str) -> Dict[str, Any]:
+        """Return backend params."""
         passthrough_keys = {
             key
             for key in params
@@ -562,6 +577,7 @@ class SearchStartCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,

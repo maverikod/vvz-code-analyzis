@@ -16,6 +16,7 @@ from code_analysis.core.docs_markdown_vector_gate import (
 
 
 def test_policy_disabled_only_when_enabled_and_vectorize_false() -> None:
+    """Verify test policy disabled only when enabled and vectorize false."""
     assert docs_markdown_embeddings_disabled_by_policy(None) is False
     assert docs_markdown_embeddings_disabled_by_policy({"enabled": False}) is False
     assert docs_markdown_embeddings_disabled_by_policy({"enabled": True}) is True
@@ -34,6 +35,7 @@ def test_policy_disabled_only_when_enabled_and_vectorize_false() -> None:
 
 
 def test_embeddings_enabled_from_top_level_json() -> None:
+    """Verify test embeddings enabled from top level json."""
     raw = {"code_analysis": {"docs_indexing": {"enabled": True, "vectorize": True}}}
     assert docs_markdown_embeddings_enabled_from_server_config_mapping(raw) is True
     raw2 = {"code_analysis": {"docs_indexing": {"enabled": True, "vectorize": False}}}
@@ -41,6 +43,7 @@ def test_embeddings_enabled_from_top_level_json() -> None:
 
 
 def test_is_docs_markdown_chunk() -> None:
+    """Verify test is docs markdown chunk."""
     assert is_docs_markdown_chunk(
         chunk={"source_type": DOCS_MARKDOWN_SOURCE_TYPE},
     )
@@ -50,6 +53,7 @@ def test_is_docs_markdown_chunk() -> None:
 
 @pytest.mark.asyncio
 async def test_process_markdown_skips_rpc_when_embeddings_disabled() -> None:
+    """Verify test process markdown skips rpc when embeddings disabled."""
     from code_analysis.core.docstring_chunker_pkg.docstring_chunker import (
         DocstringChunker,
     )
@@ -96,6 +100,7 @@ async def test_process_markdown_skips_rpc_when_embeddings_disabled() -> None:
 
 
 def test_batch_processor_embedding_ready_uses_exclude_helper() -> None:
+    """Verify test batch processor embedding ready uses exclude helper."""
     from code_analysis.core.vectorization_worker_pkg import batch_processor
 
     src_embed = inspect.getsource(batch_processor.process_embedding_ready_chunks)

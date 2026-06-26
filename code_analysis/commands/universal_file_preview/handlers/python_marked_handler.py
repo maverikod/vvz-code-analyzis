@@ -23,6 +23,7 @@ class PythonMarkedTreeHandler(FileHandler):
 
     @property
     def supported_extensions(self) -> frozenset[str]:
+        """Return supported extensions."""
         return frozenset({".py", ".pyi", ".pyw"})
 
     def open_root(
@@ -31,6 +32,7 @@ class PythonMarkedTreeHandler(FileHandler):
         session: Any | None,
         budget: PreviewBudget | None = None,
     ) -> Node | PreviewError:
+        """Return open root."""
         return input_error(
             INPUT_ERROR_CONFLICTING_PARAMETERS,
             "Python preview uses marked-tree navigation only; provide project_id.",
@@ -42,6 +44,7 @@ class PythonMarkedTreeHandler(FileHandler):
         node_ref: str,
         session: Any | None,
     ) -> Node | PreviewError:
+        """Return resolve node ref."""
         return input_error(
             INPUT_ERROR_CONFLICTING_PARAMETERS,
             "Python preview uses marked-tree navigation only; node_ref must be short_id.",

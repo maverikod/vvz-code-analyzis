@@ -17,6 +17,8 @@ from code_analysis.tree.preview_selector import (
 
 @dataclass(frozen=True)
 class _Block:
+    """Represent Block."""
+
     short_id: NodeId
     text: str
 
@@ -41,6 +43,7 @@ _BLOCKS = (
 def test_preview_selector_parse_slice(
     raw: str, expected: tuple[int | None, int | None]
 ) -> None:
+    """Verify test preview selector parse slice."""
     selector = PreviewSelector.parse(raw)
     assert selector._kind == "slice"
     assert selector._slice_start == expected[0]
@@ -48,6 +51,7 @@ def test_preview_selector_parse_slice(
 
 
 def test_preview_selector_parse_cherry_pick_short_ids() -> None:
+    """Verify test preview selector parse cherry pick short ids."""
     selector = PreviewSelector.parse([3, 1])
     assert selector._kind == "ids"
     assert selector._short_ids == (NodeId(3), NodeId(1))
@@ -56,6 +60,7 @@ def test_preview_selector_parse_cherry_pick_short_ids() -> None:
 
 
 def test_preview_selector_apply_slice_bounds() -> None:
+    """Verify test preview selector apply slice bounds."""
     assert len(PreviewSelector.parse(":").apply(_BLOCKS)) == 5
     assert len(PreviewSelector.parse("3:").apply(_BLOCKS)) == 2
     assert len(PreviewSelector.parse(":5").apply(_BLOCKS)) == 5
@@ -73,6 +78,7 @@ def test_preview_selector_apply_slice_bounds() -> None:
 def test_decide_render_mode(
     line_span: int, threshold: int, expected: PreviewRenderMode
 ) -> None:
+    """Verify test decide render mode."""
     config = PreviewSelectorConfig(full_text_max_lines={"python": threshold})
     mode = PreviewSelector.decide_render_mode(
         format_key="python",
@@ -83,6 +89,7 @@ def test_decide_render_mode(
 
 
 def test_paginate_envelope_truncates_with_ellipsis() -> None:
+    """Verify test paginate envelope truncates with ellipsis."""
     text = "abcdefghij"
     assert paginate_envelope(text, max_chars=5) == "abcde\u2026"
     assert paginate_envelope(text, max_chars=20) == text

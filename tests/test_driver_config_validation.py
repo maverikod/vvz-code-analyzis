@@ -367,6 +367,7 @@ class TestDriverConfigValidation:
 
 
 def _config_with_docs_indexing(docs_indexing: dict) -> dict:
+    """Return config with docs indexing."""
     return {
         "server": {
             "host": "localhost",
@@ -397,6 +398,7 @@ class TestDocsIndexingConfigValidation:
     """Validation for code_analysis.docs_indexing."""
 
     def test_docs_indexing_default_block_valid(self) -> None:
+        """Verify test docs indexing default block valid."""
         validator = CodeAnalysisConfigValidator()
         results = validator.validate_config(
             _config_with_docs_indexing(default_docs_indexing_dict())
@@ -405,6 +407,7 @@ class TestDocsIndexingConfigValidation:
         assert not any(r.level == "error" for r in results)
 
     def test_docs_indexing_minimal_enabled_valid(self) -> None:
+        """Verify test docs indexing minimal enabled valid."""
         validator = CodeAnalysisConfigValidator()
         results = validator.validate_config(
             _config_with_docs_indexing({"enabled": True})
@@ -413,6 +416,7 @@ class TestDocsIndexingConfigValidation:
         assert not any(r.level == "error" for r in results)
 
     def test_docs_indexing_unknown_nested_key_errors(self) -> None:
+        """Verify test docs indexing unknown nested key errors."""
         validator = CodeAnalysisConfigValidator()
         results = validator.validate_config(
             _config_with_docs_indexing({"enabled": False, "typo_key": 1})
@@ -422,6 +426,7 @@ class TestDocsIndexingConfigValidation:
         )
 
     def test_docs_indexing_include_without_docs_suffix_errors(self) -> None:
+        """Verify test docs indexing include without docs suffix errors."""
         validator = CodeAnalysisConfigValidator()
         body = default_docs_indexing_dict()
         body["include"] = ["docs/**/*.txt"]
@@ -435,6 +440,7 @@ class TestDocsIndexingConfigValidation:
         )
 
     def test_docs_indexing_include_json_only_valid(self) -> None:
+        """Verify test docs indexing include json only valid."""
         validator = CodeAnalysisConfigValidator()
         body = default_docs_indexing_dict()
         body["include"] = ["docs/**/*.json"]
@@ -443,6 +449,7 @@ class TestDocsIndexingConfigValidation:
         assert not any(r.level == "error" for r in results)
 
     def test_docs_indexing_roots_traversal_errors(self) -> None:
+        """Verify test docs indexing roots traversal errors."""
         validator = CodeAnalysisConfigValidator()
         body = default_docs_indexing_dict()
         body["roots"] = ["docs/../secrets"]
@@ -450,6 +457,7 @@ class TestDocsIndexingConfigValidation:
         assert any(r.level == "error" for r in results)
 
     def test_docs_indexing_not_object_errors(self) -> None:
+        """Verify test docs indexing not object errors."""
         validator = CodeAnalysisConfigValidator()
         cfg = _config_with_docs_indexing({})
         cfg["code_analysis"]["docs_indexing"] = "no"

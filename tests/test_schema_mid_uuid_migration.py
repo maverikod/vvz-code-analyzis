@@ -20,6 +20,7 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
 
 
 def _wrapped(table_name: str) -> dict:
+    """Return wrapped."""
     return {
         "tables": {table_name: get_tables_mid()[table_name]},
         "indexes": [],
@@ -40,6 +41,7 @@ _UUID_MID_TABLES = (
 
 
 def test_mid_primary_keys_are_logical_uuid_without_autoincrement() -> None:
+    """Verify test mid primary keys are logical uuid without autoincrement."""
     tables = get_tables_mid()
     for tname in _UUID_MID_TABLES:
         tbl = tables[tname]
@@ -49,6 +51,7 @@ def test_mid_primary_keys_are_logical_uuid_without_autoincrement() -> None:
 
 
 def test_mid_foreign_key_columns_to_core_are_uuid() -> None:
+    """Verify test mid foreign key columns to core are uuid."""
     tables = get_tables_mid()
     imp = {c["name"]: c for c in tables["imports"]["columns"]}
     assert imp["file_id"]["type"] == "UUID"
@@ -85,6 +88,7 @@ def test_polymorphic_entity_id_option_a_uuid_no_entity_fk() -> None:
 
 
 def test_vector_id_stays_integer() -> None:
+    """Verify test vector id stays integer."""
     tables = get_tables_mid()
     v = {c["name"]: c for c in tables["vector_index"]["columns"]}
     assert v["vector_id"]["type"] == "INTEGER"
@@ -93,6 +97,7 @@ def test_vector_id_stays_integer() -> None:
 
 
 def test_step_06_unique_constraints_preserved() -> None:
+    """Verify test step 06 unique constraints preserved."""
     tables = get_tables_mid()
     assert {"columns": ["file_id", "ast_hash"]} in tables["ast_trees"][
         "unique_constraints"
@@ -108,6 +113,7 @@ def test_step_06_unique_constraints_preserved() -> None:
 
 @pytest.mark.parametrize("table", _UUID_MID_TABLES)
 def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
+    """Verify test sqlite ddl maps uuid to text."""
     sd = _wrapped(table)
     ddl = generate_create_table_sql(sd, table).upper()
     # Logical UUID maps to SQLite TEXT; column names like chunk_uuid → CHUNK_UUID contain "UUID".
@@ -128,6 +134,7 @@ def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
     ),
 )
 def test_postgres_ddl_uses_native_uuid_primary_key(table: str) -> None:
+    """Verify test postgres ddl uses native uuid primary key."""
     sd = _wrapped(table)
     ddl = generate_create_table_sql_postgres(sd, table)
     up = ddl.upper()
@@ -137,6 +144,7 @@ def test_postgres_ddl_uses_native_uuid_primary_key(table: str) -> None:
 
 
 def test_postgres_code_chunks_file_id_uuid_and_chunk_uuid_unique() -> None:
+    """Verify test postgres code chunks file id uuid and chunk uuid unique."""
     sd = _wrapped("code_chunks")
     ddl = generate_create_table_sql_postgres(sd, "code_chunks")
     assert "file_id UUID" in ddl
@@ -144,6 +152,7 @@ def test_postgres_code_chunks_file_id_uuid_and_chunk_uuid_unique() -> None:
 
 
 def test_postgres_vector_index_entity_triple_unique() -> None:
+    """Verify test postgres vector index entity triple unique."""
     sd = _wrapped("vector_index")
     ddl = generate_create_table_sql_postgres(sd, "vector_index")
     assert "UNIQUE (project_id, entity_type, entity_id)" in ddl

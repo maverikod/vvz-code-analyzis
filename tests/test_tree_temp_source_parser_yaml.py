@@ -12,11 +12,13 @@ from code_analysis.commands.universal_file_edit.tree_temp_edit_nodes import (
 
 
 def _first_root_must_be_objects_or_array(parsed: list[TreeNode]) -> TreeNode:
+    """Return first root must be objects or array."""
     assert len(parsed) == 1
     return parsed[0]
 
 
 def _find_child(root: TreeNode, key: str) -> TreeNode:
+    """Return find child."""
     assert root.children is not None
     for c in root.children:
         if c.key == key:
@@ -25,6 +27,7 @@ def _find_child(root: TreeNode, key: str) -> TreeNode:
 
 
 def test_yaml_hash_inline_maps_to_scalar_member() -> None:
+    """Verify test yaml hash inline maps to scalar member."""
     source = "top: leaf  # mark\n"
     node = _first_root_must_be_objects_or_array(parse_yaml_source_to_roots(source))
     assert kind_as_str(node) == "object"
@@ -35,6 +38,7 @@ def test_yaml_hash_inline_maps_to_scalar_member() -> None:
 
 
 def test_yaml_above_line_maps_before_next_mapping_pair() -> None:
+    """Verify test yaml above line maps before next mapping pair."""
     source = "# head\naaa: bbb\n"
     roots = parse_yaml_source_to_roots(source)
     root = roots[0]
@@ -43,6 +47,7 @@ def test_yaml_above_line_maps_before_next_mapping_pair() -> None:
 
 
 def test_yaml_sequence_three_elements_under_array_root() -> None:
+    """Verify test yaml sequence three elements under array root."""
     source = "- 1\n- 2\n- 3\n"
     roots = parse_yaml_source_to_roots(source)
     assert len(roots) == 3
@@ -65,6 +70,7 @@ def test_yaml_sequence_single_element_under_array_root() -> None:
 
 
 def test_yaml_mapping_order_not_alphabetical() -> None:
+    """Verify test yaml mapping order not alphabetical."""
     source = "zzz: 0\naaa: 1\n"
     root = _first_root_must_be_objects_or_array(parse_yaml_source_to_roots(source))
     assert root.children is not None
@@ -72,6 +78,7 @@ def test_yaml_mapping_order_not_alphabetical() -> None:
 
 
 def test_yaml_nested_mapping_value() -> None:
+    """Verify test yaml nested mapping value."""
     source = "wrapper:\n  inner: true\n"
     root = _first_root_must_be_objects_or_array(parse_yaml_source_to_roots(source))
     wrap = _find_child(root, "wrapper")
@@ -81,6 +88,7 @@ def test_yaml_nested_mapping_value() -> None:
 
 
 def test_yaml_null_keyword() -> None:
+    """Verify test yaml null keyword."""
     source = "hole: null\n"
     root = _first_root_must_be_objects_or_array(parse_yaml_source_to_roots(source))
     h = _find_child(root, "hole")
@@ -89,5 +97,6 @@ def test_yaml_null_keyword() -> None:
 
 
 def test_yaml_truncated_raises_value_error() -> None:
+    """Verify test yaml truncated raises value error."""
     with pytest.raises(ValueError):
         parse_yaml_source_to_roots("[")

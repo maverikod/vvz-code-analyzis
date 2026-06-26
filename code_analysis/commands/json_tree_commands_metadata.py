@@ -18,6 +18,7 @@ from .command_metadata_helpers import (
 
 
 def _json_tree_return(op: str) -> Dict[str, Any]:
+    """Build the standard return-value metadata for a JSON tree operation."""
     return simple_success_return(
         description=f"JSON tree {op} completed.",
         data_fields={

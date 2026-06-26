@@ -3,6 +3,7 @@
 S3 verification: normalize_ggrep_match produces Finding objects.
 Run: cd /home/vasilyvz/projects/tools/code_analysis && .venv/bin/python scripts/verify_s3_ggrep.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -15,6 +16,7 @@ failed = 0
 
 
 def check(label: str, cond: bool) -> None:
+    """Return check."""
     global passed, failed
     if cond:
         print(f"  PASS  {label}")
@@ -98,7 +100,9 @@ raw7 = {
     "evidence": {},
 }
 f7 = normalize_ggrep_match(raw7, index=6)
-check("file_path from relative_path", f7 and f7.file_path == "code_analysis/core/rel.py")
+check(
+    "file_path from relative_path", f7 and f7.file_path == "code_analysis/core/rel.py"
+)
 
 # 8. to_dict / from_dict round-trip
 if f1:

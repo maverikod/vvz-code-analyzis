@@ -28,6 +28,7 @@ _MIGRATION_KEY = "projects_root_segment_postgres_v1"
 
 
 def _db_settings_has(database: Any, key: str) -> bool:
+    """Return db settings has."""
     try:
         row = database._fetchone(
             "SELECT 1 FROM db_settings WHERE key = ? LIMIT 1", (key,)
@@ -38,6 +39,7 @@ def _db_settings_has(database: Any, key: str) -> bool:
 
 
 def _db_settings_set(database: Any, key: str, value: str) -> None:
+    """Return db settings set."""
     database._execute(
         "INSERT INTO db_settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -57,7 +59,9 @@ def migrate_projects_root_segment_postgres(database: Any) -> None:
 
     for cname in ("projects_root_path_key", "projects_root_path_unique"):
         try:
-            database._execute(f'ALTER TABLE projects DROP CONSTRAINT IF EXISTS "{cname}"')
+            database._execute(
+                f'ALTER TABLE projects DROP CONSTRAINT IF EXISTS "{cname}"'
+            )
             database._commit()
         except Exception as ex:
             logger.debug("DROP CONSTRAINT %s: %s", cname, ex)

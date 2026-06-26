@@ -48,6 +48,7 @@ class EditSession:
 
 
 def _norm_file_path(file_path: str) -> str:
+    """Return norm file path."""
     return Path(str(file_path).replace("\\", "/")).as_posix()
 
 

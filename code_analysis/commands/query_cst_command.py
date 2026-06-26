@@ -41,6 +41,8 @@ __all__ = ["QueryCSTCommand"]
 
 
 class QueryCSTCommand(BaseMCPCommand):
+    """Query LibCST nodes and optionally replace selected source ranges."""
+
     name = "query_cst"
     version = "1.1.0"
     descr = (
@@ -53,6 +55,7 @@ class QueryCSTCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for CST queries, replacements, and previews."""
         return get_query_cst_schema()
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -79,6 +82,7 @@ class QueryCSTCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Query a Python file and optionally apply or preview CST replacements."""
         t_start = time.perf_counter()
         preview_mode = preview or dry_run
         try:

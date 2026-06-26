@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 def read_project_version(pyproject_path: Path) -> str:
+    """Return read project version."""
     text = pyproject_path.read_text(encoding="utf-8")
     match = re.search(r'(?m)^version = "([^"]+)"', text)
     if not match:
@@ -24,6 +25,7 @@ def read_project_version(pyproject_path: Path) -> str:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--repo-root",

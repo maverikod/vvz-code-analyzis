@@ -71,6 +71,7 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
 
     # Prefer smallest containing span; then order: method > function > class
     def key(item: Tuple[str, int, int, int]) -> Tuple[int, int, int]:
+        """Return key."""
         entity_type, entity_id, start, end = item
         span = end - start
         type_rank = {"method": 0, "function": 1, "class": 2}[entity_type]

@@ -19,6 +19,7 @@ from code_analysis.commands.cst_load_file_command import CSTLoadFileCommand
 
 
 def _make_command(target: Path) -> CSTLoadFileCommand:
+    """Return make command."""
     cmd = CSTLoadFileCommand()
     db = MagicMock()
     db.disconnect = MagicMock()

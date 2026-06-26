@@ -240,6 +240,7 @@ def build_tree_operations(
             )
 
     def _replace_delete_sort_key(op: TreeOperation) -> tuple:
+        """Sort replace/delete operations by descending source line before others."""
         if (
             op.action
             in (

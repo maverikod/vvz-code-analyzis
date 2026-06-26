@@ -59,10 +59,12 @@ _XPATH_REGRESSION_GREP_PATTERNS: tuple[str, ...] = (
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_commands() -> None:
+    """Return register commands."""
     hooks.execute_custom_commands_hooks(registry)
 
 
 def test_project_cross_search_registered() -> None:
+    """Verify test project cross search registered."""
     cls = registry.get_command("project_cross_search")
     assert cls is ProjectCrossSearchCommand
     assert cls.category == "search"
@@ -72,6 +74,7 @@ def test_project_cross_search_registered() -> None:
 
 
 def test_validate_params_preserves_zero_semantic_and_fulltext_limits() -> None:
+    """Verify test validate params preserves zero semantic and fulltext limits."""
     cmd = ProjectCrossSearchCommand()
     out = cmd.validate_params(
         {
@@ -88,6 +91,7 @@ def test_validate_params_preserves_zero_semantic_and_fulltext_limits() -> None:
 
 
 def test_validate_params_rejects_fast_text_only_with_structural_grep() -> None:
+    """Verify test validate params rejects fast text only with structural grep."""
     cmd = ProjectCrossSearchCommand()
     with pytest.raises(ValidationError, match="fast_text_only"):
         cmd.validate_params(
@@ -101,12 +105,14 @@ def test_validate_params_rejects_fast_text_only_with_structural_grep() -> None:
 
 
 def test_project_cross_search_schema_exposes_fast_text_only() -> None:
+    """Verify test project cross search schema exposes fast text only."""
     props = ProjectCrossSearchCommand.get_schema().get("properties") or {}
     assert "fast_text_only" in props
     assert "grep_hard_timeout_seconds" in props
 
 
 def test_project_cross_search_metadata_meets_standard() -> None:
+    """Verify test project cross search metadata meets standard."""
     cls = ProjectCrossSearchCommand
     meta = cls.metadata()
     for key in REQUIRED_METADATA_KEYS:
@@ -117,6 +123,7 @@ def test_project_cross_search_metadata_meets_standard() -> None:
 
 
 def _item(source: str, file_path: str, **extra: object) -> dict:
+    """Return item."""
     base = {
         "source": source,
         "file_path": file_path,
@@ -132,6 +139,7 @@ def _item(source: str, file_path: str, **extra: object) -> dict:
 
 
 def _structural_grep_item(file_path: str, *, node_ref: str = "stable-id-1") -> dict:
+    """Return structural grep item."""
     return _item(
         "grep_unindexed",
         file_path,
@@ -154,6 +162,7 @@ def _structural_grep_item(file_path: str, *, node_ref: str = "stable-id-1") -> d
 
 
 def test_merge_three_sources_high_confidence() -> None:
+    """Verify test merge three sources high confidence."""
     path = "code_analysis/commands/sessions/session_create_command.py"
     semantic = [_item("semantic", path, score=0.9, text="session create")]
     fulltext = [_item("fulltext", path, score=-1.2, text="class SessionCreateCommand")]
@@ -174,6 +183,7 @@ def test_merge_three_sources_high_confidence() -> None:
 
 
 def test_merge_two_sources_medium_confidence() -> None:
+    """Verify test merge two sources medium confidence."""
     path = "code_analysis/foo.py"
     fulltext = [_item("fulltext", path, score=-0.5)]
     grep = [_structural_grep_item(path)]
@@ -191,6 +201,7 @@ def test_merge_two_sources_medium_confidence() -> None:
 
 
 def test_strict_mode_filters_non_3of3() -> None:
+    """Verify test strict mode filters non 3of3."""
     candidates = [
         {
             "evidence_score": 1,
@@ -211,6 +222,7 @@ def test_strict_mode_filters_non_3of3() -> None:
 
 
 def test_intersection_mode_filters_single_source() -> None:
+    """Verify test intersection mode filters single source."""
     candidates = [
         {
             "evidence_score": 1,
@@ -227,6 +239,7 @@ def test_intersection_mode_filters_single_source() -> None:
 
 
 def test_command_audit_detects_session_guard() -> None:
+    """Verify test command audit detects session guard."""
     path = "code_analysis/commands/sessions/session_open_file_command.py"
     grep_evidence = [
         _item(
@@ -256,6 +269,7 @@ def test_command_audit_detects_session_guard() -> None:
 
 
 def test_normalize_semantic_hit_json_serializes_numpy_scalars() -> None:
+    """Verify test normalize semantic hit json serializes numpy scalars."""
     hit = normalize_semantic_hit(
         {
             "file_path": "code_analysis/foo.py",
@@ -279,6 +293,7 @@ def test_normalize_semantic_hit_json_serializes_numpy_scalars() -> None:
 
 
 def test_normalize_fulltext_hit_accepts_decimal_bm25() -> None:
+    """Verify test normalize fulltext hit accepts decimal bm25."""
     hit = normalize_fulltext_hit(
         {
             "file_path": "code_analysis/bar.py",
@@ -292,6 +307,7 @@ def test_normalize_fulltext_hit_accepts_decimal_bm25() -> None:
 
 
 def test_line_only_grep_ignored_in_merge() -> None:
+    """Verify test line only grep ignored in merge."""
     path = "code_analysis/foo.py"
     line_only = [_item("grep_unindexed", path, text="foo", line_start=1)]
     structural = [_structural_grep_item(path)]
@@ -311,6 +327,7 @@ def test_line_only_grep_ignored_in_merge() -> None:
 
 
 def test_partition_grep_for_cross_search() -> None:
+    """Verify test partition grep for cross search."""
     path = "a.py"
     hits = [
         _item("grep_unindexed", path, text="x"),
@@ -323,6 +340,7 @@ def test_partition_grep_for_cross_search() -> None:
 
 
 def test_normalize_grep_hit_tolerates_missing_fields() -> None:
+    """Verify test normalize grep hit tolerates missing fields."""
     hit = normalize_grep_hit({}, "xpath", None)
     assert hit["file_path"] == ""
     assert hit["line_start"] is None
@@ -330,6 +348,7 @@ def test_normalize_grep_hit_tolerates_missing_fields() -> None:
 
 
 def test_path_normalization_absolute_to_project_relative(tmp_path: Path) -> None:
+    """Verify test path normalization absolute to project relative."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     abs_path = project_root / "src" / "module.py"
@@ -345,6 +364,7 @@ def test_path_normalization_absolute_to_project_relative(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_execute_partial_success_with_warnings(tmp_path: Path) -> None:
+    """Verify test execute partial success with warnings."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     (project_root / "foo.py").write_text("session_create\n", encoding="utf-8")
@@ -425,6 +445,7 @@ async def test_execute_partial_success_with_warnings(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_all_sources_fail(tmp_path: Path) -> None:
+    """Verify test execute all sources fail."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
 
@@ -506,6 +527,7 @@ async def test_execute_xpath_regression_grep_patterns_json_safe(
     )
 
     async def _grep_side_effect(**kwargs: object) -> SuccessResult:
+        """Return grep side effect."""
         pattern = str(kwargs.get("pattern") or "")
         rel = "code_analysis/query_engine.py"
         node_ref = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -583,6 +605,7 @@ async def test_execute_xpath_regression_grep_patterns_json_safe(
 
 
 def test_json_safe_scalar_coerces_numpy() -> None:
+    """Verify test json safe scalar coerces numpy."""
     assert json_safe_scalar(np.float32(0.5)) == pytest.approx(0.5)
 
 
@@ -627,6 +650,7 @@ async def test_execute_grep_only_xpath_sync_bounded(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_queued_context_uses_full_grep_budget(tmp_path: Path) -> None:
+    """Verify test execute queued context uses full grep budget."""
     project_root = tmp_path / "proj"
     (project_root / "code_analysis").mkdir(parents=True)
     (project_root / "code_analysis" / "a.py").write_text(
@@ -684,11 +708,13 @@ async def test_execute_queued_context_uses_full_grep_budget(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_grep_budget_exceeded_warning_propagated(tmp_path: Path) -> None:
+    """Verify test grep budget exceeded warning propagated."""
     project_root = tmp_path / "proj"
     (project_root / "code_analysis").mkdir(parents=True)
     (project_root / "code_analysis" / "a.py").write_text("xpath\n", encoding="utf-8")
 
     async def _grep_budget_hit(**_kwargs: object) -> SuccessResult:
+        """Return grep budget hit."""
         return SuccessResult(
             data={
                 "matches": [],
@@ -727,6 +753,7 @@ async def test_grep_budget_exceeded_warning_propagated(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_many_grep_patterns_marks_queued_recommended(tmp_path: Path) -> None:
+    """Verify test many grep patterns marks queued recommended."""
     project_root = tmp_path / "proj"
     (project_root / "code_analysis").mkdir(parents=True)
     (project_root / "code_analysis" / "a.py").write_text("x\n", encoding="utf-8")
@@ -761,6 +788,7 @@ async def test_many_grep_patterns_marks_queued_recommended(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_cross_search_ignores_line_only_grep(tmp_path: Path) -> None:
+    """Verify test cross search ignores line only grep."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     (project_root / "mod.py").write_text("CSTQuery\n", encoding="utf-8")
@@ -819,6 +847,7 @@ async def test_cross_search_ignores_line_only_grep(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cross_search_counts_structural_grep(tmp_path: Path) -> None:
+    """Verify test cross search counts structural grep."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     rel = "code_analysis/mod.py"
@@ -896,6 +925,7 @@ async def test_cross_search_counts_structural_grep(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_search_plan_preserves_zero_limits(tmp_path: Path) -> None:
+    """Verify test execute search plan preserves zero limits."""
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True)
     (project_root / "a.py").write_text("needle\n", encoding="utf-8")
@@ -903,6 +933,7 @@ async def test_execute_search_plan_preserves_zero_limits(tmp_path: Path) -> None
     node_ref = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
     async def _semantic_must_not_run(**_kwargs: object) -> SuccessResult:
+        """Return semantic must not run."""
         raise AssertionError("semantic phase must be skipped when semantic_limit=0")
 
     with (
@@ -969,6 +1000,7 @@ async def test_execute_search_plan_preserves_zero_limits(tmp_path: Path) -> None
 async def test_cross_search_partial_success_when_grep_hard_timeout(
     tmp_path: Path,
 ) -> None:
+    """Verify test cross search partial success when grep hard timeout."""
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True)
     (project_root / "a.py").write_text("needle\n", encoding="utf-8")
@@ -981,6 +1013,7 @@ async def test_cross_search_partial_success_when_grep_hard_timeout(
     }
 
     async def _grep_hard_timeout(**_kwargs: object) -> ErrorResult:
+        """Return grep hard timeout."""
         return ErrorResult(
             message="fs_grep exceeded hard timeout and was stopped.",
             code=GREP_HARD_TIMEOUT,
@@ -1020,11 +1053,13 @@ async def test_cross_search_partial_success_when_grep_hard_timeout(
 
 @pytest.mark.asyncio
 async def test_cross_search_error_when_only_grep_hard_timeout(tmp_path: Path) -> None:
+    """Verify test cross search error when only grep hard timeout."""
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True)
     (project_root / "a.py").write_text("needle\n", encoding="utf-8")
 
     async def _grep_hard_timeout(**_kwargs: object) -> ErrorResult:
+        """Return grep hard timeout."""
         return ErrorResult(
             message="fs_grep exceeded hard timeout and was stopped.",
             code=GREP_HARD_TIMEOUT,

@@ -13,6 +13,7 @@ from code_analysis.core.server_log_dir import (
 
 
 def test_server_log_dir_from_config_data_absolute(tmp_path: Path) -> None:
+    """Verify test server log dir from config data absolute."""
     cfg = {"server": {"log_dir": "/var/log/casmgr"}}
     assert server_log_dir_from_config_data(cfg, tmp_path / "config.json") == Path(
         "/var/log/casmgr"
@@ -20,6 +21,7 @@ def test_server_log_dir_from_config_data_absolute(tmp_path: Path) -> None:
 
 
 def test_server_log_dir_from_config_data_relative(tmp_path: Path) -> None:
+    """Verify test server log dir from config data relative."""
     cfg_path = tmp_path / "config-prod.json"
     cfg_path.write_text(
         json.dumps({"server": {"log_dir": "./logs-prod"}}), encoding="utf-8"
@@ -32,6 +34,7 @@ def test_server_log_dir_from_config_data_relative(tmp_path: Path) -> None:
 
 
 def test_resolve_server_log_dir_from_config_argv(tmp_path: Path, monkeypatch) -> None:
+    """Verify test resolve server log dir from config argv."""
     log_dir = tmp_path / "prod-logs"
     cfg_path = tmp_path / "config-prod.json"
     cfg_path.write_text(
@@ -49,6 +52,7 @@ def test_resolve_server_log_dir_from_config_argv(tmp_path: Path, monkeypatch) ->
 
 
 def test_append_server_startup_log_writes_file(tmp_path: Path) -> None:
+    """Verify test append server startup log writes file."""
     append_server_startup_log(tmp_path, "hello prod")
     log_path = tmp_path / "server_startup.log"
     assert log_path.is_file()

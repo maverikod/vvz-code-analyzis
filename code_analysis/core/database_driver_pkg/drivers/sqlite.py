@@ -52,6 +52,7 @@ def _sql_implies_write(sql: str) -> bool:
 
 
 def _execute_batch_implies_write(operations: List[Tuple[str, Optional[tuple]]]) -> bool:
+    """Return execute batch implies write."""
     for sql, _ in expand_operations(operations):
         if _sql_implies_write(sql):
             return True
@@ -89,6 +90,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         return {"success": True, "remaining": self._qa_transient_injections_remaining}
 
     def _qa_maybe_inject_transient(self) -> None:
+        """Return qa maybe inject transient."""
         if self._qa_transient_injections_remaining <= 0:
             return
         self._qa_transient_injections_remaining -= 1
@@ -203,11 +205,13 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.conn.rollback()
 
     def _sleep_before_retry(self, attempt_1based: int) -> None:
+        """Return sleep before retry."""
         time.sleep(self._retry_policy.delay_for_attempt(attempt_1based))
 
     def _run_self_managed_with_retry(
         self, operation_name: str, func: Callable[[], _T]
     ) -> _T:
+        """Return run self managed with retry."""
         max_a = self._retry_policy.attempts
         for attempt in range(1, max_a + 1):
             try:
@@ -357,6 +361,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             )
 
         def do_run() -> List[Dict[str, Any]]:
+            """Return do run."""
             self._qa_maybe_inject_transient()
             return run_execute_batch(
                 self.conn,
@@ -401,6 +406,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             )
 
         def do_run() -> Dict[str, Any]:
+            """Return do run."""
             self._qa_maybe_inject_transient()
             return run_execute(
                 self.conn,

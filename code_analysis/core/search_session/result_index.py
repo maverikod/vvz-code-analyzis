@@ -51,6 +51,7 @@ class SearchResultIndex:
     def __post_init__(self) -> None:
         # Keep blocks (legacy alias) and temporal_blocks in sync. Whichever was
         # provided non-empty wins; temporal_blocks is the canonical source.
+        """Return post init."""
         if self.temporal_blocks and not self.blocks:
             self.blocks = self.temporal_blocks
         elif self.blocks and not self.temporal_blocks:
@@ -60,6 +61,7 @@ class SearchResultIndex:
 
 
 def _index_to_dict(index: SearchResultIndex) -> dict[str, Any]:
+    """Return index to dict."""
     temporal = list(index.temporal_blocks)
     return {
         "temporal_blocks": temporal,
@@ -72,6 +74,7 @@ def _index_to_dict(index: SearchResultIndex) -> dict[str, Any]:
 
 
 def _normalize_block_entries(raw: Any) -> list[dict[str, Any]]:
+    """Return normalize block entries."""
     entries: list[dict[str, Any]] = []
     for entry in raw or []:
         if not isinstance(entry, dict):
@@ -88,6 +91,7 @@ def _normalize_block_entries(raw: Any) -> list[dict[str, Any]]:
 def _index_from_dict(data: dict[str, Any]) -> SearchResultIndex:
     # Canonical temporal source is ``temporal_blocks``; fall back to the legacy
     # flat ``blocks`` key for indexes written before dual-ordering.
+    """Return index from dict."""
     temporal_raw = data.get("temporal_blocks")
     if temporal_raw is None:
         temporal_raw = data.get("blocks")

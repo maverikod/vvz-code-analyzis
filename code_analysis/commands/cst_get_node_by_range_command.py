@@ -34,6 +34,7 @@ class CSTGetNodeByRangeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -73,6 +74,7 @@ class CSTGetNodeByRangeCommand(BaseMCPCommand):
         all_intersecting: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        """Return the best CST node or all nodes intersecting a line range."""
         t_start = time.perf_counter()
         try:
             t0 = time.perf_counter()

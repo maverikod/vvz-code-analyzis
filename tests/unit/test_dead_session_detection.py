@@ -18,6 +18,7 @@ from code_analysis.core.search_session.manifest import (
 def _manifest(
     *, heartbeat_at: float | None, status: str = "running"
 ) -> SearchSessionManifest:
+    """Return manifest."""
     return SearchSessionManifest(
         search_id="session-1",
         created_at=0.0,
@@ -32,6 +33,7 @@ def _manifest(
 
 
 def test_missing_process_is_dead() -> None:
+    """Verify test missing process is dead."""
     manifest = _manifest(heartbeat_at=100.0)
 
     with patch(
@@ -48,6 +50,7 @@ def test_missing_process_is_dead() -> None:
 
 
 def test_stale_heartbeat_on_running_is_timed_out() -> None:
+    """Verify test stale heartbeat on running is timed out."""
     manifest = _manifest(heartbeat_at=100.0)
 
     with (
@@ -70,6 +73,7 @@ def test_stale_heartbeat_on_running_is_timed_out() -> None:
 
 
 def test_fresh_heartbeat_is_live() -> None:
+    """Verify test fresh heartbeat is live."""
     manifest = _manifest(heartbeat_at=190.0)
 
     with (

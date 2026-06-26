@@ -1,4 +1,5 @@
 """Tests for semantic_search pagination schema extension (T-003/A-004)."""
+
 from __future__ import annotations
 
 from code_analysis.commands.semantic_search_pagination_schema import (
@@ -8,6 +9,7 @@ from code_analysis.commands.semantic_search_pagination_schema import (
 
 
 def test_schema_includes_optional_pagination_properties() -> None:
+    """Verify test schema includes optional pagination properties."""
     schema = get_semantic_search_schema_with_pagination()
     props = schema["properties"]
     assert "paginated" in props
@@ -17,6 +19,7 @@ def test_schema_includes_optional_pagination_properties() -> None:
 
 
 def test_required_list_unchanged() -> None:
+    """Verify test required list unchanged."""
     schema = get_semantic_search_schema_with_pagination()
     required = set(schema.get("required") or [])
     for field in ("paginated", "job_id", "include_job_id", "block_position"):
@@ -24,6 +27,7 @@ def test_required_list_unchanged() -> None:
 
 
 def test_metadata_documents_all_four_pagination_fields() -> None:
+    """Verify test metadata documents all four pagination fields."""
     meta = document_semantic_search_pagination_metadata()
     for key in ("paginated", "job_id", "include_job_id", "block_position"):
         assert key in meta

@@ -30,6 +30,7 @@ _PROJECT_UUID = "baadf00d-baad-4bad-b00d-baaaaaaaaaaa"
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -39,6 +40,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _mock_db_bundle(tmp: Path) -> MagicMock:
+    """Return mock db bundle."""
     db = MagicMock()
     proj = MagicMock()
     proj.root_path = str(tmp.resolve())
@@ -47,6 +49,7 @@ def _mock_db_bundle(tmp: Path) -> MagicMock:
 
 
 async def _open_text(tmp: Path, rel: str = "notes/sample.txt") -> tuple[str, Path]:
+    """Return open text."""
     _ensure_project_root(tmp)
     target = tmp / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +124,7 @@ async def test_text_write_preview_does_not_touch_disk(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_text_preview_commit_close_roundtrip(tmp_path: Path) -> None:
+    """Verify test text preview commit close roundtrip."""
     rel = "notes/sample.txt"
     sid, target = await _open_text(tmp_path, rel)
 
@@ -308,6 +312,7 @@ async def test_text_edit_rejects_stale_line_number_after_prior_edit(
 async def test_text_edit_anchor_mismatch_rejects_stale_coordinates(
     tmp_path: Path,
 ) -> None:
+    """Verify test text edit anchor mismatch rejects stale coordinates."""
     rel = "notes/sample.txt"
     sid, _target = await _open_text(tmp_path, rel)
 

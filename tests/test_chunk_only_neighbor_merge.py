@@ -1,3 +1,5 @@
+"""Test chunk-only vectorization neighbor merge recovery."""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +18,7 @@ from code_analysis.core.vectorization_worker_pkg.batch_processor import (
 
 @pytest.mark.asyncio
 async def test_neighbor_merge_middle_failure_merges_with_previous() -> None:
+    """Verify test neighbor merge middle failure merges with previous."""
     chunks = [
         _EmbeddingTextChunk("a", "A"),
         _EmbeddingTextChunk("b", "B"),
@@ -28,6 +31,7 @@ async def test_neighbor_merge_middle_failure_merges_with_previous() -> None:
     calls: list[str] = []
 
     async def embed_one(text: str) -> tuple[Optional[list], Optional[str]]:
+        """Return embed one."""
         calls.append(text)
         return [9.0], "merged"
 
@@ -41,6 +45,7 @@ async def test_neighbor_merge_middle_failure_merges_with_previous() -> None:
 
 @pytest.mark.asyncio
 async def test_neighbor_merge_first_failure_merges_with_next() -> None:
+    """Verify test neighbor merge first failure merges with next."""
     chunks = [
         _EmbeddingTextChunk("a", "A"),
         _EmbeddingTextChunk("b", "B"),
@@ -53,6 +58,7 @@ async def test_neighbor_merge_first_failure_merges_with_next() -> None:
     calls: list[str] = []
 
     async def embed_one(text: str) -> tuple[Optional[list], Optional[str]]:
+        """Return embed one."""
         calls.append(text)
         return [8.0], "merged"
 
@@ -64,6 +70,7 @@ async def test_neighbor_merge_first_failure_merges_with_next() -> None:
 
 @pytest.mark.asyncio
 async def test_neighbor_merge_grows_to_whole_file_and_assigns_shared_vector() -> None:
+    """Verify test neighbor merge grows to whole file and assigns shared vector."""
     chunks = [
         _EmbeddingTextChunk("a", "A"),
         _EmbeddingTextChunk("b", "B"),
@@ -79,6 +86,7 @@ async def test_neighbor_merge_grows_to_whole_file_and_assigns_shared_vector() ->
     calls: list[str] = []
 
     async def embed_one(text: str) -> tuple[Optional[list], Optional[str]]:
+        """Return embed one."""
         calls.append(text)
         if text == "ABCD":
             return [7.0], "whole"
@@ -97,6 +105,7 @@ async def test_neighbor_merge_grows_to_whole_file_and_assigns_shared_vector() ->
 
 @pytest.mark.asyncio
 async def test_neighbor_merge_unembeddable_whole_file_returns_no_assignments() -> None:
+    """Verify test neighbor merge unembeddable whole file returns no assignments."""
     chunks = [
         _EmbeddingTextChunk("a", "A"),
         _EmbeddingTextChunk("b", "B"),
@@ -104,6 +113,7 @@ async def test_neighbor_merge_unembeddable_whole_file_returns_no_assignments() -
     calls: list[str] = []
 
     async def embed_one(text: str) -> tuple[Optional[list], Optional[str]]:
+        """Return embed one."""
         calls.append(text)
         return None, None
 
@@ -114,12 +124,16 @@ async def test_neighbor_merge_unembeddable_whole_file_returns_no_assignments() -
 
 
 class _FakeDatabase:
+    """Represent FakeDatabase."""
+
     def __init__(self, chunks: list[dict[str, Any]]) -> None:
+        """Initialize the instance."""
         self.chunks = chunks
         self.logical_writes: list[dict[str, Any]] = []
         self.batch_writes: list[list[tuple[str, Optional[tuple]]]] = []
 
     def execute(self, sql: str, params: tuple, **_kwargs: Any) -> dict[str, Any]:
+        """Execute the command."""
         if "GROUP BY cc.file_id" in sql:
             return {
                 "data": [
@@ -133,21 +147,27 @@ class _FakeDatabase:
         return {"data": self.chunks}
 
     def execute_logical_write_operation(self, payload: dict[str, Any]) -> None:
+        """Return execute logical write operation."""
         self.logical_writes.append(payload)
 
     def execute_batch(
         self, ops: list[tuple[str, Optional[tuple]]], **_kwargs: Any
     ) -> None:
+        """Return execute batch."""
         self.batch_writes.append(ops)
 
 
 class _FakeSvoManager:
+    """Represent FakeSvoManager."""
+
     def __init__(self, vectors_by_text: dict[str, Optional[list]]) -> None:
+        """Initialize the instance."""
         self.vectors_by_text = vectors_by_text
         self._embedding_available = True
         self.calls: list[str] = []
 
     async def get_embeddings(self, chunks: list[Any]) -> list[Any]:
+        """Return get embeddings."""
         for chunk in chunks:
             text = getattr(chunk, "text")
             self.calls.append(text)
@@ -159,6 +179,7 @@ class _FakeSvoManager:
 
 
 def _worker(manager: Any) -> SimpleNamespace:
+    """Return worker."""
     return SimpleNamespace(
         chunk_only=True,
         svo_client_manager=manager,
@@ -170,6 +191,7 @@ def _worker(manager: Any) -> SimpleNamespace:
 
 
 def _write_ops(db: _FakeDatabase) -> list[tuple[str, Optional[tuple]]]:
+    """Return write ops."""
     if db.logical_writes:
         return db.logical_writes[0]["batches"][0]
     return db.batch_writes[0]
@@ -177,6 +199,7 @@ def _write_ops(db: _FakeDatabase) -> list[tuple[str, Optional[tuple]]]:
 
 @pytest.mark.asyncio
 async def test_process_chunk_only_fully_embeddable_commits_update_ops() -> None:
+    """Verify test process chunk only fully embeddable commits update ops."""
     db = _FakeDatabase(
         [
             {"id": "a", "chunk_text": "A"},
@@ -190,13 +213,16 @@ async def test_process_chunk_only_fully_embeddable_commits_update_ops() -> None:
     assert (updated, errors) == (2, 0)
     ops = _write_ops(db)
     assert len(ops) == 2
-    assert all(op[0].startswith("UPDATE code_chunks SET embedding_vector") for op in ops)
+    assert all(
+        op[0].startswith("UPDATE code_chunks SET embedding_vector") for op in ops
+    )
     assert all("DELETE FROM code_chunks" not in op[0] for op in ops)
     assert json.loads(ops[0][1][0]) == [1.0]
 
 
 @pytest.mark.asyncio
 async def test_process_chunk_only_neighbor_recovery_writes_shared_vector() -> None:
+    """Verify test process chunk only neighbor recovery writes shared vector."""
     db = _FakeDatabase(
         [
             {"id": "a", "chunk_text": "A"},
@@ -215,8 +241,13 @@ async def test_process_chunk_only_neighbor_recovery_writes_shared_vector() -> No
 
 @pytest.mark.asyncio
 async def test_process_chunk_only_unavailable_skips_file_without_writes() -> None:
+    """Verify test process chunk only unavailable skips file without writes."""
+
     class UnavailableManager(_FakeSvoManager):
+        """Represent UnavailableManager."""
+
         async def get_embeddings(self, chunks: list[Any]) -> list[Any]:
+            """Return get embeddings."""
             self._embedding_available = False
             raise TimeoutError("connection timeout")
 
@@ -232,6 +263,7 @@ async def test_process_chunk_only_unavailable_skips_file_without_writes() -> Non
 
 @pytest.mark.asyncio
 async def test_process_chunk_only_unembeddable_leaves_rows_for_retry() -> None:
+    """Verify test process chunk only unembeddable leaves rows for retry."""
     db = _FakeDatabase(
         [
             {"id": "a", "chunk_text": "A"},

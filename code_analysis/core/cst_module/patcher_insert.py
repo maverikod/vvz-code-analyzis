@@ -31,6 +31,7 @@ class _InsertRewriter(cst.CSTTransformer):
         insert_after: dict[tuple[int, int, int, int], list[cst.BaseStatement]],
         insert_at_end: list[cst.BaseStatement],
     ):
+        """Initialize the instance."""
         self._insert_before = insert_before
         self._insert_after = insert_after
         self._insert_at_end = insert_at_end
@@ -122,6 +123,7 @@ class _InsertRewriter(cst.CSTTransformer):
     def leave_Module(
         self, original_node: cst.Module, updated_node: cst.Module
     ) -> cst.Module:
+        """Return leave Module."""
         return updated_node.with_changes(
             body=self._rewrite_body_with_insertions(list(original_node.body))
         )
@@ -129,6 +131,7 @@ class _InsertRewriter(cst.CSTTransformer):
     def leave_IndentedBlock(
         self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock
     ) -> cst.IndentedBlock:
+        """Return leave IndentedBlock."""
         return updated_node.with_changes(
             body=self._rewrite_body_with_insertions(list(original_node.body))
         )

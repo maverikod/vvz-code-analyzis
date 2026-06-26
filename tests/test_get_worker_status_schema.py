@@ -11,6 +11,7 @@ from code_analysis.commands.worker_status_mcp_commands.get_worker_status_metadat
 
 
 def test_get_worker_status_schema_worker_type_optional_and_examples() -> None:
+    """Verify test get worker status schema worker type optional and examples."""
     schema = GetWorkerStatusMCPCommand.get_schema()
     assert schema.get("required") in (None, [], ())
     props = schema.get("properties") or {}
@@ -28,6 +29,7 @@ def test_get_worker_status_schema_worker_type_optional_and_examples() -> None:
 
 
 def test_get_worker_status_metadata_parameter_keys_and_enums_match_schema() -> None:
+    """Verify test get worker status metadata parameter keys and enums match schema."""
     schema = GetWorkerStatusMCPCommand.get_schema()
     props = schema.get("properties") or {}
     meta = get_metadata(GetWorkerStatusMCPCommand)

@@ -22,22 +22,26 @@ from code_analysis.commands.base_mcp_command import BaseMCPCommand
 
 
 def _uuid4() -> str:
+    """Return uuid4."""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
 def temp_dir():
+    """Return temp dir."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
 def project_id():
+    """Return project id."""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
 def test_db(temp_dir):
+    """Verify test db."""
     facade, raw_client = make_sqlite_in_process_legacy_facade(temp_dir)
     try:
         yield facade
@@ -47,6 +51,7 @@ def test_db(temp_dir):
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
+    """Verify test project."""
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), temp_dir.name),
@@ -295,6 +300,7 @@ def test_base_string_references_class():
     """Regression strings for matching a base reference to a simple class name."""
 
     def _same_base_name(base_str: str, class_name: str) -> bool:
+        """Return same base name."""
         if base_str == class_name:
             return True
         if "." in base_str and base_str.rsplit(".", 1)[-1] == class_name:

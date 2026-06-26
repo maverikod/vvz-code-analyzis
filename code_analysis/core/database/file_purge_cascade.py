@@ -27,6 +27,7 @@ def database_uses_postgres(database: Any) -> bool:
 
 
 def _pair_issues_delete_for_purge_temp() -> Tuple[str, tuple[Any, ...]]:
+    """Return pair issues delete for purge temp."""
     sql = f"""
 DELETE FROM issues WHERE
   file_id IN ({_PURGE})
@@ -42,6 +43,7 @@ DELETE FROM issues WHERE
 
 
 def _pair_entity_cross_ref_delete_for_purge_temp() -> Tuple[str, tuple[Any, ...]]:
+    """Return pair entity cross ref delete for purge temp."""
     sql = f"""
 DELETE FROM entity_cross_ref WHERE
   file_id IN ({_PURGE})

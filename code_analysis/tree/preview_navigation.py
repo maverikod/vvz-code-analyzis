@@ -121,6 +121,8 @@ class PreviewNavigationError(ValueError):
 
 
 class PreviewTextMode(str, Enum):
+    """Represent PreviewTextMode."""
+
     ANNOTATED = "annotated"
     FULL_TEXT = "full_text"
     STRUCTURAL = "structural"
@@ -128,6 +130,8 @@ class PreviewTextMode(str, Enum):
 
 @dataclass
 class PreviewBlockRecord:
+    """Represent PreviewBlockRecord."""
+
     short_id: NodeId
     type_label: str
     attribute_summary: str
@@ -138,6 +142,8 @@ class PreviewBlockRecord:
 
 @dataclass
 class PreviewNavigationResult:
+    """Represent PreviewNavigationResult."""
+
     focus_short_id: NodeId
     blocks: List[PreviewBlockRecord]
     serialized_envelope: str
@@ -147,6 +153,7 @@ class PreviewNavigation:
     """Three-phase preview: enumerate → select → render (C-016)."""
 
     def __init__(self, *, tree_loader: Callable[[Path, Optional[str]], Any]) -> None:
+        """Initialize the instance."""
         self._tree_loader = tree_loader
 
     def navigate(
@@ -159,6 +166,7 @@ class PreviewNavigation:
         config: Optional[PreviewSelectorConfig] = None,
         text_mode: PreviewTextMode = PreviewTextMode.ANNOTATED,
     ) -> PreviewNavigationResult:
+        """Return navigate."""
         cfg = config or PreviewSelectorConfig()
         tree = self._tree_loader(source_path, session_id)
         max_sid = compute_max_short_id_in_tree(tree)
@@ -206,6 +214,7 @@ class PreviewNavigation:
         )
 
     def _enumerate_children(self, tree: Any, focus_short_id: NodeId) -> List[Any]:
+        """Return enumerate children."""
         _, by_short_id, children_by_parent = _build_indexes(tree)
         focus = by_short_id.get(focus_short_id)
         if focus is None:
@@ -224,6 +233,7 @@ class PreviewNavigation:
         source_path: Path,
         max_short_id: int,
     ) -> PreviewBlockRecord:
+        """Return render block."""
         del source_path  # reserved for consumer wiring
         kind = str(getattr(block, "kind", "") or "")
         content = str(getattr(block, "content", "") or "")
@@ -273,6 +283,7 @@ class PreviewNavigation:
 
 
 def _iter_all_nodes(tree: Any) -> Sequence[Any]:
+    """Return iter all nodes."""
     if hasattr(tree, "all_nodes"):
         result = tree.all_nodes()
         return list(result) if not isinstance(result, list) else result
@@ -285,6 +296,7 @@ def _iter_all_nodes(tree: Any) -> Sequence[Any]:
 def _build_indexes(
     tree: Any,
 ) -> tuple[List[Any], Dict[NodeId, Any], Dict[Optional[NodeId], List[Any]]]:
+    """Return build indexes."""
     nodes = list(_iter_all_nodes(tree))
     by_short_id: Dict[NodeId, Any] = {}
     children_by_parent: Dict[Optional[NodeId], List[Any]] = {}
@@ -298,6 +310,7 @@ def _build_indexes(
 
 
 def _effective_focus_node(focus: Any, by_short_id: Dict[NodeId, Any]) -> Any:
+    """Return effective focus node."""
     kind = str(getattr(focus, "kind", "") or "")
     if kind in _CONTAINER_KINDS:
         return focus
@@ -322,6 +335,7 @@ def _expand_indented_blocks(
     direct_children: Sequence[Any],
     children_by_parent: Dict[Optional[NodeId], List[Any]],
 ) -> List[Any]:
+    """Return expand indented blocks."""
     result: List[Any] = []
     for child in direct_children:
         if getattr(child, "kind", None) == INDENTED_BLOCK_KIND:
@@ -334,6 +348,7 @@ def _expand_indented_blocks(
 
 
 def _line_to_short_id_for_block(block: Any, content: str) -> Dict[int, NodeId]:
+    """Return line to short id for block."""
     sid = block.short_id
     attrs = getattr(block, "attributes", None) or {}
     start = attrs.get("start_line")
@@ -350,6 +365,7 @@ def _line_to_short_id_for_block(block: Any, content: str) -> Dict[int, NodeId]:
 
 
 def _attribute_summary(attrs: Mapping[str, Any]) -> str:
+    """Return attribute summary."""
     if not attrs:
         return ""
     parts: List[str] = []

@@ -21,6 +21,7 @@ from code_analysis.core.search_session.http_access import (
 
 
 def _json_response(status_code: int, payload: dict) -> JSONResponse:
+    """Return json response."""
     return JSONResponse(content=payload, status_code=status_code)
 
 
@@ -29,14 +30,17 @@ def register_search_job_routes(app: Any, *, sessions_root: Path) -> None:
     ctx = HttpAccessContext(sessions_root=sessions_root)
 
     def get_index(job_id: str) -> JSONResponse:
+        """Return get index."""
         status_code, payload = handle_get_index(ctx, job_id)
         return _json_response(status_code, payload)
 
     def get_block(job_id: str, position: int) -> JSONResponse:
+        """Return get block."""
         status_code, payload = handle_get_block(ctx, job_id, position)
         return _json_response(status_code, payload)
 
     def get_status(job_id: str) -> JSONResponse:
+        """Return get status."""
         status_code, payload = handle_get_status(ctx, job_id)
         return _json_response(status_code, payload)
 

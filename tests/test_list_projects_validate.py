@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
 def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
+    """Return write config."""
     cfg = {"code_analysis": {"worker": {"watch_dirs": watch_dirs}}}
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(cfg), encoding="utf-8")
@@ -23,6 +24,7 @@ def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
 
 
 def test_list_projects_validate_params_rejects_unknown_param() -> None:
+    """Verify test list projects validate params rejects unknown param."""
     cmd = ListProjectsMCPCommand()
     with pytest.raises(ValidationError, match="unknown parameter"):
         cmd.validate_params({"__unknown_param__": "x"})
@@ -31,6 +33,7 @@ def test_list_projects_validate_params_rejects_unknown_param() -> None:
 def test_list_projects_validate_params_rejects_unknown_watched_dir_id(
     tmp_path: Path,
 ) -> None:
+    """Verify test list projects validate params rejects unknown watched dir id."""
     watch_root = tmp_path / "watch"
     watch_root.mkdir()
     wid = str(uuid.uuid4())
@@ -43,6 +46,7 @@ def test_list_projects_validate_params_rejects_unknown_watched_dir_id(
 
 @pytest.mark.asyncio
 async def test_list_projects_execute_rejects_unknown_param() -> None:
+    """Verify test list projects execute rejects unknown param."""
     cmd = ListProjectsMCPCommand()
     result = await cmd.execute(__unknown_param__="x")
     assert isinstance(result, ErrorResult)
@@ -53,6 +57,7 @@ async def test_list_projects_execute_rejects_unknown_param() -> None:
 async def test_list_projects_execute_rejects_unknown_watched_dir_id(
     tmp_path: Path,
 ) -> None:
+    """Verify test list projects execute rejects unknown watched dir id."""
     watch_root = tmp_path / "watch"
     watch_root.mkdir()
     wid = str(uuid.uuid4())
@@ -67,6 +72,7 @@ async def test_list_projects_execute_rejects_unknown_watched_dir_id(
 
 @pytest.mark.asyncio
 async def test_list_projects_command_disk_format(tmp_path: Path) -> None:
+    """Verify test list projects command disk format."""
     from code_analysis.commands.command_metadata_helpers import REQUIRED_METADATA_KEYS
 
     watch_root = tmp_path / "tools"

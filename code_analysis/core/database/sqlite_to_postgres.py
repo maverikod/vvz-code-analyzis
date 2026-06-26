@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _sqlite_table_names(conn: sqlite3.Connection) -> Set[str]:
+    """Return sqlite table names."""
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     )
@@ -36,6 +37,7 @@ def _sqlite_table_names(conn: sqlite3.Connection) -> Set[str]:
 
 
 def _table_has_identity(schema_definition: Dict[str, Any], table_name: str) -> bool:
+    """Return table has identity."""
     for col in schema_definition["tables"][table_name]["columns"]:
         if (
             col.get("primary_key")
@@ -49,6 +51,7 @@ def _table_has_identity(schema_definition: Dict[str, Any], table_name: str) -> b
 def _identity_pk_column(
     schema_definition: Dict[str, Any], table_name: str
 ) -> Optional[str]:
+    """Return identity pk column."""
     for col in schema_definition["tables"][table_name]["columns"]:
         if (
             col.get("primary_key")
@@ -102,6 +105,7 @@ def create_postgresql_schema(
 
 
 def _row_values(row: sqlite3.Row) -> Tuple[Any, ...]:
+    """Return row values."""
     return tuple(row[c] for c in row.keys())
 
 

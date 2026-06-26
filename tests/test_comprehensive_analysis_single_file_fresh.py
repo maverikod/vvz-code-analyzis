@@ -19,6 +19,7 @@ from code_analysis.commands.comprehensive_analysis_mcp.execute_single import (
 
 
 def _empty_results() -> dict:
+    """Return empty results."""
     return {
         "placeholders": [],
         "stubs": [],
@@ -96,6 +97,7 @@ async def test_single_file_runs_mypy_when_mtime_gate_would_skip_cached_row(
     cmd = MagicMock()
 
     def _validate(fp: str, root):
+        """Return validate."""
         return (root / fp).resolve()
 
     cmd._validate_file_path = _validate

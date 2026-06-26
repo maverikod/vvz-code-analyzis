@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 def _non_empty_batches(
     batches: Sequence[Sequence[Tuple[str, Any]]],
 ) -> List[List[SqlParamPair]]:
+    """Return non empty batches."""
     return [cast(List[SqlParamPair], list(b)) for b in batches if b]
 
 

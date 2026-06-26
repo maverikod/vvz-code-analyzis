@@ -56,6 +56,7 @@ def validate_sidecar_digest_format(digest: str) -> None:
 
 
 def _require_object(value: Any, context: str) -> Dict[str, Any]:
+    """Return require object."""
     if not isinstance(value, dict):
         raise SidecarParseError(
             f"{context}: expected JSON object, got {type(value).__name__}"

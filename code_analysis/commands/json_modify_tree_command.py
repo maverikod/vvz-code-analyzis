@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _json_modify_schema() -> Dict[str, Any]:
+    """Build the JSON schema for in-memory tree modification operations."""
     op = {
         "type": "object",
         "properties": {
@@ -61,6 +62,8 @@ def _json_modify_schema() -> Dict[str, Any]:
 
 
 class JsonModifyTreeCommand(BaseMCPCommand):
+    """Apply replace, delete, and insert operations to a JSON tree session."""
+
     name = "json_modify_tree"
     version = "1.0.0"
     descr = "Apply replace / delete / insert operations to JSON tree session"
@@ -71,6 +74,7 @@ class JsonModifyTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return _json_modify_schema()
 
     async def execute(
@@ -80,6 +84,7 @@ class JsonModifyTreeCommand(BaseMCPCommand):
         preview: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Apply JSON tree operations and return updated node metadata."""
         t_start = time.perf_counter()
         try:
             if not get_tree(tree_id):
@@ -126,6 +131,7 @@ class JsonModifyTreeCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonModifyTreeCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON tree modification command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

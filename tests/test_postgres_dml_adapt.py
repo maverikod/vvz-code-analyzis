@@ -14,6 +14,7 @@ from code_analysis.core.vectorization_worker_pkg import batch_processor
 
 
 def test_adapt_indexing_errors_insert_or_replace_to_upsert() -> None:
+    """Verify test adapt indexing errors insert or replace to upsert."""
     raw = (
         "INSERT OR REPLACE INTO indexing_errors "
         "(project_id, file_path, error_type, error_message, created_at) "
@@ -27,6 +28,7 @@ def test_adapt_indexing_errors_insert_or_replace_to_upsert() -> None:
 
 
 def test_adapt_julianday_only() -> None:
+    """Verify test adapt julianday only."""
     sql = "UPDATE t SET x = julianday('now') WHERE id = ?"
     out = _adapt_sqlite_dml_for_postgres(sql)
     assert "julianday" not in out
@@ -34,6 +36,7 @@ def test_adapt_julianday_only() -> None:
 
 
 def test_adapt_watch_dirs_insert_or_replace_to_upsert() -> None:
+    """Verify test adapt watch dirs insert or replace to upsert."""
     from code_analysis.core.database.watch_dir_sql import (
         watch_dirs_upsert_norm_for_postgres_adapter,
     )
@@ -50,6 +53,7 @@ def test_adapt_watch_dirs_insert_or_replace_to_upsert() -> None:
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_to_upsert() -> None:
+    """Verify test adapt watch dir paths insert or replace to upsert."""
     from code_analysis.core.database.watch_dir_sql import (
         watch_dir_paths_upsert_norm_for_postgres_adapter,
     )
@@ -64,6 +68,7 @@ def test_adapt_watch_dir_paths_insert_or_replace_to_upsert() -> None:
 
 
 def test_adapt_bool_int_assignments_for_boolean_columns() -> None:
+    """Verify test adapt bool int assignments for boolean columns."""
     sql = (
         "UPDATE files SET deleted = 0, has_docstring = 1, "
         "processing_paused = 0 WHERE id = 1"
@@ -77,6 +82,7 @@ def test_adapt_bool_int_assignments_for_boolean_columns() -> None:
 
 
 def test_adapt_dml_combined_julianday_and_deleted_assignment() -> None:
+    """Verify test adapt dml combined julianday and deleted assignment."""
     raw = "UPDATE files SET deleted = 0, updated_at = julianday('now') WHERE path = ?"
     out = _adapt_sqlite_dml_for_postgres(raw)
     assert "deleted = FALSE" in out
@@ -84,6 +90,7 @@ def test_adapt_dml_combined_julianday_and_deleted_assignment() -> None:
 
 
 def test_adapt_watch_dirs_insert_values_deleted_literal() -> None:
+    """Verify test adapt watch dirs insert values deleted literal."""
     raw = (
         "INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at) "
         "VALUES (?, ?, ?, 0, julianday('now'))"
@@ -94,6 +101,7 @@ def test_adapt_watch_dirs_insert_values_deleted_literal() -> None:
 
 
 def test_adapt_watch_dirs_insert_bind_param_unchanged() -> None:
+    """Verify test adapt watch dirs insert bind param unchanged."""
     raw = (
         "INSERT INTO watch_dirs (server_instance_id, id, name, deleted, updated_at) "
         "VALUES (?, ?, ?, ?, julianday('now'))"
@@ -104,6 +112,7 @@ def test_adapt_watch_dirs_insert_bind_param_unchanged() -> None:
 
 
 def test_adapt_watch_dir_paths_insert_or_replace_null_path_to_upsert() -> None:
+    """Verify test adapt watch dir paths insert or replace null path to upsert."""
     from code_analysis.core.database.watch_dir_sql import (
         watch_dir_paths_upsert_null_norm_for_postgres_adapter,
     )

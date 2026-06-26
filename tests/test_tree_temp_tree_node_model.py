@@ -26,6 +26,7 @@ SAMPLE_DIGEST = "0" * 64
 
 
 def test_object_member_requires_non_empty_key() -> None:
+    """Verify test object member requires non empty key."""
     root = TreeNode(
         stable_id=new_uuid_str(), type="object", children=[], key=None, value=None
     )
@@ -42,6 +43,7 @@ def test_object_member_requires_non_empty_key() -> None:
 
 
 def test_scalar_root_must_not_carry_key() -> None:
+    """Verify test scalar root must not carry key."""
     node = TreeNode(
         stable_id=new_uuid_str(),
         type="string",
@@ -54,6 +56,7 @@ def test_scalar_root_must_not_carry_key() -> None:
 
 
 def test_each_scalar_kind_accepts_expected_value_shapes() -> None:
+    """Verify test each scalar kind accepts expected value shapes."""
     cases: list[tuple[str, object]] = [
         ("string", "a"),
         ("number", 3),
@@ -74,6 +77,7 @@ def test_each_scalar_kind_accepts_expected_value_shapes() -> None:
 
 
 def test_container_children_ordering_stable() -> None:
+    """Verify test container children ordering stable."""
     first = TreeNode(
         stable_id=new_uuid_str(),
         type="number",
@@ -102,12 +106,14 @@ def test_container_children_ordering_stable() -> None:
 
 
 def test_sidecar_digest_validation_rejects_non_hex() -> None:
+    """Verify test sidecar digest validation rejects non hex."""
     with pytest.raises(ValueError, match="digest_format"):
         validate_sidecar_digest_format("g" + "0" * 63)
     validate_sidecar_digest_format(SAMPLE_DIGEST)
 
 
 def test_sidecar_roundtrip_preserves_comments_and_stable_ids() -> None:
+    """Verify test sidecar roundtrip preserves comments and stable ids."""
     child = TreeNode(
         stable_id=new_uuid_str(),
         type="number",
@@ -134,6 +140,7 @@ def test_sidecar_roundtrip_preserves_comments_and_stable_ids() -> None:
 
 
 def test_root_encoding_single_object_vs_root_array_contract() -> None:
+    """Verify test root encoding single object vs root array contract."""
     a = TreeNode(
         stable_id=new_uuid_str(),
         type="number",
@@ -178,6 +185,7 @@ def test_root_encoding_single_object_vs_root_array_contract() -> None:
 
 
 def test_empty_object_root_roundtrips() -> None:
+    """Verify test empty object root roundtrips."""
     root = TreeNode(
         stable_id=new_uuid_str(),
         type="object",

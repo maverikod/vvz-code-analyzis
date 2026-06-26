@@ -37,31 +37,39 @@ class _ClientFacade:
     """Surface for :func:`update_file_data` and CRUD helpers used by these tests."""
 
     def __init__(self, client: DatabaseClient, driver: SQLiteDriver) -> None:
+        """Initialize the instance."""
         self._c = client
         self._driver = driver
 
     def __getattr__(self, name: str) -> Any:
+        """Return getattr."""
         return getattr(self._c, name)
 
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
+        """Return execute."""
         self._c.execute(sql, params)
 
     def _commit(self) -> None:
+        """Return commit."""
         pass
 
     def _fetchone(self, sql: str, params: Optional[tuple] = None):
+        """Return fetchone."""
         r = self._c.execute(sql, params)
         rows = r.get("data") or []
         return rows[0] if rows else None
 
     def _fetchall(self, sql: str, params: Optional[tuple] = None) -> List[dict]:
+        """Return fetchall."""
         r = self._c.execute(sql, params)
         return list(r.get("data") or [])
 
     def _clear_file_vectors(self, file_id: Any) -> None:
+        """Return clear file vectors."""
         clear_file_vectors_via_driver(self._driver, str(file_id))
 
     def clear_file_data(self, file_id: Any) -> None:
+        """Return clear file data."""
         clear_file_data_via_driver(self._driver, str(file_id))
 
 

@@ -39,12 +39,14 @@ UUID4_PATTERN = re.compile(
 
 
 def test_compute_content_fingerprint_empty() -> None:
+    """Verify test compute content fingerprint empty."""
     result = compute_content_fingerprint("")
     assert len(result) == 64
     assert all(c in "0123456789abcdef" for c in result)
 
 
 def test_build_first_creation() -> None:
+    """Verify test build first creation."""
     fp1 = compute_content_fingerprint("alpha")
     fp2 = compute_content_fingerprint("beta")
     nodes = [
@@ -75,6 +77,7 @@ def test_build_first_creation() -> None:
 
 
 def test_build_rebuild_preserves_uuid_by_fingerprint() -> None:
+    """Verify test build rebuild preserves uuid by fingerprint."""
     fp1 = compute_content_fingerprint("same content")
     u1 = str(uuid.uuid4())
     prior = MapSection(
@@ -156,6 +159,7 @@ def test_build_preserves_distinct_uuids_for_duplicate_fingerprints() -> None:
 
 
 def test_validate_and_repair_preserves_uuid() -> None:
+    """Verify test validate and repair preserves uuid."""
     fp1 = compute_content_fingerprint("content")
     correct_uuid = str(uuid.uuid4())
     wrong_uuid = str(uuid.uuid4())
@@ -198,6 +202,7 @@ def test_validate_and_repair_preserves_uuid() -> None:
 
 
 def test_validate_and_repair_drops_orphan_entries() -> None:
+    """Verify test validate and repair drops orphan entries."""
     fp1 = compute_content_fingerprint("keep")
     fp_orphan = compute_content_fingerprint("orphan")
     map_section = MapSection(
@@ -235,6 +240,7 @@ def test_validate_and_repair_drops_orphan_entries() -> None:
 
 
 def test_validate_and_repair_bumps_next_free() -> None:
+    """Verify test validate and repair bumps next free."""
     fp1 = compute_content_fingerprint("node")
     map_section = MapSection(
         next_free=1,
@@ -257,6 +263,7 @@ def test_validate_and_repair_bumps_next_free() -> None:
 
 
 def test_resolve_bidirectional() -> None:
+    """Verify test resolve bidirectional."""
     fp1 = compute_content_fingerprint("solo")
     nodes = [
         DiscoveredNode(
@@ -277,6 +284,7 @@ def test_resolve_bidirectional() -> None:
 
 
 def test_resolve_unknown_short_id() -> None:
+    """Verify test resolve unknown short id."""
     fp1 = compute_content_fingerprint("x")
     nodes = [
         DiscoveredNode(
@@ -295,6 +303,7 @@ def test_resolve_unknown_short_id() -> None:
 
 
 def test_resolve_unknown_uuid() -> None:
+    """Verify test resolve unknown uuid."""
     fp1 = compute_content_fingerprint("x")
     nodes = [
         DiscoveredNode(
@@ -313,6 +322,7 @@ def test_resolve_unknown_uuid() -> None:
 
 
 def test_resolve_requires_exactly_one_arg() -> None:
+    """Verify test resolve requires exactly one arg."""
     nm = NodeIdMap(MapSection(next_free=DEFAULT_NEXT_FREE, entries=[]))
     with pytest.raises(NodeIdMapError):
         nm.resolve()
@@ -321,6 +331,7 @@ def test_resolve_requires_exactly_one_arg() -> None:
 
 
 def test_parse_serialize_roundtrip() -> None:
+    """Verify test parse serialize roundtrip."""
     fp1 = compute_content_fingerprint("tree body")
     entry = MapEntry(
         short_id=1,
@@ -340,12 +351,14 @@ def test_parse_serialize_roundtrip() -> None:
 
 
 def test_parse_missing_checksums_section() -> None:
+    """Verify test parse missing checksums section."""
     text = f"{SECTION_MAP_START}\nnext_free: 1\nentries: []\n{SECTION_TREE_START}\n"
     with pytest.raises(NodeIdMapError):
         parse_tree_file(text)
 
 
 def test_tree_section_has_no_uuid() -> None:
+    """Verify test tree section has no uuid."""
     fp1 = compute_content_fingerprint("no uuid here")
     sections = TreeSections(
         checksums={"source_sha256": SOURCE_SHA256},

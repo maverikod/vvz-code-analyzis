@@ -380,6 +380,7 @@ class TestBatchReplacePreservesClassDocstring:
     """BUG-009: two REPLACE ops in one modify_tree must not corrupt class docstring."""
 
     def test_batch_two_method_replaces_preserve_class_docstring_indent(self, tmp_path):
+        """Verify test batch two method replaces preserve class docstring indent."""
         path = str(tmp_path / "batch_class_doc.py")
         tree = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
         tree_id = tree.tree_id
@@ -573,6 +574,7 @@ class Widget:
 
 
 def _is_descendant_of(tree, node_id: str, ancestor_id: str) -> bool:
+    """Return is descendant of."""
     current: str | None = node_id
     while current:
         if current == ancestor_id:
@@ -614,6 +616,7 @@ def _function_stable_ids_by_name(
 
 
 def _decorator_stable_id_for_method(tree_id: str, method_name: str) -> str:
+    """Return decorator stable id for method."""
     tree = get_tree(tree_id)
     assert tree is not None
     method_meta = None
@@ -634,6 +637,7 @@ class TestBatchStableIdMarkerRoundTrip:
     def test_batch_replace_then_delete_preserves_untouched_node_stable_id(
         self, tmp_path
     ):
+        """Verify test batch replace then delete preserves untouched node stable id."""
         path = str(tmp_path / "batch_replace_delete_stable.py")
         tree = create_tree_from_code(path, SOURCE_BATCH_REPLACE_DELETE_STABLE.strip())
         tree_id = tree.tree_id
@@ -672,6 +676,7 @@ class TestBatchStableIdMarkerRoundTrip:
             remove_tree(tree_id)
 
     def test_batch_replace_delete_insert_three_ops(self, tmp_path):
+        """Verify test batch replace delete insert three ops."""
         path = str(tmp_path / "batch_three_ops_stable.py")
         tree = create_tree_from_code(path, SOURCE_CLASS_BATCH_TWO_METHODS.strip())
         tree_id = tree.tree_id
@@ -715,6 +720,7 @@ class TestBatchStableIdMarkerRoundTrip:
             remove_tree(tree_id)
 
     def test_batch_decorator_stable_id_preserved_after_sibling_replace(self, tmp_path):
+        """Verify test batch decorator stable id preserved after sibling replace."""
         path = str(tmp_path / "decorator_stable_batch.py")
         tree = create_tree_from_code(path, SOURCE_CLASS_DECORATOR_STABLE.strip())
         tree_id = tree.tree_id
@@ -873,6 +879,7 @@ class TestReplaceClassMethodPreservesDocstringIndent:
     """Replace FunctionDef inside ClassDef: docstring interior keeps method-body indent."""
 
     def test_replace_method_with_sectioned_docstring(self, tmp_path):
+        """Verify test replace method with sectioned docstring."""
         path = str(tmp_path / "sample.py")
         tree = create_tree_from_code(path, SOURCE_CLASS_WITH_DOCSTRING_METHOD.strip())
         tree_id = tree.tree_id
@@ -920,6 +927,7 @@ class TestReplaceClassDefStaleNodeMap:
     """
 
     def test_replace_module_level_classdef_after_stale_node_map(self, tmp_path):
+        """Verify test replace module level classdef after stale node map."""
         source = SOURCE_MODULE_CLASS_X.strip()
         path = str(tmp_path / "mod_class.py")
         tree = create_tree_from_code(path, source)
@@ -985,6 +993,7 @@ def module_func():
 
 
 def _find_function_in_class(tree_id: str, class_name: str, method_name: str) -> str:
+    """Return find function in class."""
     t = get_tree(tree_id)
     assert t is not None
     class_id = _find_classdef_node_id(tree_id, class_name)
@@ -1001,6 +1010,7 @@ def _find_function_in_class(tree_id: str, class_name: str, method_name: str) -> 
 
 
 def _find_module_function(tree_id: str, name: str) -> str:
+    """Return find module function."""
     t = get_tree(tree_id)
     assert t is not None
     for nid, meta in t.metadata_map.items():
@@ -1013,6 +1023,7 @@ def _find_module_function(tree_id: str, name: str) -> str:
 
 @pytest.fixture
 def move_tree_id(tmp_path):
+    """Return move tree id."""
     path = str(tmp_path / "move_sample.py")
     tree = create_tree_from_code(path, MOVE_FIXTURE_SOURCE.strip())
     yield tree.tree_id
@@ -1023,6 +1034,7 @@ class TestMoveOperations:
     """Cross-container and same-container MOVE via modify_tree."""
 
     def test_reorder_within_same_class(self, move_tree_id: str) -> None:
+        """Verify test reorder within same class."""
         alpha_two = _find_function_in_class(move_tree_id, "Alpha", "alpha_two")
         alpha_class = _find_classdef_node_id(move_tree_id, "Alpha")
         modified = modify_tree(
@@ -1042,6 +1054,7 @@ class TestMoveOperations:
         assert idx_two < idx_one
 
     def test_move_method_to_other_class(self, move_tree_id: str) -> None:
+        """Verify test move method to other class."""
         alpha_one = _find_function_in_class(move_tree_id, "Alpha", "alpha_one")
         beta_class = _find_classdef_node_id(move_tree_id, "Beta")
         modified = modify_tree(
@@ -1063,6 +1076,7 @@ class TestMoveOperations:
         assert "\n    def alpha_one" in code
 
     def test_move_module_function_into_nested_class(self, move_tree_id: str) -> None:
+        """Verify test move module function into nested class."""
         module_func = _find_module_function(move_tree_id, "module_func")
         inner_class = _find_classdef_node_id(move_tree_id, "Inner")
         modified = modify_tree(
@@ -1084,6 +1098,7 @@ class TestMoveOperations:
         assert "def module_func" not in before_inner
 
     def test_move_method_to_module_level(self, move_tree_id: str) -> None:
+        """Verify test move method to module level."""
         beta_one = _find_function_in_class(move_tree_id, "Beta", "beta_one")
         modified = modify_tree(
             move_tree_id,
@@ -1104,6 +1119,7 @@ class TestMoveOperations:
         assert code[line_start:idx] == ""
 
     def test_move_into_own_descendant_rejected(self, move_tree_id: str) -> None:
+        """Verify test move into own descendant rejected."""
         alpha_one = _find_function_in_class(move_tree_id, "Alpha", "alpha_one")
         alpha_class = _find_classdef_node_id(move_tree_id, "Alpha")
         with pytest.raises(ValueError, match="descendant"):
@@ -1120,6 +1136,7 @@ class TestMoveOperations:
             )
 
     def test_move_unknown_node_rejected(self, move_tree_id: str) -> None:
+        """Verify test move unknown node rejected."""
         beta_class = _find_classdef_node_id(move_tree_id, "Beta")
         with pytest.raises(ValueError, match="Node not found for move"):
             modify_tree(
@@ -1245,6 +1262,7 @@ class TestInsertMethodIntoClassPreservesDocstringIndent:
         self,
         tmp_path,
     ) -> None:
+        """Verify test insert method into class preserves docstring indent."""
         source = '''"""Doc."""
 class Sample:
     """A sample class."""

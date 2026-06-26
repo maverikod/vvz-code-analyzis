@@ -17,11 +17,13 @@ from code_analysis.core.cst_tree.tree_range_finder import find_node_by_range
 
 
 def test_annotate_statement_source_short() -> None:
+    """Verify test annotate statement source short."""
     out = annotate_statement_source("a = 1\nb = 2", start_line=10)
     assert out == "10\ta = 1\n11\tb = 2"
 
 
 def test_annotate_statement_source_truncates() -> None:
+    """Verify test annotate statement source truncates."""
     lines = [f"x = {i}" for i in range(100)]
     src = "\n".join(lines)
     out = annotate_statement_source(src, start_line=1, max_lines=10)
@@ -33,6 +35,7 @@ def test_annotate_statement_source_truncates() -> None:
 
 
 def test_find_statement_ancestor_assign_from_leaf(tmp_path: Path) -> None:
+    """Verify test find statement ancestor assign from leaf."""
     src = "def f():\n    y = 1\n"
     tree = create_tree_from_code(str(tmp_path / "x.py"), src)
     leaf = find_node_by_range(tree.tree_id, 2, 2, prefer_exact=False)
@@ -44,6 +47,7 @@ def test_find_statement_ancestor_assign_from_leaf(tmp_path: Path) -> None:
 
 
 def test_cst_get_node_at_line_includes_statement_and_leaf(tmp_path: Path) -> None:
+    """Verify test cst get node at line includes statement and leaf."""
     p = tmp_path / "m.py"
     src = "def g():\n    z = 2\n"
     p.write_text(src, encoding="utf-8")

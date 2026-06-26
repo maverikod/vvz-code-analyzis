@@ -528,6 +528,7 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             return False
 
         def _fetchone(sql: str, params: tuple[Any, ...]) -> Optional[Dict[str, Any]]:
+            """Return fetchone."""
             r = self.execute(sql, params)
             if not isinstance(r, dict):
                 return None

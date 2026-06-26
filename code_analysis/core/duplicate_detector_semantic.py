@@ -45,7 +45,10 @@ async def get_function_embedding(
             func_code = ast.dump(func_node)
 
         class FunctionChunk:
+            """Represent FunctionChunk."""
+
             def __init__(self: "FunctionChunk", text: str) -> None:
+                """Initialize the instance."""
                 self.body = text
                 self.text = text
 
@@ -136,6 +139,7 @@ async def find_semantic_duplicates_impl(
                 class_name: Optional[str],
                 func_type: str,
             ) -> None:
+                """Return add occurrence."""
                 if (func_name, class_name) in existing_names:
                     return
                 start_line = getattr(func_node, "lineno", 0) or 0

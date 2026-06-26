@@ -17,6 +17,7 @@ from code_analysis.core.sql_portable import (
 
 
 def test_sql_julian_timestamp_now_expr_backend_specific() -> None:
+    """Verify test sql julian timestamp now expr backend specific."""
     pg = MagicMock()
     pg._driver_type = "postgres"
     assert "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)" in sql_julian_timestamp_now_expr(pg)
@@ -27,6 +28,7 @@ def test_sql_julian_timestamp_now_expr_backend_specific() -> None:
 
 
 def test_database_has_sqlite_code_content_fts_by_driver() -> None:
+    """Verify test database has sqlite code content fts by driver."""
     pg = MagicMock()
     pg._driver_type = "postgres"
     assert database_has_sqlite_code_content_fts(pg) is False
@@ -38,6 +40,7 @@ def test_database_has_sqlite_code_content_fts_by_driver() -> None:
 
 
 def test_full_clear_batch_skips_fts_when_disabled() -> None:
+    """Verify test full clear batch skips fts when disabled."""
     ops = build_delete_project_full_clear_batch(
         "proj-no-fts", include_code_content_fts=False
     )
@@ -45,6 +48,7 @@ def test_full_clear_batch_skips_fts_when_disabled() -> None:
 
 
 def test_full_clear_batch_issues_delete_uses_project_id_subqueries() -> None:
+    """Verify test full clear batch issues delete uses project id subqueries."""
     ops = build_delete_project_full_clear_batch("proj-issues")
     issues_sql = [sql for sql, _ in ops if "DELETE FROM issues" in sql]
     assert len(issues_sql) == 1
@@ -53,6 +57,7 @@ def test_full_clear_batch_issues_delete_uses_project_id_subqueries() -> None:
 
 
 def test_full_clear_batch_sweeps_dual_fk_tables_by_project_id() -> None:
+    """Verify test full clear batch sweeps dual fk tables by project id."""
     pid = "proj-dual-fk"
     ops = build_delete_project_full_clear_batch(pid)
     pairs = [(sql, params) for sql, params in ops]
@@ -73,6 +78,7 @@ def test_delete_batch_each_statement_param_count_matches_placeholders() -> None:
 
 
 def test_issues_and_entity_cross_ref_helpers_param_counts() -> None:
+    """Verify test issues and entity cross ref helpers param counts."""
     pid = "p"
     for sql, params in (_pair_issues_delete(pid), _pair_entity_cross_ref_delete(pid)):
         assert sql.count("?") == len(params)
@@ -82,6 +88,7 @@ def test_clear_project_data_uses_single_logical_write_rpc() -> None:
     """Full DB clear must be one execute_logical_write_operation (no transaction helpers)."""
 
     async def _run() -> None:
+        """Return run."""
         db = MagicMock()
         db._driver_type = "postgres"
         await _clear_project_data_impl(db, "proj-1")
@@ -95,8 +102,10 @@ def test_clear_project_data_uses_single_logical_write_rpc() -> None:
 
 
 def test_mark_project_deleted_uses_single_logical_write_rpc() -> None:
+    """Verify test mark project deleted uses single logical write rpc."""
 
     async def _run() -> None:
+        """Return run."""
         db = MagicMock()
         await mark_project_deleted_impl(db, "proj-2")
         db.execute_logical_write_operation.assert_called_once()

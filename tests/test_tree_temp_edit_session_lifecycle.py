@@ -35,6 +35,7 @@ _PROJECT_UUID = "baadf00d-baad-4bad-b00d-baaaaaaaaaaa"
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -44,6 +45,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _mock_db_bundle(tmp: Path) -> MagicMock:
+    """Return mock db bundle."""
     db = MagicMock()
     proj = MagicMock()
     proj.root_path = str(tmp.resolve())
@@ -52,21 +54,25 @@ def _mock_db_bundle(tmp: Path) -> MagicMock:
 
 
 def _sha_hex(data: bytes) -> str:
+    """Return sha hex."""
     return hashlib.sha256(data).hexdigest()
 
 
 def _clear_json_trees() -> None:
+    """Return clear json trees."""
     jtb._trees.clear()
 
 
 @pytest.fixture(autouse=True)
 def _reset_registry() -> None:
+    """Return reset registry."""
     _clear_json_trees()
     yield
     _clear_json_trees()
 
 
 async def _open(tmp: Path, rel: str = "nested/demo.json") -> tuple[str, Path]:
+    """Return open."""
     _ensure_project_root(tmp)
     body = '{"counter":7}\n'
     target = tmp / rel
@@ -87,6 +93,7 @@ async def _open(tmp: Path, rel: str = "nested/demo.json") -> tuple[str, Path]:
 async def test_roundtrip_commit_refreshes_sidecar_digest_matches_source(
     tmp_path: Path,
 ) -> None:
+    """Verify test roundtrip commit refreshes sidecar digest matches source."""
     rel = "nested/demo.json"
     sid, target = await _open(tmp_path, rel)
     initial_sha = _sha_hex(target.read_bytes())
@@ -159,6 +166,7 @@ async def test_roundtrip_commit_refreshes_sidecar_digest_matches_source(
 async def test_close_without_write_after_edit_restores_original_hash(
     tmp_path: Path,
 ) -> None:
+    """Verify test close without write after edit restores original hash."""
     rel = "nested/demo.json"
     sid, target = await _open(tmp_path, rel)
     snap = target.read_bytes()
@@ -200,6 +208,7 @@ async def test_close_without_write_after_edit_restores_original_hash(
 async def test_insert_into_object_using_after_key_maintains_order(
     tmp_path: Path,
 ) -> None:
+    """Verify test insert into object using after key maintains order."""
     rel = "nested/order.json"
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,6 +289,7 @@ async def test_insert_into_object_using_after_key_maintains_order(
 async def test_invalid_batch_returns_error_without_partial_mutation(
     tmp_path: Path,
 ) -> None:
+    """Verify test invalid batch returns error without partial mutation."""
     rel = "nested/batch.json"
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)

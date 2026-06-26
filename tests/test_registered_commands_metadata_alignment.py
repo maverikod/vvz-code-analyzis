@@ -26,6 +26,7 @@ _REGISTERED: list[Type[Any]] = [
     "cmd_cls", _REGISTERED, ids=lambda c: getattr(c, "name", c.__name__)
 )
 def test_finalized_metadata_parameters_match_schema(cmd_cls: Type[Any]) -> None:
+    """Verify test finalized metadata parameters match schema."""
     schema = cmd_cls.get_schema()
     props = set((schema.get("properties") or {}).keys())
     required = set(schema.get("required") or [])
@@ -51,6 +52,7 @@ def test_finalized_metadata_parameters_match_schema(cmd_cls: Type[Any]) -> None:
     "cmd_cls", _REGISTERED, ids=lambda c: getattr(c, "name", c.__name__)
 )
 def test_finalized_usage_examples_use_schema_keys_only(cmd_cls: Type[Any]) -> None:
+    """Verify test finalized usage examples use schema keys only."""
     schema = cmd_cls.get_schema()
     props = set((schema.get("properties") or {}).keys())
     meta = finalize_command_metadata(cmd_cls, cmd_cls.metadata())

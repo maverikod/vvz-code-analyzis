@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Lazy import to avoid circular dependency; used only for duplicate-name validation
 def _list_cst_blocks(source: str) -> list:
+    """Return list cst blocks."""
     from ..cst_module import list_cst_blocks as _list_blocks
 
     return _list_blocks(source)

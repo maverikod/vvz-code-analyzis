@@ -78,6 +78,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "title": "write_project_text_lines",
@@ -310,6 +311,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
         backup: bool = True,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Execute the command."""
         try:
             params: Dict[str, Any] = {
                 "project_id": project_id,
@@ -453,6 +455,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                 absolute_path.write_text(source_code, encoding="utf-8")
 
                 def _restore_file_from_backup() -> None:
+                    """Return restore file from backup."""
                     if not backup_uuid or not absolute_path.exists():
                         return
                     backup_manager = BackupManager(root_dir)

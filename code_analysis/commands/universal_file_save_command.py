@@ -60,11 +60,11 @@ from ..core.file_lock import file_lock
 
 from ..core.path_normalization import normalize_path_simple
 
-
 logger = logging.getLogger(__name__)
 
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
+    """Return success from handler."""
     data: Dict[str, Any] = {
         "success": True,
         "handler_id": fr.handler_id,
@@ -79,6 +79,7 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
 
 
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
+    """Return error from handler."""
     return ErrorResult(
         message=fr.message or fr.code,
         code=fr.code or "VALIDATION_FAILED",
@@ -118,6 +119,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "title": "universal_file_save",
@@ -200,12 +202,14 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         from .universal_file_save_metadata import get_universal_file_save_metadata
 
         return get_universal_file_save_metadata(cls)
 
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
+        """Return validate save payload."""
         if content is None:
             return ErrorResult(
                 message="content is required",
@@ -235,6 +239,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         create_parent_dirs: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         try:
             try:
                 handler_id = resolve_handler(file_path, "save")

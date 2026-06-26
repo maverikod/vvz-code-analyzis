@@ -19,6 +19,7 @@ from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
 
 def _count(database: Any, sql: str, project_id: str) -> int:
+    """Return count."""
     res = database.execute(sql, (project_id,))
     rows = res.get("data", []) if isinstance(res, dict) else (res or [])
     if not rows:

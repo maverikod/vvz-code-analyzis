@@ -44,6 +44,7 @@ _PREVIEW_ACQUIRE_PATCH = (
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -53,6 +54,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _db(tmp: Path, project_id: str = _PID) -> MagicMock:
+    """Return db."""
     m = MagicMock()
     m.select.return_value = [
         {
@@ -67,22 +69,26 @@ def _db(tmp: Path, project_id: str = _PID) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
+    """Return reset."""
     jtb._trees.clear()
     yield
     jtb._trees.clear()
 
 
 def _sidecar_path(tmp: Path, rel: str) -> Path:
+    """Return sidecar path."""
     return sibling_tree_path((tmp / rel).resolve())
 
 
 def _normalize_pointer(pointer: str) -> str:
+    """Return normalize pointer."""
     if pointer in ("", "/"):
         return "/"
     return pointer if pointer.startswith("/") else f"/{pointer}"
 
 
 def _short_id_for_pointer(*, source_path: Path, pointer: str) -> int:
+    """Return short id for pointer."""
     handler = HandlerRegistry.default_registry().resolve(source_path)
     source_text = source_path.read_text(encoding="utf-8")
     nodes = handler.parse_content(source_path, source_text)
@@ -95,6 +101,7 @@ def _short_id_for_pointer(*, source_path: Path, pointer: str) -> int:
 
 
 def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) -> str:
+    """Return uuid for pointer."""
     sections = parse_tree_file(sidecar_path.read_text(encoding="utf-8"))
     handler = HandlerRegistry.default_registry().resolve(source_path)
     source_text = source_path.read_text(encoding="utf-8")
@@ -115,6 +122,7 @@ def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) ->
 
 
 def _stable_id_in_forest(roots: list[TreeNode], pointer: str) -> str:
+    """Return stable id in forest."""
     norm = _normalize_pointer(pointer)
     if norm == "/":
         assert len(roots) == 1
@@ -137,6 +145,7 @@ def _stable_id_in_forest(roots: list[TreeNode], pointer: str) -> str:
 
 
 def _preview_acquisition(tmp: Path, rel: str) -> TreeTempOpenAcquisition:
+    """Return preview acquisition."""
     source = (tmp / rel).resolve()
     return acquire_tree_temp_for_open(
         project_root=tmp.resolve(),
@@ -147,10 +156,12 @@ def _preview_acquisition(tmp: Path, rel: str) -> TreeTempOpenAcquisition:
 
 
 def _ids(blocks: list[dict[str, Any]]) -> set[str]:
+    """Return ids."""
     return {str(b[BLOCK_ID_KEY]) for b in blocks}
 
 
 async def _open_write_commit_close(tmp: Path, rel: str) -> None:
+    """Return open write commit close."""
     op = UniversalFileOpenCommand()
     wr = UniversalFileWriteCommand()
     cl = UniversalFileCloseCommand()
@@ -175,6 +186,7 @@ async def _open_write_commit_close(tmp: Path, rel: str) -> None:
 
 
 async def _hydrate(tmp: Path) -> None:
+    """Return hydrate."""
     _ensure_project_root(tmp)
     p = tmp / _REL
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +195,7 @@ async def _hydrate(tmp: Path) -> None:
 
 
 async def _preview(tmp: Path, node_ref: str | int | None) -> SuccessResult:
+    """Return preview."""
     cmd = UniversalFilePreviewCommand()
     raw: dict[str, Any] = {"project_id": _PID, "file_path": _REL}
     if node_ref is not None:
@@ -197,6 +210,7 @@ async def _preview(tmp: Path, node_ref: str | int | None) -> SuccessResult:
 async def test_scalar_stable_id_resolves_container_children_matching_parent_preview(
     tmp_path: Path,
 ) -> None:
+    """Verify test scalar stable id resolves container children matching parent preview."""
     await _hydrate(tmp_path)
     source = (tmp_path / _REL).resolve()
     svc_sid = _short_id_for_pointer(source_path=source, pointer="/svc")
@@ -217,6 +231,7 @@ async def test_scalar_stable_id_resolves_container_children_matching_parent_prev
 
 @pytest.mark.asyncio
 async def test_root_scalar_json_preview_equivalent_without_ref(tmp_path: Path) -> None:
+    """Verify test root scalar json preview equivalent without ref."""
     _ensure_project_root(tmp_path)
     rel = "solo.json"
     p = tmp_path / rel
@@ -269,6 +284,7 @@ async def test_root_scalar_json_preview_equivalent_without_ref(tmp_path: Path) -
 async def test_rescan_after_external_edit_and_removed_sidecar_generates_new_uuid(
     tmp_path: Path,
 ) -> None:
+    """Verify test rescan after external edit and removed sidecar generates new uuid."""
     await _hydrate(tmp_path)
     sc = _sidecar_path(tmp_path, _REL)
     source = tmp_path / _REL
@@ -287,11 +303,13 @@ async def test_rescan_after_external_edit_and_removed_sidecar_generates_new_uuid
 async def test_stable_id_persists_across_sessions_without_disk_change(
     tmp_path: Path,
 ) -> None:
+    """Verify test stable id persists across sessions without disk change."""
     await _hydrate(tmp_path)
     sc = _sidecar_path(tmp_path, _REL)
     source = tmp_path / _REL
 
     async def cycle() -> str:
+        """Return cycle."""
         op = UniversalFileOpenCommand()
         cl = UniversalFileCloseCommand()
         with patch.object(
@@ -316,6 +334,7 @@ async def test_stable_id_persists_across_sessions_without_disk_change(
 
 @pytest.mark.asyncio
 async def test_unknown_node_ref_errors(tmp_path: Path) -> None:
+    """Verify test unknown node ref errors."""
     await _hydrate(tmp_path)
     cmd = UniversalFilePreviewCommand()
     with patch.object(

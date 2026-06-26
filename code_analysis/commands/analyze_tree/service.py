@@ -73,7 +73,9 @@ def _under_roots(rel: str, roots: list[str]) -> bool:
     return False
 
 
-def _rel_of(path_abs: Optional[str], relative_path: Optional[str], root: Path) -> Optional[str]:
+def _rel_of(
+    path_abs: Optional[str], relative_path: Optional[str], root: Path
+) -> Optional[str]:
     """Project-relative path for a file row, preferring an explicit relative_path."""
     if relative_path:
         return str(relative_path).replace("\\", "/").lstrip("/")
@@ -171,7 +173,9 @@ def build_core(
             (project_id,),
         )
         lease_rows = (
-            lease_res.get("data", []) if isinstance(lease_res, dict) else (lease_res or [])
+            lease_res.get("data", [])
+            if isinstance(lease_res, dict)
+            else (lease_res or [])
         )
         for row in lease_rows:
             fp = _rv(row, "file_path")
@@ -269,7 +273,9 @@ def _load_structure(
     rel_by_file_id: dict[str, str],
 ) -> dict[str, dict]:
     """Per-file composition (classes+methods, functions) for the sub-tree files."""
-    out: dict[str, dict] = {rel: {"classes": [], "functions": []} for rel in internal_set}
+    out: dict[str, dict] = {
+        rel: {"classes": [], "functions": []} for rel in internal_set
+    }
 
     cls_res = db.execute(
         """
@@ -329,7 +335,11 @@ def _load_structure(
         if rel not in internal_set:
             continue
         out[rel]["functions"].append(
-            {"name": _rv(row, "name"), "line": _rv(row, "line"), "end_line": _rv(row, "end_line")}
+            {
+                "name": _rv(row, "name"),
+                "line": _rv(row, "line"),
+                "end_line": _rv(row, "end_line"),
+            }
         )
     return out
 
@@ -371,8 +381,13 @@ def _load_dead_code(
             class_rel_by_id[str(_rv(row, "id"))] = rel
         if rel in internal_set:
             symbols.append(
-                {"kind": "class", "name": _rv(row, "name"), "file": rel,
-                 "line": _rv(row, "line"), "class_name": None}
+                {
+                    "kind": "class",
+                    "name": _rv(row, "name"),
+                    "file": rel,
+                    "line": _rv(row, "line"),
+                    "class_name": None,
+                }
             )
 
     fn_res = db.execute(
@@ -389,8 +404,13 @@ def _load_dead_code(
         rel = rel_by_file_id.get(str(_rv(row, "file_id")))
         if rel in internal_set:
             symbols.append(
-                {"kind": "function", "name": _rv(row, "name"), "file": rel,
-                 "line": _rv(row, "line"), "class_name": None}
+                {
+                    "kind": "function",
+                    "name": _rv(row, "name"),
+                    "file": rel,
+                    "line": _rv(row, "line"),
+                    "class_name": None,
+                }
             )
 
     m_res = db.execute(
@@ -409,11 +429,17 @@ def _load_dead_code(
         rel = class_rel_by_id.get(cid)
         if rel in internal_set:
             symbols.append(
-                {"kind": "method", "name": _rv(row, "name"), "file": rel,
-                 "line": _rv(row, "line"), "class_name": class_name_by_id.get(cid)}
+                {
+                    "kind": "method",
+                    "name": _rv(row, "name"),
+                    "file": rel,
+                    "line": _rv(row, "line"),
+                    "class_name": class_name_by_id.get(cid),
+                }
             )
 
     def _name_map(sql: str, name_col: str) -> dict[str, list[str]]:
+        """Return name map."""
         res = db.execute(sql, (project_id,))
         rows = res.get("data", []) if isinstance(res, dict) else (res or [])
         acc: dict[str, set[str]] = {}

@@ -19,6 +19,7 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
 
 
 def _wrapped_core() -> dict:
+    """Return wrapped core."""
     return {"tables": get_tables_core(), "indexes": [], "virtual_tables": []}
 
 
@@ -35,6 +36,7 @@ _UUID_CORE_TABLES = (
 
 
 def test_core_identity_columns_are_logical_uuid() -> None:
+    """Verify test core identity columns are logical uuid."""
     tables = get_tables_core()
     for tname in _UUID_CORE_TABLES:
         tbl = tables[tname]
@@ -57,6 +59,7 @@ def test_core_identity_columns_are_logical_uuid() -> None:
 
 
 def test_projects_watch_dirs_logical_uuid_stable_no_autoincrement() -> None:
+    """Verify test projects watch dirs logical uuid stable no autoincrement."""
     tables = get_tables_core()
     p = tables["projects"]["columns"]
     w = tables["watch_dirs"]["columns"][0]
@@ -65,11 +68,13 @@ def test_projects_watch_dirs_logical_uuid_stable_no_autoincrement() -> None:
 
 
 def test_files_unique_project_path_preserved() -> None:
+    """Verify test files unique project path preserved."""
     uc = get_tables_core()["files"]["unique_constraints"]
     assert {"columns": ["project_id", "path"]} in uc
 
 
 def test_core_fk_graph_uuid_targets() -> None:
+    """Verify test core fk graph uuid targets."""
     tables = get_tables_core()
     files_fk = {
         tuple(fk["columns"]): fk["references_table"]
@@ -89,6 +94,7 @@ def test_core_fk_graph_uuid_targets() -> None:
 
 @pytest.mark.parametrize("table", _UUID_CORE_TABLES)
 def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
+    """Verify test sqlite ddl maps uuid to text."""
     sd = _wrapped_core()
     ddl = generate_create_table_sql(sd, table).upper()
     assert "UUID" not in ddl, ddl
@@ -100,6 +106,7 @@ def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
     ("files", "classes", "functions", "methods", "entity_cross_ref", "projects"),
 )
 def test_postgres_ddl_uses_native_uuid_not_integer_identity(table: str) -> None:
+    """Verify test postgres ddl uses native uuid not integer identity."""
     sd = _wrapped_core()
     ddl = generate_create_table_sql_postgres(sd, table)
     up = ddl.upper()
@@ -109,6 +116,7 @@ def test_postgres_ddl_uses_native_uuid_not_integer_identity(table: str) -> None:
 
 
 def test_postgres_files_ddl_unique_and_fk() -> None:
+    """Verify test postgres files ddl unique and fk."""
     sd = _wrapped_core()
     ddl = generate_create_table_sql_postgres(sd, "files")
     assert "UNIQUE (project_id, path)" in ddl
@@ -117,6 +125,7 @@ def test_postgres_files_ddl_unique_and_fk() -> None:
 
 
 def test_postgres_entity_cross_ref_fk_columns_uuid() -> None:
+    """Verify test postgres entity cross ref fk columns uuid."""
     sd = _wrapped_core()
     ddl = generate_create_table_sql_postgres(sd, "entity_cross_ref")
     for frag in (

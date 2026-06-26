@@ -10,6 +10,7 @@ import inspect
 
 
 def test_faiss_rebuild_row_number_sorts_by_created_at_then_id() -> None:
+    """Verify test faiss rebuild row number sorts by created at then id."""
     from code_analysis.core import faiss_manager_rebuild
 
     src = inspect.getsource(faiss_manager_rebuild.rebuild_from_database_impl)
@@ -19,6 +20,7 @@ def test_faiss_rebuild_row_number_sorts_by_created_at_then_id() -> None:
 
 
 def test_faiss_fetch_chunks_orders_by_created_at() -> None:
+    """Verify test faiss fetch chunks orders by created at."""
     from code_analysis.core import faiss_manager_rebuild
 
     src = inspect.getsource(faiss_manager_rebuild._fetch_chunks_for_rebuild)
@@ -26,6 +28,7 @@ def test_faiss_fetch_chunks_orders_by_created_at() -> None:
 
 
 def test_base_chunks_queries_use_created_at_order() -> None:
+    """Verify test base chunks queries use created at order."""
     from code_analysis.core.database import base_chunks
 
     src = inspect.getsource(base_chunks.get_all_chunks_for_faiss_rebuild)

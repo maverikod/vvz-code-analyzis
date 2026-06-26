@@ -32,6 +32,7 @@ _PROJECT_UUID = "cafebabe-cafe-4caf-babe-cafebabecafe"
 
 
 def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
+    """Return db for."""
     m = MagicMock()
     row = {
         "id": project_id,
@@ -47,23 +48,30 @@ def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
 
 
 def _ensure_project_root(tmp: Path, project_id: str = _PROJECT_UUID) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(json.dumps({"id": project_id}) + "\n", encoding="utf-8")
 
 
 class TestPreviewAddressingHelpers:
+    """Represent TestPreviewAddressingHelpers."""
+
     def test_identifier_addressing_node_ref(self) -> None:
+        """Verify test identifier addressing node ref."""
         assert uses_identifier_addressing({"node_ref": "abc"}) is True
 
     def test_identifier_addressing_selector_slice(self) -> None:
+        """Verify test identifier addressing selector slice."""
         assert uses_identifier_addressing({"selector": "0:3"}) is True
 
     def test_line_fallback_only_offset(self) -> None:
+        """Verify test line fallback only offset."""
         assert uses_line_fallback_addressing({"preview_offset": 100}) is True
         assert uses_line_fallback_addressing({"preview_offset": 0}) is False
 
     def test_check_invalid_json_with_node_ref(self) -> None:
+        """Verify test check invalid json with node ref."""
         err = check_preview_addressing(
             parseable=False,
             params={"node_ref": "/a", "file_path": "x.json"},
@@ -73,6 +81,7 @@ class TestPreviewAddressingHelpers:
         assert err.code == INPUT_ERROR_REQUIRES_LINE_ADDRESSING
 
     def test_check_valid_with_preview_offset(self) -> None:
+        """Verify test check valid with preview offset."""
         err = check_preview_addressing(
             parseable=True,
             params={"preview_offset": 500, "file_path": "x.json"},
@@ -94,6 +103,7 @@ class TestPreviewAddressingHelpers:
 async def test_invalid_structured_file_rejects_identifier_addressing(
     tmp_path: Path, rel: str, content: str
 ) -> None:
+    """Verify test invalid structured file rejects identifier addressing."""
     _ensure_project_root(tmp_path)
     (tmp_path / rel).write_text(content, encoding="utf-8")
     cmd = UniversalFilePreviewCommand()
@@ -126,6 +136,7 @@ async def test_invalid_structured_file_rejects_identifier_addressing(
 async def test_parseable_file_rejects_line_pagination(
     tmp_path: Path, rel: str, content: str
 ) -> None:
+    """Verify test parseable file rejects line pagination."""
     _ensure_project_root(tmp_path)
     (tmp_path / rel).write_text(content, encoding="utf-8")
     cmd = UniversalFilePreviewCommand()
@@ -147,6 +158,7 @@ async def test_parseable_file_rejects_line_pagination(
 
 @pytest.mark.asyncio
 async def test_invalid_json_allows_root_line_pagination(tmp_path: Path) -> None:
+    """Verify test invalid json allows root line pagination."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     (tmp_path / rel).write_text('{"x": ' + ("y" * 500), encoding="utf-8")
@@ -174,6 +186,7 @@ async def test_invalid_json_allows_root_line_pagination(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_valid_json_root_has_no_preview_chunk(tmp_path: Path) -> None:
+    """Verify test valid json root has no preview chunk."""
     _ensure_project_root(tmp_path)
     rel = "ok.json"
     (tmp_path / rel).write_text('{"items": [1, 2, 3]}\n', encoding="utf-8")
@@ -197,6 +210,7 @@ async def test_valid_json_root_has_no_preview_chunk(tmp_path: Path) -> None:
 
 
 def test_preview_source_is_parseable_all_formats(tmp_path: Path) -> None:
+    """Verify test preview source is parseable all formats."""
     (tmp_path / "a.json").write_text('{"ok": true}', encoding="utf-8")
     (tmp_path / "b.json").write_text("{bad", encoding="utf-8")
     (tmp_path / "c.txt").write_text("any text", encoding="utf-8")
@@ -206,6 +220,7 @@ def test_preview_source_is_parseable_all_formats(tmp_path: Path) -> None:
 
 
 def test_schema_node_ref_accepts_integer_short_id() -> None:
+    """Verify test schema node ref accepts integer short id."""
     schema = UniversalFilePreviewCommand.get_schema()
     node_ref = schema["properties"]["node_ref"]
     assert "oneOf" in node_ref
@@ -214,6 +229,7 @@ def test_schema_node_ref_accepts_integer_short_id() -> None:
 
 
 def test_validate_params_accepts_integer_node_ref() -> None:
+    """Verify test validate params accepts integer node ref."""
     cmd = UniversalFilePreviewCommand()
     params = cmd.validate_params(
         {
@@ -226,6 +242,7 @@ def test_validate_params_accepts_integer_node_ref() -> None:
 
 
 def test_validate_params_rejects_non_positive_integer_node_ref() -> None:
+    """Verify test validate params rejects non positive integer node ref."""
     cmd = UniversalFilePreviewCommand()
     with pytest.raises(ValidationError):
         cmd.validate_params(

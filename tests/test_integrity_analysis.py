@@ -25,19 +25,25 @@ from code_analysis.core.integrity_analysis.import_cycles_sql import (
 
 
 class _FakeDB:
+    """Represent FakeDB."""
+
     def __init__(self, lock_row: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize the instance."""
         self.lock_row = lock_row
         self.executed: List[Tuple[str, tuple[Any, ...]]] = []
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> Dict[str, Any]:
+        """Execute the command."""
         self.executed.append((sql.strip(), params))
         return {"data": [], "affected_rows": 0}
 
 
 def test_eligibility_no_lock() -> None:
+    """Verify test eligibility no lock."""
     db = _FakeDB()
 
     def _get(_db: Any, _pid: str) -> None:
+        """Return get."""
         return None
 
     import code_analysis.core.integrity_analysis.eligibility as mod
@@ -53,6 +59,7 @@ def test_eligibility_no_lock() -> None:
 
 
 def test_eligibility_watcher_active() -> None:
+    """Verify test eligibility watcher active."""
     db = _FakeDB()
     row = {
         "owner_type": "watcher",
@@ -72,6 +79,7 @@ def test_eligibility_watcher_active() -> None:
 
 
 def test_step1_creates_indexes_and_excludes_self_loops() -> None:
+    """Verify test step1 creates indexes and excludes self loops."""
     ops = build_step1_create_edges_sql("proj-uuid")
     sql_blob = "\n".join(s for s, _ in ops)
     assert "CREATE INDEX idx_integrity_ie_from" in sql_blob
@@ -104,12 +112,14 @@ def test_parametrized_statements_have_no_literal_percent() -> None:
 
 
 def test_step3_rejects_f0_equals_f1() -> None:
+    """Verify test step3 rejects f0 equals f1."""
     sql, _ = build_step3_select_cycles_sql(4)
     assert "f0 <> f1" in sql
     assert "f2 = f0" in sql or "f2 = f0 OR f2 = f1" in sql
 
 
 def test_batch_has_three_stages() -> None:
+    """Verify test batch has three stages."""
     batch = build_import_cycle_detection_batch("pid", max_depth=3)
     assert len(batch) >= 10
     select_sql = batch[-1][0]
@@ -117,11 +127,13 @@ def test_batch_has_three_stages() -> None:
 
 
 def test_trim_path_at_duplicate() -> None:
+    """Verify test trim path at duplicate."""
     assert _trim_path_at_first_duplicate(["a", "b", "c", "b"]) == ["a", "b", "c", "b"]
     assert _trim_path_at_first_duplicate(["a", "b", "a"]) == ["a", "b", "a"]
 
 
 def test_batch_summary_includes_integrity() -> None:
+    """Verify test batch summary includes integrity."""
     from code_analysis.commands.comprehensive_analysis_mcp.batch_summary import (
         build_batch_summary,
     )
@@ -149,6 +161,7 @@ def test_batch_summary_includes_integrity() -> None:
 
 
 def test_comprehensive_schema_has_integrity_params() -> None:
+    """Verify test comprehensive schema has integrity params."""
     from code_analysis.commands.comprehensive_analysis_mcp.command import (
         ComprehensiveAnalysisMCPCommand,
     )
@@ -161,12 +174,14 @@ def test_comprehensive_schema_has_integrity_params() -> None:
 
 
 def test_docker_watch_root_constant() -> None:
+    """Verify test docker watch root constant."""
     from code_analysis.core.constants import CASMGR_DOCKER_WATCH_ROOT
 
     assert CASMGR_DOCKER_WATCH_ROOT == "/watched"
 
 
 def test_docker_server_dockerfile_exists() -> None:
+    """Verify test docker server dockerfile exists."""
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
@@ -175,6 +190,7 @@ def test_docker_server_dockerfile_exists() -> None:
 
 
 def test_dedupe_cycle_rotations() -> None:
+    """Verify test dedupe cycle rotations."""
     a = ["id1", "id2", "id3", "id1"]
     b = ["id2", "id3", "id1", "id2"]
     out = _dedupe_cycle_paths([a, b])

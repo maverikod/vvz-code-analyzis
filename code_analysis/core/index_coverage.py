@@ -28,12 +28,15 @@ CoverageReason = Literal[
 
 @dataclass
 class IndexedCoverage:
+    """Represent IndexedCoverage."""
+
     file_path: str
     indexed: bool
     unchanged: bool
     reason: CoverageReason
 
     def as_dict(self) -> dict[str, Any]:
+        """Return as dict."""
         return {
             "file_path": self.file_path,
             "indexed": self.indexed,
@@ -46,11 +49,13 @@ class IndexCoverageService:
     """Determine which project files are covered by the fulltext index."""
 
     def __init__(self, database: Any, project_id: str, project_root: Path) -> None:
+        """Initialize the instance."""
         self._db = database
         self._project_id = project_id
         self._root = project_root.resolve()
 
     def check_path(self, rel_path: str) -> IndexedCoverage:
+        """Return check path."""
         rel = rel_path.replace("\\", "/").lstrip("/")
         if not is_supported_extension(rel):
             return IndexedCoverage(
@@ -179,6 +184,7 @@ class IndexCoverageService:
         return out, reasons
 
     def _count_code_content(self, file_id: Any) -> int:
+        """Return count code content."""
         result = self._db.execute(
             "SELECT COUNT(*) AS c FROM code_content WHERE file_id = ?",
             (file_id,),
@@ -189,6 +195,7 @@ class IndexCoverageService:
         return int(rows[0].get("c") or 0)
 
     def _latest_cst_hash(self, file_id: Any) -> Optional[str]:
+        """Return latest cst hash."""
         result = self._db.execute(
             "SELECT cst_hash FROM cst_trees WHERE file_id = ? ORDER BY file_mtime DESC LIMIT 1",
             (file_id,),

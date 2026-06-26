@@ -38,6 +38,7 @@ from unittest.mock import MagicMock
 
 
 def _make_db_mock() -> MagicMock:
+    """Return make db mock."""
     db = MagicMock()
     db.select = MagicMock(return_value=[])
     created = MagicMock()
@@ -51,6 +52,7 @@ def _make_db_mock() -> MagicMock:
     def _execute_side_effect(
         sql: str, params: tuple = (), *args: object, **kwargs: object
     ) -> dict:
+        """Return execute side effect."""
         s = str(sql)
         if "SELECT editing_pid" in s:
             return {"affected_rows": 0, "data": [{"editing_pid": None}]}
@@ -60,9 +62,7 @@ def _make_db_mock() -> MagicMock:
 
     db.execute = MagicMock(side_effect=_execute_side_effect)
     db.execute_batch = MagicMock(
-        side_effect=lambda ops, **kw: [
-            {"affected_rows": 1, "data": None} for _ in ops
-        ]
+        side_effect=lambda ops, **kw: [{"affected_rows": 1, "data": None} for _ in ops]
     )
     db.execute_logical_write_operation = MagicMock(
         return_value={

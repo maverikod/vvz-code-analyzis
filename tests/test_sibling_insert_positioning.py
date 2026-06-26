@@ -86,11 +86,13 @@ def outer():
 
 
 def _top_level_function_names(source: str) -> list[str]:
+    """Return top level function names."""
     mod = ast.parse(source)
     return [n.name for n in mod.body if isinstance(n, ast.FunctionDef)]
 
 
 def _class_method_names(source: str, class_name: str) -> list[str]:
+    """Return class method names."""
     mod = ast.parse(source)
     for node in mod.body:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
@@ -99,6 +101,7 @@ def _class_method_names(source: str, class_name: str) -> list[str]:
 
 
 def _blank_lines_before_def(source: str, def_name: str) -> int:
+    """Return blank lines before def."""
     lines = source.splitlines()
     def_idx = next(
         i for i, ln in enumerate(lines) if ln.lstrip().startswith(f"def {def_name}")
@@ -119,6 +122,7 @@ def _function_node_id(
     in_class: str | None = None,
     in_function: str | None = None,
 ) -> str:
+    """Return function node id."""
     tree = get_tree(tree_id)
     assert tree is not None
     root_id = tree.root_node_id
@@ -160,6 +164,7 @@ def _function_node_id(
 
 
 def _function_stable_id(tree_id: str, name: str, *, in_class: str | None = None) -> str:
+    """Return function stable id."""
     tree = get_tree(tree_id)
     assert tree is not None
     root_id = tree.root_node_id
@@ -190,6 +195,7 @@ def _function_stable_id(tree_id: str, name: str, *, in_class: str | None = None)
 
 @pytest.fixture
 def three_func_tree_id(tmp_path: Path) -> str:
+    """Return three func tree id."""
     path = str(tmp_path / "mod.py")
     tree = create_tree_from_code(path, THREE_FUNCS)
     yield tree.tree_id
@@ -198,6 +204,7 @@ def three_func_tree_id(tmp_path: Path) -> str:
 
 @pytest.fixture
 def container_tree_id(tmp_path: Path) -> str:
+    """Return container tree id."""
     path = str(tmp_path / "container.py")
     tree = create_tree_from_code(path, CONTAINER_CLASS)
     yield tree.tree_id
@@ -206,6 +213,7 @@ def container_tree_id(tmp_path: Path) -> str:
 
 @pytest.fixture
 def nested_func_tree_id(tmp_path: Path) -> str:
+    """Return nested func tree id."""
     path = str(tmp_path / "nested.py")
     tree = create_tree_from_code(path, NESTED_FUNCTIONS)
     yield tree.tree_id
@@ -216,6 +224,7 @@ class TestSidecarSiblingInsert:
     """AT-SC-01 .. AT-SC-05 (FORMAT_SIDECAR)."""
 
     def test_insert_after_alpha(self, three_func_tree_id: str) -> None:
+        """Verify test insert after alpha."""
         alpha_sid = _function_stable_id(three_func_tree_id, "alpha")
         built, err = build_tree_operations(
             get_tree(three_func_tree_id),
@@ -235,6 +244,7 @@ class TestSidecarSiblingInsert:
         assert _blank_lines_before_def(code, "inserted") == 2
 
     def test_insert_before_beta(self, three_func_tree_id: str) -> None:
+        """Verify test insert before beta."""
         beta_sid = _function_stable_id(three_func_tree_id, "beta")
         built, _ = build_tree_operations(
             get_tree(three_func_tree_id),
@@ -266,6 +276,7 @@ class TestSidecarSiblingInsert:
         assert parent_meta.name == "Container"
 
     def test_insert_after_method_in_class(self, container_tree_id: str) -> None:
+        """Verify test insert after method in class."""
         get_nid = _function_node_id(container_tree_id, "get", in_class="Container")
         built, _ = build_tree_operations(
             get_tree(container_tree_id),
@@ -294,6 +305,7 @@ class TestSidecarSiblingInsert:
         assert _blank_lines_before_def(code, "extra") == 1
 
     def test_insert_before_method_in_class(self, container_tree_id: str) -> None:
+        """Verify test insert before method in class."""
         double_nid = _function_node_id(
             container_tree_id, "double", in_class="Container"
         )
@@ -319,6 +331,7 @@ class TestSidecarSiblingInsert:
         assert _blank_lines_before_def(code, "before_double") == 1
 
     def test_insert_after_nested_inner_function(self, nested_func_tree_id: str) -> None:
+        """Verify test insert after nested inner function."""
         tree = get_tree(nested_func_tree_id)
         assert tree is not None
         inner_a_nid = _function_node_id(
@@ -345,6 +358,7 @@ class TestSidecarSiblingInsert:
         assert inner_names == ["inner_a", "inner_between", "inner_b"]
 
     def test_position_after_index_shorthand(self, three_func_tree_id: str) -> None:
+        """Verify test position after index shorthand."""
         built, _ = build_tree_operations(
             get_tree(three_func_tree_id),
             [
@@ -362,6 +376,7 @@ class TestSidecarSiblingInsert:
 
     @pytest.mark.asyncio
     async def test_stale_target_node_id(self, tmp_path: Path) -> None:
+        """Verify test stale target node id."""
         path = tmp_path / "stale.py"
         path.write_text(THREE_FUNCS, encoding="utf-8")
         tree = load_file_to_tree(str(path))
@@ -405,6 +420,7 @@ class TestJsonArraySiblingInsert:
 
     @pytest.fixture(autouse=True)
     def _clear_json_sessions(self):
+        """Return clear json sessions."""
         import code_analysis.core.json_tree.tree_builder as tb
 
         tb._trees.clear()
@@ -412,6 +428,7 @@ class TestJsonArraySiblingInsert:
         tb._trees.clear()
 
     def _items_tree(self, tmp_path: Path):
+        """Return items tree."""
         data = {"items": ["a", "b", "c"]}
         tree = build_tree_from_data(str(tmp_path / "doc.json"), data, register=True)
         items_ptr = normalize_key_path("items")
@@ -422,6 +439,7 @@ class TestJsonArraySiblingInsert:
         return tree, items_id, b_id
 
     def test_insert_before_element_by_node_id(self, tmp_path: Path) -> None:
+        """Verify test insert before element by node id."""
         tree, items_id, b_id = self._items_tree(tmp_path)
         json_modify_tree(
             tree.tree_id,
@@ -441,6 +459,7 @@ class TestJsonArraySiblingInsert:
         assert updated.root_data == {"items": ["a", "x", "b", "c"]}
 
     def test_insert_after_element_by_node_id(self, tmp_path: Path) -> None:
+        """Verify test insert after element by node id."""
         tree, items_id, b_id = self._items_tree(tmp_path)
         json_modify_tree(
             tree.tree_id,
@@ -460,6 +479,7 @@ class TestJsonArraySiblingInsert:
         assert updated.root_data == {"items": ["a", "b", "x", "c"]}
 
     def test_before_node_id_and_index_mutually_exclusive(self, tmp_path: Path) -> None:
+        """Verify test before node id and index mutually exclusive."""
         tree, items_id, b_id = self._items_tree(tmp_path)
         with pytest.raises(ValueError, match="mutually exclusive"):
             json_modify_tree(
@@ -481,6 +501,7 @@ class TestJsonObjectSiblingInsert:
 
     @pytest.fixture(autouse=True)
     def _clear_json_sessions(self):
+        """Return clear json sessions."""
         import code_analysis.core.json_tree.tree_builder as tb
 
         tb._trees.clear()
@@ -488,6 +509,7 @@ class TestJsonObjectSiblingInsert:
         tb._trees.clear()
 
     def test_insert_before_key_preserves_order(self, tmp_path: Path) -> None:
+        """Verify test insert before key preserves order."""
         data = {"a": 1, "b": 2, "c": 3}
         tree = build_tree_from_data(str(tmp_path / "o.json"), data, register=True)
         json_modify_tree(
@@ -510,6 +532,7 @@ class TestJsonObjectSiblingInsert:
         assert updated.root_data == {"a": 1, "x": 99, "b": 2, "c": 3}
 
     def test_insert_after_key_preserves_order(self, tmp_path: Path) -> None:
+        """Verify test insert after key preserves order."""
         data = {"a": 1, "b": 2, "c": 3}
         tree = build_tree_from_data(str(tmp_path / "o2.json"), data, register=True)
         json_modify_tree(
@@ -531,6 +554,7 @@ class TestJsonObjectSiblingInsert:
         assert list(updated.root_data.keys()) == ["a", "b", "x", "c"]
 
     def test_before_key_missing_raises(self, tmp_path: Path) -> None:
+        """Verify test before key missing raises."""
         data = {"a": 1}
         tree = build_tree_from_data(str(tmp_path / "o3.json"), data, register=True)
         with pytest.raises(KeyError, match="Sibling key not found"):
@@ -548,6 +572,7 @@ class TestJsonObjectSiblingInsert:
             )
 
     def test_before_and_after_key_mutually_exclusive(self, tmp_path: Path) -> None:
+        """Verify test before and after key mutually exclusive."""
         data = {"a": 1, "b": 2}
         tree = build_tree_from_data(str(tmp_path / "o4.json"), data, register=True)
         with pytest.raises(ValueError, match="mutually exclusive"):
@@ -571,6 +596,7 @@ class TestYamlSiblingInsert:
 
     @pytest.fixture(autouse=True)
     def _clear_yaml_sessions(self):
+        """Return clear yaml sessions."""
         import code_analysis.core.yaml_tree.tree_builder as yb
 
         yb._trees.clear()
@@ -578,6 +604,7 @@ class TestYamlSiblingInsert:
         yb._trees.clear()
 
     def test_insert_before_key_preserves_yaml_order(self, tmp_path: Path) -> None:
+        """Verify test insert before key preserves yaml order."""
         path = tmp_path / "doc.yaml"
         path.write_text("a: 1\nb: 2\nc: 3\n", encoding="utf-8")
         tree = load_yaml_to_tree(str(path))
@@ -598,6 +625,7 @@ class TestYamlSiblingInsert:
         assert list(updated.root_data.keys()) == ["a", "x", "b", "c"]
 
     def test_insert_after_sequence_element(self, tmp_path: Path) -> None:
+        """Verify test insert after sequence element."""
         path = tmp_path / "seq.yaml"
         path.write_text("items:\n  - a\n  - b\n  - c\n", encoding="utf-8")
         tree = load_yaml_to_tree(str(path))
@@ -624,6 +652,7 @@ class TestYamlSiblingInsert:
 def test_universal_edit_normalization_strips_parent_for_sibling_insert(
     three_func_tree_id: str,
 ) -> None:
+    """Verify test universal edit normalization strips parent for sibling insert."""
     tree = get_tree(three_func_tree_id)
     assert tree is not None
     beta_sid = _function_stable_id(three_func_tree_id, "beta")

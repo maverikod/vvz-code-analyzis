@@ -8,6 +8,7 @@ from code_analysis.core.database.migrations import watch_dirs_server_instance as
 
 
 def test_postgres_primary_key_query_uses_sqlite_qmark_placeholder() -> None:
+    """Verify test postgres primary key query uses sqlite qmark placeholder."""
     source = inspect.getsource(mod._postgres_primary_key_columns)
     assert "relname = ?" in source
     assert "relname = %s" not in source

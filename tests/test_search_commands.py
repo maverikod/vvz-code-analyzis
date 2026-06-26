@@ -58,14 +58,18 @@ class TestFulltextSearchCommand:
     async def test_fulltext_search_returns_success_structure(
         self, mock_db, project_root
     ):
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        """Verify test fulltext search returns success structure."""
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = FulltextSearchMCPCommand()
             result = await cmd.execute(
@@ -85,6 +89,7 @@ class TestFulltextSearchCommand:
     async def test_fulltext_search_with_entity_type_and_limit(
         self, mock_db, project_root
     ):
+        """Verify test fulltext search with entity type and limit."""
         mock_db.full_text_search.return_value = [
             {
                 "entity_type": "class",
@@ -94,14 +99,17 @@ class TestFulltextSearchCommand:
                 "file_path": "src/foo.py",
             }
         ]
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = FulltextSearchMCPCommand()
             result = await cmd.execute(
@@ -120,14 +128,18 @@ class TestFindClassesCommand:
 
     @pytest.mark.asyncio
     async def test_find_classes_returns_success_structure(self, mock_db, project_root):
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        """Verify test find classes returns success structure."""
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = FindClassesMCPCommand()
             result = await cmd.execute(project_id="test-proj")
@@ -139,17 +151,21 @@ class TestFindClassesCommand:
 
     @pytest.mark.asyncio
     async def test_find_classes_with_pattern(self, mock_db, project_root):
+        """Verify test find classes with pattern."""
         mock_db.search_classes.return_value = [
             {"name": "MyClass", "file_path": "a.py", "line": 1}
         ]
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = FindClassesMCPCommand()
             result = await cmd.execute(
@@ -168,14 +184,18 @@ class TestListClassMethodsCommand:
     async def test_list_class_methods_returns_success_structure(
         self, mock_db, project_root
     ):
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        """Verify test list class methods returns success structure."""
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = ListClassMethodsMCPCommand()
             result = await cmd.execute(
@@ -197,14 +217,18 @@ class TestSearchASTNodesCommand:
     async def test_search_ast_nodes_returns_success_structure(
         self, mock_db, project_root
     ):
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        """Verify test search ast nodes returns success structure."""
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = SearchASTNodesMCPCommand()
             result = await cmd.execute(
@@ -220,6 +244,7 @@ class TestSearchASTNodesCommand:
 
     @pytest.mark.asyncio
     async def test_search_ast_nodes_function_def(self, mock_db, project_root):
+        """Verify test search ast nodes function def."""
         mock_db.execute.return_value = {
             "data": [
                 {
@@ -230,14 +255,17 @@ class TestSearchASTNodesCommand:
                 }
             ]
         }
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
         ):
             cmd = SearchASTNodesMCPCommand()
             result = await cmd.execute(

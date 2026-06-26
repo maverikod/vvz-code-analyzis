@@ -9,6 +9,7 @@ from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_P
 
 
 def test_db_execute_batch_uses_database_execute_batch_when_available() -> None:
+    """Verify test db execute batch uses database execute batch when available."""
     db = Mock()
     db.execute_batch = Mock(return_value=[{"affected_rows": 1, "lastrowid": None}])
     q = ProcessorQueueOps(db, watch_dirs_resolved=[])

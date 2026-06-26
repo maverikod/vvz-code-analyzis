@@ -88,6 +88,7 @@ def _connect_from_params(
     user: str,
     password: str,
 ):
+    """Return connect from params."""
     import psycopg
 
     if dsn:

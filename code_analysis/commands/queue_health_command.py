@@ -29,6 +29,7 @@ class QueueHealthCommand(Command):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the empty schema for the queue health probe."""
         from code_analysis.commands.command_metadata_helpers import empty_params_schema
 
         return empty_params_schema(
@@ -37,6 +38,7 @@ class QueueHealthCommand(Command):
 
     @classmethod
     def metadata(cls: type["QueueHealthCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for the queue health command."""
         from code_analysis.commands.zero_arg_commands_metadata import (
             queue_health_command_metadata,
         )
@@ -48,6 +50,7 @@ class QueueHealthCommand(Command):
         return super().validate_params(params)
 
     async def execute(self, **kwargs: Any):
+        """Return queue health enriched with dependency compatibility details."""
         params = {k: v for k, v in kwargs.items() if k != "context"}
         try:
             self.validate_params(params)
@@ -88,6 +91,7 @@ class QueueHealthCommand(Command):
 
     @staticmethod
     def _safe_get_queue_config() -> Dict[str, Any]:
+        """Read queue-manager configuration, returning an empty mapping on failure."""
         try:
             from mcp_proxy_adapter.config import get_config
 

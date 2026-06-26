@@ -23,9 +23,7 @@ class CSTListTreesCommand(BaseMCPCommand):
 
     name = "cst_list_trees"
     version = "1.0.0"
-    descr = (
-        "List all CST trees currently loaded in memory with their TTL status."
-    )
+    descr = "List all CST trees currently loaded in memory with their TTL status."
     category = "cst"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -33,6 +31,7 @@ class CSTListTreesCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {},
@@ -42,11 +41,13 @@ class CSTListTreesCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["CSTListTreesCommand"]) -> Dict[str, Any]:
+        """Return metadata for the zero-argument CST tree listing command."""
         from .zero_arg_commands_metadata import cst_list_trees_metadata
 
         return cst_list_trees_metadata(cls)
 
     async def execute(self, **kwargs: Any) -> SuccessResult:
+        """Return loaded CST trees with idle time and TTL expiration details."""
         now = time.monotonic()
         trees = []
         for tree in _trees.values():

@@ -33,6 +33,7 @@ from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
 
 @pytest.fixture
 def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return ipc client."""
     db_path = tmp_path / "test.db"
     driver = create_driver("sqlite", {"path": str(db_path)})
     handlers = RPCHandlers(driver)
@@ -50,6 +51,7 @@ def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
 
 @pytest.fixture
 def test_project(ipc_client: DatabaseClient, tmp_path: Path):
+    """Verify test project."""
     project_id = str(uuid.uuid4())
     ipc_client.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
@@ -60,6 +62,7 @@ def test_project(ipc_client: DatabaseClient, tmp_path: Path):
 
 @pytest.fixture
 def test_file(ipc_client: DatabaseClient, tmp_path: Path, test_project: str):
+    """Verify test file."""
     file_path = tmp_path / "test_file.py"
     file_content = DEFAULT_TEST_FILE_CONTENT
     file_path.write_text(file_content, encoding="utf-8")
@@ -76,16 +79,19 @@ def test_file(ipc_client: DatabaseClient, tmp_path: Path, test_project: str):
 
 
 def _fetchall(client: DatabaseClient, sql: str, params: tuple | None = None):
+    """Return fetchall."""
     r = client.execute(sql, params)
     return list(r.get("data") or [])
 
 
 def _fetchone(client: DatabaseClient, sql: str, params: tuple | None = None):
+    """Return fetchone."""
     rows = _fetchall(client, sql, params)
     return rows[0] if rows else None
 
 
 def test_update_file_data_batch_success(ipc_client: DatabaseClient, test_file):
+    """Verify test update file data batch success."""
     file_id, file_path, project_id, _root_dir = test_file
     new_source = '''"""
 Updated test file.
@@ -133,6 +139,7 @@ def new_function():
 
 
 def test_update_file_data_batch_syntax_error(ipc_client: DatabaseClient, test_file):
+    """Verify test update file data batch syntax error."""
     file_id, file_path, project_id, _root = test_file
     invalid_source = "def invalid_syntax("
     result = update_file_data_atomic_batch(
@@ -168,6 +175,7 @@ def test_update_file_data_batch_no_outer_transaction_required(
 def test_update_file_data_batch_clears_old_entities(
     ipc_client: DatabaseClient, test_file
 ):
+    """Verify test update file data batch clears old entities."""
     file_id, file_path, project_id, _root = test_file
     oc_id = str(uuid.uuid4())
     of_id = str(uuid.uuid4())

@@ -14,6 +14,7 @@ from code_analysis.core.search_session.atomic_publication import (
 
 
 def test_atomic_write_bytes_publishes_complete_file(tmp_path) -> None:
+    """Verify test atomic write bytes publishes complete file."""
     target = tmp_path / "nested" / "block_1.json"
     atomic_write_bytes(target, b'{"ready": true}')
 
@@ -22,6 +23,7 @@ def test_atomic_write_bytes_publishes_complete_file(tmp_path) -> None:
 
 
 def test_atomic_write_json_writes_valid_json(tmp_path) -> None:
+    """Verify test atomic write json writes valid json."""
     target = tmp_path / "index.json"
     atomic_write_json(target, {"blocks": [], "completeness": "search_still_running"})
 
@@ -30,12 +32,14 @@ def test_atomic_write_json_writes_valid_json(tmp_path) -> None:
 
 
 def test_readers_never_see_partial_file_during_write(tmp_path) -> None:
+    """Verify test readers never see partial file during write."""
     target = tmp_path / "block.json"
     staging = target.with_suffix(target.suffix + ".tmp")
     observed: list[str | None] = []
     started = threading.Event()
 
     def slow_writer() -> None:
+        """Return slow writer."""
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(staging, "wb") as handle:
             handle.write(b'{"partial":')
@@ -47,6 +51,7 @@ def test_readers_never_see_partial_file_during_write(tmp_path) -> None:
         atomic_publish_rename(staging, target)
 
     def reader() -> None:
+        """Return reader."""
         started.wait(timeout=1.0)
         deadline = time.time() + 0.2
         while time.time() < deadline:

@@ -13,17 +13,20 @@ from code_analysis.core.structure_extraction.stable_tree import TreeResolutionSt
 
 
 def test_known_types_default_excludes_logs() -> None:
+    """Verify test known types default excludes logs."""
     assert should_scan_path("logs/app.log", scan_all=False) is False
     assert should_scan_path("app.log", scan_all=False) is False
 
 
 def test_scan_all_true_include_logs() -> None:
+    """Verify test scan all true include logs."""
     assert should_scan_path("logs/app.log", scan_all=True, include_logs=True) is True
     assert should_scan_path("app.log", scan_all=True, include_logs=True) is True
 
 
 @pytest.mark.asyncio
 async def test_fast_text_only_returns_no_node_ref(tmp_path) -> None:
+    """Verify test fast text only returns no node ref."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "a.py").write_text("needle = 1\n", encoding="utf-8")
@@ -47,6 +50,7 @@ async def test_fast_text_only_returns_no_node_ref(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_python_missing_tree_created_before_enrichment(tmp_path) -> None:
+    """Verify test python missing tree created before enrichment."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     py_path = project_root / "mod.py"
@@ -82,6 +86,7 @@ async def test_python_missing_tree_created_before_enrichment(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_grep_same_node_ref(tmp_path) -> None:
+    """Verify test repeated grep same node ref."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "stable.py").write_text(

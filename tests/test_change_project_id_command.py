@@ -23,6 +23,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 @pytest.fixture
 def cmd() -> ChangeProjectIdMCPCommand:
+    """Return cmd."""
     return ChangeProjectIdMCPCommand()
 
 
@@ -30,6 +31,7 @@ def cmd() -> ChangeProjectIdMCPCommand:
 async def test_duplicate_new_project_id_fails_before_file_change(
     cmd: ChangeProjectIdMCPCommand, tmp_path: Path
 ) -> None:
+    """Verify test duplicate new project id fails before file change."""
     old_id = str(uuid.uuid4())
     new_id = str(uuid.uuid4())
     root = tmp_path / "myprj"
@@ -48,10 +50,13 @@ async def test_duplicate_new_project_id_fails_before_file_change(
     pre_db.disconnect = MagicMock()
     pre_db.get_project = MagicMock(return_value=other)
 
-    with patch.object(cmd, "_resolve_project_root", return_value=root), patch.object(
-        ChangeProjectIdMCPCommand,
-        "_open_database_from_config",
-        return_value=pre_db,
+    with (
+        patch.object(cmd, "_resolve_project_root", return_value=root),
+        patch.object(
+            ChangeProjectIdMCPCommand,
+            "_open_database_from_config",
+            return_value=pre_db,
+        ),
     ):
         result = await cmd.execute(
             project_id=old_id,
@@ -69,6 +74,7 @@ async def test_duplicate_new_project_id_fails_before_file_change(
 async def test_database_error_restores_projectid_file(
     cmd: ChangeProjectIdMCPCommand, tmp_path: Path
 ) -> None:
+    """Verify test database error restores projectid file."""
     old_id = str(uuid.uuid4())
     new_id = str(uuid.uuid4())
     root = tmp_path / "myprj"
@@ -86,17 +92,23 @@ async def test_database_error_restores_projectid_file(
     main_db.select = MagicMock(return_value=[{"id": old_id}])
     main_db.execute = MagicMock(side_effect=RuntimeError("simulated DB failure"))
 
-    with patch.object(cmd, "_resolve_project_root", return_value=root), patch.object(
-        ChangeProjectIdMCPCommand,
-        "_open_database_from_config",
-        side_effect=[pre_db, main_db],
-    ), patch.object(
-        cmd, "_resolve_config_path", return_value=tmp_path / "config.json"
-    ), patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
+    with (
+        patch.object(cmd, "_resolve_project_root", return_value=root),
+        patch.object(
+            ChangeProjectIdMCPCommand,
+            "_open_database_from_config",
+            side_effect=[pre_db, main_db],
+        ),
+        patch.object(
+            cmd, "_resolve_config_path", return_value=tmp_path / "config.json"
+        ),
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+        ),
     ):
         result = await cmd.execute(
             project_id=old_id,
@@ -113,6 +125,7 @@ async def test_database_error_restores_projectid_file(
 async def test_same_id_description_only_still_succeeds(
     cmd: ChangeProjectIdMCPCommand, tmp_path: Path
 ) -> None:
+    """Verify test same id description only still succeeds."""
     pid = str(uuid.uuid4())
     root = tmp_path / "myprj"
     root.mkdir()
@@ -127,17 +140,23 @@ async def test_same_id_description_only_still_succeeds(
     main_db.select = MagicMock(return_value=[{"id": pid}])
     main_db.execute = MagicMock(return_value={"affected_rows": 1})
 
-    with patch.object(cmd, "_resolve_project_root", return_value=root), patch.object(
-        ChangeProjectIdMCPCommand,
-        "_open_database_from_config",
-        return_value=main_db,
-    ), patch.object(
-        cmd, "_resolve_config_path", return_value=tmp_path / "config.json"
-    ), patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
+    with (
+        patch.object(cmd, "_resolve_project_root", return_value=root),
+        patch.object(
+            ChangeProjectIdMCPCommand,
+            "_open_database_from_config",
+            return_value=main_db,
+        ),
+        patch.object(
+            cmd, "_resolve_config_path", return_value=tmp_path / "config.json"
+        ),
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+        ),
     ):
         result = await cmd.execute(
             project_id=pid,

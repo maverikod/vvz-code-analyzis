@@ -116,15 +116,19 @@ class Fixture:
 
 @dataclass
 class Runner:
+    """Represent Runner."""
+
     passed: int = 0
     failed: int = 0
     errors: List[str] = field(default_factory=list)
 
     def ok(self, name: str) -> None:
+        """Return ok."""
         self.passed += 1
         print(f"  OK  {name}")
 
     def fail(self, name: str, exc: BaseException) -> None:
+        """Return fail."""
         self.failed += 1
         msg = f"{type(exc).__name__}: {exc}"
         self.errors.append(f"{name}: {msg}")
@@ -132,17 +136,20 @@ class Runner:
 
 
 def _data(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Return data."""
     inner = resp.get("data")
     return inner if isinstance(inner, dict) else resp
 
 
 def expect_success(resp: Dict[str, Any], label: str) -> Dict[str, Any]:
+    """Return expect success."""
     if resp.get("success") is not True:
         raise AssertionError(f"{label}: expected success, got {resp!r}")
     return _data(resp)
 
 
 def _error_code(resp: Dict[str, Any]) -> str:
+    """Return error code."""
     if resp.get("success") is True:
         return ""
     top = resp.get("code")
@@ -159,6 +166,7 @@ def _error_code(resp: Dict[str, Any]) -> str:
 
 
 def expect_error(resp: Dict[str, Any], code: str, label: str) -> None:
+    """Return expect error."""
     if resp.get("success") is True:
         raise AssertionError(f"{label}: expected error {code}, got success {resp!r}")
     got = _error_code(resp)
@@ -174,6 +182,7 @@ def expect_error(resp: Dict[str, Any], code: str, label: str) -> None:
 async def _call(
     client: CodeAnalysisAsyncClient, command: str, params: Dict[str, Any]
 ) -> Dict[str, Any]:
+    """Return call."""
     out = await client.call(command, params)
     if not isinstance(out, dict):
         raise AssertionError(f"{command}: response is not a dict: {out!r}")
@@ -181,6 +190,7 @@ async def _call(
 
 
 async def discover_fixture(client: CodeAnalysisAsyncClient) -> Fixture:
+    """Return discover fixture."""
     raw = load_server_config(default_config_path())
     sessions_cfg = raw.get("sessions") or {}
     show_ids = bool(sessions_cfg.get("show_session_ids", False))
@@ -250,6 +260,7 @@ async def discover_fixture(client: CodeAnalysisAsyncClient) -> Fixture:
 
 
 async def run_all(*, skip_transfer: bool) -> int:
+    """Return run all."""
     chdir_repo_root()
     cfg = default_config_path()
     runner = Runner()
@@ -259,6 +270,7 @@ async def run_all(*, skip_transfer: bool) -> int:
         fs = client.file_sessions
 
         async def case(name: str, fn: CaseFn) -> None:
+            """Return case."""
             try:
                 await fn()
                 runner.ok(name)
@@ -283,6 +295,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ schema / validation
         async def neg_create_missing_comment() -> None:
+            """Return neg create missing comment."""
             try:
                 await client.call_validated("session_create", {})
                 raise AssertionError("expected ClientValidationError")
@@ -290,6 +303,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 return
 
         async def neg_stale_threshold_type() -> None:
+            """Return neg stale threshold type."""
             sid = await fs.create_session("ex_file_sessions stale-type neg")
             try:
                 try:
@@ -315,6 +329,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ lifecycle happy
         async def pos_create_list_delete() -> None:
+            """Return pos create list delete."""
             sid = await fs.create_session("ex_file_sessions lifecycle")
             await fs.assert_session_exists(sid)
             locks = await fs.list_file_locks(sid)
@@ -328,6 +343,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 raise AssertionError(f"delete payload: {deleted!r}")
 
         async def pos_list_without_session_id_when_hidden() -> None:
+            """Return pos list without session id when hidden."""
             if fx.show_session_ids:
                 resp = await _call(client, "session_list", {})
                 expect_error(
@@ -344,6 +360,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                     )
 
         async def pos_stale_threshold_large() -> None:
+            """Return pos stale threshold large."""
             sid = await fs.create_session("ex_file_sessions stale filter")
             try:
                 lst = await fs.list_sessions(stale_threshold_seconds=999_999_999)
@@ -361,6 +378,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ DB file locks
         async def pos_db_lock_unlock_idempotent() -> None:
+            """Return pos db lock unlock idempotent."""
             sid = await fs.create_session("ex_file_sessions db lock")
             try:
                 first = await fs.lock_file(sid, fx.project_id, fx.file_id)
@@ -411,6 +429,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ advisory locks
         async def pos_advisory_lock_unlock() -> None:
+            """Return pos advisory lock unlock."""
             sid = await fs.create_session("ex_file_sessions advisory")
             try:
                 locked = await fs.lock_files_advisory(
@@ -430,6 +449,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ delete guards
         async def neg_delete_with_locks_no_force() -> None:
+            """Return neg delete with locks no force."""
             sid = await fs.create_session("ex_file_sessions delete guard")
             await fs.lock_file(sid, fx.project_id, fx.file_id)
             resp = await _call(
@@ -441,6 +461,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 raise AssertionError(forced)
 
         async def neg_delete_unknown() -> None:
+            """Return neg delete unknown."""
             resp = await _call(
                 client,
                 "session_delete",
@@ -449,12 +470,14 @@ async def run_all(*, skip_transfer: bool) -> int:
             expect_error(resp, "SESSION_NOT_FOUND", "delete unknown session")
 
         async def neg_double_delete() -> None:
+            """Return neg double delete."""
             sid = await fs.create_session("ex_file_sessions double delete")
             await fs.delete_session(sid)
             resp = await _call(client, "session_delete", {"session_id": sid})
             expect_error(resp, "SESSION_NOT_FOUND", "second delete")
 
         async def neg_ops_after_delete() -> None:
+            """Return neg ops after delete."""
             sid = await fs.create_session("ex_file_sessions after delete")
             await fs.delete_session(sid)
             resp = await _call(
@@ -480,6 +503,7 @@ async def run_all(*, skip_transfer: bool) -> int:
             expect_error(resp2, "SESSION_NOT_FOUND", "open_file after delete")
 
         async def neg_unknown_session_touch_commands() -> None:
+            """Return neg unknown session touch commands."""
             resp = await _call(
                 client,
                 "session_list_file_locks",
@@ -498,6 +522,7 @@ async def run_all(*, skip_transfer: bool) -> int:
             expect_error(resp2, "SESSION_NOT_FOUND", "open_file unknown session")
 
         async def neg_transfer_begin_unknown_session() -> None:
+            """Return neg transfer begin unknown session."""
             resp = await _call(
                 client,
                 "project_file_transfer_download_begin",
@@ -521,6 +546,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
         # ------------------------------------------------------------------ transfer roundtrip
         async def pos_transfer_roundtrip_same_bytes() -> None:
+            """Return pos transfer roundtrip same bytes."""
             sid = await fs.create_session("ex_file_sessions transfer rt")
             try:
                 with tempfile.TemporaryDirectory() as tmp:
@@ -547,6 +573,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_download_without_lock() -> None:
+            """Return pos download without lock."""
             sid = await fs.create_session("ex_file_sessions download no lock")
             try:
                 with tempfile.TemporaryDirectory() as tmp:
@@ -568,6 +595,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_upload_unlock_false() -> None:
+            """Return pos upload unlock false."""
             sid = await fs.create_session("ex_file_sessions upload no unlock")
             try:
                 with tempfile.TemporaryDirectory() as tmp:
@@ -600,6 +628,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_transfer_dry_run_upload() -> None:
+            """Return pos transfer dry run upload."""
             sid = await fs.create_session("ex_file_sessions dry run")
             try:
                 with tempfile.TemporaryDirectory() as tmp:
@@ -638,6 +667,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_download_to_path_explicit() -> None:
+            """Return pos download to path explicit."""
             sid = await fs.create_session("ex_file_sessions download_to_path")
             try:
                 with tempfile.TemporaryDirectory() as tmp:
@@ -664,6 +694,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_upload_bytes_then_save_dry_run() -> None:
+            """Return pos upload bytes then save dry run."""
             sid = await fs.create_session("ex_file_sessions upload_bytes")
             rel_path = f"tmp/client_ex_{uuid.uuid4().hex[:12]}.txt"
             try:
@@ -691,6 +722,7 @@ async def run_all(*, skip_transfer: bool) -> int:
                 await fs.delete_session(sid, force=True)
 
         async def pos_upload_new_dry_run() -> None:
+            """Return pos upload new dry run."""
             sid = await fs.create_session("ex_file_sessions upload_new")
             rel_path = f"tmp/client_ex_new_{uuid.uuid4().hex[:12]}.txt"
             try:
@@ -819,6 +851,7 @@ async def run_all(*, skip_transfer: bool) -> int:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="Client session integration driver")
     parser.add_argument(
         "--skip-transfer",

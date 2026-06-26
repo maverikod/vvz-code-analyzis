@@ -47,6 +47,7 @@ def _make_db_mock_for_sync() -> MagicMock:
     db.rollback_transaction = MagicMock(return_value=True)
 
     def _exec(sql: str, params=None, transaction_id=None):
+        """Return exec."""
         _ = transaction_id
         if (sql or "").strip().upper().startswith("SELECT"):
             return {"data": [{"editing_pid": None}], "affected_rows": 0}
@@ -55,6 +56,7 @@ def _make_db_mock_for_sync() -> MagicMock:
     db.execute = MagicMock(side_effect=_exec)
 
     def _batch(ops, transaction_id=None):
+        """Return batch."""
         _ = transaction_id
         return [{"affected_rows": 1, "data": None} for _ in ops]
 
@@ -64,6 +66,7 @@ def _make_db_mock_for_sync() -> MagicMock:
 
 
 def _make_db_mock() -> MagicMock:
+    """Return make db mock."""
     db = MagicMock()
     db.select = MagicMock(return_value=[])
     created = MagicMock()
@@ -75,6 +78,7 @@ def _make_db_mock() -> MagicMock:
     db.rollback_transaction = MagicMock(return_value=True)
 
     def _exec(sql: str, params=None, transaction_id=None):
+        """Return exec."""
         _ = transaction_id
         if (sql or "").strip().upper().startswith("SELECT"):
             return {"data": [{"editing_pid": None}], "affected_rows": 0}
@@ -83,6 +87,7 @@ def _make_db_mock() -> MagicMock:
     db.execute = MagicMock(side_effect=_exec)
 
     def _batch(ops, transaction_id=None):
+        """Return batch."""
         _ = transaction_id
         return [{"affected_rows": 1, "data": None} for _ in ops]
 
@@ -259,6 +264,7 @@ def test_sync_with_marked_source_writes_same_root_node_id() -> None:
     root_captured: list = []
 
     def capture_batch(ops, transaction_id=None):
+        """Return capture batch."""
         for sql, params in ops:
             if "file_tree_snapshot_roots" in sql and "INSERT" in sql:
                 root_captured.append(params)

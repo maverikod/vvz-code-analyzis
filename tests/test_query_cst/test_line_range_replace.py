@@ -20,19 +20,23 @@ class TestQueryCSTCommandLineRangeReplace:
 
     @pytest.mark.asyncio
     async def test_replace_by_line_range_only(self, project_root, mock_db):
+        """Verify test replace by line range only."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "a = 1\nb = 2\nc = 3\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -52,19 +56,23 @@ class TestQueryCSTCommandLineRangeReplace:
 
     @pytest.mark.asyncio
     async def test_replace_by_line_range_multiline(self, project_root, mock_db):
+        """Verify test replace by line range multiline."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "def foo():\n    return 1\n\nx = 0\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

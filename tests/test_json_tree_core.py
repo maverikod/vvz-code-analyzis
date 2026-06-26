@@ -41,12 +41,14 @@ def _clear_json_sessions() -> Generator[None, None, None]:
 
 
 def test_stable_node_id_deterministic_for_pointer() -> None:
+    """Verify test stable node id deterministic for pointer."""
     p = "/foo/bar"
     assert stable_node_id_for_pointer(p) == stable_node_id_for_pointer(p)
     assert stable_node_id_for_pointer(p) != stable_node_id_for_pointer("/foo/baz")
 
 
 def test_build_tree_indexes_nested_structure(tmp_path: Path) -> None:
+    """Verify test build tree indexes nested structure."""
     data = {"a": {"b": [1, {"c": True}]}}
     tree = build_tree_from_data(str(tmp_path / "x.json"), data, register=True)
     assert tree.root_node_id == stable_node_id_for_pointer(ROOT_POINTER)
@@ -60,6 +62,7 @@ def test_build_tree_indexes_nested_structure(tmp_path: Path) -> None:
 
 
 def test_load_file_to_tree_registers_session(tmp_path: Path) -> None:
+    """Verify test load file to tree registers session."""
     f = tmp_path / "doc.json"
     f.write_text('{"x": 1}\n', encoding="utf-8")
     tree = load_file_to_tree(str(f))
@@ -69,6 +72,7 @@ def test_load_file_to_tree_registers_session(tmp_path: Path) -> None:
 
 
 def test_modify_replace_delete_insert(tmp_path: Path) -> None:
+    """Verify test modify replace delete insert."""
     data = {"items": [1, 2], "extra": {}}
     tree = build_tree_from_data(str(tmp_path / "m.json"), data, register=True)
     tid = tree.tree_id
@@ -131,6 +135,7 @@ def test_modify_replace_delete_insert(tmp_path: Path) -> None:
 
 
 def test_reload_tree_from_file(tmp_path: Path) -> None:
+    """Verify test reload tree from file."""
     f = tmp_path / "r.json"
     f.write_text('{"v": 1}', encoding="utf-8")
     tree = load_file_to_tree(str(f))
@@ -175,6 +180,7 @@ def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
 
 
 def test_save_json_tree_to_file_rejects_target_outside_root(tmp_path: Path) -> None:
+    """Verify test save json tree to file rejects target outside root."""
     root_dir = tmp_path / "proj"
     root_dir.mkdir()
     outside = tmp_path / "escape.json"
@@ -197,5 +203,6 @@ def test_save_json_tree_to_file_rejects_target_outside_root(tmp_path: Path) -> N
 
 
 def test_key_path_normalization_matches_pointer() -> None:
+    """Verify test key path normalization matches pointer."""
     assert normalize_key_path("a.b.0") == "/a/b/0"
     assert normalize_key_path(["a", "b", 0]) == "/a/b/0"

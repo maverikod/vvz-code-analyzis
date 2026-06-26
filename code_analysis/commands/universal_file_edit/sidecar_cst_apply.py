@@ -518,6 +518,7 @@ def _run_valid_session_sidecar_batch(
     source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
 
     def _rollback() -> None:
+        """Return rollback."""
         session.core.session_tree_path.write_text(snapshot, encoding="utf-8")
         session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
 
@@ -598,6 +599,7 @@ def run_sidecar_cst_edit_batch(
         code: str,
         metadata_snapshot: Dict[str, Any],
     ) -> None:
+        """Return rollback sidecar session."""
         rollback_tree_to_code(
             tree_id,
             code,
@@ -632,6 +634,7 @@ def run_sidecar_cst_edit_batch(
     batch_original_metadata = dict(tree.metadata_map)
 
     def _rollback_and_fail(err: ErrorResult) -> ErrorResult:
+        """Return rollback and fail."""
         _rollback_sidecar_session(
             batch_original_tree_id,
             batch_original_code,

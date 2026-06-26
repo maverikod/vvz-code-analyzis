@@ -23,7 +23,10 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def walk_schema_nodes(schema: Any, path: str = "root") -> List[Tuple[str, Dict[str, Any]]]:
+def walk_schema_nodes(
+    schema: Any, path: str = "root"
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return walk schema nodes."""
     nodes: List[Tuple[str, Dict[str, Any]]] = []
     if not isinstance(schema, dict):
         return nodes
@@ -47,6 +50,7 @@ def walk_schema_nodes(schema: Any, path: str = "root") -> List[Tuple[str, Dict[s
 
 
 def get_source_file(cls: type) -> str:
+    """Return get source file."""
     try:
         p = Path(inspect.getfile(cls))
         try:
@@ -58,17 +62,22 @@ def get_source_file(cls: type) -> str:
 
 
 def inherits_base_mcp(cls: type) -> bool:
+    """Return inherits base mcp."""
     return any(b.__name__ == "BaseMCPCommand" for b in cls.__mro__)
 
 
 def inherits_adapter_command(cls: type) -> bool:
+    """Return inherits adapter command."""
     return any(b.__name__ == "Command" for b in cls.__mro__)
 
 
 def schema_static_issues(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return schema static issues."""
     issues: List[Dict[str, Any]] = []
     if schema.get("type") != "object":
-        issues.append({"id": "schema_root_not_object", "severity": "error", "path": "root"})
+        issues.append(
+            {"id": "schema_root_not_object", "severity": "error", "path": "root"}
+        )
     if "additionalProperties" not in schema:
         issues.append(
             {
@@ -90,7 +99,9 @@ def schema_static_issues(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         )
     if "required" not in schema:
-        issues.append({"id": "schema_missing_required", "severity": "warning", "path": "root"})
+        issues.append(
+            {"id": "schema_missing_required", "severity": "warning", "path": "root"}
+        )
 
     for path, node in walk_schema_nodes(schema):
         if path == "root":
@@ -131,6 +142,7 @@ def schema_static_issues(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def analyze_validate_params(cls: type) -> List[Dict[str, Any]]:
+    """Return analyze validate params."""
     issues: List[Dict[str, Any]] = []
     if "validate_params" not in cls.__dict__:
         if inherits_base_mcp(cls):
@@ -181,7 +193,10 @@ def analyze_validate_params(cls: type) -> List[Dict[str, Any]]:
                 ),
             }
         )
-    if "super().validate_params" not in src and "validate_params_against_schema" not in src:
+    if (
+        "super().validate_params" not in src
+        and "validate_params_against_schema" not in src
+    ):
         issues.append(
             {
                 "id": "validate_params_override_without_super",
@@ -205,13 +220,14 @@ def analyze_validate_params(cls: type) -> List[Dict[str, Any]]:
 
 
 def analyze_execute(cls: type) -> List[Dict[str, Any]]:
+    """Return analyze execute."""
     issues: List[Dict[str, Any]] = []
     execute = getattr(cls, "execute", None)
     if execute is None:
         return issues
     try:
         src = inspect.getsource(execute)
-    except (OSError, TypeError):
+    except OSError, TypeError:
         return issues
     if (
         "if k in schema_props" in src
@@ -226,7 +242,9 @@ def analyze_execute(cls: type) -> List[Dict[str, Any]]:
             }
         )
     sig = inspect.signature(execute)
-    has_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    has_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
     return issues
 
 
@@ -254,6 +272,7 @@ def discover_command_classes() -> Dict[str, type]:
 
 
 def minimal_valid_params(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Return minimal valid params."""
     valid: Dict[str, Any] = {}
     req = schema.get("required") or []
     for r in req:
@@ -325,6 +344,7 @@ def minimal_valid_params(schema: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def behavioral_probe(cls: type, schema: Dict[str, Any]) -> Dict[str, str]:
+    """Return behavioral probe."""
     from code_analysis.core.exceptions import ValidationError
 
     inst = cls()
@@ -356,6 +376,7 @@ def behavioral_probe(cls: type, schema: Dict[str, Any]) -> Dict[str, str]:
 
 
 def audit() -> Dict[str, Any]:
+    """Return audit."""
     from mcp_proxy_adapter.commands.command_registry import CommandRegistry
     from code_analysis.hooks import register_code_analysis_commands
 
@@ -557,6 +578,7 @@ def audit() -> Dict[str, Any]:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     logging.disable(logging.CRITICAL)
     report = audit()
     out_path = project_root / "docs" / "ai_reports" / "api-cmd_bugs.yaml"

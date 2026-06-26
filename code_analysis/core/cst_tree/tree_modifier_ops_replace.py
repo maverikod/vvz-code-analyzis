@@ -124,7 +124,10 @@ def replace_node(
     parent_type = parent_metadata.type if parent_metadata else "unknown"
 
     class NodeReplacer(cst.CSTTransformer):
+        """Represent NodeReplacer."""
+
         def __init__(self, target_node: cst.CSTNode, replacements: list[cst.CSTNode]):
+            """Initialize the instance."""
             self.target_node = target_node
             self.replacements = replacements
             self.replaced = False
@@ -133,6 +136,7 @@ def replace_node(
         def on_leave(  # type: ignore[override]
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode | cst.RemovalSentinel | cst.FlattenSentinel:
+            """Return on leave."""
             if original_node is self.target_node:
                 if len(self.replacements) == 1:
                     self.replaced = True
@@ -153,6 +157,7 @@ def replace_node(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
             # Handle module-level replacements
+            """Return leave Module."""
             if original_node is self.target_node or any(
                 stmt is self.target_node for stmt in original_node.body
             ):
@@ -185,6 +190,7 @@ def replace_node(
         ) -> cst.IndentedBlock:
             # Handle block-level replacements (including multiple statements)
             # Check both original and updated body to handle nested cases
+            """Return leave IndentedBlock."""
             body_to_check = original_node.body
             if any(stmt is self.target_node for stmt in body_to_check):
                 new_body: list[cst.BaseStatement] = []
@@ -218,6 +224,7 @@ def replace_node(
             # we need to replace it at the parent level (IndentedBlock/Module)
             # This is handled in leave_IndentedBlock/leave_Module
             # Mark that we visited this node to help with debugging
+            """Return leave SimpleStatementLine."""
             if original_node is self.target_node and len(self.replacements) > 1:
                 # This will be handled by parent's leave_IndentedBlock/leave_Module
                 return updated_node
@@ -302,12 +309,15 @@ def replace_range(
 
     # Use LibCST transformer to replace the range
     class RangeReplacer(cst.CSTTransformer):
+        """Represent RangeReplacer."""
+
         def __init__(
             self,
             start_node: cst.CSTNode,
             end_node: cst.CSTNode,
             replacements: list[cst.BaseStatement],
         ):
+            """Initialize the instance."""
             self.start_node = start_node
             self.end_node = end_node
             self.replacements = replacements
@@ -318,6 +328,7 @@ def replace_range(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
             # Handle module-level range replacements
+            """Return leave Module."""
             body = list(original_node.body)
             start_idx = -1
             end_idx = -1
@@ -345,6 +356,7 @@ def replace_range(
             updated_node: cst.IndentedBlock,
         ) -> cst.IndentedBlock:
             # Handle block-level range replacements
+            """Return leave IndentedBlock."""
             body = list(original_node.body)
             start_idx = -1
             end_idx = -1

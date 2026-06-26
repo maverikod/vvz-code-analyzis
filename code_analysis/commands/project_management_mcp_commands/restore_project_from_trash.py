@@ -40,6 +40,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
     def get_schema(
         cls: type["RestoreProjectFromTrashMCPCommand"],
     ) -> Dict[str, Any]:
+        """Return the schema for selecting a trashed project to restore."""
         return {
             "type": "object",
             "description": "Restore a project from trash (move files then unmark in DB)",
@@ -69,6 +70,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
         trash_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Move a trashed project to its original path and reactivate its rows."""
         try:
             import shutil
 

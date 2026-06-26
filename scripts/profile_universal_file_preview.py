@@ -12,14 +12,17 @@ ABS_FILE = PROJECT_ROOT / REL_FILE
 
 
 def _sec(start: float) -> float:
+    """Return sec."""
     return time.perf_counter() - start
 
 
 def _report(label: str, elapsed: float) -> None:
+    """Return report."""
     print(f"  {label:48s} {elapsed:7.3f}s")
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     if not ABS_FILE.is_file():
         raise SystemExit(f"missing file: {ABS_FILE}")
 
@@ -45,7 +48,9 @@ def main() -> None:
     from code_analysis.tree.handler_registry import HandlerRegistry
 
     content = ABS_FILE.read_text(encoding="utf-8")
-    budget = PreviewBudget(preview_lines=20, value_preview_len=120, full_text_max_lines=200)
+    budget = PreviewBudget(
+        preview_lines=20, value_preview_len=120, full_text_max_lines=200
+    )
 
     print("=== Micro-benchmarks (isolated) ===")
 
@@ -61,7 +66,9 @@ def main() -> None:
     _report("PythonFormatHandler.mark", _sec(t0))
 
     t0 = time.perf_counter()
-    create_tree_from_code(str(ABS_FILE), content, persist_sidecar=False, register_in_memory=False)
+    create_tree_from_code(
+        str(ABS_FILE), content, persist_sidecar=False, register_in_memory=False
+    )
     _report("create_tree_from_code (no sidecar)", _sec(t0))
 
     t0 = time.perf_counter()
@@ -95,7 +102,9 @@ def main() -> None:
 
     if hasattr(result, "focus_node"):
         focus_text = (result.focus_node.attributes or {}).get("text", "")
-        print(f"\n  focus.text chars={len(focus_text)}  blocks={len(result.selected_blocks)}")
+        print(
+            f"\n  focus.text chars={len(focus_text)}  blocks={len(result.selected_blocks)}"
+        )
     else:
         print(f"\n  error: {result}")
 
@@ -121,7 +130,10 @@ def main() -> None:
         parse_focus_short_id,
     )
     from code_analysis.tree.preview_navigation import PreviewNavigation
-    from code_analysis.tree.preview_selector import PreviewSelector, PreviewSelectorConfig
+    from code_analysis.tree.preview_selector import (
+        PreviewSelector,
+        PreviewSelectorConfig,
+    )
     from code_analysis.tree.sibling_convention import PreviewTextMode
     from code_analysis.commands.universal_file_preview.marked_tree_navigation import (
         _root_view_block_set,
@@ -131,7 +143,9 @@ def main() -> None:
 
     focus_short_id = parse_focus_short_id(None, tree.nodes)
     format_key = format_key_from_extension(ABS_FILE.suffix)
-    config = PreviewSelectorConfig(full_text_max_lines={format_key: budget.full_text_max_lines})
+    config = PreviewSelectorConfig(
+        full_text_max_lines={format_key: budget.full_text_max_lines}
+    )
     navigation = PreviewNavigation(tree_loader=loader)
     max_short_id = compute_max_short_id_in_tree(tree)
 
@@ -175,7 +189,9 @@ def main() -> None:
     _report("  _root_view_block_set", t_blocks)
     _report("  render selected blocks", t_render_blocks)
     _report("  _enrich_focus_for_root_view", t_enrich)
-    print(f"  sum(steps)={t_lifecycle + t_loader + t_blocks + t_render_blocks + t_enrich:.3f}s")
+    print(
+        f"  sum(steps)={t_lifecycle + t_loader + t_blocks + t_render_blocks + t_enrich:.3f}s"
+    )
 
 
 if __name__ == "__main__":

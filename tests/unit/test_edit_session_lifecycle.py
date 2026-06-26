@@ -23,6 +23,7 @@ from code_analysis.core.tree_lifecycle.checksum import compute_content_checksum
 
 
 def _setup_valid_json(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Return setup valid json."""
     rel_path = "nested/demo.json"
     source_abs = tmp_path / rel_path
     source_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -38,6 +39,7 @@ def _setup_valid_json(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def _setup_invalid_json(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Return setup invalid json."""
     rel_path = "broken/demo.json"
     source_abs = tmp_path / rel_path
     source_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -46,6 +48,7 @@ def _setup_invalid_json(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def test_open_rejects_content_when_valid_external_file(tmp_path: Path) -> None:
+    """Verify test open rejects content when valid external file."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     with pytest.raises(EditSessionError) as exc_info:
         EditSession.open(
@@ -58,6 +61,7 @@ def test_open_rejects_content_when_valid_external_file(tmp_path: Path) -> None:
 
 
 def test_valid_mutation_commits_tree_and_source(tmp_path: Path) -> None:
+    """Verify test valid mutation commits tree and source."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -70,6 +74,7 @@ def test_valid_mutation_commits_tree_and_source(tmp_path: Path) -> None:
         assert initial_commits == 1
 
         def mutator(denuded: str) -> str:
+            """Return mutator."""
             return denuded.replace('"counter": 1', '"counter": 42')
 
         session.apply_valid_tree_mutation(mutator)
@@ -81,6 +86,7 @@ def test_valid_mutation_commits_tree_and_source(tmp_path: Path) -> None:
 
 
 def test_invalid_plaintext_commits_source_only(tmp_path: Path) -> None:
+    """Verify test invalid plaintext commits source only."""
     root, source_abs, rel = _setup_invalid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -99,6 +105,7 @@ def test_invalid_plaintext_commits_source_only(tmp_path: Path) -> None:
 
 
 def test_revalidation_restores_valid_mode(tmp_path: Path) -> None:
+    """Verify test revalidation restores valid mode."""
     root, source_abs, rel = _setup_invalid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -115,6 +122,7 @@ def test_revalidation_restores_valid_mode(tmp_path: Path) -> None:
 
 
 def test_close_removes_session_directory(tmp_path: Path) -> None:
+    """Verify test close removes session directory."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,

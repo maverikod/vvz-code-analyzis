@@ -36,6 +36,7 @@ class ConfigJSONDecodeError(ValueError):
         column: Optional[int] = None,
         hint: Optional[str] = None,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(message)
         self.source_path = source_path
         self.source_text = source_text
@@ -142,6 +143,7 @@ def install_comment_json_for_mcp_adapter() -> None:
     _orig_simple_load = SimpleConfig.load
 
     def load_with_comments(self: Any) -> Any:
+        """Return load with comments."""
         content = load_config_json(self.config_path)
         orig_loads = sc_mod.json.loads
         sc_mod.json.loads = lambda *_args, **_kwargs: content

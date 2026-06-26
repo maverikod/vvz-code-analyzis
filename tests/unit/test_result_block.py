@@ -14,6 +14,7 @@ from code_analysis.core.search_session.result_block import (
 
 
 def test_assemble_block_respects_size_limit_without_splitting() -> None:
+    """Verify test assemble block respects size limit without splitting."""
     findings = [
         {"id": "1", "payload": "aa"},
         {"id": "2", "payload": "bb"},
@@ -31,6 +32,7 @@ def test_assemble_block_respects_size_limit_without_splitting() -> None:
 
 
 def test_oversized_single_result_forms_one_block_exceeding_limit() -> None:
+    """Verify test oversized single result forms one block exceeding limit."""
     finding = {"id": "big", "payload": "x" * 500}
     max_size = 50
 
@@ -44,6 +46,7 @@ def test_oversized_single_result_forms_one_block_exceeding_limit() -> None:
 
 
 def test_serialize_block_round_trip_shape() -> None:
+    """Verify test serialize block round trip shape."""
     block = SearchResultBlock(
         position=2,
         items=({"id": "x"},),
@@ -54,5 +57,6 @@ def test_serialize_block_round_trip_shape() -> None:
 
 
 def test_block_items_from_payload_reads_legacy_results_key() -> None:
+    """Verify test block items from payload reads legacy results key."""
     legacy = {"position": 1, "results": [{"result_id": "ft-000001"}]}
     assert block_items_from_payload(legacy) == [{"result_id": "ft-000001"}]

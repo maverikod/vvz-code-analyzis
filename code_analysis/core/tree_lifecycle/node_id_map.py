@@ -25,11 +25,15 @@ DEFAULT_NEXT_FREE = 1
 
 
 class ChecksumsSection(TypedDict):
+    """Represent ChecksumsSection."""
+
     source_sha256: str
 
 
 @dataclass
 class MapEntry:
+    """Represent MapEntry."""
+
     short_id: int
     uuid: str
     content_fingerprint: str
@@ -39,12 +43,16 @@ class MapEntry:
 
 @dataclass
 class MapSection:
+    """Represent MapSection."""
+
     next_free: int
     entries: List[MapEntry]
 
 
 @dataclass
 class TreeSections:
+    """Represent TreeSections."""
+
     checksums: ChecksumsSection
     map: MapSection
     tree: str
@@ -62,6 +70,8 @@ class DiscoveredNode:
 
 @dataclass(frozen=True)
 class ResolveResult:
+    """Represent ResolveResult."""
+
     short_id: int
     uuid: str
 
@@ -71,13 +81,19 @@ class NodeIdMapError(ValueError):
 
 
 class UnknownShortIdError(NodeIdMapError):
+    """Represent UnknownShortIdError."""
+
     def __init__(self, short_id: int) -> None:
+        """Initialize the instance."""
         super().__init__(f"Unknown short_id: {short_id}")
         self.short_id = short_id
 
 
 class UnknownTreeNodeUuidError(NodeIdMapError):
+    """Represent UnknownTreeNodeUuidError."""
+
     def __init__(self, node_uuid: str) -> None:
+        """Initialize the instance."""
         super().__init__(f"Unknown TreeNodeUuid: {node_uuid}")
         self.node_uuid = node_uuid
 
@@ -144,6 +160,7 @@ def _identity_index_from_entries(entries: List[MapEntry]) -> Dict[str, str]:
 
 
 def _parse_map_entry(raw: Dict[str, Any]) -> MapEntry:
+    """Return parse map entry."""
     if not isinstance(raw, dict):
         raise NodeIdMapError("map entry must be a mapping")
     short_id = raw.get("short_id")
@@ -260,6 +277,7 @@ def _build_entries_from_discovered(
     discovered_nodes: List[DiscoveredNode],
     prior_map: Optional[MapSection],
 ) -> tuple[List[MapEntry], int]:
+    """Return build entries from discovered."""
     next_free = prior_map.next_free if prior_map is not None else DEFAULT_NEXT_FREE
     identity_to_uuid: Dict[str, str] = {}
     if prior_map is not None:
@@ -305,6 +323,7 @@ class NodeIdMap:
     """In-memory owner of MAP section state (C-025)."""
 
     def __init__(self, map_section: MapSection) -> None:
+        """Initialize the instance."""
         self._map = map_section
         self._by_short, self._by_uuid = _rebuild_indexes(map_section.entries)
 

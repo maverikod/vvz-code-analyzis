@@ -15,6 +15,8 @@ SourceKind = Literal["disk", "draft_session"]
 
 @dataclass
 class StructureWarning:
+    """Represent StructureWarning."""
+
     code: str
     message: str
     file_path: Optional[str] = None
@@ -22,6 +24,8 @@ class StructureWarning:
 
 @dataclass
 class PreviewRef:
+    """Represent PreviewRef."""
+
     command: str = "universal_file_preview"
     file_path: str = ""
     node_ref: Optional[str] = None
@@ -29,6 +33,7 @@ class PreviewRef:
     session_id: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return as dict."""
         out: Dict[str, Any] = {
             "command": self.command,
             "file_path": self.file_path,
@@ -44,6 +49,8 @@ class PreviewRef:
 
 @dataclass
 class StructureBlock:
+    """Represent StructureBlock."""
+
     block_id: str
     node_type: str
     start_line: int
@@ -58,6 +65,7 @@ class StructureBlock:
     preview: Optional[PreviewRef] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return as dict."""
         out: Dict[str, Any] = {
             "block_id": self.block_id,
             "node_type": self.node_type,
@@ -83,6 +91,8 @@ class StructureBlock:
 
 @dataclass
 class StructureDocument:
+    """Represent StructureDocument."""
+
     file_path: str
     format_group: str
     source: SourceKind
@@ -94,6 +104,7 @@ class StructureDocument:
     preview_file_path: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        """Return as dict."""
         return {
             "file_path": self.file_path,
             "format_group": self.format_group,

@@ -14,6 +14,7 @@ def test_sqlite_qa_inject_emits_db_retry_on_retry(
     caplog: pytest.LogCaptureFixture,
     tmp_path: Path,
 ) -> None:
+    """Verify test sqlite qa inject emits db retry on retry."""
     p = tmp_path / "db.sqlite"
     d = create_driver("sqlite", {"path": str(p)})
     try:

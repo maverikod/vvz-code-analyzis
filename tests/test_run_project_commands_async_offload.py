@@ -30,12 +30,14 @@ _VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
 async def test_run_project_script_uses_asyncio_to_thread_for_sandbox(
     tmp_path: Path,
 ) -> None:
+    """Verify test run project script uses asyncio to thread for sandbox."""
     root = tmp_path / "proj"
     root.mkdir()
     fake = SandboxRunResult(stdout="ok", stderr="", returncode=0, timed_out=False)
     calls: list[tuple] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         calls.append((fn, args, kwargs))
         return fake
 
@@ -65,12 +67,14 @@ async def test_run_project_script_uses_asyncio_to_thread_for_sandbox(
 async def test_run_project_module_uses_asyncio_to_thread_for_sandbox(
     tmp_path: Path,
 ) -> None:
+    """Verify test run project module uses asyncio to thread for sandbox."""
     root = tmp_path / "proj"
     root.mkdir()
     fake = SandboxRunResult(stdout="help", stderr="", returncode=0, timed_out=False)
     calls: list[tuple] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         calls.append((fn, args, kwargs))
         return fake
 
@@ -123,6 +127,7 @@ def test_run_project_script_validate_params_accepts_params_without_db() -> None:
 
 
 def test_run_project_script_validate_params_rejects_unknown_param() -> None:
+    """Verify test run project script validate params rejects unknown param."""
     with pytest.raises(ValidationError, match="unknown parameter"):
         RunProjectScriptCommand().validate_params(
             {
@@ -134,6 +139,7 @@ def test_run_project_script_validate_params_rejects_unknown_param() -> None:
 
 
 def test_run_project_module_validate_params_rejects_unknown_project() -> None:
+    """Verify test run project module validate params rejects unknown project."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     mock_db.get_project.return_value = None

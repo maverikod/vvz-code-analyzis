@@ -38,12 +38,14 @@ from ..models import Node, NodeKind
 
 
 def _source_line_count(raw: str) -> int:
+    """Return source line count."""
     if not raw:
         return 0
     return raw.count("\n") + (1 if not raw.endswith("\n") else 0)
 
 
 def _line_for_yaml_pointer(lines: list[str], pointer: str) -> int | None:
+    """Return line for yaml pointer."""
     if not lines:
         return None
     if pointer == "":
@@ -66,6 +68,7 @@ def _line_for_yaml_pointer(lines: list[str], pointer: str) -> int | None:
 
 
 def _pointer_in_subtree(ptr: str, root: str) -> bool:
+    """Return pointer in subtree."""
     if root == "":
         return True
     if ptr == root:
@@ -78,6 +81,7 @@ def _line_span_for_pointer(
     source_lines: list[str],
     pointer: str,
 ) -> tuple[int, int] | None:
+    """Return line span for pointer."""
     lines: list[int] = []
     for meta in metadata_map.values():
         ptr = meta.yaml_pointer
@@ -109,6 +113,7 @@ def _annotated_lines_in_range(
     end_line: int,
     root_pointer: str,
 ) -> str:
+    """Return annotated lines in range."""
     by_line: defaultdict[int, list[str]] = defaultdict(list)
     for meta in metadata_map.values():
         ptr = meta.yaml_pointer
@@ -377,6 +382,7 @@ def _yaml_value_to_node(value: Any, pointer: str) -> Node:
     if isinstance(value, dict):
 
         def _load_mapping() -> list[Node]:
+            """Return load mapping."""
             children = []
             for k, v in value.items():
                 child_pointer = f"{pointer}/{k}"
@@ -401,6 +407,7 @@ def _yaml_value_to_node(value: Any, pointer: str) -> Node:
     if isinstance(value, list):
 
         def _load_seq() -> list[Node]:
+            """Return load seq."""
             return [
                 _yaml_value_to_node(v, f"{pointer}/{i}") for i, v in enumerate(value)
             ]

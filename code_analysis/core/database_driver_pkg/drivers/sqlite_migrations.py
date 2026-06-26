@@ -34,21 +34,25 @@ class _SqliteConnMigrateAdapter:
     """Minimal db-like surface for schema_creation_migrate.run_migrate_schema (driver process)."""
 
     def __init__(self, conn: Any, schema_manager: Any) -> None:
+        """Initialize the instance."""
         self._conn = conn
         self._schema_manager = schema_manager
 
     def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        """Return get table info."""
         return cast(
             List[Dict[str, Any]], self._schema_manager.get_table_info(table_name)
         )
 
     def _execute(self, sql: str, params: Any = None) -> None:
+        """Return execute."""
         if params is not None and params != ():
             self._conn.execute(sql, params)
         else:
             self._conn.execute(sql)
 
     def _fetchone(self, sql: str, params: Any = None) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         cur = self._conn.cursor()
         try:
             if params is not None and params != ():
@@ -63,6 +67,7 @@ class _SqliteConnMigrateAdapter:
             cur.close()
 
     def _commit(self) -> None:
+        """Return commit."""
         self._conn.commit()
 
 

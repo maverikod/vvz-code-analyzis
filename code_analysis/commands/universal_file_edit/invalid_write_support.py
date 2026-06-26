@@ -28,10 +28,12 @@ def _parse_error_entry(
     col: int = 0,
     message: str,
 ) -> Dict[str, Any]:
+    """Return parse error entry."""
     return {"line": line, "col": col, "message": message}
 
 
 def _errors_from_exception(exc: BaseException) -> List[Dict[str, Any]]:
+    """Return errors from exception."""
     if isinstance(exc, json.JSONDecodeError):
         return [
             _parse_error_entry(

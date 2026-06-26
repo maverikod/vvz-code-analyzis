@@ -138,6 +138,7 @@ def sync_file_to_db_atomic(
     )
 
     def _sync() -> Dict[str, Any]:
+        """Return sync."""
         nonlocal file_id
         from code_analysis.core.database.file_edit_lock import (
             acquire_file_edit_lock_with_retry,

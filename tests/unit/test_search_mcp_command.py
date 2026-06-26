@@ -17,6 +17,7 @@ _VALID_PROJECT_ID = str(uuid.uuid4())
 
 
 def _mock_project_db() -> MagicMock:
+    """Return mock project db."""
     mock_db = MagicMock()
     mock_db.get_project.return_value = {"id": _VALID_PROJECT_ID}
     return mock_db
@@ -24,11 +25,13 @@ def _mock_project_db() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_search_runs_background_in_dedicated_thread(tmp_path) -> None:
+    """Verify test search runs background in dedicated thread."""
     cmd = SearchMCPCommand()
     sessions_root = tmp_path / "search_sessions"
     thread_started = threading.Event()
 
     def _capture_thread(**kwargs: object) -> None:
+        """Return capture thread."""
         thread_started.set()
         layout = kwargs["layout"]
         (layout.blocks_dir / "block_1.json").write_text(
@@ -71,10 +74,12 @@ async def test_search_runs_background_in_dedicated_thread(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
+    """Verify test search returns handoff with job id."""
     cmd = SearchMCPCommand()
     sessions_root = tmp_path / "search_sessions"
 
     async def _fake_cross(**kwargs: object) -> int:
+        """Return fake cross."""
         layout = kwargs["layout"]
         (layout.blocks_dir / "block_1.json").write_text(
             '{"position": 1, "items": [{"result_id": "ft-1", "source": "fulltext"}]}',
@@ -126,6 +131,7 @@ async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
 
 
 def test_search_accepts_path_filter_alias() -> None:
+    """Verify test search accepts path filter alias."""
     cmd = SearchMCPCommand()
     with patch.object(
         BaseMCPCommand,
@@ -144,6 +150,7 @@ def test_search_accepts_path_filter_alias() -> None:
 
 
 def test_search_rejects_conflicting_path_filter_and_file_pattern() -> None:
+    """Verify test search rejects conflicting path filter and file pattern."""
     cmd = SearchMCPCommand()
     with patch.object(
         BaseMCPCommand,

@@ -43,9 +43,11 @@ class ProjectFileLockStatusCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for the project and relative file path."""
         return cast(Dict[str, Any], get_project_file_lock_status_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate that the project exists and the file path is non-empty."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         if not str(params.get("file_path") or "").strip():
@@ -58,11 +60,13 @@ class ProjectFileLockStatusCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["ProjectFileLockStatusCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for the lock-status command."""
         return cast(Dict[str, Any], get_project_file_lock_status_metadata(cls))
 
     async def execute(
         self, project_id: str, file_path: str, **kwargs: Any
     ) -> SuccessResult | ErrorResult:
+        """Return the cooperative advisory lock state for a project file."""
         database = self._open_database_from_config(auto_analyze=False)
         try:
             project = database.get_project(project_id)

@@ -29,6 +29,7 @@ def test_mypy_diagnostic_counts_only_files_with_positive_error_count() -> None:
 
 
 def test_mypy_diagnostic_counts_real_errors() -> None:
+    """Verify test mypy diagnostic counts real errors."""
     rows = [
         {
             "success": False,
@@ -44,6 +45,7 @@ def test_mypy_diagnostic_counts_real_errors() -> None:
 
 
 def test_build_single_file_summary_matches_totals_for_stale_mypy_row() -> None:
+    """Verify test build single file summary matches totals for stale mypy row."""
     results = {
         "placeholders": [],
         "stubs": [],
@@ -70,6 +72,7 @@ def test_build_single_file_summary_matches_totals_for_stale_mypy_row() -> None:
 
 
 def test_build_batch_summary_mypy_coherence() -> None:
+    """Verify test build batch summary mypy coherence."""
     results = {
         "placeholders": [],
         "stubs": [],

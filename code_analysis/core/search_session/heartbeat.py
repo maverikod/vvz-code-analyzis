@@ -27,6 +27,7 @@ def make_heartbeat_hook(
     """Return a no-arg callable for paginated search workers to refresh heartbeat."""
 
     def tick() -> None:
+        """Return tick."""
         touch_heartbeat(layout, now=time.time())
 
     return tick

@@ -404,6 +404,7 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             di_block["vectorize"] = bool(code_analysis_docs_indexing_vectorize)
 
         def _csv_to_list(raw: Optional[str]) -> Optional[List[str]]:
+            """Return csv to list."""
             if raw is None or not str(raw).strip():
                 return None
             return [x.strip() for x in str(raw).split(",") if x.strip()]

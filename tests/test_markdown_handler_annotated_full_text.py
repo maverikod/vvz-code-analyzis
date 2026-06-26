@@ -17,12 +17,14 @@ from code_analysis.commands.universal_file_preview.models import NodeKind
 
 @pytest.fixture
 def handler() -> MarkdownFileHandler:
+    """Return handler."""
     return MarkdownFileHandler()
 
 
 def test_annotated_full_text_prefixes_block_start_lines(
     handler: MarkdownFileHandler, tmp_path: Path
 ) -> None:
+    """Verify test annotated full text prefixes block start lines."""
     md = tmp_path / "doc.md"
     md.write_text("# Title\n\nBody line.\n", encoding="utf-8")
     budget = PreviewBudget(
@@ -43,6 +45,7 @@ def test_annotated_full_text_prefixes_block_start_lines(
 def test_annotated_full_text_exposes_top_level_blocks(
     handler: MarkdownFileHandler, tmp_path: Path
 ) -> None:
+    """Verify test annotated full text exposes top level blocks."""
     md = tmp_path / "doc.md"
     md.write_text("# H\n\npara\n", encoding="utf-8")
     budget = PreviewBudget(
@@ -61,6 +64,7 @@ def test_annotated_full_text_exposes_top_level_blocks(
 def test_resolve_uuid_block_node_ref(
     handler: MarkdownFileHandler, tmp_path: Path
 ) -> None:
+    """Verify test resolve uuid block node ref."""
     md = tmp_path / "doc.md"
     path = str(md)
     md.write_text("# Only\n", encoding="utf-8")
@@ -102,6 +106,7 @@ def test_open_root_reads_original_when_draft_empty(
 
 
 def test_uuid5_stable_across_reads(tmp_path: Path) -> None:
+    """Verify test uuid5 stable across reads."""
     path = str(tmp_path / "x.md")
     from markdown_it import MarkdownIt
 

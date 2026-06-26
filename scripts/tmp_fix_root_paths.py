@@ -7,42 +7,49 @@ Dry-run by default. Pass --apply to commit.
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
+
 import os, json, sys
 from pathlib import Path
 
-DRY_RUN = '--apply' not in sys.argv
+DRY_RUN = "--apply" not in sys.argv
 
-env_path = Path('.env')
+env_path = Path(".env")
 if env_path.exists():
     for line in env_path.read_text().splitlines():
         line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        k, v = line.split('=', 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('\'"'))
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
 import psycopg
 from psycopg.rows import dict_row
 
-cfg = json.loads(Path('config.json').read_text())
+cfg = json.loads(Path("config.json").read_text())
+
 
 def find_driver(o):
+    """Return find driver."""
     if isinstance(o, dict):
-        if o.get('type') == 'postgres' and 'config' in o:
-            return o['config']
+        if o.get("type") == "postgres" and "config" in o:
+            return o["config"]
         for v in o.values():
             r = find_driver(v)
             if r:
                 return r
     return None
 
+
 dc = find_driver(cfg)
-pw = os.environ.get(dc.get('password_env', ''))
+pw = os.environ.get(dc.get("password_env", ""))
 
 conn = psycopg.connect(
-    host=dc['host'], port=dc['port'],
-    dbname=dc['dbname'], user=dc['user'],
-    password=pw, connect_timeout=15,
+    host=dc["host"],
+    port=dc["port"],
+    dbname=dc["dbname"],
+    user=dc["user"],
+    password=pw,
+    connect_timeout=15,
     row_factory=dict_row,
 )
 conn.autocommit = False
@@ -63,7 +70,7 @@ for r in rows:
 
 if DRY_RUN:
     print()
-    print('DRY RUN — no changes made. Pass --apply to commit.')
+    print("DRY RUN — no changes made. Pass --apply to commit.")
     conn.rollback()
     conn.close()
     sys.exit(0)
@@ -74,9 +81,9 @@ cur.execute("""
     SET root_path = name
     WHERE root_path LIKE '/%' AND deleted = FALSE
 """)
-print(f'\nUpdated {cur.rowcount} rows.')
+print(f"\nUpdated {cur.rowcount} rows.")
 conn.commit()
-print('COMMITTED.')
+print("COMMITTED.")
 
 # Verify
 cur.execute("""

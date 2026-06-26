@@ -39,6 +39,7 @@ class MarkFilesDeletedByMaskCommand:
         trash_dir: Optional[str] = None,
         version_dir: Optional[str] = None,
     ) -> None:
+        """Store database, project, mask, and optional trash/version directories."""
         self.database = database
         self.project_id = project_id
         self.path_mask = path_mask
@@ -46,6 +47,7 @@ class MarkFilesDeletedByMaskCommand:
         self.version_dir = version_dir
 
     async def execute(self) -> Dict[str, Any]:
+        """Mark all active project files matching the mask as deleted."""
         paths_list: List[str] = []
         errors_list: List[Dict[str, str]] = []
         result: Dict[str, Any] = {
@@ -63,13 +65,18 @@ class MarkFilesDeletedByMaskCommand:
         if not proj:
             result["success"] = False
             errors_list.append(
-                {"code": "PROJECT_NOT_FOUND", "message": f"Unknown project {self.project_id}"}
+                {
+                    "code": "PROJECT_NOT_FOUND",
+                    "message": f"Unknown project {self.project_id}",
+                }
             )
             return result
 
         root_path = proj.root_path
         project_root = Path(str(root_path))
-        rows = self.database.get_project_file_rows(self.project_id, include_deleted=False)
+        rows = self.database.get_project_file_rows(
+            self.project_id, include_deleted=False
+        )
         matched = filter_rows_by_mask(rows, project_root, self.path_mask)
         result["matched"] = len(matched)
 
@@ -109,7 +116,9 @@ class MarkFilesDeletedByMaskCommand:
                     )
             except Exception as e:
                 result["failed"] += 1
-                logger.error("mark_files_deleted_by_mask: %s: %s", rel, e, exc_info=True)
+                logger.error(
+                    "mark_files_deleted_by_mask: %s: %s", rel, e, exc_info=True
+                )
                 errors_list.append({"path": rel, "code": "ERROR", "message": str(e)})
 
         if result["matched"] == 0:

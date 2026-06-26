@@ -94,6 +94,7 @@ def build_file_watcher_watch_dir_entries(
 
 
 def _watch_dir_specs_signature(specs: Sequence[WatchDirSpec]) -> tuple[Any, ...]:
+    """Return watch dir specs signature."""
     return tuple((s.watch_dir_id, str(s.watch_dir), s.ignore_patterns) for s in specs)
 
 
@@ -146,7 +147,9 @@ def load_file_watcher_runtime_settings(
         if spec.ignore_patterns:
             entry["ignore_patterns"] = list(spec.ignore_patterns)
         entries.append(entry)
-    mount_root = resolve_effective_watch_mount_root({"code_analysis": code_analysis_config})
+    mount_root = resolve_effective_watch_mount_root(
+        {"code_analysis": code_analysis_config}
+    )
     logger.info(
         "Mount-root watch dirs: %s under %s",
         len(specs),

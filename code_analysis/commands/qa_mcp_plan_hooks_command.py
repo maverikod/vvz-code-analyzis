@@ -35,6 +35,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for selecting deterministic QA hook scenarios."""
         return {
             "type": "object",
             "properties": {
@@ -71,6 +72,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
         trigger_touch_project_row: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Exercise configured DB retry and worker-coordination QA hooks."""
         if not qa_mcp_hooks_enabled_for_mcp_commands():
             return ErrorResult(
                 message=(
@@ -161,6 +163,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["QAMcpPlanHooksCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for the QA hook command."""
         return {
             "name": cls.name,
             "version": cls.version,

@@ -20,16 +20,20 @@ class TestQueryCSTCommandValidation:
 
     @pytest.mark.asyncio
     async def test_invalid_file_extension(self, project_root, mock_db):
+        """Verify test invalid file extension."""
         txt_file = project_root / "readme.txt"
         txt_file.write_text("hello", encoding="utf-8")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -42,14 +46,18 @@ class TestQueryCSTCommandValidation:
 
     @pytest.mark.asyncio
     async def test_file_not_found(self, project_root, mock_db):
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        """Verify test file not found."""
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

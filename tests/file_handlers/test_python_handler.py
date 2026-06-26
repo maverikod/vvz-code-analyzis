@@ -33,12 +33,14 @@ NODE_UUID = "550e8400-e29b-41d4-a716-446655440001"
 @pytest.mark.parametrize("suffix", (".py", ".pyi", ".pyw"))
 @pytest.mark.parametrize("op", sorted(OPERATIONS))
 def test_python_suffixes_resolve_to_python_handler(suffix: str, op: str) -> None:
+    """Verify test python suffixes resolve to python handler."""
     assert resolve_handler(f"pkg/mod{suffix}", op) == HANDLER_PYTHON
     assert resolve_handler(f"pkg/mod{suffix.upper()}", op) == HANDLER_PYTHON
 
 
 @pytest.mark.parametrize("suffix", (".py", ".pyi", ".pyw"))
 def test_python_suffixes_never_resolve_to_text_handler(suffix: str) -> None:
+    """Verify test python suffixes never resolve to text handler."""
     assert resolve_handler(f"src/x{suffix}", "read") != HANDLER_TEXT
 
 
@@ -47,6 +49,7 @@ def test_python_suffixes_never_resolve_to_text_handler(suffix: str) -> None:
     ("mod.py", "types.pyi", "gui.pyw"),
 )
 def test_resolve_python_files_all_suffixes(name: str) -> None:
+    """Verify test resolve python files all suffixes."""
     for op in sorted(OPERATIONS):
         assert resolve_handler(name, op) == HANDLER_PYTHON
 
@@ -62,6 +65,7 @@ def test_resolve_python_files_all_suffixes(name: str) -> None:
 def test_text_handler_rejects_python_paths_for_replace(
     tmp_path: Path, suffix: str, body: str
 ) -> None:
+    """Verify test text handler rejects python paths for replace."""
     f = tmp_path / f"x{suffix}"
     f.write_text(body, encoding="utf-8")
     req = FileHandlerRequest(
@@ -81,6 +85,7 @@ def test_text_handler_rejects_python_paths_for_replace(
 
 
 def _root_with_file(tmp_path: Path, rel: str, content: str) -> tuple[Path, Path]:
+    """Return root with file."""
     root = tmp_path / "proj"
     root.mkdir()
     f = root / rel
@@ -99,6 +104,7 @@ def _root_with_file(tmp_path: Path, rel: str, content: str) -> tuple[Path, Path]
 def test_python_replace_rejects_raw_line_payloads(
     tmp_path: Path, line_keys: dict
 ) -> None:
+    """Verify test python replace rejects raw line payloads."""
     root, f = _root_with_file(tmp_path, "m.py", "a = 1\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -114,6 +120,7 @@ def test_python_replace_rejects_raw_line_payloads(
 
 
 def test_python_save_rejects_raw_line_payloads(tmp_path: Path) -> None:
+    """Verify test python save rejects raw line payloads."""
     root, f = _root_with_file(tmp_path, "m.py", "a = 1\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -133,6 +140,7 @@ def test_python_save_rejects_raw_line_payloads(tmp_path: Path) -> None:
 
 
 def test_python_delete_ops_path_rejects_raw_line_payloads(tmp_path: Path) -> None:
+    """Verify test python delete ops path rejects raw line payloads."""
     root, f = _root_with_file(tmp_path, "m.py", "a = 1\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -158,6 +166,7 @@ def test_python_delete_ops_path_rejects_raw_line_payloads(tmp_path: Path) -> Non
 
 
 def test_python_replace_invalid_ops_empty_list_before_write(tmp_path: Path) -> None:
+    """Verify test python replace invalid ops empty list before write."""
     root, f = _root_with_file(tmp_path, "m.py", "a = 1\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -174,6 +183,7 @@ def test_python_replace_invalid_ops_empty_list_before_write(tmp_path: Path) -> N
 
 
 def test_python_replace_dry_run_range_selector_diff_no_write(tmp_path: Path) -> None:
+    """Verify test python replace dry run range selector diff no write."""
     root, rel = tmp_path / "proj", "m.py"
     root.mkdir()
     f = root / rel
@@ -203,6 +213,7 @@ def test_python_replace_dry_run_range_selector_diff_no_write(tmp_path: Path) -> 
 
 
 def test_python_replace_dry_run_node_id_diff_no_write(tmp_path: Path) -> None:
+    """Verify test python replace dry run node id diff no write."""
     root, rel = tmp_path / "proj", "m.py"
     root.mkdir()
     f = root / rel
@@ -238,6 +249,7 @@ def test_python_replace_dry_run_node_id_diff_no_write(tmp_path: Path) -> None:
 
 
 def test_invalid_node_id_selector_fails_before_backup_and_db(tmp_path: Path) -> None:
+    """Verify test invalid node id selector fails before backup and db."""
     root, f = _root_with_file(tmp_path, "m.py", "a = 1\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -326,6 +338,7 @@ def test_parse_validation_failure_before_apply_skips_backup_and_db(
 
 
 def test_python_read_lines_syntax_broken_file(tmp_path: Path) -> None:
+    """Verify test python read lines syntax broken file."""
     root, f = _root_with_file(tmp_path, "bad.py", "this is not valid python !!!\n")
     req = FileHandlerRequest(
         project_id="p1",
@@ -340,6 +353,7 @@ def test_python_read_lines_syntax_broken_file(tmp_path: Path) -> None:
 
 
 def test_python_read_cst_view_requires_tree_id() -> None:
+    """Verify test python read cst view requires tree id."""
     req = FileHandlerRequest(
         project_id="p1",
         file_path="x.py",
@@ -353,6 +367,7 @@ def test_python_read_cst_view_requires_tree_id() -> None:
 
 
 def test_python_handler_registration_ready() -> None:
+    """Verify test python handler registration ready."""
     h = PythonFileHandler()
     assert h.handler_id == "python"
     assert h.ready_for_all_operations_schema()

@@ -64,6 +64,7 @@ CODE_CHUNK_UPSERT_SQL = """
 
 
 def _norm_sql_one_line(sql: str) -> str:
+    """Return norm sql one line."""
     return " ".join(sql.strip().rstrip(";").split())
 
 

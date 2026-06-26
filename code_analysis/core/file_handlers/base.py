@@ -13,7 +13,6 @@ from typing import Any, Dict, FrozenSet, Optional
 
 from .registry import HANDLER_IDS, OPERATIONS
 
-
 # Canonical error codes for handler / universal command responses (lowercase snake).
 UNSUPPORTED_OPERATION = "unsupported_operation"
 UNSUPPORTED_EXTENSION = "unsupported_extension"
@@ -167,16 +166,24 @@ class BaseFileHandler(ABC):
         """Return JSON-Schema-like object for MCP registration for ``operation``."""
 
     @abstractmethod
-    def read(self, request: FileHandlerRequest) -> FileHandlerResult: ...
+    def read(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Read file content through this handler."""
+        ...
 
     @abstractmethod
-    def save(self, request: FileHandlerRequest) -> FileHandlerResult: ...
+    def save(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Save full file content through this handler."""
+        ...
 
     @abstractmethod
-    def replace(self, request: FileHandlerRequest) -> FileHandlerResult: ...
+    def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Replace part of a file through this handler."""
+        ...
 
     @abstractmethod
-    def delete(self, request: FileHandlerRequest) -> FileHandlerResult: ...
+    def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Delete a file through this handler."""
+        ...
 
     def supported_operations(self) -> FrozenSet[str]:
         """Override to omit operations this handler rejects (documented upfront)."""
@@ -184,6 +191,7 @@ class BaseFileHandler(ABC):
         return OPERATIONS
 
     def supports_operation(self, operation: str) -> bool:
+        """Return supports operation."""
         op = (operation or "").lower().strip()
         return op in self.supported_operations()
 

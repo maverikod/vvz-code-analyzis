@@ -21,6 +21,7 @@ from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
 @pytest.fixture
 def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return ipc client."""
     db_path = tmp_path / "test.db"
     driver = create_driver("sqlite", {"path": str(db_path)})
     handlers = RPCHandlers(driver)
@@ -43,12 +44,14 @@ def _fetchone(
     *,
     transaction_id: str | None = None,
 ):
+    """Return fetchone."""
     r = client.execute(sql, params, transaction_id=transaction_id)
     rows = r.get("data") or []
     return rows[0] if rows else None
 
 
 def test_transaction_manual_commit_success(ipc_client: DatabaseClient) -> None:
+    """Verify test transaction manual commit success."""
     tid = ipc_client.begin_transaction()
     try:
         ipc_client.execute(
@@ -68,6 +71,7 @@ def test_transaction_manual_commit_success(ipc_client: DatabaseClient) -> None:
 
 
 def test_transaction_manual_rollback_on_error(ipc_client: DatabaseClient) -> None:
+    """Verify test transaction manual rollback on error."""
     tid = ipc_client.begin_transaction()
     with pytest.raises(ValueError):
         try:
@@ -87,6 +91,7 @@ def test_transaction_manual_rollback_on_error(ipc_client: DatabaseClient) -> Non
 
 
 def test_transaction_nested_exception_rolls_back(ipc_client: DatabaseClient) -> None:
+    """Verify test transaction nested exception rolls back."""
     tid = ipc_client.begin_transaction()
     try:
         ipc_client.execute(
@@ -105,6 +110,7 @@ def test_transaction_nested_exception_rolls_back(ipc_client: DatabaseClient) -> 
 
 
 def test_transaction_multiple_ops_commit(ipc_client: DatabaseClient) -> None:
+    """Verify test transaction multiple ops commit."""
     tid = ipc_client.begin_transaction()
     try:
         ipc_client.execute(

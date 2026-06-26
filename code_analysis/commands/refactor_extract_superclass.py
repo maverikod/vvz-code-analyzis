@@ -36,6 +36,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for superclass extraction and dry-run preview."""
         return {
             "type": "object",
             "properties": {
@@ -375,6 +376,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        """Preview or apply superclass extraction with backup and progress updates."""
         from ..core.progress_tracker import get_progress_tracker_from_context
 
         extra = dict(kwargs)

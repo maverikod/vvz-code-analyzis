@@ -31,9 +31,13 @@ logger = logging.getLogger(__name__)
 
 
 class CSTApplyBufferCommand(BaseMCPCommand):
+    """Apply uploaded replacement code to a selected CST node in a project file."""
+
     name = "cst_apply_buffer"
     version = "1.0.0"
-    descr = "Apply replacement code from a completed transfer upload buffer to a CST node"
+    descr = (
+        "Apply replacement code from a completed transfer upload buffer to a CST node"
+    )
     category = "cst"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -42,6 +46,7 @@ class CSTApplyBufferCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -441,4 +446,3 @@ class CSTApplyBufferCommand(BaseMCPCommand):
             None,
             validate_syntax_only,
         )
-

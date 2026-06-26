@@ -22,6 +22,7 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 
 def _assert_universal_replace_ok_fields(d: dict) -> None:
+    """Return assert universal replace ok fields."""
     assert d.get("success") is True
     assert d.get("handler_id")
     assert d.get("operation") == "replace"
@@ -33,7 +34,10 @@ def _assert_universal_replace_ok_fields(d: dict) -> None:
 
 @pytest.mark.asyncio
 class TestUniversalFileReplaceRouting:
+    """Represent TestUniversalFileReplaceRouting."""
+
     async def test_toml_unsupported_before_db(self) -> None:
+        """Verify test toml unsupported before db."""
         cmd = UniversalFileReplaceCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -48,6 +52,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_text_missing_payload_before_db(self) -> None:
+        """Verify test text missing payload before db."""
         cmd = UniversalFileReplaceCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(project_id=_PID, file_path="README.md")
@@ -56,6 +61,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_json_missing_operations_before_db(self) -> None:
+        """Verify test json missing operations before db."""
         cmd = UniversalFileReplaceCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -68,6 +74,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_yaml_missing_value_before_db(self) -> None:
+        """Verify test yaml missing value before db."""
         cmd = UniversalFileReplaceCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -80,6 +87,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_python_missing_ops_before_db(self) -> None:
+        """Verify test python missing ops before db."""
         cmd = UniversalFileReplaceCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -92,6 +100,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_file_not_found_after_db(self, tmp_path: Path) -> None:
+        """Verify test file not found after db."""
         missing = tmp_path / "nope.txt"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -121,6 +130,7 @@ class TestUniversalFileReplaceRouting:
         assert result.code == "FILE_NOT_FOUND"
 
     async def test_text_overlapping_replacements_no_write(self, tmp_path: Path) -> None:
+        """Verify test text overlapping replacements no write."""
         f = tmp_path / "t.txt"
         f.write_text("l1\nl2\nl3\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -157,6 +167,7 @@ class TestUniversalFileReplaceRouting:
         assert f.read_text(encoding="utf-8") == "l1\nl2\nl3\n"
 
     async def test_text_dry_run_diff_shape(self, tmp_path: Path) -> None:
+        """Verify test text dry run diff shape."""
         f = tmp_path / "notes.txt"
         f.write_text("a\nb\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -195,6 +206,7 @@ class TestUniversalFileReplaceRouting:
         assert f.read_text(encoding="utf-8") == "a\nb\n"
 
     async def test_text_apply_metadata_restore_on_failure(self, tmp_path: Path) -> None:
+        """Verify test text apply metadata restore on failure."""
         f = tmp_path / "notes.txt"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -225,6 +237,7 @@ class TestUniversalFileReplaceRouting:
             mock_bm.create_backup.return_value = "bu-1"
 
             def _do_restore(*_a: object, **_k: object) -> None:
+                """Return do restore."""
                 f.write_text("a\n", encoding="utf-8")
 
             mock_bm.restore_file.side_effect = _do_restore

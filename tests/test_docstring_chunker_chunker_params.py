@@ -27,6 +27,7 @@ def _doc_item(
     ast_node_type: str = "Module",
     text: str = "Some docstring text long enough.",
 ) -> _DocItem:
+    """Return doc item."""
     return _DocItem(
         source_type=source_type,
         chunk_type="DocBlock",
@@ -38,6 +39,7 @@ def _doc_item(
 
 
 def test_chunker_params_docstring_items() -> None:
+    """Verify test chunker params docstring items."""
     chunker = DocstringChunker(database=Mock(), svo_client_manager=None)
     p = chunker._chunker_params_for_items([_doc_item()])
     assert p == {
@@ -49,6 +51,7 @@ def test_chunker_params_docstring_items() -> None:
 
 
 def test_chunker_params_docstring_override_plain_text() -> None:
+    """Verify test chunker params docstring override plain text."""
     chunker = DocstringChunker(
         database=Mock(),
         svo_client_manager=None,
@@ -59,6 +62,7 @@ def test_chunker_params_docstring_override_plain_text() -> None:
 
 
 def test_chunker_params_markdown_override_plain_text() -> None:
+    """Verify test chunker params markdown override plain text."""
     chunker = DocstringChunker(
         database=Mock(),
         svo_client_manager=None,
@@ -70,6 +74,7 @@ def test_chunker_params_markdown_override_plain_text() -> None:
 
 
 def test_chunk_set_override_invalid_logs_and_uses_default(caplog) -> None:
+    """Verify test chunk set override invalid logs and uses default."""
     with caplog.at_level("WARNING"):
         chunker = DocstringChunker(
             database=Mock(),
@@ -89,6 +94,7 @@ def test_chunk_set_override_invalid_logs_and_uses_default(caplog) -> None:
     ],
 )
 def test_chunker_params_markdown_technical_text(item: _DocItem) -> None:
+    """Verify test chunker params markdown technical text."""
     chunker = DocstringChunker(database=Mock(), svo_client_manager=None)
     p = chunker._chunker_params_for_items([item])
     assert p == {
@@ -101,6 +107,7 @@ def test_chunker_params_markdown_technical_text(item: _DocItem) -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_rows_passes_kwargs_to_get_chunks() -> None:
+    """Verify test fetch rows passes kwargs to get chunks."""
     item = _doc_item()
     mgr = Mock()
     mgr.get_chunks = AsyncMock(return_value=[])
@@ -118,7 +125,10 @@ async def test_fetch_rows_passes_kwargs_to_get_chunks() -> None:
 
 
 class _FakeChunk:
+    """Represent FakeChunk."""
+
     def __init__(self, body: str) -> None:
+        """Initialize the instance."""
         self.body = body
         self.embedding = None
         self.embedding_model = None
@@ -129,6 +139,7 @@ class _FakeChunk:
 async def test_process_prepared_files_passes_kwargs_to_get_chunks_batch(
     monkeypatch,
 ) -> None:
+    """Verify test process prepared files passes kwargs to get chunks batch."""
     monkeypatch.setattr(
         DocstringChunker,
         "_file_still_exists_and_not_deleted",
@@ -175,6 +186,7 @@ async def test_process_prepared_files_passes_kwargs_to_get_chunks_batch(
     db = Mock()
 
     async def lw(program):
+        """Return lw."""
         return {"success": True}
 
     db.execute_logical_write_operation = lw
@@ -195,6 +207,7 @@ async def test_process_prepared_files_passes_kwargs_to_get_chunks_batch(
 
 @pytest.mark.asyncio
 async def test_gather_rows_batch_passes_kwargs_to_get_chunks_batch() -> None:
+    """Verify test gather rows batch passes kwargs to get chunks batch."""
     item = _doc_item()
     mgr = Mock()
     mgr.get_chunks_batch = AsyncMock(return_value=[[_FakeChunk("x")]])
@@ -213,6 +226,7 @@ async def test_gather_rows_batch_passes_kwargs_to_get_chunks_batch() -> None:
 
 @pytest.mark.asyncio
 async def test_gather_rows_single_fallback_passes_kwargs_to_get_chunks() -> None:
+    """Verify test gather rows single fallback passes kwargs to get chunks."""
     item = _doc_item()
     mgr = Mock()
     mgr.get_chunks = AsyncMock(return_value=[])

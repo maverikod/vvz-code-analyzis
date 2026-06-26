@@ -18,6 +18,7 @@ from code_analysis.core.security_policy import (
 
 
 def test_is_command_permitted_disabled_always_true_no_db() -> None:
+    """Verify test is command permitted disabled always true no db."""
     database = MagicMock()
     with patch("code_analysis.core.client_sessions.get_roles_for_session") as get_roles:
         assert (
@@ -34,6 +35,7 @@ def test_is_command_permitted_disabled_always_true_no_db() -> None:
 
 
 def test_is_command_permitted_allowlist_requires_permission() -> None:
+    """Verify test is command permitted allowlist requires permission."""
     database = MagicMock()
     with (
         patch(
@@ -69,6 +71,7 @@ def test_is_command_permitted_allowlist_requires_permission() -> None:
 
 
 def test_is_command_permitted_allowlist_denies_without_roles() -> None:
+    """Verify test is command permitted allowlist denies without roles."""
     database = MagicMock()
     with patch(
         "code_analysis.core.client_sessions.get_roles_for_session",
@@ -87,6 +90,7 @@ def test_is_command_permitted_allowlist_denies_without_roles() -> None:
 
 
 def test_is_command_permitted_denylist_blocks_listed_command() -> None:
+    """Verify test is command permitted denylist blocks listed command."""
     database = MagicMock()
     with (
         patch(
@@ -121,6 +125,7 @@ def test_is_command_permitted_denylist_blocks_listed_command() -> None:
 
 
 def test_is_command_permitted_denylist_permits_without_roles() -> None:
+    """Verify test is command permitted denylist permits without roles."""
     database = MagicMock()
     with patch(
         "code_analysis.core.client_sessions.get_roles_for_session",
@@ -139,6 +144,7 @@ def test_is_command_permitted_denylist_permits_without_roles() -> None:
 
 
 def test_is_command_permitted_unknown_mode_fails_closed() -> None:
+    """Verify test is command permitted unknown mode fails closed."""
     database = MagicMock()
     with patch(
         "code_analysis.core.client_sessions.get_roles_for_session",

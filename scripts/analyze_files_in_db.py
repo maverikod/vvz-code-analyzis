@@ -82,8 +82,7 @@ def run_analysis(conn: sqlite3.Connection) -> None:
         n = cur.fetchone()[0]
         if n > 0:
             print(f"  {name:20} {n}")
-    cur.execute(
-        """
+    cur.execute("""
         SELECT COUNT(*) FROM files
         WHERE (deleted = 0 OR deleted IS NULL)
           AND path NOT LIKE '%.venv%'
@@ -96,22 +95,19 @@ def run_analysis(conn: sqlite3.Connection) -> None:
           AND path NOT LIKE '%/build/%'
           AND path NOT LIKE '%/dist/%'
           AND path NOT LIKE '%egg-info%'
-        """
-    )
+        """)
     other = cur.fetchone()[0]
     print(f"  {'(none of above)':20} {other}\n")
 
     # By project
-    cur.execute(
-        """
+    cur.execute("""
         SELECT p.id, p.name, p.root_path, COUNT(f.id) AS cnt
         FROM projects p
         LEFT JOIN files f ON f.project_id = p.id AND (f.deleted = 0 OR f.deleted IS NULL)
         GROUP BY p.id
         ORDER BY cnt DESC
         LIMIT 20
-        """
-    )
+        """)
     rows = cur.fetchall()
     print("By project (top 20, active files):")
     for row in rows:
@@ -120,15 +116,13 @@ def run_analysis(conn: sqlite3.Connection) -> None:
     print()
 
     # Duplicates: same (project_id, path)
-    cur.execute(
-        """
+    cur.execute("""
         SELECT project_id, path, COUNT(*) AS cnt
         FROM files
         WHERE (deleted = 0 OR deleted IS NULL)
         GROUP BY project_id, path
         HAVING COUNT(*) > 1
-        """
-    )
+        """)
     dup_rows = cur.fetchall()
     dup_pairs = sum(r[2] for r in dup_rows)
     dup_extra = dup_pairs - len(dup_rows) if dup_pairs else 0
@@ -146,14 +140,12 @@ def run_analysis(conn: sqlite3.Connection) -> None:
     print()
 
     # Sample of .venv / venv paths
-    cur.execute(
-        """
+    cur.execute("""
         SELECT path FROM files
         WHERE (deleted = 0 OR deleted IS NULL)
           AND (path LIKE '%.venv%' OR path LIKE '%/venv/%')
         LIMIT 15
-        """
-    )
+        """)
     samples = [r[0] for r in cur.fetchall()]
     if samples:
         print("Sample paths (.venv / venv):")
@@ -162,20 +154,16 @@ def run_analysis(conn: sqlite3.Connection) -> None:
     print()
 
     # Paths that look like they might be under test_data vs rest
-    cur.execute(
-        """
+    cur.execute("""
         SELECT COUNT(*) FROM files
         WHERE (deleted = 0 OR deleted IS NULL) AND path LIKE '%/test_data/%'
-        """
-    )
+        """)
     test_data_count = cur.fetchone()[0]
     print(f"Paths containing '/test_data/': {test_data_count}")
-    cur.execute(
-        """
+    cur.execute("""
         SELECT COUNT(*) FROM files
         WHERE (deleted = 0 OR deleted IS NULL) AND path NOT LIKE '%/test_data/%'
-        """
-    )
+        """)
     not_test_data = cur.fetchone()[0]
     print(f"Paths not containing '/test_data/': {not_test_data}\n")
 
@@ -196,6 +184,7 @@ def run_analysis(conn: sqlite3.Connection) -> None:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="Analyze files table breakdown")
     parser.add_argument(
         "--db",

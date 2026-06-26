@@ -17,6 +17,7 @@ from code_analysis.core.database_client.client import DatabaseClient
 
 @pytest.fixture
 def temp_db(tmp_path: Path) -> SqliteLegacyRpcFacade:
+    """Return temp db."""
     db_path = tmp_path / "relocate.db"
     backup_dir = tmp_path / "backups"
     client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
@@ -39,6 +40,7 @@ def temp_db(tmp_path: Path) -> SqliteLegacyRpcFacade:
 def test_relocate_updates_project_and_file_paths(
     temp_db: SqliteLegacyRpcFacade, tmp_path: Path
 ) -> None:
+    """Verify test relocate updates project and file paths."""
     pid = str(uuid.uuid4())
     old_root = (tmp_path / "parent" / "myproj").resolve()
     new_root = (tmp_path / "myproj").resolve()
@@ -88,6 +90,7 @@ def test_relocate_updates_project_and_file_paths(
 def test_relocate_noop_when_same_path(
     temp_db: SqliteLegacyRpcFacade, tmp_path: Path
 ) -> None:
+    """Verify test relocate noop when same path."""
     pid = str(uuid.uuid4())
     root = (tmp_path / "r").resolve()
     root.mkdir()
@@ -102,6 +105,7 @@ def test_relocate_noop_when_same_path(
 def test_relocate_false_when_new_root_taken(
     temp_db: SqliteLegacyRpcFacade, tmp_path: Path
 ) -> None:
+    """Verify test relocate false when new root taken."""
     a = str(uuid.uuid4())
     b = str(uuid.uuid4())
     r1 = (tmp_path / "p1").resolve()

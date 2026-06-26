@@ -32,24 +32,29 @@ from mcp_proxy_adapter.commands.hooks import hooks
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_commands() -> None:
+    """Return register commands."""
     hooks.execute_custom_commands_hooks(registry)
 
 
 def test_registry_file_content_read_surface() -> None:
+    """Verify test registry file content read surface."""
     assert_file_content_read_commands_registered(registry.get_command)
 
 
 def test_registry_no_content_editing_commands() -> None:
+    """Verify test registry no content editing commands."""
     assert_removed_commands_absent(registry.get_command)
 
 
 @pytest.mark.parametrize("name", sorted(REMOVED_COMMANDS))
 def test_each_removed_command_absent(name: str) -> None:
+    """Verify test each removed command absent."""
     with pytest.raises(KeyError, match=name):
         registry.get_command(name)
 
 
 def test_registered_read_only_universal_file_command_classes() -> None:
+    """Verify test registered read only universal file command classes."""
     cls_preview = registry.get_command("universal_file_preview")
     cls_lines = registry.get_command("get_file_lines")
 
@@ -62,6 +67,7 @@ def test_registered_read_only_universal_file_command_classes() -> None:
 
 
 def test_editing_removed_subset_covers_legacy_and_edit_session() -> None:
+    """Verify test editing removed subset covers legacy and edit session."""
     assert LEGACY_REMOVED_COMMANDS <= REMOVED_COMMANDS
     assert EDITING_REMOVED_COMMANDS <= REMOVED_COMMANDS
     assert "universal_file_open" in EDITING_REMOVED_COMMANDS
@@ -69,6 +75,7 @@ def test_editing_removed_subset_covers_legacy_and_edit_session() -> None:
 
 
 def test_file_content_read_includes_preview_and_search() -> None:
+    """Verify test file content read includes preview and search."""
     assert {"universal_file_preview", "search", "search_get_page"} <= (
         FILE_CONTENT_READ_COMMANDS
     )

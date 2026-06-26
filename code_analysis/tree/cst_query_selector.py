@@ -24,10 +24,13 @@ class CstQuerySelectorError(ValueError):
 
 @dataclass(frozen=True)
 class CstQuerySelector:
+    """Represent CstQuerySelector."""
+
     selector: str
 
     @classmethod
     def parse(cls, raw: str) -> CstQuerySelector:
+        """Return parse."""
         if not isinstance(raw, str):
             raise CstQuerySelectorError("selector must be a non-empty string")
         stripped = raw.strip()
@@ -51,6 +54,7 @@ class CstQuerySelector:
         *,
         short_id_mapper: Callable[[Any], NodeId],
     ) -> List[NodeId]:
+        """Return evaluate."""
         engine_matches = self._run_engine(tree)
         seen: set[NodeId] = set()
         result: List[NodeId] = []
@@ -62,6 +66,7 @@ class CstQuerySelector:
         return result
 
     def _run_engine(self, tree: Any) -> Sequence[Any]:
+        """Return run engine."""
         if hasattr(tree, "tree_id"):
             from code_analysis.core.cst_tree.tree_finder import find_nodes
 

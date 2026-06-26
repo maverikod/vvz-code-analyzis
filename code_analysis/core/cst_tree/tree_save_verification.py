@@ -38,7 +38,6 @@ from .tree_builder import create_tree_from_code, get_tree, remove_tree
 
 from .tree_modifier import modify_tree
 
-
 FILE_CHANGED_SINCE_LOAD = "FILE_CHANGED_SINCE_LOAD"
 
 CST_REPLAY_MISMATCH = "CST_REPLAY_MISMATCH"
@@ -53,6 +52,7 @@ class SaveVerificationError(Exception):
     def __init__(
         self, *, code: str, details: Mapping[str, object] | None = None
     ) -> None:
+        """Initialize the instance."""
         self.code = code
         self.details: dict[str, object] = dict(details) if details is not None else {}
         super().__init__(code)
@@ -63,6 +63,7 @@ def _resolve_meta_for_replay_remap(
     ref_tree: CSTTree,
     id_lookup_tree: Optional[CSTTree],
 ) -> Optional[TreeNodeMetadata]:
+    """Return resolve meta for replay remap."""
     if not node_id or node_id == ROOT_NODE_ID_SENTINEL:
         return None
     meta = ref_tree.metadata_map.get(node_id)
@@ -81,6 +82,7 @@ def _replay_node_id_for_operation_id(
     exact_to_replay_id: dict[Tuple[int, int, int, int, str], str],
     loose_to_replay_ids: dict[Tuple[int, int, str], List[str]],
 ) -> str:
+    """Return replay node id for operation id."""
     if not node_id or node_id == ROOT_NODE_ID_SENTINEL:
         return node_id
     if node_id in replay_tree.metadata_map:
@@ -126,6 +128,7 @@ def _remap_ops_to_replay_tree(
     replay_tree: CSTTree,
     id_lookup_tree: Optional[CSTTree],
 ) -> List[TreeOperation]:
+    """Return remap ops to replay tree."""
     exact_to_replay_id: dict[Tuple[int, int, int, int, str], str] = {}
     loose_to_replay_ids: DefaultDict[Tuple[int, int, str], List[str]] = defaultdict(
         list
@@ -142,6 +145,7 @@ def _remap_ops_to_replay_tree(
         loose_to_replay_ids[(rmeta.start_line, rmeta.start_col, rmeta.type)].append(rid)
 
     def _remap_one(nid: Optional[str]) -> Optional[str]:
+        """Return remap one."""
         if not nid:
             return nid
         return _replay_node_id_for_operation_id(
@@ -175,6 +179,7 @@ def _replay_operations_produce_code_at_path(
     *,
     id_lookup_tree: Optional[CSTTree] = None,
 ) -> str:
+    """Return replay operations produce code at path."""
     ref_tree = create_tree_from_code(
         replay_file_path,
         original_source,

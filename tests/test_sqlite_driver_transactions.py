@@ -21,6 +21,7 @@ from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
 @pytest.fixture
 def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return ipc client."""
     db_path = tmp_path / "test.db"
     driver = create_driver("sqlite", {"path": str(db_path)})
     handlers = RPCHandlers(driver)
@@ -43,12 +44,14 @@ def _fetchone(
     *,
     transaction_id: str | None = None,
 ):
+    """Return fetchone."""
     r = client.execute(sql, params, transaction_id=transaction_id)
     rows = r.get("data") or []
     return rows[0] if rows else None
 
 
 def test_sqlite_transaction_commit(ipc_client: DatabaseClient) -> None:
+    """Verify test sqlite transaction commit."""
     tid = ipc_client.begin_transaction()
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
@@ -64,6 +67,7 @@ def test_sqlite_transaction_commit(ipc_client: DatabaseClient) -> None:
 
 
 def test_sqlite_transaction_rollback(ipc_client: DatabaseClient) -> None:
+    """Verify test sqlite transaction rollback."""
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("before-rollback", "/before/path"),
@@ -90,6 +94,7 @@ def test_sqlite_transaction_rollback(ipc_client: DatabaseClient) -> None:
 
 
 def test_sqlite_no_autocommit_during_transaction(ipc_client: DatabaseClient) -> None:
+    """Verify test sqlite no autocommit during transaction."""
     tid = ipc_client.begin_transaction()
     ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",

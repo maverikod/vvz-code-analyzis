@@ -14,6 +14,8 @@ from code_analysis.tree.contracts import NodeId
 
 @dataclass
 class TreeNode:
+    """Represent TreeNode."""
+
     short_id: NodeId
     kind: str
     content: str

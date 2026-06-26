@@ -55,6 +55,7 @@ def setup_daemon_logging(
             root_logger.setLevel(logging.INFO)
 
         def _daemon_thread_excepthook(args_obj: object) -> None:
+            """Return daemon thread excepthook."""
             root_logger.error(
                 "Uncaught exception in thread %s: %s",
                 getattr(getattr(args_obj, "thread", None), "name", None)
@@ -83,6 +84,7 @@ def setup_daemon_logging(
             exc_value: BaseException,
             exc_tb: types.TracebackType | None,
         ) -> None:
+            """Return daemon excepthook."""
             root_logger.error(
                 "Uncaught exception in main thread (process will exit): %s",
                 exc_value,
@@ -95,6 +97,7 @@ def setup_daemon_logging(
         heartbeat_stop = threading.Event()
 
         def _heartbeat_worker() -> None:
+            """Return heartbeat worker."""
             log = logging.getLogger(__name__)
             while not heartbeat_stop.wait(timeout=60.0):
                 log.info("Main process heartbeat (pid=%s)", os.getpid())

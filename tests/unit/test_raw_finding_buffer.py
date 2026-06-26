@@ -13,6 +13,7 @@ from code_analysis.core.search_session.raw_finding_buffer import (
 
 
 def test_append_list_remove_findings(tmp_path) -> None:
+    """Verify test append list remove findings."""
     buffer = RawFindingBuffer(tmp_path / "buffer")
     first = buffer.append_finding("a", {"id": "a"})
     second = buffer.append_finding("b", {"id": "b"})
@@ -28,6 +29,7 @@ def test_append_list_remove_findings(tmp_path) -> None:
 
 
 def test_lock_acquire_release(tmp_path) -> None:
+    """Verify test lock acquire release."""
     buffer = RawFindingBuffer(tmp_path / "buffer")
 
     assert buffer.try_acquire_lock() is True
@@ -43,6 +45,7 @@ def test_lock_acquire_release(tmp_path) -> None:
 
 
 def test_stale_lock_reclaimed_when_owner_pid_dead(tmp_path) -> None:
+    """Verify test stale lock reclaimed when owner pid dead."""
     buffer = RawFindingBuffer(tmp_path / "buffer")
     lock_path = buffer.buffer_dir / LOCK_FILENAME
     lock_path.write_text("999999", encoding="utf-8")

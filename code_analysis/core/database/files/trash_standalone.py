@@ -43,6 +43,7 @@ def _database_for_julian_expr(driver: Any) -> Any:
 def _get_project_row(
     driver: TrashSqlDriver, project_id: str
 ) -> Optional[Dict[str, Any]]:
+    """Return get project row."""
     return driver_fetchone(driver, "SELECT * FROM projects WHERE id = ?", (project_id,))
 
 
@@ -54,6 +55,7 @@ def mark_file_deleted_via_driver(
     reason: Optional[str] = None,
     trash_dir: Optional[str] = None,
 ) -> bool:
+    """Return mark file deleted via driver."""
     import shutil
 
     if trash_dir is not None:
@@ -238,6 +240,7 @@ def unmark_file_deleted_via_driver(
     project_id: str,
     out_error: Optional[Dict[str, str]] = None,
 ) -> bool:
+    """Return unmark file deleted via driver."""
     import shutil
 
     from ...path_normalization import normalize_path_simple
@@ -352,6 +355,7 @@ def unmark_file_deleted_via_driver(
 def get_deleted_files_via_driver(
     driver: TrashSqlDriver, project_id: str
 ) -> List[Dict[str, Any]]:
+    """Return get deleted files via driver."""
     return cast(
         List[Dict[str, Any]],
         driver_fetchall(
@@ -367,6 +371,7 @@ def get_deleted_files_via_driver(
 
 
 def hard_delete_file_via_driver(driver: TrashSqlDriver, file_id: str | int) -> None:
+    """Return hard delete file via driver."""
     fid = file_id
 
     row = driver_fetchone(

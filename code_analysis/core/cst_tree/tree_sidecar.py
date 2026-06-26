@@ -56,6 +56,7 @@ def flatten_path_to_node_id(
     out: Dict[str, str] = {}
 
     def walk(node_id: str, path_indices: tuple[int, ...]) -> None:
+        """Return walk."""
         meta = metadata_map.get(node_id)
         if meta is None:
             return
@@ -216,6 +217,7 @@ def persisted_node_ids_from_payload(payload: Dict[str, Any]) -> PersistedNodeIds
 
 
 def parent_map_from_payload(payload: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Return parent map from payload."""
     raw = payload.get("parent_map")
     if not isinstance(raw, dict):
         return {}
@@ -231,6 +233,7 @@ def parent_map_from_payload(payload: Dict[str, Any]) -> Dict[str, Optional[str]]
 
 
 def aliases_from_payload(payload: Dict[str, Any]) -> Dict[str, str]:
+    """Return aliases from payload."""
     raw = payload.get("node_id_aliases")
     if not isinstance(raw, dict):
         return {}

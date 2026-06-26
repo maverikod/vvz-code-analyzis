@@ -7,7 +7,9 @@ from pathlib import Path
 from code_analysis.core.resolve_indexed_file_path import resolve_indexed_file_path
 
 
-def test_resolve_prefers_watch_dir_plus_project_name_plus_relative(tmp_path: Path) -> None:
+def test_resolve_prefers_watch_dir_plus_project_name_plus_relative(
+    tmp_path: Path,
+) -> None:
     """Layout: watch_absolute_path / project_name / relative_path (matches watcher MCP resolver)."""
     watch = tmp_path / "observed"
     proj_root = watch / "code_analysis"
@@ -46,6 +48,7 @@ def test_resolve_falls_back_to_root_plus_relative(tmp_path: Path) -> None:
 
 
 def test_resolve_returns_none_when_nothing_exists(tmp_path: Path) -> None:
+    """Verify test resolve returns none when nothing exists."""
     row = {
         "id": 1,
         "path": str(tmp_path / "nope.py"),

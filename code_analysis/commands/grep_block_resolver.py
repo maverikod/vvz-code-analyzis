@@ -63,12 +63,14 @@ class GrepBlockResolver:
     """
 
     def __init__(self) -> None:
+        """Initialize per-file structure document and legacy index caches."""
         self._indexes: dict[_CacheKey, _LineBlockIndex | None] = {}
         self._documents: dict[_CacheKey, "StructureDocument | None"] = {}
 
     def resolve(
         self, abs_path: Path, line_number: int
     ) -> tuple[str | None, str | None]:
+        """Resolve a source line to the smallest containing block id and type."""
         from code_analysis.core.structure_extraction.extractor import (
             extract_structure,
             find_smallest_block_containing_line,
@@ -96,12 +98,16 @@ class GrepBlockResolver:
         return block.block_id, block.node_type
 
     def cleanup(self) -> None:
+        """Clear cached structure documents and line indexes."""
         self._indexes.clear()
         self._documents.clear()
 
 
 class _LineBlockIndex:
+    """Interface for mapping a 1-based line number to block metadata."""
+
     def lookup(self, line_number: int) -> tuple[str | None, str | None]:
+        """Return the block id and type for a line, if any."""
         raise NotImplementedError
 
 
@@ -109,10 +115,12 @@ class _SidecarPythonLineBlockIndex(_LineBlockIndex):
     """Lookup via TreeLifecycle-validated sibling ``<source>.py.tree`` metadata_map (no in-memory CST session)."""
 
     def __init__(self, metadata_map: dict[str, TreeNodeMetadata]) -> None:
+        """Store sidecar node metadata and initialize the line lookup cache."""
         self._metadata = list(metadata_map.values())
         self._cache: dict[int, tuple[str | None, str | None]] = {}
 
     def lookup(self, line_number: int) -> tuple[str | None, str | None]:
+        """Return the narrowest preferred sidecar node containing the line."""
         if line_number in self._cache:
             return self._cache[line_number]
         candidates = [
@@ -138,10 +146,14 @@ class _SidecarPythonLineBlockIndex(_LineBlockIndex):
 
 
 class _StructuredLineBlockIndex(_LineBlockIndex):
+    """Line lookup backed by a precomputed structured document map."""
+
     def __init__(self, line_map: dict[int, tuple[str, str]]) -> None:
+        """Store a direct line-to-block mapping."""
         self._line_map = line_map
 
     def lookup(self, line_number: int) -> tuple[str | None, str | None]:
+        """Return the structured block mapped to the line."""
         hit = self._line_map.get(line_number)
         if hit is None:
             return None, None
@@ -149,12 +161,16 @@ class _StructuredLineBlockIndex(_LineBlockIndex):
 
 
 class _MarkdownLineBlockIndex(_LineBlockIndex):
+    """Line lookup backed by markdown-it block token spans."""
+
     def __init__(self, abs_path: Path, tokens: list[Any]) -> None:
+        """Store markdown block tokens and initialize a line lookup cache."""
         self._file_path = str(abs_path.resolve())
         self._tokens = tokens
         self._cache: dict[int, tuple[str | None, str | None]] = {}
 
     def lookup(self, line_number: int) -> tuple[str | None, str | None]:
+        """Return the narrowest markdown token covering the line."""
         if line_number in self._cache:
             return self._cache[line_number]
         zero_line = line_number - 1
@@ -178,6 +194,7 @@ class _MarkdownLineBlockIndex(_LineBlockIndex):
 
 
 def _cache_key(abs_path: Path) -> _CacheKey:
+    """Return a cache key that invalidates when file mtime changes."""
     resolved = abs_path.resolve()
     try:
         mtime = resolved.stat().st_mtime
@@ -228,13 +245,14 @@ def _build_line_to_node_id_map(
 
 
 def _load_python_sidecar_index(abs_path: Path) -> _SidecarPythonLineBlockIndex | None:
+    """Load a Python sidecar tree as a line block index when available."""
     resolved = abs_path.resolve()
     try:
         tree_ref, _state = validate_or_recreate_tree_file(
             project_root=resolved.parent,
             file_path=resolved.name,
         )
-    except (FileNotFoundError, ValueError, OSError, NotImplementedError):
+    except FileNotFoundError, ValueError, OSError, NotImplementedError:
         return None
     if not tree_ref.sidecar_path.is_file():
         return None
@@ -251,6 +269,7 @@ def _load_python_sidecar_index(abs_path: Path) -> _SidecarPythonLineBlockIndex |
 
 
 def _build_index(abs_path: Path) -> _LineBlockIndex | None:
+    """Build the best available line block index for a supported file type."""
     suffix = abs_path.suffix.lower()
     try:
         if suffix in _PY_SUFFIXES:

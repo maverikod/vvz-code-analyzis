@@ -37,11 +37,13 @@ _SUBORDINATE_COMMANDS = (
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_subordinate_commands() -> None:
+    """Return register subordinate commands."""
     hooks.execute_custom_commands_hooks(registry)
 
 
 @pytest.mark.parametrize("name,expected_cls", _SUBORDINATE_COMMANDS)
 def test_subordinate_commands_registered(name: str, expected_cls: type) -> None:
+    """Verify test subordinate commands registered."""
     cls = registry.get_command(name)
     assert cls is expected_cls
     assert cls.category == "session_management"
@@ -49,6 +51,7 @@ def test_subordinate_commands_registered(name: str, expected_cls: type) -> None:
 
 @pytest.mark.parametrize("name,expected_cls", _SUBORDINATE_COMMANDS)
 def test_subordinate_command_metadata(name: str, expected_cls: type) -> None:
+    """Verify test subordinate command metadata."""
     cls = registry.get_command(name)
     meta = cls.metadata()
     for key in REQUIRED_METADATA_KEYS:
@@ -59,6 +62,7 @@ def test_subordinate_command_metadata(name: str, expected_cls: type) -> None:
 
 @pytest.mark.asyncio
 async def test_subordinate_session_create_execute() -> None:
+    """Verify test subordinate session create execute."""
     row = {
         "parent_session_id": "11111111-1111-4111-8111-111111111111",
         "server_uuid": "880e8400-e29b-41d4-a716-446655440003",
@@ -95,6 +99,7 @@ async def test_subordinate_session_create_execute() -> None:
 
 @pytest.mark.asyncio
 async def test_subordinate_session_list_execute() -> None:
+    """Verify test subordinate session list execute."""
     mock_db = MagicMock()
     rows = [{"parent_session_id": "a", "count": 1}]
     with (
@@ -119,6 +124,7 @@ async def test_subordinate_session_list_execute() -> None:
 
 @pytest.mark.asyncio
 async def test_subordinate_session_get_not_found() -> None:
+    """Verify test subordinate session get not found."""
     mock_db = MagicMock()
     with (
         patch.object(

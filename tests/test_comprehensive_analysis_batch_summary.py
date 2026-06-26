@@ -19,6 +19,7 @@ from code_analysis.core.comprehensive_analyzer import ComprehensiveAnalyzer
 
 
 def _minimal_results() -> dict:
+    """Return minimal results."""
     return {
         "placeholders": [],
         "stubs": [],
@@ -33,6 +34,7 @@ def _minimal_results() -> dict:
 
 
 def _empty_file_results() -> dict:
+    """Return empty file results."""
     return {
         "placeholders": [],
         "stubs": [],
@@ -94,6 +96,7 @@ async def test_run_batch_summary_counter_invariants(tmp_path) -> None:
     db.save_comprehensive_analysis_results_batch = MagicMock()
 
     def should_analyze_file(fid, _mtime):
+        """Return should analyze file."""
         if fid == 2:
             return {"should_analyze": False, "reason": "up_to_date"}
         return {"should_analyze": True}

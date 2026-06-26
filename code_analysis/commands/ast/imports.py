@@ -26,6 +26,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -68,6 +69,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
         offset: int = 0,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()

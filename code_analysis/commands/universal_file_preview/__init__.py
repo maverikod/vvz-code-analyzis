@@ -19,6 +19,7 @@ __all__ = ["UniversalFilePreviewCommand"]
 
 
 def __getattr__(name: str) -> Any:
+    """Return getattr."""
     if name == "UniversalFilePreviewCommand":
         from ..universal_file_preview_command import UniversalFilePreviewCommand
 

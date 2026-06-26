@@ -25,12 +25,12 @@ from code_analysis.commands.universal_file_preview.tree_temp_preview_focus impor
 from code_analysis.core.json_tree.tree_builder import build_tree_from_data, remove_tree
 from code_analysis.core.tree_temp.tree_node import TreeNode
 
-
 _SID_OBJ = "11111111-1111-4111-a111-111111111111"
 _SID_SCALAR = "22222222-2222-4222-a222-222222222222"
 
 
 def test_resolve_tree_temp_container_drill_down() -> None:
+    """Verify test resolve tree temp container drill down."""
     leaf = TreeNode(
         stable_id=_SID_SCALAR,
         type="string",
@@ -56,6 +56,7 @@ def test_resolve_tree_temp_container_drill_down() -> None:
 
 
 def test_resolve_tree_temp_scalar_promotes_to_parent_container() -> None:
+    """Verify test resolve tree temp scalar promotes to parent container."""
     leaf = TreeNode(
         stable_id=_SID_SCALAR,
         type="number",
@@ -81,6 +82,7 @@ def test_resolve_tree_temp_scalar_promotes_to_parent_container() -> None:
 
 
 def test_resolve_tree_temp_unknown_stable_id_raises() -> None:
+    """Verify test resolve tree temp unknown stable id raises."""
     root = TreeNode(
         stable_id=_SID_OBJ,
         type="object",
@@ -117,6 +119,7 @@ def test_resolve_session_finds_json_tree_session(tmp_path: Path) -> None:
 def test_navigate_tree_temp_sidecar_stable_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Verify test navigate tree temp sidecar stable id."""
     leaf = TreeNode(
         stable_id=_SID_SCALAR,
         type="string",
@@ -140,6 +143,7 @@ def test_navigate_tree_temp_sidecar_stable_id(
     pj.write_text('{"msg":"hi"}', encoding="utf-8")
 
     def _fake_resolve(*_args, **_kw):
+        """Return fake resolve."""
         return (None, "none", None)
 
     import code_analysis.commands.universal_file_preview.navigation as nav_mod

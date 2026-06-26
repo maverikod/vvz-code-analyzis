@@ -13,6 +13,7 @@ from ..exceptions import DriverOperationError
 
 
 def _pg_type(sqlite_type: str) -> str:
+    """Return pg type."""
     t = (sqlite_type or "TEXT").upper().strip()
     if t in ("TEXT",):
         return "TEXT"

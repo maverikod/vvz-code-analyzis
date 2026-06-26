@@ -61,6 +61,7 @@ class NodeInfo:
 
     @property
     def node_type(self) -> str:
+        """Return node type."""
         return self.node.__class__.__name__
 
 
@@ -96,6 +97,7 @@ def build_index(
     func_stack: list[str] = []
 
     def visit(node: cst.CSTNode, depth: int, path_indices: tuple[int, ...]) -> None:
+        """Return visit."""
         parent = parents.get(node)
         pos = positions.get(node)
         if pos is None:

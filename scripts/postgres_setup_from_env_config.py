@@ -119,10 +119,12 @@ def _config_from_argv(argv: list[str]) -> str | None:
 
 
 def _repo_root() -> Path:
+    """Return repo root."""
     return Path(__file__).resolve().parent.parent
 
 
 def _resolve_config_path(explicit: str | None) -> Path:
+    """Return resolve config path."""
     if explicit:
         p = Path(explicit).expanduser().resolve()
         if not p.is_file():
@@ -145,6 +147,7 @@ def _resolve_config_path(explicit: str | None) -> Path:
 
 
 def _driver_config_from_json(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """Return driver config from json."""
     driver = cfg.get("code_analysis", {}).get("database", {}).get("driver") or {}
     dtype = str(driver.get("type") or "").strip().lower()
     if dtype not in ("postgres", "postgresql"):
@@ -182,6 +185,7 @@ def _merge_env_overrides(dc: dict[str, Any]) -> dict[str, Any]:
 
 
 def _superuser_connect_password() -> str:
+    """Return superuser connect password."""
     return (
         os.environ.get("POSTGRES_SUPERUSER_CONNECT_PASSWORD")
         or os.environ.get("POSTGRES_SUPERUSER_PASSWORD")
@@ -193,6 +197,7 @@ def _superuser_connect_password() -> str:
 
 
 def _superuser_name() -> str:
+    """Return superuser name."""
     return (
         os.environ.get("POSTGRES_SUPERUSER_USER")
         or os.environ.get("PGUSER")
@@ -201,12 +206,14 @@ def _superuser_name() -> str:
 
 
 def _require_non_empty(name: str, value: str) -> str:
+    """Return require non empty."""
     if not (value or "").strip():
         raise SystemExit(f"ERROR: environment variable {name} is empty or unset.")
     return value
 
 
 def _validate_sql_identifier(label: str, value: str) -> str:
+    """Return validate sql identifier."""
     v = value.strip()
     if not _IDENT_SAFE.match(v):
         raise SystemExit(
@@ -216,6 +223,7 @@ def _validate_sql_identifier(label: str, value: str) -> str:
 
 
 def _require_docker_cli() -> str:
+    """Return require docker cli."""
     path = shutil.which("docker")
     if not path:
         raise SystemExit("ERROR: `docker` not found in PATH.")
@@ -228,6 +236,7 @@ def _docker_run(
     check: bool = True,
     capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
+    """Return docker run."""
     _require_docker_cli()
     return subprocess.run(
         ["docker", *args],
@@ -238,6 +247,7 @@ def _docker_run(
 
 
 def _docker_image_ref(image_arg: str | None) -> str:
+    """Return docker image ref."""
     return (
         (image_arg or "").strip()
         or os.environ.get("CODE_ANALYSIS_POSTGRES_DOCKER_IMAGE", "").strip()
@@ -280,6 +290,7 @@ def _collect_docker_subnets() -> list[ipaddress._BaseNetwork]:
 def _address_in_docker_subnets(
     addr: ipaddress._BaseAddress, nets: list[ipaddress._BaseNetwork]
 ) -> bool:
+    """Return address in docker subnets."""
     for net in nets:
         if addr.version != net.version:
             continue
@@ -403,6 +414,7 @@ def _etc_hosts_first_ip_for_hostname(hosts_file: Path, hostname: str) -> str | N
 
 
 def _add_host_flags_hostnames(flat: list[str]) -> set[str]:
+    """Return add host flags hostnames."""
     names: set[str] = set()
     i = 0
     while i < len(flat):
@@ -450,6 +462,7 @@ def _prepend_add_host_for_config_driver_hostname(
 
 
 def _container_name_from_driver_host(host: str) -> str:
+    """Return container name from driver host."""
     h = host.strip()
     if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", h):
         raise SystemExit(
@@ -493,6 +506,7 @@ def _ensure_docker_network(network: str) -> None:
 
 
 def _container_attached_to_network(container: str, network: str) -> bool:
+    """Return container attached to network."""
     r = _docker_run(
         ["inspect", "-f", "{{json .NetworkSettings.Networks}}", container],
         capture_output=True,
@@ -503,6 +517,7 @@ def _container_attached_to_network(container: str, network: str) -> bool:
 
 
 def _docker_network_connect_if_needed(container: str, network: str) -> None:
+    """Return docker network connect if needed."""
     if _container_attached_to_network(container, network):
         print(f"Container {container!r} already attached to {network!r}.")
         return
@@ -518,6 +533,7 @@ def cmd_run_postgres_docker(
     sync_hosts: bool = True,
     hosts_file: Path | None = None,
 ) -> None:
+    """Return cmd run postgres docker."""
     from code_analysis.core.env_loader import load_dotenv_near_config
 
     load_dotenv_near_config(config_path)
@@ -628,6 +644,7 @@ def _connect_super(
     user: str,
     sslmode: str | None,
 ) -> Any:
+    """Return connect super."""
     import psycopg
 
     kwargs: dict[str, Any] = {
@@ -644,6 +661,7 @@ def _connect_super(
 
 
 def cmd_set_superuser_password(config_path: Path) -> None:
+    """Return cmd set superuser password."""
     from code_analysis.core.env_loader import load_dotenv_near_config
 
     load_dotenv_near_config(config_path)
@@ -688,6 +706,7 @@ def cmd_set_superuser_password(config_path: Path) -> None:
 
 
 def cmd_ensure_app_db(config_path: Path, *, fix_existing_db_owner: bool) -> None:
+    """Return cmd ensure app db."""
     from code_analysis.core.env_loader import load_dotenv_near_config
     from code_analysis.core.postgres_cli_backup import (
         PostgresCliBackupError,
@@ -861,6 +880,7 @@ def _config_argument_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     config_parent = _config_argument_parser()
     parser = argparse.ArgumentParser(
         description=(
@@ -1001,24 +1021,28 @@ def main() -> int:
 
 
 def _dispatch_set_super(args: argparse.Namespace, config_path: Path | None) -> None:
+    """Return dispatch set super."""
     if config_path is None:
         raise SystemExit("ERROR: internal: config path required.")
     cmd_set_superuser_password(config_path)
 
 
 def _dispatch_ensure(args: argparse.Namespace, config_path: Path | None) -> None:
+    """Return dispatch ensure."""
     if config_path is None:
         raise SystemExit("ERROR: internal: config path required.")
     cmd_ensure_app_db(config_path, fix_existing_db_owner=args.fix_existing_db_owner)
 
 
 def _dispatch_pull(args: argparse.Namespace, config_path: Path | None) -> None:
+    """Return dispatch pull."""
     del config_path
     image = _docker_image_ref(getattr(args, "image", None))
     cmd_pull_postgres_docker_image(image, force=bool(args.force))
 
 
 def _dispatch_docker(args: argparse.Namespace, config_path: Path | None) -> None:
+    """Return dispatch docker."""
     if config_path is None:
         raise SystemExit("ERROR: internal: config path required.")
     image = _docker_image_ref(getattr(args, "image", None))
@@ -1032,6 +1056,7 @@ def _dispatch_docker(args: argparse.Namespace, config_path: Path | None) -> None
 
 
 def _dispatch_pull_and_run(args: argparse.Namespace, config_path: Path | None) -> None:
+    """Return dispatch pull and run."""
     if config_path is None:
         raise SystemExit("ERROR: internal: config path required.")
     image = _docker_image_ref(getattr(args, "image", None))

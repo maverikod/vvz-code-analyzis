@@ -33,6 +33,7 @@ def parse_colon_position(position: Any) -> Optional[ColonPosition]:
 
 
 def _is_uuid_v4_string(value: str) -> bool:
+    """Return is uuid v4 string."""
     try:
         return uuid.UUID(value).version == 4
     except ValueError:
@@ -40,6 +41,7 @@ def _is_uuid_v4_string(value: str) -> bool:
 
 
 def _legacy_anchor_fields_present(mop: Dict[str, Any]) -> bool:
+    """Return legacy anchor fields present."""
     return any(
         mop.get(k) is not None
         for k in (

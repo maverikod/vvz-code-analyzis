@@ -152,6 +152,7 @@ async def test_get_code_entity_info_file_not_found_when_path_unresolved(
 async def test_get_code_entity_info_queries_with_file_id_when_resolved(
     tmp_path: Path,
 ) -> None:
+    """Verify test get code entity info queries with file id when resolved."""
     mock_db = MagicMock()
     mock_db.execute.side_effect = [
         {"data": [{"id": 99, "path": "/tmp/x/pkg/m.py", "relative_path": "pkg/m.py"}]},

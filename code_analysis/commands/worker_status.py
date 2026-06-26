@@ -472,6 +472,7 @@ class DatabaseStatusCommand:
                 batch_results = db.execute_batch(status_ops)
 
                 def _row0(idx: int) -> int:
+                    """Return row0."""
                     d = (
                         batch_results[idx].get("data", [])
                         if idx < len(batch_results)
@@ -480,6 +481,7 @@ class DatabaseStatusCommand:
                     return d[0]["count"] if d else 0
 
                 def _data(idx: int) -> list:
+                    """Return data."""
                     return (
                         batch_results[idx].get("data", [])
                         if idx < len(batch_results)

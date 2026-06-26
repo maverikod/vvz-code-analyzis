@@ -22,6 +22,7 @@ def _make_assembler(
     append_index_entry=None,
     update_manifest_metrics=None,
 ):
+    """Return make assembler."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -47,6 +48,7 @@ def _make_assembler(
 
 
 def test_publishes_block_when_threshold_reached(tmp_path) -> None:
+    """Verify test publishes block when threshold reached."""
     assembler, layout, buffer, index_entries, metrics_updates = _make_assembler(
         tmp_path,
         max_block_size_bytes=40,
@@ -67,6 +69,7 @@ def test_publishes_block_when_threshold_reached(tmp_path) -> None:
 
 
 def test_final_run_drains_trailing_findings_and_releases_lock(tmp_path) -> None:
+    """Verify test final run drains trailing findings and releases lock."""
     assembler, layout, buffer, index_entries, _metrics_updates = _make_assembler(
         tmp_path,
         max_block_size_bytes=10_000,
@@ -86,6 +89,7 @@ def test_final_run_drains_trailing_findings_and_releases_lock(tmp_path) -> None:
 def test_exits_without_publishing_when_below_threshold_and_not_completed(
     tmp_path,
 ) -> None:
+    """Verify test exits without publishing when below threshold and not completed."""
     assembler, layout, buffer, index_entries, metrics_updates = _make_assembler(
         tmp_path,
         max_block_size_bytes=10_000,
@@ -104,6 +108,7 @@ def test_exits_without_publishing_when_below_threshold_and_not_completed(
 
 
 def test_run_until_idle_accumulates_publications(tmp_path) -> None:
+    """Verify test run until idle accumulates publications."""
     assembler, layout, buffer, index_entries, _metrics_updates = _make_assembler(
         tmp_path,
         max_block_size_bytes=10_000,
@@ -120,6 +125,7 @@ def test_run_until_idle_accumulates_publications(tmp_path) -> None:
 
 
 def test_second_assembler_exits_when_live_lock_held(tmp_path) -> None:
+    """Verify test second assembler exits when live lock held."""
     assembler, _layout, buffer, _index_entries, _metrics_updates = _make_assembler(
         tmp_path,
         max_block_size_bytes=10,

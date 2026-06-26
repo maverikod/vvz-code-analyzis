@@ -1,3 +1,5 @@
+"""Helpers for reading, stripping, and assigning CST stable node ids."""
+
 from __future__ import annotations
 
 import re
@@ -5,7 +7,6 @@ import uuid
 from typing import Optional
 
 import libcst as cst
-
 
 _STABLE_ID_RE = re.compile(r"#\s*@node-id:\s*([0-9a-f-]{36})")
 _STABLE_ID_PREFIX = "# @node-id: "

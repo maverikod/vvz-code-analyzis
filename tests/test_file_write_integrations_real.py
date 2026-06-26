@@ -22,6 +22,7 @@ from code_analysis.core.refactorer_pkg.splitter import ClassSplitter
 
 
 def _fetchone(client: DatabaseClient, sql: str, params: tuple = ()) -> dict | None:
+    """Return fetchone."""
     r = client.execute(sql, params)
     rows = r.get("data") or []
     return rows[0] if rows else None

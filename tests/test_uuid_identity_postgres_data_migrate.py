@@ -26,19 +26,25 @@ from code_analysis.core.database.migrations.uuid_identity_postgres_data_migrate 
 
 
 class _DryRunPgDb:
+    """Represent DryRunPgDb."""
+
     _driver_type = "postgresql"
 
     def _execute(self, *args: Any, **kwargs: Any) -> None:
+        """Return execute."""
         raise AssertionError("dry-run must not execute")
 
     def _fetchone(self, *args: Any, **kwargs: Any) -> Any:
+        """Return fetchone."""
         raise AssertionError("dry-run must not fetch")
 
     def _commit(self) -> None:
+        """Return commit."""
         raise AssertionError("dry-run must not commit")
 
 
 def test_phases_345_dry_run_no_execute_no_swap_sql() -> None:
+    """Verify test phases 345 dry run no execute no swap sql."""
     report = run_uuid_migration_phases_3_to_5_postgres(
         _DryRunPgDb(),
         dry_run=True,
@@ -54,6 +60,7 @@ def test_phases_345_dry_run_no_execute_no_swap_sql() -> None:
 
 
 def test_copy_sql_order_files_before_classes_and_entity_cross_ref() -> None:
+    """Verify test copy sql order files before classes and entity cross ref."""
     stmts = build_copy_insert_sql()
     text = "\n".join(stmts)
     i_files = text.find("INSERT INTO uuid_mig_new_files")
@@ -65,12 +72,14 @@ def test_copy_sql_order_files_before_classes_and_entity_cross_ref() -> None:
 
 
 def test_truncate_is_reverse_of_insert_dependency() -> None:
+    """Verify test truncate is reverse of insert dependency."""
     trunc = build_truncate_shadow_sql()
     assert trunc[0].startswith("DELETE FROM uuid_mig_new_indexing_errors")
     assert "uuid_mig_new_files" in trunc[-1]
 
 
 def test_shadow_ddl_fk_points_at_shadow_peer() -> None:
+    """Verify test shadow ddl fk points at shadow peer."""
     ddl = "\n".join(build_shadow_table_ddl_postgres())
     assert "REFERENCES uuid_mig_new_files(id)" in ddl
     assert "REFERENCES projects(id)" in ddl
@@ -78,6 +87,7 @@ def test_shadow_ddl_fk_points_at_shadow_peer() -> None:
 
 
 def test_polymorphic_joins_use_mapping_tables() -> None:
+    """Verify test polymorphic joins use mapping tables."""
     stmts = build_copy_insert_sql()
     cc_ins = next(s for s in stmts if "INSERT INTO uuid_mig_new_code_content" in s)
     assert "uuid_migration_files j_pol_fm" in cc_ins
@@ -88,13 +98,19 @@ def test_polymorphic_joins_use_mapping_tables() -> None:
 
 
 def test_phase6_swap_requires_explicit_confirmation() -> None:
+    """Verify test phase6 swap requires explicit confirmation."""
+
     class _Pg:
+        """Represent Pg."""
+
         _driver_type = "postgresql"
 
         def _execute(self, *a: Any, **k: Any) -> None:
+            """Return execute."""
             return None
 
         def _commit(self) -> None:
+            """Return commit."""
             return None
 
     with pytest.raises(UuidMigrationError, match="refused"):
@@ -102,15 +118,20 @@ def test_phase6_swap_requires_explicit_confirmation() -> None:
 
 
 def test_phase6_swap_runs_when_confirmed() -> None:
+    """Verify test phase6 swap runs when confirmed."""
     executed: List[str] = []
 
     class _Pg:
+        """Represent Pg."""
+
         _driver_type = "postgresql"
 
         def _execute(self, sql: str, *a: Any, **k: Any) -> None:
+            """Return execute."""
             executed.append(sql)
 
         def _commit(self) -> None:
+            """Return commit."""
             return None
 
     out = run_uuid_migration_phase6_swap_postgres(
@@ -127,6 +148,7 @@ def test_phase6_swap_runs_when_confirmed() -> None:
     not os.environ.get("UUID_MIG_TEST_PG_URI"), reason="UUID_MIG_TEST_PG_URI unset"
 )
 def test_postgres_integration_smoke_optional() -> None:
+    """Verify test postgres integration smoke optional."""
     uri = os.environ["UUID_MIG_TEST_PG_URI"]
     try:
         import psycopg
@@ -141,6 +163,7 @@ def test_postgres_integration_smoke_optional() -> None:
 
 
 def test_migrated_tables_cover_step10_groups() -> None:
+    """Verify test migrated tables cover step10 groups."""
     names = set(MIGRATED_TABLES_COPY_ORDER)
     for required in (
         "files",

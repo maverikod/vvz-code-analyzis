@@ -53,18 +53,21 @@ LINE_RANGE_MUTATION_KEYS = frozenset(
 
 
 def ensure_python_suffix(file_path: str) -> None:
+    """Return ensure python suffix."""
     suf = Path(file_path).suffix.lower()
     if suf not in PYTHON_SUFFIXES:
         raise ValueError(f"Not a configured Python handler suffix: {suf!r}")
 
 
 def is_registered_python_suffix(file_path: str) -> bool:
+    """Return is registered python suffix."""
     return Path(file_path).suffix.lower() in PYTHON_SUFFIXES
 
 
 def _reject_line_mutation_params(
     extra: Dict[str, Any], *, request: FileHandlerRequest
 ) -> Optional[FileHandlerResult]:
+    """Return reject line mutation params."""
     overlap = LINE_RANGE_MUTATION_KEYS.intersection(extra.keys())
     if not overlap:
         return None
@@ -158,6 +161,7 @@ def _mcp_to_file_handler_result(
     request: FileHandlerRequest,
     mcp: SuccessResult | ErrorResult,
 ) -> FileHandlerResult:
+    """Return mcp to file handler result."""
     if isinstance(mcp, ErrorResult):
         details = dict(mcp.details or {})
         details.setdefault("file_path", request.file_path)
@@ -195,6 +199,7 @@ def _mcp_to_file_handler_result(
 
 
 def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
+    """Return require root path."""
     raw = request.extra.get("root_path")
     if not isinstance(raw, Path):
         return standard_error_result(
@@ -255,12 +260,15 @@ class PythonFileHandler(BaseFileHandler):
 
     @property
     def handler_id(self) -> str:
+        """Return handler id."""
         return HANDLER_PYTHON
 
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
+        """Return json schema for."""
         return get_handler_schema(HANDLER_PYTHON, operation)
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return read."""
         abs_path = request.extra.get("absolute_path")
         if not isinstance(abs_path, Path):
             return standard_error_result(
@@ -364,6 +372,7 @@ class PythonFileHandler(BaseFileHandler):
         )
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return save."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -515,6 +524,7 @@ class PythonFileHandler(BaseFileHandler):
         return _mcp_to_file_handler_result(request, mcp)
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return replace."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -555,6 +565,7 @@ class PythonFileHandler(BaseFileHandler):
         return _mcp_to_file_handler_result(request, mcp)
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return delete."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre

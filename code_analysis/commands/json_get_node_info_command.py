@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class JsonGetNodeInfoCommand(BaseMCPCommand):
+    """Return metadata and optional value fragments for JSON tree nodes."""
+
     name = "json_get_node_info"
     version = "1.0.0"
     descr = "Get metadata for a JSON value by node_id, json_pointer, or key_path; optional fragment"
@@ -36,6 +38,7 @@ class JsonGetNodeInfoCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -112,6 +115,7 @@ class JsonGetNodeInfoCommand(BaseMCPCommand):
         include_fragment: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Resolve a JSON node address and return its metadata and optional value."""
         t_start = time.perf_counter()
         try:
             tree = get_tree(tree_id)
@@ -177,6 +181,7 @@ class JsonGetNodeInfoCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonGetNodeInfoCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON node information command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

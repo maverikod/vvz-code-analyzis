@@ -33,6 +33,7 @@ _NEW_CONSTRAINT_NAME = "projects_server_instance_watch_dir_root_path_uniq"
 
 
 def _db_settings_has(database: Any, key: str) -> bool:
+    """Return db settings has."""
     try:
         row = database._fetchone(
             "SELECT 1 FROM db_settings WHERE key = ? LIMIT 1", (key,)
@@ -43,6 +44,7 @@ def _db_settings_has(database: Any, key: str) -> bool:
 
 
 def _db_settings_set(database: Any, key: str, value: str) -> None:
+    """Return db settings set."""
     database._execute(
         "INSERT INTO db_settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -52,6 +54,7 @@ def _db_settings_set(database: Any, key: str, value: str) -> None:
 
 
 def _drop_legacy_uniqueness(database: Any) -> None:
+    """Return drop legacy uniqueness."""
     driver = getattr(database, "_driver_type", None)
     if driver == "postgres":
         for cname in _OLD_CONSTRAINT_NAMES:
@@ -78,6 +81,7 @@ def _drop_legacy_uniqueness(database: Any) -> None:
 
 
 def _add_server_scoped_uniqueness(database: Any) -> None:
+    """Return add server scoped uniqueness."""
     driver = getattr(database, "_driver_type", None)
     if driver == "postgres":
         try:

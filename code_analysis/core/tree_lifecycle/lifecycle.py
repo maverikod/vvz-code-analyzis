@@ -35,6 +35,7 @@ class TreeLifecycle:
         _cached: type | None = None
 
         def __get__(self, obj: object | None, owner: type) -> type:
+            """Return get."""
             if self._cached is None:
                 from code_analysis.core.tree_lifecycle.builder import TreeBuilder
 
@@ -55,6 +56,7 @@ class TreeLifecycle:
         root_stable_id: str | None,
         force: bool = False,
     ) -> tuple[TreeRepresentationRef, TreeValidityState]:
+        """Return from content."""
         return validate_or_recreate_from_content(
             kind=kind,
             content=content,
@@ -73,6 +75,7 @@ class TreeLifecycle:
         file_path: str,
         force: bool = False,
     ) -> tuple[TreeRepresentationRef, TreeValidityState]:
+        """Return from path."""
         return validate_or_recreate_tree_file(
             project_root=project_root,
             file_path=file_path,

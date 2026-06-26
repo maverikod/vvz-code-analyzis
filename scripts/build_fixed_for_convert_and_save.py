@@ -78,6 +78,7 @@ def build_update_test_fixed() -> str:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     DATA.mkdir(parents=True, exist_ok=True)
     out = DATA / "_temp_update_test_fixed.py"
     out.write_text(build_update_test_fixed(), encoding="utf-8")

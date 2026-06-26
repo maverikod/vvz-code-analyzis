@@ -13,6 +13,7 @@ from code_analysis.core.tree_temp.tree_node import TreeNode, kind_as_str
 
 
 def _find_member(root_list: list[TreeNode], key: str) -> TreeNode:
+    """Return find member."""
     assert len(root_list) == 1
     root = root_list[0]
     assert root.children is not None
@@ -23,6 +24,7 @@ def _find_member(root_list: list[TreeNode], key: str) -> TreeNode:
 
 
 def test_top_level_above_comment_maps_to_before_on_first_root_object() -> None:
+    """Verify test top level above comment maps to before on first root object."""
     src = "// file head\n{\n}\n"
     roots = parse_json_source_to_roots(src)
     assert len(roots) == 1
@@ -33,11 +35,13 @@ def test_top_level_above_comment_maps_to_before_on_first_root_object() -> None:
 
 
 def test_inline_comment_maps_to_scalar_member() -> None:
+    """Verify test inline comment maps to scalar member."""
     roots = parse_json_source_to_roots('{"a": 1}// tail')
     m = _find_member(roots, "a")
     assert m.value in (1, 1.0)
 
     def _walk(n: TreeNode) -> bool:
+        """Return walk."""
         if "tail" in (n.comment_inline or ""):
             return True
         return any(_walk(c) for c in (n.children or []))
@@ -46,6 +50,7 @@ def test_inline_comment_maps_to_scalar_member() -> None:
 
 
 def test_above_line_comment_before_next_member() -> None:
+    """Verify test above line comment before next member."""
     src = '{"x":true,\n// between\n"y":false}\n'
     roots = parse_json_source_to_roots(src)
     y = _find_member(roots, "y")
@@ -54,6 +59,7 @@ def test_above_line_comment_before_next_member() -> None:
 
 
 def test_array_root_order_three_elements() -> None:
+    """Verify test array root order three elements."""
     roots = parse_json_source_to_roots('[{"k":9},false,null]')
     assert len(roots) == 3
     assert [kind_as_str(x) for x in roots] == ["object", "boolean", "null"]
@@ -62,6 +68,7 @@ def test_array_root_order_three_elements() -> None:
 
 
 def test_object_member_order_not_sorted() -> None:
+    """Verify test object member order not sorted."""
     roots = parse_json_source_to_roots('{"z":0,"y":1,"x":2}')
     root = roots[0]
     assert root.children is not None
@@ -69,6 +76,7 @@ def test_object_member_order_not_sorted() -> None:
 
 
 def test_scalar_types_number_bool_null_string() -> None:
+    """Verify test scalar types number bool null string."""
     roots = parse_json_source_to_roots('{"n":42,"t":false,"u":null,"s":"hi"}')
     root = roots[0]
     assert root.children is not None
@@ -80,6 +88,7 @@ def test_scalar_types_number_bool_null_string() -> None:
 
 
 def test_block_comment_before_key_maps_inline_on_member_same_line() -> None:
+    """Verify test block comment before key maps inline on member same line."""
     roots = parse_json_source_to_roots('{/*solo*/ "b": 2}')
     m = _find_member(roots, "b")
     blob = (m.comment_inline or "") + (m.comment_before or "")
@@ -87,5 +96,6 @@ def test_block_comment_before_key_maps_inline_on_member_same_line() -> None:
 
 
 def test_truncated_document_raises_value_error() -> None:
+    """Verify test truncated document raises value error."""
     with pytest.raises(ValueError):
         parse_json_source_to_roots("{")

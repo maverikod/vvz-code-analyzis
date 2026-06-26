@@ -39,7 +39,11 @@ _CLIENT = _EXAMPLES.parent
 if str(_CLIENT) not in sys.path:
     sys.path.insert(0, str(_CLIENT))
 
-from _common import chdir_repo_root, default_config_path, ensure_client_package_on_path  # noqa: E402
+from _common import (
+    chdir_repo_root,
+    default_config_path,
+    ensure_client_package_on_path,
+)  # noqa: E402
 
 ensure_client_package_on_path()
 
@@ -61,11 +65,13 @@ CLIENT_API_COVERAGE = frozenset(
 
 
 def _data(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Return data."""
     inner = resp.get("data")
     return inner if isinstance(inner, dict) else resp
 
 
 async def _discover_text_file(client: CodeAnalysisAsyncClient) -> tuple[str, str]:
+    """Return discover text file."""
     resp = await client.call("list_projects", {"include_deleted": False})
     if resp.get("success") is not True:
         raise RuntimeError(f"list_projects failed: {resp!r}")
@@ -97,6 +103,7 @@ async def _discover_text_file(client: CodeAnalysisAsyncClient) -> tuple[str, str
 
 
 async def run_all() -> int:
+    """Return run all."""
     chdir_repo_root()
     cfg = default_config_path()
 
@@ -157,6 +164,7 @@ async def run_all() -> int:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     try:
         return asyncio.run(run_all())
     except KeyboardInterrupt:

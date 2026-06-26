@@ -19,7 +19,6 @@ from code_analysis.core.vectorization_worker_pkg.processing import (
     process_chunks,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -37,6 +36,7 @@ def _make_self(stop_event: asyncio.Event, svo: object) -> MagicMock:
 
 
 def _open_svo(backoff_delay: float) -> MagicMock:
+    """Return open svo."""
     svo = MagicMock()
     svo.get_circuit_state.return_value = CircuitState(
         state="open", failures=999, opened_at=0.0
@@ -45,14 +45,20 @@ def _open_svo(backoff_delay: float) -> MagicMock:
     return svo
 
 
-async def _fake_ensure_db(self, cfg_path, *, db_available, db_status_logged, backoff, backoff_max):
+async def _fake_ensure_db(
+    self, cfg_path, *, db_available, db_status_logged, backoff, backoff_max
+):
+    """Return fake ensure db."""
     fake_db = MagicMock()
     fake_db.disconnect = MagicMock()
     return (fake_db, True, backoff, db_status_logged)
 
 
 def _make_fake_run_one_cycle(stop_event: asyncio.Event, cycles_done: list):
+    """Return make fake run one cycle."""
+
     async def _inner(self, db, cycle_count, total_processed, total_errors):
+        """Return inner."""
         cycles_done.append(cycle_count)
         stop_event.set()  # one cycle is enough; stop the outer while loop
         return (0, 0, False, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -148,6 +154,7 @@ def test_max_poll_interval_ceiling():
 
 
 def test_config_validator_rejects_huge_max_backoff():
+    """Verify test config validator rejects huge max backoff."""
     from code_analysis.core.config_validator.section_code_analysis import (
         validate_code_analysis_section_impl,
     )
@@ -171,6 +178,7 @@ def test_config_validator_rejects_huge_max_backoff():
 
 
 def test_config_validator_rejects_huge_backoff_multiplier():
+    """Verify test config validator rejects huge backoff multiplier."""
     from code_analysis.core.config_validator.section_code_analysis import (
         validate_code_analysis_section_impl,
     )
@@ -195,6 +203,7 @@ def test_config_validator_rejects_huge_backoff_multiplier():
 
 
 def test_config_validator_accepts_valid_circuit_breaker():
+    """Verify test config validator accepts valid circuit breaker."""
     from code_analysis.core.config_validator.section_code_analysis import (
         validate_code_analysis_section_impl,
     )

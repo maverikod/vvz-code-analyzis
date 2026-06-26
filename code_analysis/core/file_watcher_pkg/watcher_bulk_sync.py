@@ -47,6 +47,7 @@ IDX_SYNC_ACTION_EXISTING = "idx_watcher_sync_action_existing"
 def _chunked_disk_raw_inserts(
     rows: Sequence[WatcherDiskFileRow],
 ) -> List[SqlParamPair]:
+    """Return chunked disk raw inserts."""
     ops: List[SqlParamPair] = []
     for i in range(0, len(rows), _INSERT_CHUNK):
         chunk = rows[i : i + _INSERT_CHUNK]

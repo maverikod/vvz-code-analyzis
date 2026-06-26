@@ -37,6 +37,7 @@ class BroadScanPolicy:
 
 
 def _path_has_excluded_dir(file_path: str, *, include_logs: bool) -> bool:
+    """Return path has excluded dir."""
     parts = PurePosixPath(file_path).parts
     for part in parts[:-1]:
         if part == "logs":
@@ -49,6 +50,7 @@ def _path_has_excluded_dir(file_path: str, *, include_logs: bool) -> bool:
 
 
 def _path_has_supported_suffix(file_path: str) -> bool:
+    """Return path has supported suffix."""
     return PurePosixPath(file_path).suffix in DEFAULT_SUPPORTED_SUFFIXES
 
 

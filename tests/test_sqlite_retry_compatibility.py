@@ -1,4 +1,4 @@
-# SQLite self-managed write retry and structured errors (no live PostgreSQL).
+"""Tests for SQLite self-managed write retry and structured errors."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ import pytest
 
 from code_analysis.core.database_driver_pkg.drivers import sqlite as sqlite_mod
 from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
-from code_analysis.core.database_driver_pkg.drivers.sqlite_run import classify_sqlite_error
+from code_analysis.core.database_driver_pkg.drivers.sqlite_run import (
+    classify_sqlite_error,
+)
 from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
 from code_analysis.core.retry_policy import RetryPolicy
 
 
 def _driver() -> SQLiteDriver:
+    """Return driver."""
     d = SQLiteDriver()
     d._retry_policy = RetryPolicy(
         attempts=3,
@@ -32,11 +35,13 @@ def _driver() -> SQLiteDriver:
 
 @patch.object(sqlite_mod.time, "sleep", autospec=True)
 def test_self_managed_database_locked_is_retried(_sleep: MagicMock) -> None:
+    """Verify test self managed database locked is retried."""
     d = _driver()
     n = 0
     out = {"affected_rows": 1, "lastrowid": 1, "data": None}
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -60,11 +65,13 @@ def test_self_managed_database_locked_is_retried(_sleep: MagicMock) -> None:
 
 @patch.object(sqlite_mod.time, "sleep", autospec=True)
 def test_self_managed_database_busy_is_retried(_sleep: MagicMock) -> None:
+    """Verify test self managed database busy is retried."""
     d = _driver()
     n = 0
     out = {"affected_rows": 1, "lastrowid": 2, "data": None}
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -87,6 +94,7 @@ def test_self_managed_database_busy_is_retried(_sleep: MagicMock) -> None:
 
 
 def test_sqlite_transient_details_are_structured() -> None:
+    """Verify test sqlite transient details are structured."""
     exc = sqlite3.OperationalError("database is locked")
     info = classify_sqlite_error(exc, for_commit=False)
     assert info.sqlstate is None
@@ -109,6 +117,7 @@ def test_sqlite_transient_details_are_structured() -> None:
 
 
 def test_sqlite_syntax_error_is_not_retryable(tmp_path: Path) -> None:
+    """Verify test sqlite syntax error is not retryable."""
     db = tmp_path / "syntax.db"
     driver = SQLiteDriver()
     driver.connect({"path": str(db)})
@@ -120,6 +129,7 @@ def test_sqlite_syntax_error_is_not_retryable(tmp_path: Path) -> None:
 
 
 def test_sqlite_integrity_error_is_not_retryable(tmp_path: Path) -> None:
+    """Verify test sqlite integrity error is not retryable."""
     db = tmp_path / "integ.db"
     driver = SQLiteDriver()
     driver.connect({"path": str(db)})
@@ -136,6 +146,7 @@ def test_sqlite_integrity_error_is_not_retryable(tmp_path: Path) -> None:
 
 @patch.object(sqlite_mod.time, "sleep", autospec=True)
 def test_external_transaction_id_is_not_retried(_sleep: MagicMock) -> None:
+    """Verify test external transaction id is not retried."""
     d = _driver()
     d._transaction_manager = MagicMock()
     ext = MagicMock()
@@ -143,6 +154,7 @@ def test_external_transaction_id_is_not_retried(_sleep: MagicMock) -> None:
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         raise TransientDatabaseError(
@@ -160,10 +172,12 @@ def test_external_transaction_id_is_not_retried(_sleep: MagicMock) -> None:
 
 @patch.object(sqlite_mod.time, "sleep", autospec=True)
 def test_commit_outcome_unknown_is_not_retried(_sleep: MagicMock) -> None:
+    """Verify test commit outcome unknown is not retried."""
     d = _driver()
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         raise TransientDatabaseError(
@@ -185,6 +199,7 @@ def test_commit_outcome_unknown_is_not_retried(_sleep: MagicMock) -> None:
 
 @patch.object(sqlite_mod.time, "sleep", autospec=True)
 def test_retry_delay_uses_shared_policy(sleep: MagicMock) -> None:
+    """Verify test retry delay uses shared policy."""
     d = _driver()
     d._retry_policy = RetryPolicy(
         attempts=3,
@@ -196,6 +211,7 @@ def test_retry_delay_uses_shared_policy(sleep: MagicMock) -> None:
     out = {"affected_rows": 0, "lastrowid": None, "data": None}
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -215,7 +231,14 @@ def test_retry_delay_uses_shared_policy(sleep: MagicMock) -> None:
 
 
 def test_no_project_lock_or_advisory_lock_behavior_in_sqlite_driver() -> None:
-    root = Path(__file__).resolve().parents[1] / "code_analysis" / "core" / "database_driver_pkg" / "drivers"
+    """Verify test no project lock or advisory lock behavior in sqlite driver."""
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "code_analysis"
+        / "core"
+        / "database_driver_pkg"
+        / "drivers"
+    )
     s1 = (root / "sqlite.py").read_text(encoding="utf-8").lower()
     s2 = (root / "sqlite_run.py").read_text(encoding="utf-8").lower()
     for needle in ("advisory", "project_lock", "project lock", "watcher", "indexer"):

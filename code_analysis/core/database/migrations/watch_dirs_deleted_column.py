@@ -16,6 +16,7 @@ _MIGRATION_KEY = "watch_dirs_deleted_column_v1"
 
 
 def _db_settings_has(database: Any, key: str) -> bool:
+    """Return db settings has."""
     try:
         row = database._fetchone(
             "SELECT 1 FROM db_settings WHERE key = ? LIMIT 1", (key,)
@@ -26,6 +27,7 @@ def _db_settings_has(database: Any, key: str) -> bool:
 
 
 def _db_settings_set(database: Any, key: str, value: str) -> None:
+    """Return db settings set."""
     database._execute(
         "INSERT INTO db_settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -35,6 +37,7 @@ def _db_settings_set(database: Any, key: str, value: str) -> None:
 
 
 def _column_exists(database: Any, table: str, column: str) -> bool:
+    """Return column exists."""
     info = database._get_table_info(table)
     return any(col.get("name") == column for col in info)
 

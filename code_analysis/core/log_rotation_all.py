@@ -62,6 +62,7 @@ def collect_log_paths(
     include_all = not filter_lower
 
     def matches(path: Path, label: str) -> bool:
+        """Return matches."""
         if include_all:
             return True
         if any(label.lower() == f for f in filter_lower):
@@ -72,6 +73,7 @@ def collect_log_paths(
         return False
 
     def add(p: Optional[str], label: str) -> None:
+        """Return add."""
         if not p or not isinstance(p, str) or not p.strip():
             return
         path = Path(p.strip()).expanduser()

@@ -14,7 +14,10 @@ from code_analysis.core.database_client.client_api_projects import (
 
 
 class _ProjectsClient(_ClientAPIProjectsMixin):
+    """Represent ProjectsClient."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.rpc_client = MagicMock()
         self._execute_calls: List[Tuple[str, tuple[Any, ...]]] = []
 
@@ -26,11 +29,13 @@ class _ProjectsClient(_ClientAPIProjectsMixin):
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Execute the command."""
         self._execute_calls.append((sql, params or ()))
         return {"data": []}
 
 
 def test_project_row_by_id_global_parses_execute_result() -> None:
+    """Verify test project row by id global parses execute result."""
     client = _ProjectsClient()
 
     def _exec(
@@ -40,6 +45,7 @@ def test_project_row_by_id_global_parses_execute_result() -> None:
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Return exec."""
         return {
             "data": [
                 {
@@ -68,6 +74,7 @@ def test_insert_project_row_reclaims_orphan_without_insert(
     _now_mock: MagicMock,
     _sid_mock: MagicMock,
 ) -> None:
+    """Verify test insert project row reclaims orphan without insert."""
     client = _ProjectsClient()
     client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
 
@@ -78,6 +85,7 @@ def test_insert_project_row_reclaims_orphan_without_insert(
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Return exec."""
         client._execute_calls.append((sql, params or ()))
         if "FROM projects WHERE id =" in sql:
             return {
@@ -116,6 +124,7 @@ def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
     _now_mock: MagicMock,
     _sid_mock: MagicMock,
 ) -> None:
+    """Verify test insert project row reassigns same disk root from other instance."""
     client = _ProjectsClient()
     client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
     root = "/home/vasilyvz/projects/tools/vast_srv"
@@ -127,6 +136,7 @@ def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Return exec."""
         client._execute_calls.append((sql, params or ()))
         if "FROM projects WHERE id =" in sql:
             return {
@@ -172,6 +182,7 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
     _now_mock: MagicMock,
     _sid_mock: MagicMock,
 ) -> None:
+    """Verify test insert project row rejects id on other server instance."""
     client = _ProjectsClient()
     client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
 
@@ -182,6 +193,7 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Return exec."""
         if "FROM projects WHERE id =" in sql:
             return {
                 "data": [
@@ -195,6 +207,7 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
         return {"data": []}
 
     def _resolve(**kw: Any) -> str:
+        """Return resolve."""
         stored = str(kw.get("root_path_stored") or "")
         if stored == "other_dir":
             return "/other/project"

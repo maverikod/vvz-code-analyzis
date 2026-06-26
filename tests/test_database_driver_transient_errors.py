@@ -1,4 +1,4 @@
-# Unit tests for structured PostgreSQL error classification (no live server).
+"""Unit tests for structured PostgreSQL error classification."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from code_analysis.core.database_driver_pkg.exceptions import (
 
 
 def test_deadlock_sqlstate_is_retryable() -> None:
+    """Verify test deadlock sqlstate is retryable."""
     exc = _FakePG(sqlstate="40P01", message="deadlock")
     info = classify_postgres_error(exc)
     assert info.error_kind == "deadlock"
@@ -20,6 +21,7 @@ def test_deadlock_sqlstate_is_retryable() -> None:
 
 
 def test_serialization_failure_sqlstate_is_retryable() -> None:
+    """Verify test serialization failure sqlstate is retryable."""
     exc = _FakePG(sqlstate="40001", message="foo")
     info = classify_postgres_error(exc)
     assert info.error_kind == "serialization_failure"
@@ -28,6 +30,7 @@ def test_serialization_failure_sqlstate_is_retryable() -> None:
 
 
 def test_lock_not_available_sqlstate_is_retryable() -> None:
+    """Verify test lock not available sqlstate is retryable."""
     exc = _FakePG(sqlstate="55P03", message="foo")
     info = classify_postgres_error(exc)
     assert info.error_kind == "lock_not_available"
@@ -36,6 +39,7 @@ def test_lock_not_available_sqlstate_is_retryable() -> None:
 
 
 def test_query_canceled_timeout_is_retryable() -> None:
+    """Verify test query canceled timeout is retryable."""
     exc = _FakePG(
         sqlstate="57014",
         message="ERROR: canceling statement due to statement timeout",
@@ -46,6 +50,7 @@ def test_query_canceled_timeout_is_retryable() -> None:
 
 
 def test_query_canceled_manual_cancel_is_not_retryable() -> None:
+    """Verify test query canceled manual cancel is not retryable."""
     exc = _FakePG(
         sqlstate="57014",
         message="canceling statement due to user request",
@@ -56,6 +61,7 @@ def test_query_canceled_manual_cancel_is_not_retryable() -> None:
 
 
 def test_unknown_sqlstate_is_not_retryable() -> None:
+    """Verify test unknown sqlstate is not retryable."""
     exc = _FakePG(sqlstate="99999", message="mystery")
     info = classify_postgres_error(exc)
     assert info.error_kind == "postgres_error"
@@ -63,6 +69,7 @@ def test_unknown_sqlstate_is_not_retryable() -> None:
 
 
 def test_sqlstate_can_be_read_from_diag_fallback() -> None:
+    """Verify test sqlstate can be read from diag fallback."""
     exc = _FakePGDiag()
     assert getattr(exc, "sqlstate", None) is None
     assert getattr(getattr(exc, "diag", None), "sqlstate", None) == "40P01"
@@ -72,6 +79,7 @@ def test_sqlstate_can_be_read_from_diag_fallback() -> None:
 
 
 def test_transient_database_error_to_details_schema() -> None:
+    """Verify test transient database error to details schema."""
     t = TransientDatabaseError(
         "msg",
         sqlstate="40P01",
@@ -101,6 +109,7 @@ def test_transient_database_error_to_details_schema() -> None:
 
 
 def test_database_error_details_handles_transient_and_non_transient() -> None:
+    """Verify test database error details handles transient and non transient."""
     t = TransientDatabaseError(
         "x",
         sqlstate="40P01",
@@ -119,21 +128,31 @@ def test_database_error_details_handles_transient_and_non_transient() -> None:
 
 
 class _FakePG:
+    """Represent FakePG."""
+
     def __init__(self, sqlstate: str, message: str) -> None:
+        """Initialize the instance."""
         self.sqlstate = sqlstate
         self._message = message
 
     def __str__(self) -> str:  # noqa: D105
+        """Return str."""
         return self._message
 
 
 class _FakePGDiag:
+    """Represent FakePGDiag."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.diag = _Diag()
 
     def __str__(self) -> str:  # noqa: D105
+        """Return str."""
         return "deadlock"
 
 
 class _Diag:
+    """Represent Diag."""
+
     sqlstate = "40P01"

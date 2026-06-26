@@ -20,6 +20,7 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 
 def _assert_universal_save_ok_fields(d: dict) -> None:
+    """Return assert universal save ok fields."""
     assert d.get("success") is True
     assert d.get("handler_id")
     assert d.get("operation") == "save"
@@ -31,7 +32,10 @@ def _assert_universal_save_ok_fields(d: dict) -> None:
 
 @pytest.mark.asyncio
 class TestUniversalFileSaveRouting:
+    """Represent TestUniversalFileSaveRouting."""
+
     async def test_toml_unsupported_before_db(self) -> None:
+        """Verify test toml unsupported before db."""
         cmd = UniversalFileSaveCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -44,6 +48,7 @@ class TestUniversalFileSaveRouting:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_unknown_suffix_unsupported(self) -> None:
+        """Verify test unknown suffix unsupported."""
         cmd = UniversalFileSaveCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -56,6 +61,7 @@ class TestUniversalFileSaveRouting:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_missing_content_before_db(self) -> None:
+        """Verify test missing content before db."""
         cmd = UniversalFileSaveCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -68,6 +74,7 @@ class TestUniversalFileSaveRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_invalid_content_type_before_backup(self, tmp_path: Path) -> None:
+        """Verify test invalid content type before backup."""
         f = tmp_path / "README.md"
         f.write_text("old\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -100,6 +107,7 @@ class TestUniversalFileSaveRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_json_invalid_content_before_backup(self, tmp_path: Path) -> None:
+        """Verify test json invalid content before backup."""
         f = tmp_path / "data.json"
         f.write_text("{}\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -132,6 +140,7 @@ class TestUniversalFileSaveRouting:
         assert result.code == "validation_failed"
 
     async def test_text_dry_run_no_write(self, tmp_path: Path) -> None:
+        """Verify test text dry run no write."""
         f = tmp_path / "notes.txt"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -168,6 +177,7 @@ class TestUniversalFileSaveRouting:
         assert f.read_text(encoding="utf-8") == "a\n"
 
     async def test_text_apply_with_diff(self, tmp_path: Path) -> None:
+        """Verify test text apply with diff."""
         f = tmp_path / "notes.txt"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -178,6 +188,7 @@ class TestUniversalFileSaveRouting:
         mock_db.create_file.return_value = MagicMock(id="fid")
 
         def _fake_persist(**_: object) -> dict:
+            """Return fake persist."""
             return {"success": True, "file_id": "fid"}
 
         with (
@@ -214,6 +225,7 @@ class TestUniversalFileSaveRouting:
         assert f.read_text(encoding="utf-8") == "z\n"
 
     async def test_text_create_missing_file(self, tmp_path: Path) -> None:
+        """Verify test text create missing file."""
         target = tmp_path / "docs" / "new_note.md"
         assert not target.exists()
         mock_db = MagicMock()
@@ -223,6 +235,7 @@ class TestUniversalFileSaveRouting:
         mock_db.select.return_value = []
 
         def _fake_persist(**_: object) -> dict:
+            """Return fake persist."""
             return {"success": True, "file_id": "fid"}
 
         with (
@@ -256,6 +269,7 @@ class TestUniversalFileSaveRouting:
         assert target.read_text(encoding="utf-8") == "# Title\n\nbody\n"
 
     async def test_python_create_missing_file(self, tmp_path: Path) -> None:
+        """Verify test python create missing file."""
         target = tmp_path / "pkg" / "new_mod.py"
         assert not target.exists()
         mock_db = MagicMock()
@@ -302,6 +316,7 @@ class TestUniversalFileSaveRouting:
         assert "answer = 42" in text
 
     async def test_json_create_missing_file(self, tmp_path: Path) -> None:
+        """Verify test json create missing file."""
         target = tmp_path / "cfg" / "app.json"
         assert not target.exists()
         mock_db = MagicMock()
@@ -352,6 +367,7 @@ class TestUniversalFileSaveRouting:
         assert '"enabled"' in target.read_text(encoding="utf-8")
 
     async def test_yaml_create_missing_file(self, tmp_path: Path) -> None:
+        """Verify test yaml create missing file."""
         target = tmp_path / "deploy" / "svc.yaml"
         assert not target.exists()
         mock_db = MagicMock()

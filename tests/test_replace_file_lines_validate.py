@@ -16,6 +16,7 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 @pytest.mark.asyncio
 async def test_replace_file_lines_rejects_range_beyond_file(tmp_path: Path) -> None:
+    """Verify test replace file lines rejects range beyond file."""
     f = tmp_path / "notes.txt"
     f.write_text("alpha\nbeta\n", encoding="utf-8")
 
@@ -42,6 +43,7 @@ async def test_replace_file_lines_rejects_range_beyond_file(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_replace_file_lines_accepts_in_range_replace(tmp_path: Path) -> None:
+    """Verify test replace file lines accepts in range replace."""
     f = tmp_path / "notes.txt"
     f.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 

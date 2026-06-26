@@ -12,38 +12,53 @@ import pytest
 from code_analysis.commands.query_cst_handler import _write_replace_result_atomically
 from tests.test_query_cst.helpers import assert_error_result
 
-
 SOURCE_CODE = '"""module"""\n\n\ndef add(a: int, b: int) -> int:\n    return a + b\n'
-NEW_SOURCE_CODE = '"""module"""\n\n\ndef add(a: int, b: int) -> int:\n    return a + b + 1\n'
+NEW_SOURCE_CODE = (
+    '"""module"""\n\n\ndef add(a: int, b: int) -> int:\n    return a + b + 1\n'
+)
 
 
 class FakeDatabaseFailure:
+    """Represent FakeDatabaseFailure."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.disconnected = False
 
     def index_file(self, file_path: str, project_id: str):
+        """Return index file."""
         return {"success": False, "error": "forced index failure"}
 
     def disconnect(self) -> None:
+        """Return disconnect."""
         self.disconnected = True
 
 
 class FakeDatabaseException:
+    """Represent FakeDatabaseException."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.disconnected = False
 
     def index_file(self, file_path: str, project_id: str):
+        """Return index file."""
         raise RuntimeError("forced index exception")
 
     def disconnect(self) -> None:
+        """Return disconnect."""
         self.disconnected = True
 
 
 class FakeCommand:
+    """Represent FakeCommand."""
+
     def __init__(self, database) -> None:
+        """Initialize the instance."""
         self._database = database
 
     def _open_database_from_config(self, auto_analyze: bool = False):
+        """Return open database from config."""
         return self._database
 
 
@@ -57,6 +72,7 @@ class FakeCommand:
 def test_write_replace_rolls_back_file_on_index_errors(
     tmp_path: Path, database, expected_db_error: str
 ):
+    """Verify test write replace rolls back file on index errors."""
     target = tmp_path / "sample.py"
     target.write_text(SOURCE_CODE, encoding="utf-8")
 

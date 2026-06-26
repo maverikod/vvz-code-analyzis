@@ -18,6 +18,7 @@ from code_analysis.core.docs_indexing_eligibility import (
 
 
 def _enabled_full_config():
+    """Return enabled full config."""
     d = default_docs_indexing_dict()
     d["enabled"] = True
     return d
@@ -99,6 +100,7 @@ def test_is_docs_markdown_eligible_table(
     eligible: bool,
     reasons_sub: tuple[str, ...],
 ) -> None:
+    """Verify test is docs markdown eligible table."""
     v = is_docs_markdown_eligible(
         docs_indexing=docs_indexing,
         relative_path=rel,
@@ -110,6 +112,7 @@ def test_is_docs_markdown_eligible_table(
 
 
 def test_exclude_beats_include_same_path() -> None:
+    """Verify test exclude beats include same path."""
     cfg = _enabled_full_config()
     cfg["include"] = ["docs/**/*.md", "docs/*.md", "README.md", "docs/plans/**"]
     cfg["exclude"] = ["docs/plans/**"]
@@ -122,6 +125,7 @@ def test_exclude_beats_include_same_path() -> None:
 
 
 def test_vectorize_does_not_affect_eligibility() -> None:
+    """Verify test vectorize does not affect eligibility."""
     cfg = _enabled_full_config()
     cfg["vectorize"] = True
     v = is_docs_markdown_eligible(
@@ -132,6 +136,7 @@ def test_vectorize_does_not_affect_eligibility() -> None:
 
 
 def test_out_of_scope_not_under_roots_and_not_lifted_by_include() -> None:
+    """Verify test out of scope not under roots and not lifted by include."""
     cfg = _enabled_full_config()
     cfg["roots"] = ["docs"]
     cfg["include"] = ["docs/*.md", "docs/**/*.md", "README.md"]
@@ -145,6 +150,7 @@ def test_out_of_scope_not_under_roots_and_not_lifted_by_include() -> None:
 
 
 def test_broad_include_outside_roots_with_star_md() -> None:
+    """Verify test broad include outside roots with star md."""
     cfg = _enabled_full_config()
     cfg["roots"] = ["docs"]
     cfg["include"] = ["**/*.md"]
@@ -174,6 +180,7 @@ def test_docs_relative_path_from_row_path_joins_project_root(tmp_path):
 
 
 def test_docs_relative_path_from_row_path_absolute_under_root(tmp_path):
+    """Verify test docs relative path from row path absolute under root."""
     from code_analysis.core.indexing_worker_pkg.processing import (
         _docs_relative_path_from_row_path,
     )

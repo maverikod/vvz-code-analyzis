@@ -57,6 +57,7 @@ _TREE_UUID_RE = re.compile(
 
 
 def _roundtrip_unified(tmp_path: Path, name: str, content: str) -> str:
+    """Return roundtrip unified."""
     (tmp_path / name).write_text(content, encoding="utf-8")
     source_abs = tmp_path / name
     checksum = compute_content_checksum(content)
@@ -73,6 +74,7 @@ def _roundtrip_unified(tmp_path: Path, name: str, content: str) -> str:
 
 
 def _assert_three_section_layout(path: Path) -> None:
+    """Return assert three section layout."""
     text = path.read_text(encoding="utf-8")
     assert SECTION_CHECKSUMS_START in text
     assert SECTION_MAP_START in text
@@ -90,6 +92,7 @@ def _assert_three_section_layout(path: Path) -> None:
 
 
 def _roundtrip_legacy(tmp_path: Path, name: str, content: str) -> str:
+    """Return roundtrip legacy."""
     (tmp_path / name).write_text(content, encoding="utf-8")
     source_abs = tmp_path / name
     checksum = compute_content_checksum(content)
@@ -120,6 +123,7 @@ def _roundtrip_legacy(tmp_path: Path, name: str, content: str) -> str:
     ["sample.txt", "sample.md", "sample.yaml", "sample.json"],
 )
 def test_unified_three_section_layout(tmp_path: Path, name: str) -> None:
+    """Verify test unified three section layout."""
     content = FIXTURES[name]
     (tmp_path / name).write_text(content, encoding="utf-8")
     source_abs = tmp_path / name
@@ -137,12 +141,14 @@ def test_unified_three_section_layout(tmp_path: Path, name: str) -> None:
     "name", ["sample.txt", "sample.md", "sample.yaml", "sample.json"]
 )
 def test_text_formats_unified_unmark_roundtrip(tmp_path: Path, name: str) -> None:
+    """Verify test text formats unified unmark roundtrip."""
     content = FIXTURES[name]
     roundtripped = _roundtrip_unified(tmp_path, name, content)
     assert roundtripped == content
 
 
 def test_python_unified_unmark_roundtrip(tmp_path: Path) -> None:
+    """Verify test python unified unmark roundtrip."""
     name = "sample.py"
     content = SAMPLE_PY
     assert _roundtrip_unified(tmp_path, name, content) == content
@@ -156,6 +162,7 @@ def test_python_unified_unmark_roundtrip(tmp_path: Path) -> None:
     strict=False,
 )
 def test_text_formats_legacy_oracle_unmark_roundtrip(tmp_path: Path, name: str) -> None:
+    """Verify test text formats legacy oracle unmark roundtrip."""
     content = FIXTURES[name]
     assert _roundtrip_legacy(tmp_path, name, content) == content
 

@@ -25,6 +25,7 @@ _META_KEY = "___meta___"
 
 
 def _find_wrapped_node(obj: Any, sid: int) -> Optional[dict[str, Any]]:
+    """Return find wrapped node."""
     if isinstance(obj, dict) and _ID_KEY in obj and int(obj[_ID_KEY]) == sid:
         return obj
     if isinstance(obj, dict):
@@ -56,6 +57,7 @@ def _find_wrapped_node(obj: Any, sid: int) -> Optional[dict[str, Any]]:
 def _target_short_id(
     handler: object, source_path: Path, content: str, marked: str
 ) -> NodeId:
+    """Return target short id."""
     if source_path.suffix == ".py":
         match = re.search(r"___id___:(\d+)", marked)
         assert match is not None, "expected Python marker in marked text"
@@ -72,6 +74,7 @@ def _apply_edit_attributes(
     content: str,
     attributes: Dict[str, Any],
 ) -> tuple[str, str, NodeId, object]:
+    """Return apply edit attributes."""
     source_path = Path(f"sample{extension}")
     handler = _REGISTRY.resolve(source_path)
     marked = handler.mark(content)
@@ -103,6 +106,7 @@ def test_edit_attributes_changes_metadata_not_content(
     content: str,
     attributes: Dict[str, Any],
 ) -> None:
+    """Verify test edit attributes changes metadata not content."""
     marked, new_marked, target_sid, handler = _apply_edit_attributes(
         extension=extension,
         content=content,
@@ -136,6 +140,7 @@ def test_edit_attributes_changes_metadata_not_content(
     ),
 )
 def test_edit_attributes_preserves_position(extension: str, content: str) -> None:
+    """Verify test edit attributes preserves position."""
     source_path = Path(f"sample{extension}")
     handler = _REGISTRY.resolve(source_path)
     marked = handler.mark(content)

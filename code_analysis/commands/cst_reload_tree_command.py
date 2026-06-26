@@ -34,6 +34,7 @@ class CSTReloadTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -65,6 +66,7 @@ class CSTReloadTreeCommand(BaseMCPCommand):
         include_children: bool = True,
         **kwargs,
     ) -> SuccessResult:
+        """Reload an existing in-memory CST tree from its source file."""
         t_start = time.perf_counter()
         try:
             t0 = time.perf_counter()

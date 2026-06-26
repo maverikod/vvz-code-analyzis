@@ -259,6 +259,7 @@ class TestScannerWithDiscovery:
         assert not any("fake.py" in k for k in files)
 
     def test_should_skip_dir_nested_test_data(self, temp_dir):
+        """Verify test should skip dir nested test data."""
         root = temp_dir.resolve()
         inner = temp_dir / "a" / "test_data"
         assert should_skip_dir(inner, walk_root=root) is True
@@ -268,6 +269,7 @@ class TestScannerWithDiscovery:
     def test_should_skip_dir_respects_immediate_project_roots_named_test_data(
         self, temp_dir
     ):
+        """Verify test should skip dir respects immediate project roots named test data."""
         root = temp_dir.resolve()
         proj = temp_dir / "test_data"
         roots = {proj.resolve()}
@@ -277,6 +279,7 @@ class TestScannerWithDiscovery:
         )
 
     def test_should_skip_dir_soft_deleted_project_subtree(self, temp_dir):
+        """Verify test should skip dir soft deleted project subtree."""
         root = temp_dir.resolve()
         dead = (temp_dir / "dead_proj").resolve()
         dead.mkdir()
@@ -316,6 +319,7 @@ class TestScannerWithDiscovery:
     def test_scan_directory_keeps_exception_inside_ignored_dir(
         self, temp_dir, project_id
     ):
+        """Verify test scan directory keeps exception inside ignored dir."""
         project_root = temp_dir / "project1"
         project_root.mkdir()
         create_projectid_file(project_root, project_id)
@@ -338,6 +342,7 @@ class TestScannerWithDiscovery:
     def test_scan_directory_keeps_pattern_exception_inside_ignored_dir(
         self, temp_dir, project_id
     ):
+        """Verify test scan directory keeps pattern exception inside ignored dir."""
         project_root = temp_dir / "project1"
         project_root.mkdir()
         create_projectid_file(project_root, project_id)
@@ -360,6 +365,7 @@ class TestScannerWithDiscovery:
     def test_scan_directory_uses_project_root_for_exception_glob_matching(
         self, temp_dir
     ):
+        """Verify test scan directory uses project root for exception glob matching."""
         project1 = temp_dir / "project1"
         project2 = temp_dir / "project2"
         project1.mkdir()
@@ -385,6 +391,7 @@ class TestScannerWithDiscovery:
     def test_scan_directory_skips_dot_venv_site_packages_without_allowlist(
         self, temp_dir, project_id
     ):
+        """Verify test scan directory skips dot venv site packages without allowlist."""
         project_root = temp_dir / "project1"
         project_root.mkdir()
         create_projectid_file(project_root, project_id)
@@ -408,6 +415,7 @@ class TestScannerWithDiscovery:
     def test_scan_directory_merges_allowlisted_venv_record_without_walking_venv(
         self, temp_dir, project_id
     ):
+        """Verify test scan directory merges allowlisted venv record without walking venv."""
         from code_analysis.core.venv_path_policy import (
             build_allowlisted_site_packages_py_files,
         )
@@ -506,6 +514,7 @@ class TestScannerWithDiscovery:
         orig_walk = os.walk
 
         def tracked_walk(top, *args, **kwargs):
+            """Return tracked walk."""
             walk_roots.append(str(Path(top).resolve()))
             return orig_walk(top, *args, **kwargs)
 

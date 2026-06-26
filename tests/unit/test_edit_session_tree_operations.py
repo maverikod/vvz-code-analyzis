@@ -26,6 +26,7 @@ from code_analysis.tree.handler_registry import HandlerRegistry
 
 
 def _setup_valid_json(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Return setup valid json."""
     rel_path = "nested/demo.json"
     source_abs = tmp_path / rel_path
     source_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ def _setup_valid_json(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def _scalar_short_id(source_abs: Path, file_path: str, field: str) -> NodeId:
+    """Return scalar short id."""
     handler = HandlerRegistry.default_registry().resolve(source_abs)
     nodes = handler.parse_content(
         Path(file_path), source_abs.read_text(encoding="utf-8")
@@ -55,6 +57,7 @@ def _scalar_short_id(source_abs: Path, file_path: str, field: str) -> NodeId:
 def test_apply_tree_operation_replace_updates_source_and_commits(
     tmp_path: Path,
 ) -> None:
+    """Verify test apply tree operation replace updates source and commits."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -86,6 +89,7 @@ def test_apply_tree_operation_replace_updates_source_and_commits(
 def test_apply_tree_operation_insert_assigns_new_short_id(
     tmp_path: Path,
 ) -> None:
+    """Verify test apply tree operation insert assigns new short id."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -123,6 +127,7 @@ def test_apply_tree_operation_insert_assigns_new_short_id(
 
 
 def test_apply_tree_operation_delete_by_short_id(tmp_path: Path) -> None:
+    """Verify test apply tree operation delete by short id."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -145,6 +150,7 @@ def test_apply_tree_operation_delete_by_short_id(tmp_path: Path) -> None:
 
 
 def test_apply_tree_operation_move_reorders_object_keys(tmp_path: Path) -> None:
+    """Verify test apply tree operation move reorders object keys."""
     root, source_abs, rel = _setup_valid_json(tmp_path)
     session = EditSession.open(
         source_abs=source_abs,
@@ -171,6 +177,7 @@ def test_apply_tree_operation_move_reorders_object_keys(tmp_path: Path) -> None:
 
 
 def test_unresolvable_node_ref_raises_in_batch_mapper(tmp_path: Path) -> None:
+    """Verify test unresolvable node ref raises in batch mapper."""
     from code_analysis.core.edit_session.edit_operations_adapter import (
         resolve_node_ref_to_short_id,
     )

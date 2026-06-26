@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_file_path_map(database: Any, project_id: str) -> Dict[str, str]:
+    """Return load file path map."""
     result = database.execute(
         f"""
         SELECT id, COALESCE(NULLIF(TRIM(relative_path), ''), path) AS label

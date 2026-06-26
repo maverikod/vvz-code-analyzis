@@ -36,7 +36,9 @@ def format_dot(data: dict) -> str:
         for item in data.get("inbound", []):
             importer = item["importer"]
             for tgt in item.get("targets", []):
-                lines.append(f"  {_q(importer)} -> {_q(tgt)} [color=blue,style=dashed];")
+                lines.append(
+                    f"  {_q(importer)} -> {_q(tgt)} [color=blue,style=dashed];"
+                )
 
     elif mode == "dependencies":
         for e in data.get("edges", {}).get("internal", []):
@@ -77,6 +79,7 @@ def format_dot(data: dict) -> str:
 
 
 def _md_header(data: dict) -> list[str]:
+    """Return md header."""
     roots = ", ".join(data.get("roots", [])) or "(project root)"
     counts = data.get("staleness", {}).get("counts", {})
     counts_str = ", ".join(f"{k}={v}" for k, v in counts.items())
@@ -109,8 +112,14 @@ def format_markdown(data: dict) -> str:
         lines.append("## Outbound — project (BLOCKER)")
         verdict_by_target = {v["target"]: v["verdict"] for v in data.get("verdict", [])}
         for b in data.get("outbound", {}).get("project", []):
-            v = f" — _{verdict_by_target[b['target']]}_" if b["target"] in verdict_by_target else ""
-            lines.append(f"- `{b['target']}`{v} (imported by {len(b['imported_by'])} file(s))")
+            v = (
+                f" — _{verdict_by_target[b['target']]}_"
+                if b["target"] in verdict_by_target
+                else ""
+            )
+            lines.append(
+                f"- `{b['target']}`{v} (imported by {len(b['imported_by'])} file(s))"
+            )
         lines.append("")
         lines.append("## Outbound — third party")
         for m in data.get("outbound", {}).get("third_party", []):
@@ -123,7 +132,9 @@ def format_markdown(data: dict) -> str:
         lines.append("")
         lines.append("## Inbound — external callers (replacement sites)")
         for item in data.get("inbound", []):
-            lines.append(f"- `{item['importer']}` → {', '.join('`'+t+'`' for t in item['targets'])}")
+            lines.append(
+                f"- `{item['importer']}` → {', '.join('`'+t+'`' for t in item['targets'])}"
+            )
 
     elif mode == "dependencies":
         s = data.get("summary", {})
@@ -145,7 +156,9 @@ def format_markdown(data: dict) -> str:
             lines.append(f"### `{f['file']}`")
             for c in f.get("classes", []):
                 methods = ", ".join(m["name"] for m in c.get("methods", []))
-                lines.append(f"- class **{c['name']}**" + (f" — {methods}" if methods else ""))
+                lines.append(
+                    f"- class **{c['name']}**" + (f" — {methods}" if methods else "")
+                )
             for fn in f.get("functions", []):
                 lines.append(f"- def {fn['name']}")
             lines.append("")
@@ -169,12 +182,18 @@ def format_markdown(data: dict) -> str:
         lines.append("")
         lines.append("## Removable (no production caller)")
         for sym in data.get("removable", []):
-            qual = f"{sym['class_name']}.{sym['name']}" if sym.get("class_name") else sym["name"]
+            qual = (
+                f"{sym['class_name']}.{sym['name']}"
+                if sym.get("class_name")
+                else sym["name"]
+            )
             detail = ""
             if sym["classification"] == "test_only":
                 detail = f" — used by {len(sym['test_callers'])} test file(s)"
             elif sym["classification"] == "import_only":
-                detail = f" — imported by {', '.join('`'+i+'`' for i in sym['importers'])}"
+                detail = (
+                    f" — imported by {', '.join('`'+i+'`' for i in sym['importers'])}"
+                )
             lines.append(
                 f"- `{sym['file']}` {sym['kind']} **{qual}** "
                 f"(L{sym.get('line')}) — _{sym['classification']}_{detail}"

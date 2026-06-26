@@ -56,6 +56,7 @@ def evaluate_session_liveness(
 
 
 def _is_process_alive(pid: int) -> bool:
+    """Return is process alive."""
     if pid <= 0:
         return False
     try:
@@ -70,6 +71,7 @@ def _is_process_alive(pid: int) -> bool:
 
 
 def _probe_process_start_epoch(pid: int) -> float | None:
+    """Return probe process start epoch."""
     stat_path = Path(f"/proc/{pid}/stat")
     if not stat_path.is_file():
         return None
@@ -92,6 +94,7 @@ def _probe_process_start_epoch(pid: int) -> float | None:
 
 
 def _linux_boot_time_epoch() -> float | None:
+    """Return linux boot time epoch."""
     try:
         for line in Path("/proc/stat").read_text(encoding="utf-8").splitlines():
             if line.startswith("btime "):

@@ -16,6 +16,7 @@ from code_analysis.cli import server_manager_cli
 
 @pytest.fixture
 def config_path(tmp_path: Path) -> Path:
+    """Return config path."""
     path = tmp_path / "config.json"
     path.write_text("{}", encoding="utf-8")
     return path
@@ -23,6 +24,7 @@ def config_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def pidfile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Return pidfile."""
     path = tmp_path / ".code-analysis-server.pid"
     monkeypatch.setattr(
         server_manager_cli,
@@ -38,9 +40,11 @@ def test_start_spawns_when_no_pidfile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test start spawns when no pidfile."""
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
 
     def fake_spawn(_config_path: str, pf: Path) -> int:
+        """Return fake spawn."""
         pf.write_text("4242", encoding="utf-8")
         return 4242
 
@@ -65,9 +69,11 @@ def test_start_already_running_when_single_daemon_discovered(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test start already running when single daemon discovered."""
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [777])
 
     def fail_spawn(_cp: str, _pf: Path) -> int:
+        """Return fail spawn."""
         raise AssertionError("must not spawn when a daemon is already running")
 
     monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fail_spawn)
@@ -85,9 +91,11 @@ def test_start_errors_when_multiple_daemons_discovered(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test start errors when multiple daemons discovered."""
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [1, 2])
 
     def fail_spawn(_cp: str, _pf: Path) -> int:
+        """Return fail spawn."""
         raise AssertionError("must not spawn")
 
     monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fail_spawn)
@@ -104,10 +112,12 @@ def test_stop_kills_pidfile_and_matching_find_daemon_pids(
     pidfile: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test stop kills pidfile and matching find daemon pids."""
     pidfile.write_text("10", encoding="utf-8")
     alive = {10, 20}
 
     def find_pids(_cfg: str) -> list[int]:
+        """Return find pids."""
         return sorted(alive) if alive else []
 
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", find_pids)
@@ -115,6 +125,7 @@ def test_stop_kills_pidfile_and_matching_find_daemon_pids(
     killed: list[int] = []
 
     def kill_one(pid: int, timeout_s: float) -> None:
+        """Return kill one."""
         killed.append(pid)
         alive.discard(pid)
 
@@ -134,17 +145,21 @@ def test_restart_stops_drains_then_starts(
     config_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test restart stops drains then starts."""
     seq: list[str] = []
 
     def fake_stop(_cp: str) -> int:
+        """Return fake stop."""
         seq.append("stop")
         return 0
 
     def fake_drain(*_a: object, **_kw: object) -> bool:
+        """Return fake drain."""
         seq.append("drain")
         return True
 
     def fake_start(_cp: str) -> int:
+        """Return fake start."""
         seq.append("start")
         return 0
 
@@ -175,6 +190,7 @@ def test_status_stopped_no_pidfile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status stopped no pidfile."""
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
 
     rc = server_manager_cli._cmd_status(str(config_path))
@@ -189,6 +205,7 @@ def test_status_running_matches_find_daemon_pids(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status running matches find daemon pids."""
     pidfile.write_text("55", encoding="utf-8")
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [55])
 
@@ -204,6 +221,7 @@ def test_status_running_daemon_without_pidfile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status running daemon without pidfile."""
     assert not pidfile.exists()
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [42])
 
@@ -218,6 +236,7 @@ def test_status_reports_and_logs_stale_daemon_children(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status reports and logs stale daemon children."""
     log_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
     monkeypatch.setattr(
@@ -248,6 +267,7 @@ def test_status_removes_stale_pidfile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status removes stale pidfile."""
     pidfile.write_text("999999", encoding="utf-8")
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
     monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: False)
@@ -265,6 +285,7 @@ def test_start_cleans_stale_daemon_children_before_spawn(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test start cleans stale daemon children before spawn."""
     killed: list[int] = []
     log_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
@@ -288,6 +309,7 @@ def test_start_cleans_stale_daemon_children_before_spawn(
     )
 
     def fake_spawn(_config_path: str, pf: Path) -> int:
+        """Return fake spawn."""
         pf.write_text("4242", encoding="utf-8")
         return 4242
 
@@ -310,6 +332,7 @@ def test_resolve_config_cli_over_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test resolve config cli over env."""
     a = tmp_path / "a.json"
     a.write_text("{}", encoding="utf-8")
     b = tmp_path / "b.json"
@@ -323,6 +346,7 @@ def test_resolve_config_env_over_system_and_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test resolve config env over system and cwd."""
     env_cfg = tmp_path / "from_env.json"
     env_cfg.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("CASMGR_CONFIG", str(env_cfg))
@@ -340,6 +364,7 @@ def test_resolve_config_system_over_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test resolve config system over cwd."""
     monkeypatch.delenv("CASMGR_CONFIG", raising=False)
     sys_cfg = tmp_path / "sys.json"
     sys_cfg.write_text("{}", encoding="utf-8")
@@ -355,6 +380,7 @@ def test_resolve_config_cwd_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test resolve config cwd fallback."""
     monkeypatch.delenv("CASMGR_CONFIG", raising=False)
     missing = tmp_path / "nope.json"
     monkeypatch.setattr(server_manager_cli, "_SYSTEM_DEFAULT_CONFIG", missing)
@@ -370,6 +396,7 @@ def test_resolve_config_none_when_missing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test resolve config none when missing."""
     monkeypatch.delenv("CASMGR_CONFIG", raising=False)
     monkeypatch.setattr(
         server_manager_cli,
@@ -387,6 +414,7 @@ def test_server_status_uses_cwd_config_without_flag(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test server status uses cwd config without flag."""
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     monkeypatch.delenv("CASMGR_CONFIG", raising=False)
     monkeypatch.setattr(
@@ -407,6 +435,7 @@ def test_status_pidfile_alive_but_not_our_daemon(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Verify test status pidfile alive but not our daemon."""
     pidfile.write_text("88", encoding="utf-8")
     monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
     monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)

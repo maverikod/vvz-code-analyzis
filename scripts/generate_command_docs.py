@@ -443,12 +443,14 @@ COMMAND_MAP = [
 
 
 def _safe_get(obj, key, default=None):
+    """Return safe get."""
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default) if obj else default
 
 
 def _schema_props_table(schema):
+    """Return schema props table."""
     props = _safe_get(schema, "properties") or {}
     required = set(_safe_get(schema, "required") or [])
     rows = []
@@ -466,6 +468,7 @@ def _schema_props_table(schema):
 
 
 def _render_md(name, cls_name, block, schema, meta, source_hint):
+    """Return render md."""
     lines = [
         f"# {name}",
         "",
@@ -611,6 +614,7 @@ def _render_md(name, cls_name, block, schema, meta, source_hint):
 
 
 def main():
+    """Run the command-line entry point."""
     os.chdir(ROOT)
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))

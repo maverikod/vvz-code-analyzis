@@ -136,6 +136,7 @@ class GetASTMCPCommand(BaseMCPCommand):
         """Return True when any known AST-entity count is positive."""
 
         def _as_int(value: Any) -> int:
+            """Return as int."""
             try:
                 return int(value or 0)
             except (TypeError, ValueError):
@@ -163,6 +164,7 @@ class GetASTMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -191,6 +193,7 @@ class GetASTMCPCommand(BaseMCPCommand):
         include_json: bool = True,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         params: Dict[str, Any] = {
             "project_id": project_id,
             "file_path": file_path,

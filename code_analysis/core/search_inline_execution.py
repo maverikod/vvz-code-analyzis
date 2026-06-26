@@ -54,6 +54,7 @@ def build_auto_queue_job_metadata(
     command_name: str,
     inline_timeout_seconds: float,
 ) -> Dict[str, Any]:
+    """Return build auto queue job metadata."""
     return {
         "auto_queued": True,
         "reason": AUTO_QUEUE_REASON,
@@ -79,6 +80,7 @@ def queued_inline_timeout_response(
     job_id: str,
     inline_timeout_seconds: float,
 ) -> SuccessResult:
+    """Return queued inline timeout response."""
     message = "Search did not finish within inline timeout and was queued."
     return SuccessResult(
         data={
@@ -95,6 +97,7 @@ def queued_inline_timeout_response(
 def mark_inline_result(
     result: SuccessResult | ErrorResult,
 ) -> SuccessResult | ErrorResult:
+    """Return mark inline result."""
     if isinstance(result, ErrorResult):
         return result
     data = dict(result.data or {})
@@ -109,6 +112,7 @@ async def enqueue_search_command(
     context: Dict[str, Any],
     inline_timeout_seconds: float,
 ) -> SuccessResult:
+    """Return enqueue search command."""
     from mcp_proxy_adapter.commands.hooks import hooks
     from mcp_proxy_adapter.commands.queue.jobs import CommandExecutionJob
     from mcp_proxy_adapter.integrations.queuemgr_integration import (
@@ -138,6 +142,7 @@ async def enqueue_search_command(
     await queue_manager.add_job(CommandExecutionJob, job_id, job_params)
 
     async def _start_job_background() -> None:
+        """Return start job background."""
         try:
             await queue_manager.start_job(job_id)
         except Exception:

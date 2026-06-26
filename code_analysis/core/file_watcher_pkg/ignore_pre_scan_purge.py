@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 def _query_file_rows(
     database: Any, sql: str, params: tuple[Any, ...]
 ) -> List[dict[str, Any]]:
+    """Return query file rows."""
     if hasattr(database, "_fetchall"):
         rows = database._fetchall(sql, params)
         return list(rows) if isinstance(rows, list) else []
@@ -51,6 +52,7 @@ def _query_file_rows(
 
 
 def _project_root_for_id(database: Any, project_id: str) -> Optional[Path]:
+    """Return project root for id."""
     from code_analysis.core.database.watch_dirs_partition import (
         current_server_instance_id,
     )
@@ -221,6 +223,7 @@ def collect_file_ids_for_active_paths(
 def _collect_file_ids_for_paths_chunk(
     database: Any, project_id: str, abs_paths: Tuple[str, ...]
 ) -> List[str]:
+    """Return collect file ids for paths chunk."""
     if not abs_paths:
         return []
     gf = getattr(database, "get_file_by_path", None)

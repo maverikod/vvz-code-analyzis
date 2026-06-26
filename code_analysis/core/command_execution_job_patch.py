@@ -29,6 +29,7 @@ _patch_applied = False
 def _mcp_failure_message(
     payload: Dict[str, Any], cmd_result: Optional[Dict[str, Any]]
 ) -> str:
+    """Return mcp failure message."""
     for block in (cmd_result, payload):
         if not isinstance(block, dict):
             continue
@@ -179,6 +180,7 @@ def _patch_command_execution_set_mcp_result(CommandExecutionJob: Any) -> None:
     def patched_set_mcp_result(
         self: Any, result: Dict[str, Any], status: Optional[str] = None
     ) -> None:
+        """Return patched set mcp result."""
         original_set_mcp_result(self, result, status)
         if getattr(self, "_reconcile_after_mcp_result", False):
             return

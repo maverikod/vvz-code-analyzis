@@ -26,6 +26,7 @@ class NodeListTree:
     nodes: List[TreeNode]
 
     def all_nodes(self) -> List[TreeNode]:
+        """Return all nodes."""
         return self.nodes
 
 
@@ -109,6 +110,7 @@ def make_preview_tree_loader(
     """Build PreviewNavigation ``tree_loader`` callback."""
 
     def loader(source_path: Path, session_id: Optional[str]) -> NodeListTree:
+        """Return loader."""
         effective_session = session_id if session_id is not None else bound_session_id
         if effective_session is not None:
             session_nodes = _load_nodes_from_valid_edit_session(str(effective_session))

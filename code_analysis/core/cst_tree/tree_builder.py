@@ -359,6 +359,7 @@ CST_TREE_TTL_SECONDS: float = 900.0  # 15 minutes
 
 
 async def _cst_tree_ttl_cleanup_loop() -> None:
+    """Return cst tree ttl cleanup loop."""
     while True:
         await asyncio.sleep(60)
         now = time.monotonic()
@@ -372,4 +373,5 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
 
 
 def start_cst_tree_ttl_cleanup() -> None:
+    """Return start cst tree ttl cleanup."""
     asyncio.ensure_future(_cst_tree_ttl_cleanup_loop())

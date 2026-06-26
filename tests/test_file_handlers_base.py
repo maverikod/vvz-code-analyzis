@@ -19,27 +19,36 @@ from code_analysis.core.file_handlers.registry import HANDLER_TEXT, get_handler_
 
 
 class _MinimalHandler(BaseFileHandler):
+    """Represent MinimalHandler."""
+
     @property
     def handler_id(self) -> str:
+        """Return handler id."""
         return HANDLER_TEXT
 
     def json_schema_for(self, operation: str) -> dict:
+        """Return json schema for."""
         return dict(get_handler_schema(HANDLER_TEXT, operation))
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return read."""
         raise NotImplementedError
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return save."""
         raise NotImplementedError
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return replace."""
         raise NotImplementedError
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return delete."""
         raise NotImplementedError
 
 
 def test_validate_before_side_effects_empty_project() -> None:
+    """Verify test validate before side effects empty project."""
     req = FileHandlerRequest(
         project_id="   ",
         file_path="x.md",
@@ -54,6 +63,7 @@ def test_validate_before_side_effects_empty_project() -> None:
 
 
 def test_operation_availability_all_four() -> None:
+    """Verify test operation availability all four."""
     h = _MinimalHandler()
     avail = h.operation_availability()
     assert set(avail.keys()) == {"delete", "read", "replace", "save"}
@@ -61,6 +71,7 @@ def test_operation_availability_all_four() -> None:
 
 
 def test_registration_readiness_uses_json_schema_all_ops() -> None:
+    """Verify test registration readiness uses json schema all ops."""
     h = _MinimalHandler()
     r = h.registration_readiness()
     assert all(entry["supported"] for entry in r.values())
@@ -68,6 +79,7 @@ def test_registration_readiness_uses_json_schema_all_ops() -> None:
 
 
 def test_mutating_precheck_rejects_unknown_operation() -> None:
+    """Verify test mutating precheck rejects unknown operation."""
     h = _MinimalHandler()
     req = FileHandlerRequest(
         project_id="p",

@@ -26,6 +26,7 @@ from code_analysis.core.search_session.tree_representation import TreeValiditySt
 
 @pytest.fixture
 def json_project(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Return json project."""
     root = tmp_path
     rel = "data/sample.json"
     path = root / rel
@@ -37,6 +38,7 @@ def json_project(tmp_path: Path) -> tuple[Path, Path, str]:
 def test_make_preview_tree_loader_calls_tree_lifecycle(
     json_project: tuple[Path, Path, str],
 ) -> None:
+    """Verify test make preview tree loader calls tree lifecycle."""
     root, path, rel = json_project
     loader = make_preview_tree_loader(
         project_root=root,
@@ -57,6 +59,7 @@ def test_make_preview_tree_loader_calls_tree_lifecycle(
 def test_parse_focus_short_id_root_and_explicit(
     json_project: tuple[Path, Path, str],
 ) -> None:
+    """Verify test parse focus short id root and explicit."""
     root, path, rel = json_project
     loader = make_preview_tree_loader(
         project_root=root,
@@ -79,6 +82,7 @@ def test_parse_focus_short_id_root_and_explicit(
 def test_navigate_marked_tree_returns_short_id_int_refs(
     json_project: tuple[Path, Path, str],
 ) -> None:
+    """Verify test navigate marked tree returns short id int refs."""
     root, path, rel = json_project
     budget = PreviewBudget(
         preview_lines=10, value_preview_len=80, full_text_max_lines=0
@@ -109,6 +113,7 @@ def test_navigate_marked_tree_returns_short_id_int_refs(
 def test_navigation_branches_to_marked_tree_for_json(
     json_project: tuple[Path, Path, str],
 ) -> None:
+    """Verify test navigation branches to marked tree for json."""
     root, path, rel = json_project
     handler = HandlerDispatcher().dispatch(rel)
     assert handler is not None and not isinstance(handler, PreviewError)
@@ -135,6 +140,7 @@ def test_navigation_branches_to_marked_tree_for_json(
 
 
 def test_should_use_marked_tree_true_for_jsonl(tmp_path: Path) -> None:
+    """Verify test should use marked tree true for jsonl."""
     path = tmp_path / "lines.jsonl"
     path.write_text("{}\n", encoding="utf-8")
     handler = HandlerDispatcher().dispatch("lines.jsonl")
@@ -215,7 +221,10 @@ def test_invalid_json_skips_marked_tree_uses_plain_text_fallback(
     assert result.short_id_refs is True
     assert result.total_blocks >= 1
     assert result.selected_blocks
-    assert all(isinstance(b.node_ref, str) and b.node_ref.isdigit() for b in result.selected_blocks)
+    assert all(
+        isinstance(b.node_ref, str) and b.node_ref.isdigit()
+        for b in result.selected_blocks
+    )
 
 
 def test_invalid_python_marked_tree_returns_plain_text_fallback(
@@ -286,6 +295,7 @@ def test_navigate_degraded_large_json_respects_text_threshold(
 
 
 def test_text_handler_parse_builds_paragraph_line_hierarchy() -> None:
+    """Verify test text handler parse builds paragraph line hierarchy."""
     from code_analysis.tree.handlers.text_handler import TextHandler
 
     handler = TextHandler()
@@ -308,6 +318,7 @@ def test_text_handler_parse_builds_paragraph_line_hierarchy() -> None:
 def test_navigate_marked_tree_small_txt_returns_full_tree_and_annotated_focus(
     tmp_path: Path,
 ) -> None:
+    """Verify test navigate marked tree small txt returns full tree and annotated focus."""
     root = tmp_path
     rel = "notes/readme.txt"
     path = root / rel
@@ -349,6 +360,7 @@ def test_navigate_marked_tree_small_txt_returns_full_tree_and_annotated_focus(
 def test_navigate_marked_tree_large_txt_respects_preview_lines_cap(
     tmp_path: Path,
 ) -> None:
+    """Verify test navigate marked tree large txt respects preview lines cap."""
     root = tmp_path
     rel = "notes/long.txt"
     path = root / rel

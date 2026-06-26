@@ -57,6 +57,7 @@ def _function_stable_id(
     in_class: str | None = None,
     in_function: str | None = None,
 ) -> str:
+    """Return function stable id."""
     tree = get_tree(tree_id)
     assert tree is not None
     root_id = tree.root_node_id
@@ -98,6 +99,7 @@ def _function_stable_id(
 
 
 def _import_stable_id(tree_id: str, snippet: str) -> str:
+    """Return import stable id."""
     tree = get_tree(tree_id)
     assert tree is not None
     for meta in tree.metadata_map.values():
@@ -200,9 +202,7 @@ async def test_batch_insert_then_replace_nested_class_methods(tmp_path) -> None:
         assert isinstance(result, SuccessResult), getattr(result, "message", result)
         after = get_tree(session.tree_id or tree.tree_id)
         assert after is not None
-        assert (
-            _function_stable_id(after.tree_id, "beta", in_class="Widget") == beta_sid
-        )
+        assert _function_stable_id(after.tree_id, "beta", in_class="Widget") == beta_sid
         assert "def gamma" in after.module.code
         assert "return 42" in after.module.code
     finally:

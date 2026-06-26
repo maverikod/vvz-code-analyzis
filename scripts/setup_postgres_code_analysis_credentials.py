@@ -24,10 +24,12 @@ from typing import Any, Mapping
 
 
 def _q(val: Any) -> str:
+    """Return q."""
     return shlex.quote("" if val is None else str(val))
 
 
 def _driver_config_from_json(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """Return driver config from json."""
     driver = cfg.get("code_analysis", {}).get("database", {}).get("driver") or {}
     dtype = str(driver.get("type") or "").strip().lower()
     if dtype not in ("postgres", "postgresql"):
@@ -65,6 +67,7 @@ def _merge_env_overrides(dc: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     if len(sys.argv) != 3:
         print(
             "usage: setup_postgres_code_analysis_credentials.py "

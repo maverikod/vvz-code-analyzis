@@ -96,7 +96,6 @@ def strip_persisted_node_ids(source: str) -> tuple[str, PersistedNodeIds]:
     return logical_source, persisted
 
 
-
 def _flatten_path_to_uuid(
     metadata_map: Dict[str, TreeNodeMetadata],
     root_node_id: str | None,
@@ -109,6 +108,7 @@ def _flatten_path_to_uuid(
     out: Dict[str, str] = {}
 
     def walk(node_id: str, path_indices: tuple[int, ...]) -> None:
+        """Return walk."""
         meta = metadata_map.get(node_id)
         if meta is None:
             return
@@ -139,6 +139,7 @@ def render_marker_block(
 
 
 def _find_last_non_empty_line(lines: list[str]) -> int:
+    """Return find last non empty line."""
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].strip():
             return index
@@ -146,6 +147,7 @@ def _find_last_non_empty_line(lines: list[str]) -> int:
 
 
 def _find_marker_begin(lines: list[str], end_idx: int) -> int | None:
+    """Return find marker begin."""
     for index in range(end_idx - 1, -1, -1):
         if lines[index].strip() == MARKERS_BEGIN:
             return index
@@ -153,6 +155,7 @@ def _find_marker_begin(lines: list[str], end_idx: int) -> int | None:
 
 
 def _parse_marker_lines(lines: list[str]) -> PersistedNodeIds:
+    """Return parse marker lines."""
     if lines:
         first = lines[0].strip()
         if first == MARKERS_VERSION_V2:
@@ -183,7 +186,11 @@ def _parse_marker_lines(lines: list[str]) -> PersistedNodeIds:
     persisted: PersistedNodeIds = {}
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped == MARKERS_VERSION or stripped == MARKERS_VERSION_V2:
+        if (
+            not stripped
+            or stripped == MARKERS_VERSION
+            or stripped == MARKERS_VERSION_V2
+        ):
             continue
         match = _MARKER_RE.match(stripped)
         if match is None:

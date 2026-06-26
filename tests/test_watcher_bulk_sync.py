@@ -20,10 +20,13 @@ from code_analysis.core.file_watcher_pkg.watcher_disk_manifest import WatcherDis
 
 
 class _PgDatabase:
+    """Represent PgDatabase."""
+
     _driver_type = "postgres"
 
 
 def test_build_watcher_bulk_sync_program_three_batches() -> None:
+    """Verify test build watcher bulk sync program three batches."""
     db = _PgDatabase()
     rows = [
         WatcherDiskFileRow(
@@ -53,6 +56,7 @@ def test_build_watcher_bulk_sync_program_three_batches() -> None:
 
 
 def test_disk_raw_inserts_use_boolean_has_docstring() -> None:
+    """Verify test disk raw inserts use boolean has docstring."""
     db = _PgDatabase()
     rows = [
         WatcherDiskFileRow(
@@ -83,12 +87,14 @@ def test_disk_raw_inserts_use_boolean_has_docstring() -> None:
 
 
 def test_build_watcher_bulk_sync_requires_postgres() -> None:
+    """Verify test build watcher bulk sync requires postgres."""
     db = SimpleNamespace(_driver_type="sqlite")
     with pytest.raises(RuntimeError, match="PostgreSQL"):
         build_watcher_bulk_sync_program("p", None, [], db)
 
 
 def test_build_watcher_bulk_sync_avoids_full_outer_join() -> None:
+    """Verify test build watcher bulk sync avoids full outer join."""
     db = _PgDatabase()
     rows = [
         WatcherDiskFileRow(

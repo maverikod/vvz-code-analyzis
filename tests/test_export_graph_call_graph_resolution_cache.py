@@ -26,11 +26,13 @@ from tests.sqlite_legacy_schema_bootstrap import bootstrap_sqlite_schema_paths
 
 @pytest.fixture
 def temp_dir(tmp_path: Path) -> Path:
+    """Return temp dir."""
     return tmp_path
 
 
 @pytest.fixture
 def project_id() -> str:
+    """Return project id."""
     return str(uuid.uuid4())
 
 
@@ -63,6 +65,7 @@ def test_db(temp_dir: Path) -> Any:
 
 @pytest.fixture
 def test_project(test_db: DatabaseClient, temp_dir: Path, project_id: str) -> str:
+    """Verify test project."""
     test_db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir.resolve()), temp_dir.name),
@@ -71,10 +74,12 @@ def test_project(test_db: DatabaseClient, temp_dir: Path, project_id: str) -> st
 
 
 def _uuid4() -> str:
+    """Return uuid4."""
     return str(uuid.uuid4())
 
 
 def _insert_file(test_db: DatabaseClient, test_project: str, path: Path) -> str:
+    """Return insert file."""
     fid = str(uuid.uuid4())
     test_db.execute(
         """INSERT INTO files (id, project_id, path, relative_path, lines, last_modified, has_docstring)
@@ -87,6 +92,7 @@ def _insert_file(test_db: DatabaseClient, test_project: str, path: Path) -> str:
 def _insert_class(
     test_db: DatabaseClient, file_id: str, name: str, cst_node_id: str
 ) -> None:
+    """Return insert class."""
     cid = str(uuid.uuid4())
     test_db.execute(
         "INSERT INTO classes (id, file_id, name, line, docstring, bases, cst_node_id) "
@@ -101,6 +107,7 @@ def _insert_usage(
     line: int,
     target_name: str,
 ) -> None:
+    """Return insert usage."""
     uid = str(uuid.uuid4())
     test_db.execute(
         "INSERT INTO usages (id, file_id, line, usage_type, target_type, target_name, target_class) "
@@ -112,6 +119,7 @@ def _insert_usage(
 def _seed_repeated_usages_same_target(
     test_db: DatabaseClient, test_project: str, temp_dir: Path, n_usages: int
 ) -> None:
+    """Return seed repeated usages same target."""
     path = temp_dir / "caller.py"
     path.write_text("# x", encoding="utf-8")
     fid = _insert_file(test_db, test_project, path)
@@ -135,6 +143,7 @@ def _seed_two_callers_one_target(
 def _seed_missing_target_repeated(
     test_db: DatabaseClient, test_project: str, temp_dir: Path, n_usages: int
 ) -> None:
+    """Return seed missing target repeated."""
     path = temp_dir / "caller.py"
     path.write_text("# x", encoding="utf-8")
     fid = _insert_file(test_db, test_project, path)
@@ -149,6 +158,7 @@ async def test_call_graph_emit_edges_for_repeated_targets(
     test_project: str,
     temp_dir: Path,
 ) -> None:
+    """Verify test call graph emit edges for repeated targets."""
     n = 10
     _seed_repeated_usages_same_target(test_db, test_project, temp_dir, n_usages=n)
     monkeypatch.setattr(
@@ -185,6 +195,7 @@ async def test_call_graph_emit_edges_two_callers_same_symbol(
     test_project: str,
     temp_dir: Path,
 ) -> None:
+    """Verify test call graph emit edges two callers same symbol."""
     _seed_two_callers_one_target(test_db, test_project, temp_dir)
     monkeypatch.setattr(
         "code_analysis.commands.base_mcp_command.get_shared_database",
@@ -219,6 +230,7 @@ async def test_call_graph_unknown_target_symbol_emits_edges(
     test_project: str,
     temp_dir: Path,
 ) -> None:
+    """Verify test call graph unknown target symbol emits edges."""
     _seed_missing_target_repeated(test_db, test_project, temp_dir, n_usages=7)
     monkeypatch.setattr(
         "code_analysis.commands.base_mcp_command.get_shared_database",

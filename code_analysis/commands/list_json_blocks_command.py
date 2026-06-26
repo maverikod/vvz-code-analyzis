@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class ListJsonBlocksCommand(BaseMCPCommand):
+    """List addressable JSON values and stable node metadata from a file."""
+
     name = "list_json_blocks"
     version = "1.0.0"
     descr = "List indexed JSON values (node_id, json_pointer, kind) for a .json file"
@@ -34,6 +36,7 @@ class ListJsonBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for selecting a JSON project file."""
         base = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -49,6 +52,7 @@ class ListJsonBlocksCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters and reject unknown project ids."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -56,6 +60,7 @@ class ListJsonBlocksCommand(BaseMCPCommand):
     async def execute(
         self, project_id: str, file_path: str, **kwargs: Any
     ) -> SuccessResult:
+        """Parse a JSON file and return stable addressable block descriptors."""
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
@@ -127,6 +132,7 @@ class ListJsonBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["ListJsonBlocksCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON block listing command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

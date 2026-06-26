@@ -53,6 +53,7 @@ def register_startup_shutdown_events(
 
     @app.on_event("startup")
     async def start_workers_on_startup() -> None:
+        """Return start workers on startup."""
         logger = logging.getLogger(__name__)
         print(
             "🚀 [STARTUP EVENT] Server startup: initializing workers via startup event...",
@@ -202,6 +203,7 @@ def register_startup_shutdown_events(
 
     @app.on_event("shutdown")
     async def stop_workers_on_shutdown() -> None:
+        """Return stop workers on shutdown."""
         logger = logging.getLogger(__name__)
         print(
             "🛑 [SHUTDOWN EVENT] Server shutdown: stopping workers via shutdown event...",

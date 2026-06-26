@@ -26,7 +26,6 @@ from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
 from code_analysis.core.database.files.update import update_file_data
 from code_analysis.core.database.projects import get_project
 
-
 # Synthetic file content: at least one top-level function and one class with method
 SYNTHETIC_FILE_WITH_FUNCTION_AND_CLASS = '''def top_level_func():
     """A top-level function for tests."""
@@ -102,6 +101,7 @@ def _insert_ast_cst_and_entities(
         class_id_map[class_name] = class_uuid
 
     def is_method(node, tree):
+        """Return is method."""
         for parent in ast.walk(tree):
             if isinstance(parent, ast.ClassDef):
                 for item in parent.body:

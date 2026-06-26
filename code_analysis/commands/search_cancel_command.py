@@ -42,6 +42,7 @@ class SearchCancelCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -55,6 +56,7 @@ class SearchCancelCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return validate params."""
         params = super().validate_params(params)
         if not str(params.get("job_id") or "").strip():
             raise ValidationError(
@@ -63,6 +65,7 @@ class SearchCancelCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        """Execute the command."""
         job_id = str(kwargs.get("job_id") or "").strip()
         ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
@@ -87,6 +90,7 @@ class SearchCancelCommand(BaseMCPCommand):
         cancelled_snapshot = apply_cancellation(snapshot, reason="client_cancel")
 
         def _mutator(m):
+            """Return mutator."""
             return replace(m, status=cancelled_snapshot.status)
 
         update_manifest_atomic(layout, _mutator)
@@ -99,6 +103,7 @@ class SearchCancelCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,

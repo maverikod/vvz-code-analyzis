@@ -24,6 +24,8 @@ VALID_POSITIONS = ("before", "after", "first_child", "last_child")
 
 
 class EditOperationKind(str, Enum):
+    """Represent EditOperationKind."""
+
     INSERT = "insert"
     DELETE = "delete"
     REPLACE = "replace"
@@ -38,6 +40,8 @@ class EditOperationError(ValueError):
 
 @dataclass
 class EditOperation:
+    """Represent EditOperation."""
+
     kind: EditOperationKind
     short_id: Optional[NodeId] = None
     anchor_short_id: Optional[NodeId] = None
@@ -48,12 +52,14 @@ class EditOperation:
 
 
 def _require(value: Any, name: str, kind: EditOperationKind) -> Any:
+    """Return require."""
     if value is None:
         raise EditOperationError(f"{name} is required for {kind.value}")
     return value
 
 
 def _check_position(position: Optional[str], kind: EditOperationKind) -> str:
+    """Return check position."""
     pos = _require(position, "position", kind)
     assert isinstance(pos, str)
     if pos not in VALID_POSITIONS:
@@ -64,6 +70,7 @@ def _check_position(position: Optional[str], kind: EditOperationKind) -> str:
 
 
 def _normalize_short_id(value: int, name: str) -> NodeId:
+    """Return normalize short id."""
     try:
         return validate_short_id(value)
     except ValueError:

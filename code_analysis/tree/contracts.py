@@ -39,6 +39,7 @@ class UnknownNodeIdError(ValueError):
     short_id: NodeId
 
     def __init__(self, short_id: NodeId) -> None:
+        """Initialize the instance."""
         super().__init__(f"Unknown short_id: {short_id!r}")
         self.short_id = short_id
 
@@ -73,14 +74,17 @@ class AddressableBlock:
     description: str
 
     def __init__(self, fmt: Format, description: str) -> None:
+        """Initialize the instance."""
         self.fmt = fmt
         self.description = description
 
     @classmethod
     def granularity_for(cls, fmt: Format) -> str:
+        """Return granularity for."""
         return cls.FORMAT_GRANULARITY[fmt]
 
     def __repr__(self) -> str:  # pragma: no cover
+        """Return repr."""
         return f"AddressableBlock(fmt={self.fmt!r}, description={self.description!r})"
 
 
@@ -119,6 +123,8 @@ if TYPE_CHECKING:
 
     @dataclass
     class TreeNode:
+        """Represent TreeNode."""
+
         short_id: NodeId
         kind: str
         content: str

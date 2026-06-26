@@ -25,7 +25,6 @@ from code_analysis.core.project_resolution import load_project_info
 from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
 
-
 # Get test data directory
 TEST_DATA_DIR = Path(__file__).parent.parent / "test_data"
 VAST_SRV_DIR = TEST_DATA_DIR / "vast_srv"
@@ -502,6 +501,7 @@ class TestDocsMarkdownWatcherAdmission:
 
     @staticmethod
     def _project_tree(base: Path) -> tuple[Path, str]:
+        """Return project tree."""
         proj = base / "myproj"
         proj.mkdir()
         pid = str(uuid.uuid4())
@@ -521,6 +521,7 @@ class TestDocsMarkdownWatcherAdmission:
         return proj, pid
 
     def test_scan_without_docs_config_ignores_markdown(self, tmp_path: Path) -> None:
+        """Verify test scan without docs config ignores markdown."""
         proj, _ = self._project_tree(tmp_path)
         roots = {proj.resolve()}
         files = scan_directory(
@@ -534,6 +535,7 @@ class TestDocsMarkdownWatcherAdmission:
         assert "guide.md" not in keys
 
     def test_scan_with_docs_enabled_includes_eligible_md(self, tmp_path: Path) -> None:
+        """Verify test scan with docs enabled includes eligible md."""
         proj, _ = self._project_tree(tmp_path)
         roots = {proj.resolve()}
         cfg = default_docs_indexing_dict()
@@ -552,6 +554,7 @@ class TestDocsMarkdownWatcherAdmission:
         assert "note.txt" not in keys
 
     def test_should_ignore_path_docs_gate(self, tmp_path: Path) -> None:
+        """Verify test should ignore path docs gate."""
         proj, _ = self._project_tree(tmp_path)
         cfg = default_docs_indexing_dict()
         cfg["enabled"] = True
@@ -574,6 +577,7 @@ class TestDocsMarkdownWatcherAdmission:
 def test_load_docs_indexing_from_config_path_disabled_returns_none(
     tmp_path: Path,
 ) -> None:
+    """Verify test load docs indexing from config path disabled returns none."""
     from code_analysis.core.docs_indexing_config_load import (
         load_docs_indexing_from_config_path,
     )
@@ -589,6 +593,7 @@ def test_load_docs_indexing_from_config_path_disabled_returns_none(
 def test_load_docs_indexing_from_config_path_enabled_returns_dict(
     tmp_path: Path,
 ) -> None:
+    """Verify test load docs indexing from config path enabled returns dict."""
     from code_analysis.core.docs_indexing_config_load import (
         load_docs_indexing_from_config_path,
     )

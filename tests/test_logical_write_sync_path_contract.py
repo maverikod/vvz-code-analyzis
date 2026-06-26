@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
+    """Return repo root."""
     p = Path(__file__).resolve()
     for parent in [p.parent, *p.parents]:
         if (parent / "code_analysis" / "core").is_dir():
@@ -22,6 +23,7 @@ def _repo_root() -> Path:
 
 
 def test_sync_file_to_db_atomic_source_no_transaction_helpers() -> None:
+    """Verify test sync file to db atomic source no transaction helpers."""
     path = _repo_root() / "code_analysis" / "core" / "database" / "file_tree_sync.py"
     if not path.is_file():
         raise AssertionError(f"missing {path}")
@@ -36,6 +38,7 @@ def test_sync_file_to_db_atomic_source_no_transaction_helpers() -> None:
 
 
 def test_clear_project_data_impl_uses_logical_write_only() -> None:
+    """Verify test clear project data impl uses logical write only."""
     path = _repo_root() / "code_analysis" / "commands" / "clear_project_data_impl.py"
     if not path.is_file():
         raise AssertionError(f"missing {path}")
@@ -50,6 +53,7 @@ def test_clear_project_data_impl_uses_logical_write_only() -> None:
 
 
 def test_update_file_data_atomic_batch_uses_logical_write_only() -> None:
+    """Verify test update file data atomic batch uses logical write only."""
     path = (
         _repo_root()
         / "code_analysis"

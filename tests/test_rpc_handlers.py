@@ -283,6 +283,7 @@ class TestRPCHandlersExecute:
     def test_handle_execute_transient_error_returns_structured_details(
         self, handlers, mock_driver
     ):
+        """Verify test handle execute transient error returns structured details."""
         mock_driver.execute.side_effect = TransientDatabaseError(
             "deadlock",
             sqlstate="40P01",
@@ -303,6 +304,7 @@ class TestRPCHandlersExecute:
     def test_handle_execute_non_transient_driver_operation_error_minimal_data(
         self, handlers, mock_driver
     ):
+        """Verify test handle execute non transient driver operation error minimal data."""
         mock_driver.execute.side_effect = DriverOperationError("nope")
         result = handlers.handle_execute({"sql": "SELECT 1"})
         assert isinstance(result, ErrorResult)
@@ -312,6 +314,7 @@ class TestRPCHandlersExecute:
     def test_handle_execute_batch_transient_error_returns_structured_details(
         self, handlers, mock_driver
     ):
+        """Verify test handle execute batch transient error returns structured details."""
         mock_driver.execute_batch.side_effect = TransientDatabaseError(
             "serialization",
             sqlstate="40001",

@@ -138,6 +138,7 @@ def save_tree_to_file(
                 _read_logical_py_source_sync_disk(target_path)
 
         def try_restore_from_backup() -> None:
+            """Return try restore from backup."""
             if backup_uuid and backup_manager and target_path.exists():
                 try:
                     rel_path = str(target_path.relative_to(root_dir))

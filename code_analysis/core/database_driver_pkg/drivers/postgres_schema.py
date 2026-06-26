@@ -19,10 +19,12 @@ class PostgreSQLSchemaManager:
     """Schema introspection and sync for PostgreSQL."""
 
     def __init__(self, connection: Any, *, schema_vector_dim: int = 384) -> None:
+        """Initialize the instance."""
         self.conn = connection
         self._schema_vector_dim = int(schema_vector_dim)
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        """Return get table info."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 
@@ -78,6 +80,7 @@ class PostgreSQLSchemaManager:
         backup_dir: Optional[str],
         create_table_func: Any,
     ) -> Dict[str, Any]:
+        """Return sync schema."""
         del create_table_func, backup_dir
         from .postgres_migrations import ensure_postgres_schema
 

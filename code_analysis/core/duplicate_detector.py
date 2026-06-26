@@ -294,6 +294,7 @@ class DuplicateDetector:
 
         # Simple implementation using longest common subsequence
         def lcs_length(s1: str, s2: str) -> int:
+            """Return lcs length."""
             m, n = len(s1), len(s2)
             dp = [[0] * (n + 1) for _ in range(m + 1)]
 

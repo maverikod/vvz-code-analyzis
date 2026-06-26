@@ -26,6 +26,7 @@ def _list_project_files_mock_db_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_db.get_project_file_rows.return_value = []
 
     def _open(_self: object, auto_analyze: bool = False) -> MagicMock:
+        """Return open."""
         return mock_db
 
     monkeypatch.setattr(
@@ -37,6 +38,7 @@ def _list_project_files_mock_db_rows(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_list_project_files_lists_file_on_disk(tmp_path) -> None:
+    """Verify test list project files lists file on disk."""
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "src").mkdir()
@@ -62,6 +64,7 @@ async def test_list_project_files_lists_file_on_disk(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_project_files_fs_only_without_db_row(tmp_path) -> None:
+    """Verify test list project files fs only without db row."""
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "only_fs.py").write_text("#\n")
@@ -85,6 +88,7 @@ async def test_list_project_files_fs_only_without_db_row(tmp_path) -> None:
 async def test_list_project_files_sets_file_id_from_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test list project files sets file id from index."""
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "src").mkdir()
@@ -99,6 +103,7 @@ async def test_list_project_files_sets_file_id_from_index(
     ]
 
     def _open(_self: object, auto_analyze: bool = False) -> MagicMock:
+        """Return open."""
         return mock_db
 
     monkeypatch.setattr(
@@ -121,6 +126,7 @@ async def test_list_project_files_sets_file_id_from_index(
 
 @pytest.mark.asyncio
 async def test_empty_project_lists_no_files(tmp_path) -> None:
+    """Verify test empty project lists no files."""
     proj = tmp_path / "proj"
     proj.mkdir()
 
@@ -139,6 +145,7 @@ async def test_empty_project_lists_no_files(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_default_skips_venv_tree(tmp_path) -> None:
+    """Verify test default skips venv tree."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "main.py").write_text("#\n")
@@ -160,6 +167,7 @@ async def test_default_skips_venv_tree(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_default_skips_cache_dir_show_hidden_lists_it(tmp_path) -> None:
+    """Verify test default skips cache dir show hidden lists it."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "app.py").write_text("#\n")
@@ -186,6 +194,7 @@ async def test_default_skips_cache_dir_show_hidden_lists_it(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_show_venv_adds_only_allowlisted_record_files(tmp_path) -> None:
+    """Verify test show venv adds only allowlisted record files."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "main.py").write_text("#\n")
@@ -254,6 +263,7 @@ async def test_ignore_exceptions_under_venv_not_listed_by_default(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_include_venv_ignore_exceptions_lists_forced_venv_file(tmp_path) -> None:
+    """Verify test include venv ignore exceptions lists forced venv file."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "main.py").write_text("#\n")
@@ -285,6 +295,7 @@ async def test_include_venv_ignore_exceptions_lists_forced_venv_file(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_show_venv_empty_allowlist_adds_no_venv_files(tmp_path) -> None:
+    """Verify test show venv empty allowlist adds no venv files."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "main.py").write_text("#\n")
@@ -320,6 +331,7 @@ async def test_show_venv_empty_allowlist_adds_no_venv_files(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_pagination_stable_sort(tmp_path) -> None:
+    """Verify test pagination stable sort."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "c.py").write_text("#\n")
@@ -344,6 +356,7 @@ async def test_pagination_stable_sort(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_file_pattern_filter(tmp_path) -> None:
+    """Verify test file pattern filter."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "keep.py").write_text("#\n")
@@ -365,6 +378,7 @@ async def test_file_pattern_filter(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_lists_markdown_and_python_by_default(tmp_path) -> None:
+    """Verify test lists markdown and python by default."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "a.py").write_text("#\n")
@@ -383,6 +397,7 @@ async def test_lists_markdown_and_python_by_default(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_plan_directory_pattern_returns_steps_and_readme(tmp_path) -> None:
+    """Verify test plan directory pattern returns steps and readme."""
     root = tmp_path / "proj"
     plan = root / "docs" / "plans" / "db_retry_worker_coordination_100_qwen"
     plan.mkdir(parents=True)
@@ -415,6 +430,7 @@ async def test_plan_directory_pattern_returns_steps_and_readme(tmp_path) -> None
 
 @pytest.mark.asyncio
 async def test_python_only_restricts_to_py(tmp_path) -> None:
+    """Verify test python only restricts to py."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "a.py").write_text("#\n")
@@ -435,6 +451,7 @@ async def test_python_only_restricts_to_py(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_pagination_total_count_offset(tmp_path) -> None:
+    """Verify test pagination total count offset."""
     root = tmp_path / "proj"
     root.mkdir()
     for name in ("m1.md", "m2.md", "m3.md"):
@@ -481,6 +498,7 @@ async def test_nested_commands_pattern_fnmatch(tmp_path) -> None:
 
 
 def test_relative_path_matches_directory_prefix_without_wildcards() -> None:
+    """Verify test relative path matches directory prefix without wildcards."""
     assert relative_path_matches_listing_pattern(
         "docs/plans/foo/README.md", "docs/plans/foo"
     )
@@ -552,6 +570,7 @@ async def test_plan_directory_literal_prefix_with_trailing_slash(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_glob_param_alias(tmp_path) -> None:
+    """Verify test glob param alias."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "a.py").write_text("#\n")
@@ -573,6 +592,7 @@ async def test_glob_param_alias(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_file_pattern_wins_over_glob(tmp_path) -> None:
+    """Verify test file pattern wins over glob."""
     root = tmp_path / "proj"
     root.mkdir()
     (root / "a.py").write_text("#\n")
@@ -595,6 +615,7 @@ async def test_file_pattern_wins_over_glob(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_backslashes_in_pattern_normalized(tmp_path) -> None:
+    """Verify test backslashes in pattern normalized."""
     root = tmp_path / "proj"
     sub = root / "pkg" / "mod"
     sub.mkdir(parents=True)

@@ -21,12 +21,14 @@ def _write_pair(
     source_text: str,
     tree_text: str,
 ) -> None:
+    """Return write pair."""
     repo_dir.mkdir(parents=True, exist_ok=True)
     (repo_dir / source_name).write_text(source_text, encoding="utf-8")
     (repo_dir / tree_name).write_text(tree_text, encoding="utf-8")
 
 
 def test_init_full_commit_captures_tree_and_source(tmp_path: Path) -> None:
+    """Verify test init full commit captures tree and source."""
     source_name = "demo.json"
     tree_name = "demo.json.tree"
     repo_dir = tmp_path / "repo_full"
@@ -54,6 +56,7 @@ def test_init_full_commit_captures_tree_and_source(tmp_path: Path) -> None:
 
 
 def test_commit_degraded_source_only(tmp_path: Path) -> None:
+    """Verify test commit degraded source only."""
     source_name = "demo.json"
     tree_name = "demo.json.tree"
     repo_dir = tmp_path / "repo_deg"
@@ -78,6 +81,7 @@ def test_commit_degraded_source_only(tmp_path: Path) -> None:
 
 
 def test_two_mutations_two_commits(tmp_path: Path) -> None:
+    """Verify test two mutations two commits."""
     source_name = "demo.json"
     tree_name = "demo.json.tree"
     repo_dir = tmp_path / "repo_mut"
@@ -110,6 +114,7 @@ def test_two_mutations_two_commits(tmp_path: Path) -> None:
 
 
 def test_revert_adds_new_commit_not_reset(tmp_path: Path) -> None:
+    """Verify test revert adds new commit not reset."""
     source_name = "demo.json"
     tree_name = "demo.json.tree"
     repo_dir = tmp_path / "repo_rev"

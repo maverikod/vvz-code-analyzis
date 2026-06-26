@@ -38,6 +38,7 @@ DOCSTRINGS = [
 
 
 async def main() -> None:
+    """Run the command-line entry point."""
     config_path = ROOT / "config.json"
     if not config_path.exists():
         print(f"Config not found: {config_path}", file=sys.stderr)

@@ -23,7 +23,6 @@ from code_analysis.core.cst_tree.tree_builder import (
 from code_analysis.core.cst_tree.tree_modifier import modify_tree
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-
 IMPORT_SOURCE = '''"""Doc."""
 from .task_status import TaskStatus
 
@@ -805,6 +804,7 @@ SOURCE_TWO_PARAMS = """def f(a: int, b: int) -> None:
 
 
 def _node_id_first_type(tree, node_type: str, *, line: int):
+    """Return node id first type."""
     for nid, meta in tree.metadata_map.items():
         if meta.type == node_type and meta.start_line == line:
             return nid
@@ -831,6 +831,7 @@ class TestReplaceLeafParamAndName:
     """Replace Param / inner Name without promoting to whole FunctionDef."""
 
     def test_build_ops_replace_param_keeps_node_id_and_body_unchanged(self, tmp_path):
+        """Verify test build ops replace param keeps node id and body unchanged."""
         path = str(tmp_path / "leaf.py")
         tree = create_tree_from_code(path, SOURCE_PARAM_AND_NAME)
         tree_id = tree.tree_id
@@ -857,6 +858,7 @@ class TestReplaceLeafParamAndName:
         assert "def foo(a):" not in code
 
     def test_build_ops_replace_name_in_return_keeps_signature(self, tmp_path):
+        """Verify test build ops replace name in return keeps signature."""
         path = str(tmp_path / "leaf2.py")
         tree = create_tree_from_code(path, SOURCE_PARAM_AND_NAME)
         tree_id = tree.tree_id
@@ -883,6 +885,8 @@ class TestReplaceLeafParamAndName:
 
 
 class TestBatchedTwoParamReplacesEquivalence:
+    """Represent TestBatchedTwoParamReplacesEquivalence."""
+
     def test_two_param_replaces_one_modify_matches_sequential(self, tmp_path):
         """Batch two Param replaces equals two sequential modifies."""
         path = str(tmp_path / "seq_two_param.py")
@@ -980,6 +984,7 @@ class TestReplaceLeafAnnotation:
     """Replace leaf Annotation (param / return) without rewriting whole signature."""
 
     def test_build_ops_replace_param_annotation_keeps_return_and_body(self, tmp_path):
+        """Verify test build ops replace param annotation keeps return and body."""
         path = str(tmp_path / "ann_param.py")
         tree = create_tree_from_code(path, SOURCE_ANNOTATION_SIGNATURE)
         tree_id = tree.tree_id
@@ -1008,6 +1013,7 @@ class TestReplaceLeafAnnotation:
         assert "pass" in code
 
     def test_build_ops_replace_return_annotation_keeps_param_and_body(self, tmp_path):
+        """Verify test build ops replace return annotation keeps param and body."""
         path = str(tmp_path / "ann_return.py")
         tree = create_tree_from_code(path, SOURCE_ANNOTATION_SIGNATURE)
         tree_id = tree.tree_id
@@ -1036,6 +1042,8 @@ class TestReplaceLeafAnnotation:
 
 
 class TestBatchedTwoAnnotationReplacesEquivalence:
+    """Represent TestBatchedTwoAnnotationReplacesEquivalence."""
+
     def test_two_annotation_replaces_one_modify_matches_sequential(self, tmp_path):
         """Batch two Annotation replaces equals two sequential modifies."""
         path = str(tmp_path / "seq_two_ann.py")
@@ -1118,6 +1126,7 @@ class TestPreviewDoesNotLeaveMutatedTree:
 
     @pytest.mark.asyncio
     async def test_preview_then_apply_module_insert_once(self, tmp_path):
+        """Verify test preview then apply module insert once."""
         path = str(tmp_path / "preview_insert.py")
         tree = create_tree_from_code(path, SOURCE_PREVIEW_INSERT.strip())
         tree_id = tree.tree_id
@@ -1158,6 +1167,7 @@ SOURCE_AWAIT_CALL = """class C:
 
 
 def _find_type_on_line(tree_id: str, node_type: str, line: int) -> str:
+    """Return find type on line."""
     t = get_tree(tree_id)
     assert t is not None
     for nid, m in t.metadata_map.items():
@@ -1171,6 +1181,7 @@ class TestPreviewExpressionReplace:
 
     @pytest.mark.asyncio
     async def test_preview_call_replace_keeps_node_ids_and_rollback(self, tmp_path):
+        """Verify test preview call replace keeps node ids and rollback."""
         path = str(tmp_path / "await_call.py")
         tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
         tree_id = tree.tree_id
@@ -1209,6 +1220,7 @@ class TestPreviewExpressionReplace:
 
     @pytest.mark.asyncio
     async def test_preview_await_replace_validates_in_function(self, tmp_path):
+        """Verify test preview await replace validates in function."""
         path = str(tmp_path / "await_call2.py")
         tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
         tree_id = tree.tree_id
@@ -1240,6 +1252,7 @@ class TestPreviewExpressionReplace:
     async def test_preview_invalid_expression_returns_error_tree_restored(
         self, tmp_path
     ):
+        """Verify test preview invalid expression returns error tree restored."""
         path = str(tmp_path / "await_call3.py")
         tree = create_tree_from_code(path, SOURCE_AWAIT_CALL.strip())
         tree_id = tree.tree_id

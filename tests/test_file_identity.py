@@ -17,6 +17,7 @@ from code_analysis.core.file_identity import (
 
 
 def test_normalize_project_file_path_same_file_different_syntax(tmp_path: Path) -> None:
+    """Verify test normalize project file path same file different syntax."""
     f = tmp_path / "f.py"
     f.write_text("x\n", encoding="utf-8")
     direct = normalize_project_file_path(f)
@@ -26,6 +27,7 @@ def test_normalize_project_file_path_same_file_different_syntax(tmp_path: Path) 
 
 
 def test_is_same_absolute_file_equivalence(tmp_path: Path) -> None:
+    """Verify test is same absolute file equivalence."""
     a = tmp_path / "a.txt"
     a.write_text("1", encoding="utf-8")
     assert is_same_absolute_file(str(a.resolve()), a.resolve())
@@ -33,6 +35,7 @@ def test_is_same_absolute_file_equivalence(tmp_path: Path) -> None:
 
 
 def test_relative_path_for_project_posix_under_root(tmp_path: Path) -> None:
+    """Verify test relative path for project posix under root."""
     root = tmp_path / "proj"
     root.mkdir()
     sub = root / "pkg" / "m.py"
@@ -43,6 +46,7 @@ def test_relative_path_for_project_posix_under_root(tmp_path: Path) -> None:
 
 
 def test_relative_path_for_project_outside_root_raises(tmp_path: Path) -> None:
+    """Verify test relative path for project outside root raises."""
     root = tmp_path / "inside"
     root.mkdir()
     outsider = tmp_path / "outside" / "x.py"
@@ -53,6 +57,7 @@ def test_relative_path_for_project_outside_root_raises(tmp_path: Path) -> None:
 
 
 def test_classify_different_project_same_relative_only(tmp_path: Path) -> None:
+    """Verify test classify different project same relative only."""
     root_a = tmp_path / "pa"
     root_b = tmp_path / "pb"
     root_a.mkdir()
@@ -78,6 +83,7 @@ def test_classify_different_project_same_relative_only(tmp_path: Path) -> None:
 
 
 def test_classify_nested_roots_same_absolute_different_projects(tmp_path: Path) -> None:
+    """Verify test classify nested roots same absolute different projects."""
     outer = tmp_path / "nest" / "super"
     inner = outer / "submodule"
     inner.mkdir(parents=True)
@@ -100,6 +106,7 @@ def test_classify_nested_roots_same_absolute_different_projects(tmp_path: Path) 
 
 
 def test_classify_same_project_same_absolute(tmp_path: Path) -> None:
+    """Verify test classify same project same absolute."""
     root = tmp_path / "one"
     root.mkdir()
     f = root / "a.py"
@@ -118,6 +125,7 @@ def test_classify_same_project_same_absolute(tmp_path: Path) -> None:
 
 
 def test_classify_unrelated_different_projects(tmp_path: Path) -> None:
+    """Verify test classify unrelated different projects."""
     ra = tmp_path / "r1"
     rb = tmp_path / "r2"
     ra.mkdir()

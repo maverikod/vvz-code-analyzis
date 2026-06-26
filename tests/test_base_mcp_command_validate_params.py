@@ -40,9 +40,11 @@ class _StrictSchemaCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return _STRICT_SCHEMA
 
     async def execute(self, **kwargs: Any) -> CommandResult:
+        """Execute the command."""
         return SuccessResult(data={})
 
 
@@ -50,6 +52,7 @@ class TestValidateParamsAgainstSchemaUnknownKey:
     """Direct server-side validate_params_against_schema unknown-key rejection."""
 
     def test_rejects_unknown_key_when_additional_properties_false(self) -> None:
+        """Verify test rejects unknown key when additional properties false."""
         with pytest.raises(ValidationError, match="unknown parameter") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"known": "ok", "surprise": 1},
@@ -67,6 +70,7 @@ class TestBaseMCPCommandValidateParamsUnknownKey:
     """BaseMCPCommand.validate_params rejects unknown keys via schema."""
 
     def test_subclass_validate_params_rejects_unknown_key(self) -> None:
+        """Verify test subclass validate params rejects unknown key."""
         with pytest.raises(ValidationError, match="unknown parameter") as exc_info:
             _StrictSchemaCommand().validate_params({"known": "ok", "unexpected": True})
         err = exc_info.value
@@ -78,6 +82,7 @@ class TestCreateProjectValidateParamsUnknownKey:
     """CreateProjectMCPCommand rejects unknown keys after SYS-004 fix."""
 
     def test_rejects_unknown_key_before_watch_dir_lookup(self) -> None:
+        """Verify test rejects unknown key before watch dir lookup."""
         params = {
             "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
             "project_name": "demo",
@@ -118,6 +123,7 @@ class TestValidateParamsAgainstSchemaConstraints:
     """SYS-006: min/max, enum, array bounds, and item type validation."""
 
     def test_integer_minimum_rejected(self) -> None:
+        """Verify test integer minimum rejected."""
         with pytest.raises(ValidationError, match="must be >=") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"count": 0},
@@ -128,6 +134,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.details["minimum"] == 1
 
     def test_integer_maximum_rejected(self) -> None:
+        """Verify test integer maximum rejected."""
         with pytest.raises(ValidationError, match="must be <=") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"count": 101},
@@ -138,6 +145,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.details["maximum"] == 100
 
     def test_integer_within_bounds_accepted(self) -> None:
+        """Verify test integer within bounds accepted."""
         BaseMCPCommand.validate_params_against_schema(
             {"count": 50},
             _EXTENDED_SCHEMA,
@@ -145,6 +153,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         )
 
     def test_number_minimum_rejected(self) -> None:
+        """Verify test number minimum rejected."""
         with pytest.raises(ValidationError, match="must be >=") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"ratio": -0.1},
@@ -154,6 +163,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.field == "ratio"
 
     def test_number_maximum_rejected(self) -> None:
+        """Verify test number maximum rejected."""
         with pytest.raises(ValidationError, match="must be <=") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"ratio": 1.5},
@@ -163,6 +173,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.field == "ratio"
 
     def test_number_within_bounds_accepted(self) -> None:
+        """Verify test number within bounds accepted."""
         BaseMCPCommand.validate_params_against_schema(
             {"ratio": 0.5},
             _EXTENDED_SCHEMA,
@@ -170,6 +181,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         )
 
     def test_enum_rejected(self) -> None:
+        """Verify test enum rejected."""
         with pytest.raises(ValidationError, match="must be one of") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"mode": "medium"},
@@ -180,6 +192,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.details["enum"] == ["fast", "slow"]
 
     def test_enum_accepted(self) -> None:
+        """Verify test enum accepted."""
         BaseMCPCommand.validate_params_against_schema(
             {"mode": "fast"},
             _EXTENDED_SCHEMA,
@@ -187,6 +200,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         )
 
     def test_array_min_items_rejected(self) -> None:
+        """Verify test array min items rejected."""
         with pytest.raises(ValidationError, match="at least 1 items") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"tags": []},
@@ -197,6 +211,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.details["minItems"] == 1
 
     def test_array_max_items_rejected(self) -> None:
+        """Verify test array max items rejected."""
         with pytest.raises(ValidationError, match="at most 3 items") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"tags": ["a", "b", "c", "d"]},
@@ -207,6 +222,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.details["maxItems"] == 3
 
     def test_array_item_type_rejected(self) -> None:
+        """Verify test array item type rejected."""
         with pytest.raises(ValidationError, match="must be string") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"tags": ["ok", 42]},
@@ -216,6 +232,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.field == "tags[1]"
 
     def test_array_item_min_max_rejected(self) -> None:
+        """Verify test array item min max rejected."""
         with pytest.raises(ValidationError, match="must be <=") as exc_info:
             BaseMCPCommand.validate_params_against_schema(
                 {"scores": [5, 11]},
@@ -225,6 +242,7 @@ class TestValidateParamsAgainstSchemaConstraints:
         assert exc_info.value.field == "scores[1]"
 
     def test_array_valid_items_accepted(self) -> None:
+        """Verify test array valid items accepted."""
         BaseMCPCommand.validate_params_against_schema(
             {"tags": ["alpha", "beta"], "scores": [0, 10]},
             _EXTENDED_SCHEMA,
@@ -258,6 +276,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
     """W3A: oneOf / anyOf union branch matching."""
 
     def test_anyof_accepts_string(self) -> None:
+        """Verify test anyof accepts string."""
         BaseMCPCommand.validate_params_against_schema(
             {"flexible": "hello"},
             _UNION_SCHEMA,
@@ -265,6 +284,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         )
 
     def test_anyof_accepts_integer(self) -> None:
+        """Verify test anyof accepts integer."""
         BaseMCPCommand.validate_params_against_schema(
             {"flexible": 42},
             _UNION_SCHEMA,
@@ -272,6 +292,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         )
 
     def test_anyof_rejects_boolean(self) -> None:
+        """Verify test anyof rejects boolean."""
         with pytest.raises(
             ValidationError, match="must match at least one branch of anyOf"
         ) as exc_info:
@@ -284,6 +305,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         assert "anyOf" in exc_info.value.details
 
     def test_oneof_accepts_string(self) -> None:
+        """Verify test oneof accepts string."""
         BaseMCPCommand.validate_params_against_schema(
             {"selector": "1:10"},
             _UNION_SCHEMA,
@@ -291,6 +313,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         )
 
     def test_oneof_accepts_integer_array(self) -> None:
+        """Verify test oneof accepts integer array."""
         BaseMCPCommand.validate_params_against_schema(
             {"selector": [0, 1, 2]},
             _UNION_SCHEMA,
@@ -298,6 +321,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         )
 
     def test_oneof_accepts_string_array(self) -> None:
+        """Verify test oneof accepts string array."""
         BaseMCPCommand.validate_params_against_schema(
             {"selector": ["block_a", "block_b"]},
             _UNION_SCHEMA,
@@ -305,6 +329,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         )
 
     def test_oneof_rejects_mixed_array(self) -> None:
+        """Verify test oneof rejects mixed array."""
         with pytest.raises(
             ValidationError, match="must match one branch of oneOf"
         ) as exc_info:
@@ -317,6 +342,7 @@ class TestValidateParamsAgainstSchemaUnionTypes:
         assert "oneOf" in exc_info.value.details
 
     def test_oneof_rejects_boolean(self) -> None:
+        """Verify test oneof rejects boolean."""
         with pytest.raises(
             ValidationError, match="must match one branch of oneOf"
         ) as exc_info:

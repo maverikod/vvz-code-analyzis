@@ -20,7 +20,10 @@ from code_analysis.commands.file_management.mark_file_deleted import (
 
 
 class _FakeDB:
+    """Represent FakeDB."""
+
     def __init__(self, project_id: str, project_root: Path, trash_root: Path) -> None:
+        """Initialize the instance."""
         self.project_id = project_id
         self.project_root = project_root
         self.trash_root = trash_root
@@ -30,6 +33,7 @@ class _FakeDB:
         # PostgreSQL-like fake: intentionally no db_path attribute.
 
     def get_project(self, pid: str) -> Optional[Dict[str, str]]:
+        """Return get project."""
         if pid != self.project_id:
             return None
         return {"id": self.project_id, "root_path": str(self.project_root)}
@@ -37,6 +41,7 @@ class _FakeDB:
     def get_file_by_path(
         self, path: str, project_id: str, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
+        """Return get file by path."""
         if project_id != self.project_id:
             return None
         row = self.files_by_abs_path.get(str(Path(path).resolve()))
@@ -54,6 +59,7 @@ class _FakeDB:
         has_docstring: bool,
         project_id: str,
     ) -> int:
+        """Return add file."""
         abs_path = str(Path(path).resolve())
         if project_id != self.project_id:
             raise ValueError("Project mismatch")
@@ -91,6 +97,7 @@ class _FakeDB:
         reason: Optional[str] = None,
         trash_dir: Optional[str] = None,
     ) -> bool:
+        """Return mark file deleted."""
         del reason, version_dir
         if not trash_dir or project_id != self.project_id:
             return False
@@ -116,6 +123,7 @@ class _FakeDB:
         return True
 
     def get_deleted_files(self, project_id: str) -> list[Dict[str, Any]]:
+        """Return get deleted files."""
         if project_id != self.project_id:
             return []
         return [r for r in self.deleted_rows if r.get("deleted") == 1]
@@ -123,6 +131,7 @@ class _FakeDB:
 
 @pytest.mark.asyncio
 async def test_delete_file_db_missing_fs_exists(tmp_path: Path) -> None:
+    """Verify test delete file db missing fs exists."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"
@@ -156,6 +165,7 @@ async def test_delete_file_db_missing_fs_exists(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_file_db_missing_fs_missing(tmp_path: Path) -> None:
+    """Verify test delete file db missing fs missing."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"
@@ -180,6 +190,7 @@ async def test_delete_file_db_missing_fs_missing(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_file_db_existing(tmp_path: Path) -> None:
+    """Verify test delete file db existing."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"
@@ -213,6 +224,7 @@ async def test_delete_file_db_existing(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_file_rejects_path_traversal(tmp_path: Path) -> None:
+    """Verify test delete file rejects path traversal."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"
@@ -233,6 +245,7 @@ async def test_delete_file_rejects_path_traversal(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_file_rejects_absolute_path(tmp_path: Path) -> None:
+    """Verify test delete file rejects absolute path."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"
@@ -253,6 +266,7 @@ async def test_delete_file_rejects_absolute_path(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_file_postgres_like_driver_without_db_path(tmp_path: Path) -> None:
+    """Verify test delete file postgres like driver without db path."""
     project_id = str(uuid.uuid4())
     project_root = tmp_path / "project"
     trash_root = tmp_path / "trash"

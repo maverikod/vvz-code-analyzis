@@ -12,6 +12,7 @@ from code_analysis.core.storage_paths import (
 
 
 def test_resolve_service_log_dir_absolute(tmp_path: Path) -> None:
+    """Verify test resolve service log dir absolute."""
     cfg = {"server": {"log_dir": "/var/log/casmgr"}}
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
@@ -21,6 +22,7 @@ def test_resolve_service_log_dir_absolute(tmp_path: Path) -> None:
 
 
 def test_storage_paths_uses_server_log_dir_not_config_dir(tmp_path: Path) -> None:
+    """Verify test storage paths uses server log dir not config dir."""
     etc = tmp_path / "etc" / "casmgr"
     etc.mkdir(parents=True)
     config_path = etc / "config.json"
@@ -37,6 +39,7 @@ def test_storage_paths_uses_server_log_dir_not_config_dir(tmp_path: Path) -> Non
 def test_resolve_search_sessions_root_uses_db_parent_not_config_dir(
     tmp_path: Path,
 ) -> None:
+    """Verify test resolve search sessions root uses db parent not config dir."""
     etc = tmp_path / "etc" / "casmgr"
     etc.mkdir(parents=True)
     config_path = etc / "config.json"

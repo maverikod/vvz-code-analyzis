@@ -20,6 +20,7 @@ from code_analysis.core.database_client.client_api_files import _ClientAPIFilesM
 
 @pytest.mark.parametrize("bad_root", ["", None, "embed"])  # empty / missing / relative
 def test_add_file_raises_on_unresolved_root(bad_root) -> None:
+    """Verify test add file raises on unresolved root."""
     fake = MagicMock()
     fake.get_project.return_value = SimpleNamespace(root_path=bad_root)
     with pytest.raises(ValueError, match="unresolved"):

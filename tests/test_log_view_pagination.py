@@ -21,11 +21,13 @@ from code_analysis.commands.log_viewer_mcp_commands.view_worker_logs import (
 
 
 def _sample_log_lines(n: int) -> list[str]:
+    """Return sample log lines."""
     return [f"2024-01-01 12:00:00 | INFO | 5 | message {i}\n" for i in range(n)]
 
 
 @pytest.mark.asyncio
 async def test_log_viewer_command_pagination(tmp_path: Path) -> None:
+    """Verify test log viewer command pagination."""
     log_file = tmp_path / "test.log"
     log_file.write_text("".join(_sample_log_lines(5)), encoding="utf-8")
 
@@ -50,6 +52,7 @@ async def test_log_viewer_command_pagination(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_worker_logs_pagination(tmp_path: Path) -> None:
+    """Verify test list worker logs pagination."""
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     for i in range(5):
@@ -76,6 +79,7 @@ async def test_list_worker_logs_pagination(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_logs_pagination() -> None:
+    """Verify test list logs pagination."""
     fake_logs = [{"log_id": f"log_{i}", "description": f"d{i}"} for i in range(4)]
 
     cmd = ListLogsMCPCommand()
@@ -109,6 +113,7 @@ async def test_list_logs_pagination() -> None:
 
 @pytest.mark.asyncio
 async def test_analyze_timing_bottlenecks_operations_pagination(tmp_path: Path) -> None:
+    """Verify test analyze timing bottlenecks operations pagination."""
     log_file = tmp_path / "vectorization_worker.log"
     lines = []
     for i in range(6):
@@ -136,6 +141,7 @@ async def test_analyze_timing_bottlenecks_operations_pagination(tmp_path: Path) 
 
 
 def test_view_worker_logs_validate_pagination_defaults() -> None:
+    """Verify test view worker logs validate pagination defaults."""
     cmd = ViewWorkerLogsMCPCommand()
     out = cmd.validate_params({"limit": 50})
     assert out["page_size"] == 50

@@ -66,6 +66,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for distributing file entities across package modules."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -373,6 +374,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
         config: Any,
         **kwargs,
     ) -> SuccessResult:
+        """Split a Python file into a backed-up package of configured modules."""
         from ..core.progress_tracker import get_progress_tracker_from_context
 
         t0 = time.monotonic()

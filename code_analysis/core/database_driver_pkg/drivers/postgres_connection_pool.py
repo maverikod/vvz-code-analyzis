@@ -40,6 +40,7 @@ class PostgreSQLConnectionPool:
         *,
         max_wait_seconds: float = 30.0,
     ) -> None:
+        """Initialize the instance."""
         try:
             import psycopg
         except ImportError as e:
@@ -99,6 +100,7 @@ class PostgreSQLConnectionPool:
             self._close_all_unlocked()
 
     def _close_all_unlocked(self) -> None:
+        """Return close all unlocked."""
         self._closed = True
         for c in self._write_conns + self._read_conns:
             try:

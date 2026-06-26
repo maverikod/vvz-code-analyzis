@@ -77,6 +77,7 @@ _ALLOWED_PYTHON: FrozenSet[str] = frozenset(
 
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
+    """Return success from handler."""
     data: Dict[str, Any] = {
         "success": True,
         "handler_id": fr.handler_id,
@@ -91,6 +92,7 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
 
 
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
+    """Return error from handler."""
     return ErrorResult(
         message=fr.message or fr.code,
         code=fr.code or "VALIDATION_FAILED",
@@ -110,6 +112,7 @@ def _validate_text_delete_local(
     end_line: int,
     req: FileHandlerRequest,
 ) -> Optional[FileHandlerResult]:
+    """Return validate text delete local."""
     if not absolute_path.exists():
         return FileHandlerResult(
             success=False,
@@ -155,6 +158,7 @@ def _validate_delete_payload(
     node_id: Optional[str],
     tree_id: Optional[str],
 ) -> Optional[ErrorResult]:
+    """Return validate delete payload."""
     allowed: Set[str]
     if handler_id == HANDLER_TEXT:
         allowed = set(_ALLOWED_TEXT)
@@ -266,6 +270,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         dm_desc = (
             "Required targeting mode (prevents ambiguous deletes). Allowed values depend "
             f"on file type once resolved: text — {sorted(_ALLOWED_TEXT)}; "
@@ -381,6 +386,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileDeleteCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,
@@ -415,6 +421,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
         node_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         dm_raw = (delete_mode or "").strip().lower()
         if not dm_raw:
             return ErrorResult(
@@ -581,7 +588,9 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
                     config_data=BaseMCPCommand._get_raw_config(),
                 )
                 if not git_ok and git_err:
-                    logger.warning("Git commit after universal_file_delete: %s", git_err)
+                    logger.warning(
+                        "Git commit after universal_file_delete: %s", git_err
+                    )
             return _success_from_handler(fr, operation="delete")
 
         except ValidationError as e:
@@ -612,6 +621,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
         """Text deletes with BackupManager; metadata update when a file remains."""
 
         def _restore(rel: str, uuid_: str) -> None:
+            """Return restore."""
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
 

@@ -56,6 +56,7 @@ def resolve_config_path(
 
 
 def _non_empty(value: Any) -> Optional[str]:
+    """Return non empty."""
     if value is None:
         return None
     if isinstance(value, str) and value.strip():
@@ -69,6 +70,7 @@ def _block_from_ssl_dict(
     ssl_dict: Dict[str, Any],
     protocol: Optional[str],
 ) -> Optional[TlsMaterialBlock]:
+    """Return block from ssl dict."""
     cert = _non_empty(ssl_dict.get("cert"))
     key = _non_empty(ssl_dict.get("key"))
     ca = _non_empty(ssl_dict.get("ca"))
@@ -92,6 +94,7 @@ def _block_from_flat_dict(
     block: Dict[str, Any],
     protocol: Optional[str],
 ) -> Optional[TlsMaterialBlock]:
+    """Return block from flat dict."""
     cert = _non_empty(block.get("cert_file"))
     key = _non_empty(block.get("key_file"))
     ca = _non_empty(block.get("ca_cert_file"))
@@ -142,10 +145,12 @@ def iter_tls_material_blocks(config_data: Dict[str, Any]) -> Iterator[TlsMateria
 
 
 def _load_pem_certificate(path: Path) -> x509.Certificate:
+    """Return load pem certificate."""
     return x509.load_pem_x509_certificate(path.read_bytes())
 
 
 def _load_crl(path: Path) -> x509.CertificateRevocationList:
+    """Return load crl."""
     data = path.read_bytes()
     try:
         return x509.load_pem_x509_crl(data)
@@ -154,6 +159,7 @@ def _load_crl(path: Path) -> x509.CertificateRevocationList:
 
 
 def _iter_pem_certificates_from_file(path: Path) -> Iterator[x509.Certificate]:
+    """Return iter pem certificates from file."""
     if not path.is_file():
         return
     for match in _PEM_CERT_RE.finditer(path.read_bytes()):
@@ -161,6 +167,7 @@ def _iter_pem_certificates_from_file(path: Path) -> Iterator[x509.Certificate]:
 
 
 def _iter_system_trust_store_paths() -> List[Path]:
+    """Return iter system trust store paths."""
     paths: List[Path] = []
     seen: set[str] = set()
     defaults = ssl.get_default_verify_paths()
@@ -193,6 +200,7 @@ def _verify_crl_signature(
     crl: x509.CertificateRevocationList,
     issuer: x509.Certificate,
 ) -> bool:
+    """Return verify crl signature."""
     public_key = issuer.public_key()
     hash_alg = crl.signature_hash_algorithm
     if hash_alg is None:
@@ -230,6 +238,7 @@ def _crl_verified_by_ca(
     crl: x509.CertificateRevocationList,
     ca_cert: x509.Certificate,
 ) -> bool:
+    """Return crl verified by ca."""
     if crl.issuer != ca_cert.subject:
         return False
     return _verify_crl_signature(crl, ca_cert)

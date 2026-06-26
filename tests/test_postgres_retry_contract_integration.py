@@ -1,3 +1,5 @@
+"""Integration-style checks for the PostgreSQL retry contract."""
+
 # PostgreSQL retry contract: integration-style checks (optional live DSN + fakes).
 #
 # ErrorResult uses ``details`` for structured fields (``wire_result.ErrorResult``),
@@ -40,16 +42,19 @@ SqlBatch = list[tuple[str, Optional[tuple[Any, ...]]]]
 
 
 def _pg_dsn() -> str:
+    """Return pg dsn."""
     return (os.environ.get(_PG_ENV) or "").strip()
 
 
 def _batches_one() -> list[SqlBatch]:
+    """Return batches one."""
     return [
         [("INSERT INTO t VALUES (?)", (1,))],
     ]
 
 
 def _batches_two() -> list[SqlBatch]:
+    """Return batches two."""
     return [
         [("INSERT INTO a VALUES (?)", (1,))],
         [("INSERT INTO b VALUES (?)", (2,))],
@@ -60,6 +65,7 @@ class FakeLogicalWriteDriver:
     """Simulates execute_batch / commit for logical-write RPC path."""
 
     def __init__(self, policy: RetryPolicy | None = None) -> None:
+        """Initialize the instance."""
         self._write_retry_policy = policy
         self.calls: list[tuple[str, ...]] = []
         self._session = 0
@@ -71,6 +77,7 @@ class FakeLogicalWriteDriver:
         self._rows = [{"affected_rows": 1, "lastrowid": None, "data": None}]
 
     def begin_transaction(self) -> str:
+        """Return begin transaction."""
         self._session += 1
         self._batch_in_session = 0
         tid = f"tid{self._session}"
@@ -80,6 +87,7 @@ class FakeLogicalWriteDriver:
     def execute(
         self, sql: str, params: Any, transaction_id: Optional[str]
     ) -> dict[str, Any]:
+        """Execute the command."""
         self.calls.append(("execute", sql, transaction_id))
         return {"affected_rows": 0, "lastrowid": None, "data": None}
 
@@ -88,6 +96,7 @@ class FakeLogicalWriteDriver:
         operations: list[tuple[str, Optional[tuple]]],
         transaction_id: Optional[str],
     ) -> list[dict[str, Any]]:
+        """Return execute batch."""
         self._batch_in_session += 1
         n = len(operations)
         self.calls.append(("execute_batch", transaction_id, self._batch_in_session, n))
@@ -114,6 +123,7 @@ class FakeLogicalWriteDriver:
         return list(self._rows) * n if n else []
 
     def commit_transaction(self, transaction_id: str) -> bool:
+        """Return commit transaction."""
         self.calls.append(("commit_transaction", transaction_id))
         if self.commit_outcome_unknown_once and self._session == 1:
             raise TransientDatabaseError(
@@ -126,10 +136,12 @@ class FakeLogicalWriteDriver:
         return True
 
     def rollback_transaction(self, transaction_id: str) -> bool:
+        """Return rollback transaction."""
         self.calls.append(("rollback_transaction", transaction_id))
         return True
 
     def acquire_project_lock(self, *args: Any, **kwargs: Any) -> None:
+        """Return acquire project lock."""
         self.calls.append(("acquire_project_lock",))
         raise AssertionError("project activity lock must not be used in this test")
 
@@ -139,6 +151,7 @@ def _run_logical_write(
     batches: list[SqlBatch],
     **extra: Any,
 ) -> SuccessResult | ErrorResult:
+    """Return run logical write."""
     params: dict[str, Any] = {
         "batches": [
             [
@@ -154,6 +167,7 @@ def _run_logical_write(
 
 
 def _pg_driver() -> PostgreSQLDriver:
+    """Return pg driver."""
     d = PostgreSQLDriver()
     d._retry_policy = RetryPolicy(
         attempts=3,
@@ -180,6 +194,7 @@ def test_postgres_config_missing_skips_with_explicit_reason() -> None:
     reason=_PG_SKIP_REASON,
 )
 def test_postgres_sqlstate_survives_to_transient_error() -> None:
+    """Verify test postgres sqlstate survives to transient error."""
     import psycopg
     from psycopg import errors
 
@@ -201,6 +216,7 @@ def test_postgres_sqlstate_survives_to_transient_error() -> None:
 def test_postgres_rpc_error_result_has_structured_details(
     _sleep: Any,
 ) -> None:
+    """Verify test postgres rpc error result has structured details."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0)
     )
@@ -226,6 +242,7 @@ def test_postgres_rpc_error_result_has_structured_details(
 def test_postgres_retry_log_has_required_fields(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test postgres retry log has required fields."""
     caplog.set_level(logging.INFO, logger=_LOG_RPC)
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=2, delay_seconds=0.0, jitter_seconds=0.0)
@@ -250,7 +267,10 @@ def test_postgres_retry_log_has_required_fields(
 
 
 def test_postgres_timeout_57014_policy() -> None:
+    """Verify test postgres timeout 57014 policy."""
+
     def _exc_57014(msg: str) -> Exception:
+        """Return exc 57014."""
         e = Exception(msg)
         e.sqlstate = "57014"  # type: ignore[attr-defined]
         return e
@@ -270,6 +290,7 @@ def test_postgres_timeout_57014_policy() -> None:
 def test_postgres_external_transaction_not_retried_by_driver(
     _sleep: MagicMock,
 ) -> None:
+    """Verify test postgres external transaction not retried by driver."""
     d = _pg_driver()
     d._transaction_manager = MagicMock()
     ext = MagicMock()
@@ -277,6 +298,7 @@ def test_postgres_external_transaction_not_retried_by_driver(
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         raise TransientDatabaseError(
@@ -296,6 +318,7 @@ def test_postgres_external_transaction_not_retried_by_driver(
 def test_postgres_commit_outcome_unknown_not_retried(
     _sleep: Any,
 ) -> None:
+    """Verify test postgres commit outcome unknown not retried."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
     )

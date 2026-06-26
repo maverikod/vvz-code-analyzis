@@ -8,6 +8,7 @@ from code_analysis.commands.worker_status_mcp_commands.get_database_status_build
 
 
 def test_build_status_ops_sqlite_uses_julianday() -> None:
+    """Verify test build status ops sqlite uses julianday."""
     ops = build_status_ops("sqlite_proxy")
     sql = " ".join(q[0] for q in ops)
     assert "julianday('now', '-1 day')" in sql
@@ -15,6 +16,7 @@ def test_build_status_ops_sqlite_uses_julianday() -> None:
 
 
 def test_build_status_ops_postgres_uses_extract() -> None:
+    """Verify test build status ops postgres uses extract."""
     ops = build_status_ops("postgres")
     assert len(ops) == 17
     sql = " ".join(q[0] for q in ops)
@@ -52,6 +54,7 @@ def test_build_status_ops_batch_length_matches_documented_indices() -> None:
 
 
 def test_build_status_ops_pgvector_uses_embedding_vec_predicate() -> None:
+    """Verify test build status ops pgvector uses embedding vec predicate."""
     sql = " ".join(
         q[0] for q in build_status_ops("postgres", vector_ann_backend="pgvector")
     )
@@ -61,6 +64,7 @@ def test_build_status_ops_pgvector_uses_embedding_vec_predicate() -> None:
 
 
 def test_build_status_ops_postgres_faiss_uses_vector_id_predicate() -> None:
+    """Verify test build status ops postgres faiss uses vector id predicate."""
     sql = " ".join(
         q[0] for q in build_status_ops("postgres", vector_ann_backend="faiss")
     )

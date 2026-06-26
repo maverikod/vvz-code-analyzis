@@ -39,7 +39,10 @@ def _sql_exclude_docs_markdown_if_gated(worker_like: Any) -> str:
 
 
 class _EmbeddingTextChunk:
+    """Represent EmbeddingTextChunk."""
+
     def __init__(self, chunk_id: str, text: str) -> None:
+        """Initialize the instance."""
         self.id = chunk_id
         self.text = text
         self.embedding: Optional[list] = None
@@ -47,6 +50,7 @@ class _EmbeddingTextChunk:
 
 
 def _usable_embedding(chunk: Any) -> Optional[list]:
+    """Return usable embedding."""
     emb = getattr(chunk, "embedding", None)
     if isinstance(emb, list) and emb:
         return emb
@@ -54,6 +58,7 @@ def _usable_embedding(chunk: Any) -> Optional[list]:
 
 
 def _embedding_model(chunk: Any) -> Optional[str]:
+    """Return embedding model."""
     model = getattr(chunk, "embedding_model", None) or getattr(chunk, "model", None)
     return str(model) if model else None
 
@@ -180,15 +185,11 @@ async def process_chunk_only_files(
         (project_id, getattr(self, "max_files_per_pass", 30)),
         priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
-    files_data = (
-        file_result.get("data", []) if isinstance(file_result, dict) else []
-    )
+    files_data = file_result.get("data", []) if isinstance(file_result, dict) else []
     if not files_data:
         return 0, 0
 
-    logger.info(
-        "[chunk_only] %d file(s) have un-vectorized chunks", len(files_data)
-    )
+    logger.info("[chunk_only] %d file(s) have un-vectorized chunks", len(files_data))
 
     for file_row in files_data:
         if getattr(self, "_stop_event", None) and self._stop_event.is_set():
@@ -203,17 +204,12 @@ async def process_chunk_only_files(
             (file_id, project_id),
             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
-        chunks = (
-            chunk_result.get("data", [])
-            if isinstance(chunk_result, dict)
-            else []
-        )
+        chunks = chunk_result.get("data", []) if isinstance(chunk_result, dict) else []
         if not chunks:
             continue
 
         chunk_objs: List[_EmbeddingTextChunk] = [
-            _EmbeddingTextChunk(str(r["id"]), r.get("chunk_text") or "")
-            for r in chunks
+            _EmbeddingTextChunk(str(r["id"]), r.get("chunk_text") or "") for r in chunks
         ]
 
         logger.info(
@@ -257,6 +253,7 @@ async def process_chunk_only_files(
             )
 
             async def _embed_one(text: str) -> Tuple[Optional[list], Optional[str]]:
+                """Return embed one."""
                 tmp = _EmbeddingTextChunk("__merged__", text)
                 await svo_mgr.get_embeddings([tmp])
                 return _usable_embedding(tmp), _embedding_model(tmp)

@@ -14,10 +14,15 @@ from code_analysis.commands.analyze_tree.modes import (
 
 ROOTS = ["pkg/sub"]
 INTERNAL = ["pkg/sub/a.py", "pkg/sub/b.py"]
-PROJECT_FILES = set(INTERNAL) | {"pkg/core/exc.py", "pkg/core/git_integration.py", "pkg/caller.py"}
+PROJECT_FILES = set(INTERNAL) | {
+    "pkg/core/exc.py",
+    "pkg/core/git_integration.py",
+    "pkg/caller.py",
+}
 
 
 def _core(edges):
+    """Return core."""
     return CoreData(
         roots=list(ROOTS),
         internal_files=list(INTERNAL),
@@ -30,22 +35,47 @@ def _core(edges):
 
 EDGES = [
     # a.py → project leak (outbound.project / blocker)
-    Edge(src="pkg/sub/a.py", kind="project", module="pkg.core.exc", target_rel="pkg/core/exc.py"),
+    Edge(
+        src="pkg/sub/a.py",
+        kind="project",
+        module="pkg.core.exc",
+        target_rel="pkg/core/exc.py",
+    ),
     # a.py → server-bound leak (verdict keep_in_server)
-    Edge(src="pkg/sub/a.py", kind="project", module="pkg.core.git_integration",
-         target_rel="pkg/core/git_integration.py"),
+    Edge(
+        src="pkg/sub/a.py",
+        kind="project",
+        module="pkg.core.git_integration",
+        target_rel="pkg/core/git_integration.py",
+    ),
     # a.py → stdlib + third party
     Edge(src="pkg/sub/a.py", kind="stdlib", module="os"),
     Edge(src="pkg/sub/a.py", kind="third_party", module="libcst"),
     # intra-subtree edges forming a cycle a <-> b
-    Edge(src="pkg/sub/a.py", kind="project", module="pkg.sub.b", target_rel="pkg/sub/b.py"),
-    Edge(src="pkg/sub/b.py", kind="project", module="pkg.sub.a", target_rel="pkg/sub/a.py"),
+    Edge(
+        src="pkg/sub/a.py",
+        kind="project",
+        module="pkg.sub.b",
+        target_rel="pkg/sub/b.py",
+    ),
+    Edge(
+        src="pkg/sub/b.py",
+        kind="project",
+        module="pkg.sub.a",
+        target_rel="pkg/sub/a.py",
+    ),
     # external caller importing INTO the sub-tree (inbound)
-    Edge(src="pkg/caller.py", kind="project", module="pkg.sub.a", target_rel="pkg/sub/a.py"),
+    Edge(
+        src="pkg/caller.py",
+        kind="project",
+        module="pkg.sub.a",
+        target_rel="pkg/sub/a.py",
+    ),
 ]
 
 
 def test_package_boundary_blocks_and_inbound():
+    """Verify test package boundary blocks and inbound."""
     data = run_mode("package_boundary", _core(EDGES), with_verdict=True)
     assert data["internal_files"] == INTERNAL
 
@@ -68,11 +98,13 @@ def test_package_boundary_blocks_and_inbound():
 
 
 def test_package_boundary_include_stdlib():
+    """Verify test package boundary include stdlib."""
     data = run_mode("package_boundary", _core(EDGES), include_stdlib=True)
     assert data["outbound"]["stdlib"] == ["os"]
 
 
 def test_dependencies_has_no_cycle_data():
+    """Verify test dependencies has no cycle data."""
     data = run_mode("dependencies", _core(EDGES))
     assert "cycles" not in data
     internal_pairs = {(e["from"], e["to"]) for e in data["edges"]["internal"]}
@@ -85,6 +117,7 @@ def test_dependencies_has_no_cycle_data():
 
 
 def test_cycles_detects_ring():
+    """Verify test cycles detects ring."""
     data = run_mode("cycles", _core(EDGES))
     assert data["cycles_found"] == 1
     cycle = set(data["cycles"][0])
@@ -92,8 +125,14 @@ def test_cycles_detects_ring():
 
 
 def test_cycles_clean_subtree_is_zero():
+    """Verify test cycles clean subtree is zero."""
     no_cycle = [
-        Edge(src="pkg/sub/a.py", kind="project", module="pkg.sub.b", target_rel="pkg/sub/b.py"),
+        Edge(
+            src="pkg/sub/a.py",
+            kind="project",
+            module="pkg.sub.b",
+            target_rel="pkg/sub/b.py",
+        ),
     ]
     data = run_mode("cycles", _core(no_cycle))
     assert data["cycles_found"] == 0
@@ -101,10 +140,18 @@ def test_cycles_clean_subtree_is_zero():
 
 
 def test_structure_composition_only():
+    """Verify test structure composition only."""
     core = _core([])
     core.structure_by_file = {
         "pkg/sub/a.py": {
-            "classes": [{"name": "Foo", "line": 1, "end_line": 9, "methods": [{"name": "bar", "line": 3}]}],
+            "classes": [
+                {
+                    "name": "Foo",
+                    "line": 1,
+                    "end_line": 9,
+                    "methods": [{"name": "bar", "line": 3}],
+                }
+            ],
             "functions": [{"name": "helper", "line": 11, "end_line": 13}],
         },
         "pkg/sub/b.py": {"classes": [], "functions": []},
@@ -120,6 +167,7 @@ def test_structure_composition_only():
 
 
 def test_verdict_classification():
+    """Verify test verdict classification."""
     assert classify_verdict("pkg/core/file_lock.py") == "keep_in_server"
     assert classify_verdict("pkg/core/backup_manager.py") == "keep_in_server"
     assert classify_verdict("pkg/core/config.py") == "parameterize"
@@ -127,6 +175,7 @@ def test_verdict_classification():
 
 
 def test_is_test_path():
+    """Verify test is test path."""
     assert is_test_path("tests/test_x.py") is True
     assert is_test_path("pkg/test/helper.py") is True
     assert is_test_path("pkg/sub/test_markers.py") is True
@@ -137,30 +186,55 @@ def test_is_test_path():
 
 
 def _dead_core(inputs):
+    """Return dead core."""
     c = _core([])
     c.dead_code_inputs = inputs
     return c
 
 
 def test_dead_code_classification():
+    """Verify test dead code classification."""
     inputs = {
         "symbols": [
             # D-1 shape: prod import, no prod call, called only by tests
-            {"kind": "function", "name": "append_persisted_node_ids",
-             "file": "pkg/sub/markers.py", "line": 5, "class_name": None},
-            {"kind": "function", "name": "build_marker_path",
-             "file": "pkg/sub/markers.py", "line": 20, "class_name": None},
-            {"kind": "function", "name": "orphan",
-             "file": "pkg/sub/markers.py", "line": 40, "class_name": None},
-            {"kind": "function", "name": "imported_never_called",
-             "file": "pkg/sub/markers.py", "line": 60, "class_name": None},
+            {
+                "kind": "function",
+                "name": "append_persisted_node_ids",
+                "file": "pkg/sub/markers.py",
+                "line": 5,
+                "class_name": None,
+            },
+            {
+                "kind": "function",
+                "name": "build_marker_path",
+                "file": "pkg/sub/markers.py",
+                "line": 20,
+                "class_name": None,
+            },
+            {
+                "kind": "function",
+                "name": "orphan",
+                "file": "pkg/sub/markers.py",
+                "line": 40,
+                "class_name": None,
+            },
+            {
+                "kind": "function",
+                "name": "imported_never_called",
+                "file": "pkg/sub/markers.py",
+                "line": 60,
+                "class_name": None,
+            },
         ],
         "usage_by_name": {
-            "append_persisted_node_ids": ["tests/test_markers.py"],   # test only
-            "build_marker_path": ["pkg/sub/other.py"],                # production
+            "append_persisted_node_ids": ["tests/test_markers.py"],  # test only
+            "build_marker_path": ["pkg/sub/other.py"],  # production
         },
         "import_by_name": {
-            "append_persisted_node_ids": ["pkg/sub/tree_modifier.py", "tests/test_markers.py"],
+            "append_persisted_node_ids": [
+                "pkg/sub/tree_modifier.py",
+                "tests/test_markers.py",
+            ],
             "imported_never_called": ["pkg/sub/consumer.py"],
         },
     }
@@ -185,10 +259,16 @@ def test_dead_code_classification():
 def test_dead_code_self_file_usage_is_live():
     # A symbol used within its own (production) module is LIVE for a pre-extraction
     # gate — removing it would break the module. Safe direction, no false 'unused'.
+    """Verify test dead code self file usage is live."""
     inputs = {
         "symbols": [
-            {"kind": "function", "name": "helper", "file": "pkg/sub/a.py",
-             "line": 1, "class_name": None},
+            {
+                "kind": "function",
+                "name": "helper",
+                "file": "pkg/sub/a.py",
+                "line": 1,
+                "class_name": None,
+            },
         ],
         "usage_by_name": {"helper": ["pkg/sub/a.py"]},
         "import_by_name": {},
@@ -198,6 +278,7 @@ def test_dead_code_self_file_usage_is_live():
 
 
 def test_unknown_mode_raises():
+    """Verify test unknown mode raises."""
     import pytest
 
     with pytest.raises(ValueError):

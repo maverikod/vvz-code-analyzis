@@ -9,6 +9,7 @@ from code_analysis.core.search_session.page_payload import temporal_page_payload
 
 
 def test_temporal_page_payload_reads_block_items(tmp_path) -> None:
+    """Verify test temporal page payload reads block items."""
     layout = provision_search_session_directory(
         sessions_root=tmp_path,
         search_id="job-1",
@@ -31,6 +32,7 @@ def test_temporal_page_payload_reads_block_items(tmp_path) -> None:
 
 
 def test_temporal_page_payload_empty_when_block_missing(tmp_path) -> None:
+    """Verify test temporal page payload empty when block missing."""
     layout = provision_search_session_directory(
         sessions_root=tmp_path,
         search_id="job-2",

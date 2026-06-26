@@ -39,6 +39,7 @@ class ConfigRuntimeState:
     last_config_data: Optional[Dict[str, Any]] = None
 
     def summary(self) -> Dict[str, Any]:
+        """Return summary."""
         return {
             "valid": self.valid,
             "config_path": str(self.config_path) if self.config_path else None,
@@ -52,6 +53,7 @@ _state = ConfigRuntimeState()
 
 
 def get_config_runtime_state() -> ConfigRuntimeState:
+    """Return get config runtime state."""
     with _lock:
         return ConfigRuntimeState(
             valid=_state.valid,
@@ -63,11 +65,13 @@ def get_config_runtime_state() -> ConfigRuntimeState:
 
 
 def is_config_valid() -> bool:
+    """Return is config valid."""
     with _lock:
         return _state.valid
 
 
 def config_blocks_command(command_name: Optional[str]) -> bool:
+    """Return config blocks command."""
     if is_config_valid():
         return False
     if not command_name:
@@ -76,6 +80,7 @@ def config_blocks_command(command_name: Optional[str]) -> bool:
 
 
 def config_invalid_command_message() -> str:
+    """Return config invalid command message."""
     st = get_config_runtime_state()
     lines = [
         "Server is in configuration error state; only help and health are available."
@@ -103,6 +108,7 @@ def _set_state(
     warning_lines: List[str],
     config_data: Optional[Dict[str, Any]],
 ) -> None:
+    """Return set state."""
     global _state
     with _lock:
         _state = ConfigRuntimeState(
@@ -119,6 +125,7 @@ def mark_config_invalid_from_exception(
     *,
     config_path: Optional[Path] = None,
 ) -> None:
+    """Return mark config invalid from exception."""
     if isinstance(exc, ConfigJSONDecodeError):
         report = str(exc) or format_config_json_error_report(
             exc,

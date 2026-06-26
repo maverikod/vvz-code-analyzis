@@ -50,6 +50,7 @@ class SearchGetPageCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -87,6 +88,7 @@ class SearchGetPageCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return validate params."""
         params = super().validate_params(params)
         if not str(params.get("job_id") or "").strip():
             raise ValidationError(
@@ -100,6 +102,7 @@ class SearchGetPageCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        """Execute the command."""
         try:
             params = self.validate_params(
                 {k: v for k, v in kwargs.items() if k != "context"}
@@ -220,6 +223,7 @@ class SearchGetPageCommand(BaseMCPCommand):
             )
 
     def _refresh(self, layout):
+        """Return refresh."""
         now = time.time()
         if layout.service_metadata_path.is_file():
             refresh_last_access(layout, now=now)
@@ -228,6 +232,7 @@ class SearchGetPageCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,

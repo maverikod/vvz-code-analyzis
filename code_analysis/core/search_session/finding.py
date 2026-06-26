@@ -67,6 +67,7 @@ class Finding:
     score: float
 
     def __post_init__(self) -> None:
+        """Return post init."""
         if not self.file_path:
             raise ValueError("Finding.file_path must be non-empty")
         if not self.stable_id:

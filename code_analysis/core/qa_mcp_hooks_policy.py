@@ -11,11 +11,13 @@ import os
 
 
 def _truthy_env() -> bool:
+    """Return truthy env."""
     v = (os.environ.get("CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS") or "").strip().lower()
     return v in ("1", "true", "yes", "on")
 
 
 def _truthy_server_config() -> bool:
+    """Return truthy server config."""
     try:
         from mcp_proxy_adapter.config import get_config
 

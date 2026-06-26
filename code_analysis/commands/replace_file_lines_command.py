@@ -49,6 +49,7 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for anchored replacement of a 1-based line range."""
         return {
             "type": "object",
             "properties": {
@@ -124,6 +125,7 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
         allow_healthy_line_ops: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Validate anchors and replace a project file range with optional backup."""
         try:
             if start_line < 1 or end_line < 1:
                 return ErrorResult(

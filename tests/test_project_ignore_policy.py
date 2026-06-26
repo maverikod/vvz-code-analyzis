@@ -47,6 +47,7 @@ from code_analysis.core.project_ignore_policy import (
     ],
 )
 def test_is_ignored_project_relative_path_defaults(rel: str, expected: bool) -> None:
+    """Verify test is ignored project relative path defaults."""
     assert (
         is_ignored_project_relative_path(
             rel,
@@ -60,6 +61,7 @@ def test_is_ignored_project_relative_path_defaults(rel: str, expected: bool) -> 
 def test_is_ignored_project_relative_path_show_hidden_unignores_cache_and_dot_segments() -> (
     None
 ):
+    """Verify test is ignored project relative path show hidden unignores cache and dot segments."""
     rel = ".mypy_cache/3.12/foo.data.json"
     assert is_ignored_project_relative_path(rel, show_hidden=False) is True
     assert is_ignored_project_relative_path(rel, show_hidden=True) is False
@@ -77,6 +79,7 @@ def test_is_ignored_project_relative_path_show_hidden_unignores_cache_and_dot_se
 def test_filter_paths_for_default_project_listing_respects_show_hidden(
     tmp_path: Path,
 ) -> None:
+    """Verify test filter paths for default project listing respects show hidden."""
     root = tmp_path / "proj"
     root.mkdir()
     p = root / ".pytest_cache" / "README.md"
@@ -99,6 +102,7 @@ def test_filter_paths_for_default_project_listing_respects_show_hidden(
 
 
 def test_path_is_under_project_local_venv(tmp_path: Path) -> None:
+    """Verify test path is under project local venv."""
     root = tmp_path / "proj"
     root.mkdir()
     inner = root / ".venv" / "lib" / "python3.12" / "site-packages" / "x.py"
@@ -110,6 +114,7 @@ def test_path_is_under_project_local_venv(tmp_path: Path) -> None:
 def test_filter_ignore_exception_py_paths_keeps_allowlisted_venv_file(
     tmp_path: Path,
 ) -> None:
+    """Verify test filter ignore exception py paths keeps allowlisted venv file."""
     root = tmp_path / "proj"
     root.mkdir()
     client = (
@@ -133,6 +138,7 @@ def test_filter_ignore_exception_py_paths_keeps_allowlisted_venv_file(
 def test_filter_ignore_exception_py_paths_drops_venv_unless_allowlisted(
     tmp_path: Path,
 ) -> None:
+    """Verify test filter ignore exception py paths drops venv unless allowlisted."""
     root = tmp_path / "proj"
     root.mkdir()
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "mod.py"
@@ -149,6 +155,7 @@ def test_filter_ignore_exception_py_paths_drops_venv_unless_allowlisted(
 
 
 def test_sql_status_aggregate_fragment_references_venv_and_column() -> None:
+    """Verify test sql status aggregate fragment references venv and column."""
     frag = sql_and_absolute_path_eligible_for_default_status_aggregates("files.path")
     assert "files.path" in frag
     assert ".venv" in frag
@@ -157,6 +164,7 @@ def test_sql_status_aggregate_fragment_references_venv_and_column() -> None:
 
 
 def test_path_matches_traversal_skip_shape_rules() -> None:
+    """Verify test path matches traversal skip shape rules."""
     parts = ("home", "proj", "data", "trash", "uuid")
     posix = "/home/proj/data/trash/uuid"
     assert path_matches_traversal_skip_shape_rules(parts, posix) is True
@@ -182,6 +190,7 @@ def test_path_matches_traversal_skip_shape_rules() -> None:
 def test_traversal_skip_directory_basenames_include_server_managed(
     basename: str,
 ) -> None:
+    """Verify test traversal skip directory basenames include server managed."""
     from code_analysis.core.project_ignore_policy import (
         DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES,
     )

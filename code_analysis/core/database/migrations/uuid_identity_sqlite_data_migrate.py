@@ -56,6 +56,7 @@ _NON_SHADOW_REF_TABLES = frozenset({"projects", "watch_dirs"})
 def _rewrite_fk_ref_table(
     ref: str, migrated: frozenset[str], shadow_prefix: str
 ) -> str:
+    """Return rewrite fk ref table."""
     if ref in _NON_SHADOW_REF_TABLES:
         return ref
     if ref in migrated:
@@ -101,6 +102,7 @@ def build_copy_insert_sql_sqlite(
 
 
 def _scalar_count(db: Any, sql: str) -> int:
+    """Return scalar count."""
     r = _migration_fetchone(db, sql)
     if not r:
         return 0
@@ -110,6 +112,7 @@ def _scalar_count(db: Any, sql: str) -> int:
 
 
 def _sqlite_has_code_content_fts(db: Any) -> bool:
+    """Return sqlite has code content fts."""
     row = _migration_fetchone(
         db,
         """
@@ -117,7 +120,7 @@ def _sqlite_has_code_content_fts(db: Any) -> bool:
         WHERE type IN ('table', 'virtual')
           AND name = 'code_content_fts'
         LIMIT 1
-        """
+        """,
     )
     return row is not None
 

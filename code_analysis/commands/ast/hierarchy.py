@@ -42,6 +42,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -67,6 +68,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
         file_path: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         params: Dict[str, Any] = {
             "project_id": project_id,
             "class_name": class_name,

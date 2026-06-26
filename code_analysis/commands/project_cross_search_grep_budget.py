@@ -45,6 +45,7 @@ class GrepBudgetLimits:
     max_response_bytes: int
 
     def as_dict(self) -> Dict[str, Any]:
+        """Serialize configured grep budget limits."""
         return {
             "mode": self.mode,
             "max_wall_seconds": self.max_wall_seconds,
@@ -70,6 +71,7 @@ class GrepBudgetUsage:
     exceed_reason: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        """Serialize current grep budget usage."""
         return {
             "wall_seconds": round(self.wall_seconds, 3),
             "files_scanned": self.files_scanned,
@@ -91,20 +93,25 @@ class GrepBudgetState:
     _grep_started_at: float = field(default_factory=time.monotonic)
 
     def remaining_wall_seconds(self) -> float:
+        """Return remaining wall-clock budget in seconds."""
         elapsed = time.monotonic() - self._grep_started_at
         return max(0.0, self.limits.max_wall_seconds - elapsed)
 
     def remaining_files_total(self) -> int:
+        """Return remaining aggregate file-scan allowance."""
         return max(0, self.limits.max_files_total - self.usage.files_scanned)
 
     def remaining_total_matches(self) -> int:
+        """Return remaining aggregate match allowance."""
         return max(0, self.limits.max_total_matches - self.usage.grep_matches)
 
     def mark_exceeded(self, reason: str) -> None:
+        """Mark the budget exhausted and record the limiting reason."""
         self.usage.exceeded = True
         self.usage.exceed_reason = reason
 
     def should_stop_grep_loop(self) -> bool:
+        """Return whether aggregate grep execution must stop."""
         if self.usage.exceeded:
             return True
         if self.remaining_wall_seconds() <= 0:
@@ -119,6 +126,7 @@ class GrepBudgetState:
         return False
 
     def per_pattern_limits(self, per_pattern_limit: int) -> Dict[str, Any]:
+        """Derive fs_grep limits for the next pattern from remaining budget."""
         return {
             "max_files_scanned": min(
                 self.limits.max_files_per_pattern,
@@ -133,6 +141,7 @@ class GrepBudgetState:
         }
 
     def record_pattern_result(self, grep_data: Dict[str, Any]) -> None:
+        """Accumulate files, matches, and budget state from one pattern."""
         self.usage.patterns_completed += 1
         self.usage.files_scanned += int(grep_data.get("files_scanned") or 0)
         self.usage.grep_matches += int(grep_data.get("match_count") or 0)
@@ -140,9 +149,11 @@ class GrepBudgetState:
             self.mark_exceeded(str(grep_data.get("budget_reason") or "pattern_budget"))
 
     def finalize_wall_clock(self) -> None:
+        """Store total elapsed grep wall time."""
         self.usage.wall_seconds = time.monotonic() - self._grep_started_at
 
     def budget_warning(self, pattern: Optional[str] = None) -> Dict[str, Any]:
+        """Build a structured warning describing early budget termination."""
         msg = (
             "Grep scan stopped early to keep the server responsive. "
             "Retry with use_queue=true for a full filesystem scan."
@@ -161,6 +172,7 @@ class GrepBudgetState:
 
 
 def limits_for_queued_job() -> GrepBudgetLimits:
+    """Return expanded grep budgets for queued execution."""
     return GrepBudgetLimits(
         mode="full",
         max_wall_seconds=QUEUED_MAX_WALL_SECONDS,
@@ -173,6 +185,7 @@ def limits_for_queued_job() -> GrepBudgetLimits:
 
 
 def limits_for_sync() -> GrepBudgetLimits:
+    """Return conservative grep budgets for synchronous execution."""
     return GrepBudgetLimits(
         mode="sync",
         max_wall_seconds=SYNC_MAX_WALL_SECONDS,
@@ -190,6 +203,7 @@ def resolve_execution_mode(
     budget: GrepBudgetState,
     pattern_count: int,
 ) -> ExecutionMode:
+    """Describe actual or recommended execution mode from budget state."""
     if in_queue:
         return "queued"
     if budget.usage.exceeded or pattern_count > 6:
@@ -198,6 +212,7 @@ def resolve_execution_mode(
 
 
 def estimate_json_bytes(payload: Any) -> int:
+    """Estimate serialized UTF-8 JSON payload size."""
     try:
         return len(json.dumps(payload, default=str).encode("utf-8"))
     except Exception:

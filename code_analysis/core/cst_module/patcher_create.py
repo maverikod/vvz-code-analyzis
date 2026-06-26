@@ -37,6 +37,7 @@ class _CreateRewriter(cst.CSTTransformer):
             tuple[int, int, int, int], list[cst.BaseStatement]
         ],
     ):
+        """Initialize the instance."""
         self._create_after = create_after
         self._create_before = create_before
         self._create_at_end = create_at_end
@@ -103,6 +104,7 @@ class _CreateRewriter(cst.CSTTransformer):
     def leave_Module(
         self, original_node: cst.Module, updated_node: cst.Module
     ) -> cst.Module:
+        """Return leave Module."""
         return updated_node.with_changes(
             body=self._rewrite_body_with_creations(list(original_node.body))
         )

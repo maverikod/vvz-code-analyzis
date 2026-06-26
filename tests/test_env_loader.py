@@ -10,6 +10,7 @@ from code_analysis.core import env_loader
 def test_load_dotenv_near_config_skips_unreadable_env(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """Verify test load dotenv near config skips unreadable env."""
     config = tmp_path / "config.json"
     config.write_text("{}", encoding="utf-8")
     env_file = tmp_path / ".env"

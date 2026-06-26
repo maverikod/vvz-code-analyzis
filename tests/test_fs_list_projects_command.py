@@ -22,6 +22,7 @@ from code_analysis.core.file_watcher_pkg.multi_project_worker_specs import Watch
 
 
 def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
+    """Return write config."""
     cfg = {
         "code_analysis": {
             "worker": {
@@ -35,6 +36,7 @@ def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
 
 
 def _write_projectid(project_dir: Path, project_id: str, **extra: object) -> None:
+    """Return write projectid."""
     project_dir.mkdir(parents=True, exist_ok=True)
     payload: dict = {"id": project_id, "description": "test project", **extra}
     (project_dir / "projectid").write_text(
@@ -44,6 +46,7 @@ def _write_projectid(project_dir: Path, project_id: str, **extra: object) -> Non
 
 
 def test_load_watch_dir_specs_resolves_relative_paths(tmp_path: Path) -> None:
+    """Verify test load watch dir specs resolves relative paths."""
     watch_root = tmp_path / "watched"
     watch_root.mkdir()
     wid = str(uuid.uuid4())
@@ -58,6 +61,7 @@ def test_load_watch_dir_specs_resolves_relative_paths(tmp_path: Path) -> None:
 
 
 def test_discover_immediate_child_projects_only(tmp_path: Path) -> None:
+    """Verify test discover immediate child projects only."""
     watch_root = tmp_path / "watch"
     watch_root.mkdir()
     pid_a = str(uuid.uuid4())
@@ -75,6 +79,7 @@ def test_discover_immediate_child_projects_only(tmp_path: Path) -> None:
 
 
 def test_discover_reads_projectid_flags(tmp_path: Path) -> None:
+    """Verify test discover reads projectid flags."""
     watch_root = tmp_path / "watch"
     watch_root.mkdir()
     pid = str(uuid.uuid4())
@@ -95,6 +100,7 @@ def test_discover_reads_projectid_flags(tmp_path: Path) -> None:
 
 
 def test_discover_skips_missing_watch_dir(tmp_path: Path) -> None:
+    """Verify test discover skips missing watch dir."""
     missing = tmp_path / "missing"
     spec = WatchDirSpec(watch_dir=missing, watch_dir_id=str(uuid.uuid4()))
     results = discover_projects_for_watch_specs([spec])

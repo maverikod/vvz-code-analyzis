@@ -58,6 +58,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ClearTrashMCPCommand"]) -> Dict[str, Any]:
+        """Return the schema for dry-run and trash-directory overrides."""
         return {
             "type": "object",
             "description": (
@@ -91,6 +92,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
         trash_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Clear trashed project data from the database, FAISS, and disk."""
         try:
             from ...core.storage_paths import (
                 load_raw_config,

@@ -1,4 +1,5 @@
 """Fix _FILES_INSERT_OR_REPLACE_NORM: remove deleted=0 to avoid bool adaptation mismatch."""
+
 import pathlib
 import shutil
 import datetime
@@ -29,18 +30,25 @@ def patch_client(lines):
             skip_next = False
             continue
         # Remove the "deleted" column from INSERT
-        if '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "' in line:
-            result.append(line.replace(
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "'
-            ))
+        if (
+            '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "'
+            in line
+        ):
+            result.append(
+                line.replace(
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "',
+                )
+            )
             continue
         # Remove "VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
         if '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)",' in line:
-            result.append(line.replace(
-                '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)",',
-                '"VALUES (?, ?, ?, ?, ?, ?, ?)",'
-            ))
+            result.append(
+                line.replace(
+                    '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)",',
+                    '"VALUES (?, ?, ?, ?, ?, ?, ?)",',
+                )
+            )
             continue
         # Remove the "1 if has_docstring else 0," line followed by watch_dir_id
         # Actually we need to remove the `0,` param for deleted
@@ -61,19 +69,29 @@ def patch_pg(lines):
     while i < len(lines):
         line = lines[i]
         # Fix the norm constant
-        if '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "' in line:
-            result.append(line.replace(
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "'
-            ))
+        if (
+            '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "'
+            in line
+        ):
+            result.append(
+                line.replace(
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "',
+                )
+            )
             i += 1
             continue
-        if '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)"' in line and '_FILES_INSERT_OR_REPLACE_NORM' not in lines[max(0,i-5):i+1]:
+        if (
+            '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)"' in line
+            and "_FILES_INSERT_OR_REPLACE_NORM" not in lines[max(0, i - 5) : i + 1]
+        ):
             # This is inside _FILES_INSERT_OR_REPLACE_NORM constant definition
-            result.append(line.replace(
-                '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)"',
-                '"VALUES (?, ?, ?, ?, ?, ?, ?)"'
-            ))
+            result.append(
+                line.replace(
+                    '"VALUES (?, ?, ?, ?, ?, ?, 0, ?)"',
+                    '"VALUES (?, ?, ?, ?, ?, ?, ?)"',
+                )
+            )
             i += 1
             continue
         # Fix the ON CONFLICT branch: remove deleted line from SET
@@ -82,18 +100,25 @@ def patch_pg(lines):
             continue
         # Fix VALUES in the ON CONFLICT branch
         if '"VALUES (?, ?, ?, ?, ?, ?, FALSE, ?) "' in line:
-            result.append(line.replace(
-                '"VALUES (?, ?, ?, ?, ?, ?, FALSE, ?) "',
-                '"VALUES (?, ?, ?, ?, ?, ?, ?) "'
-            ))
+            result.append(
+                line.replace(
+                    '"VALUES (?, ?, ?, ?, ?, ?, FALSE, ?) "',
+                    '"VALUES (?, ?, ?, ?, ?, ?, ?) "',
+                )
+            )
             i += 1
             continue
         # Fix column list in ON CONFLICT INSERT INTO
-        if '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "' in line:
-            result.append(line.replace(
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
-                '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "'
-            ))
+        if (
+            '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "'
+            in line
+        ):
+            result.append(
+                line.replace(
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "',
+                    '"(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "',
+                )
+            )
             i += 1
             continue
         result.append(line)
@@ -102,6 +127,7 @@ def patch_pg(lines):
 
 
 def main():
+    """Run the command-line entry point."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Patch client

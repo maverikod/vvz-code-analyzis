@@ -42,12 +42,14 @@ class PostgreSQLTransactionManager:
         lock_timeout_seconds: float | None = None,
         statement_timeout_seconds: float | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._connect_kwargs = connect_kwargs
         self._lock_timeout_seconds = lock_timeout_seconds
         self._statement_timeout_seconds = statement_timeout_seconds
         self._transactions: Dict[str, Any] = {}
 
     def _apply_set_local_timeouts(self, conn: Any) -> None:
+        """Return apply set local timeouts."""
         with conn.cursor() as cur:
             lock = self._lock_timeout_seconds
             if lock is not None and lock > 0:
@@ -59,6 +61,7 @@ class PostgreSQLTransactionManager:
                 cur.execute("SET LOCAL statement_timeout = %s", (f"{ms}ms",))
 
     def begin_transaction(self) -> str:
+        """Return begin transaction."""
         try:
             import psycopg
         except ImportError as e:
@@ -97,6 +100,7 @@ class PostgreSQLTransactionManager:
             raise TransactionError(f"Failed to begin transaction: {e}") from e
 
     def commit_transaction(self, transaction_id: str) -> bool:
+        """Return commit transaction."""
         logger.debug(
             "[CHAIN] postgres_transactions commit_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
@@ -118,6 +122,7 @@ class PostgreSQLTransactionManager:
             raise TransactionError(f"Failed to commit transaction: {e}") from e
 
     def rollback_transaction(self, transaction_id: str) -> bool:
+        """Return rollback transaction."""
         logger.debug(
             "[CHAIN] postgres_transactions rollback_transaction tid=%s n_open=%s",
             (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
@@ -139,6 +144,7 @@ class PostgreSQLTransactionManager:
             raise TransactionError(f"Failed to rollback transaction: {e}") from e
 
     def close_all(self) -> None:
+        """Return close all."""
         for transaction_id, conn in list(self._transactions.items()):
             try:
                 conn.rollback()

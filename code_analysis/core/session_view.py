@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 def _project_relative_path(file_row: Mapping[str, Any]) -> str:
+    """Return project relative path."""
     rel = str(file_row.get("relative_path") or "").strip()
     if rel:
         return rel.replace("\\", "/")

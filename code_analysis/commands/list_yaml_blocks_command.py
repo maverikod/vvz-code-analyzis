@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class ListYamlBlocksCommand(BaseMCPCommand):
+    """List addressable YAML values and stable node metadata from a file."""
+
     name = "list_yaml_blocks"
     version = "1.0.0"
     descr = (
@@ -36,6 +38,7 @@ class ListYamlBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for selecting a YAML project file."""
         base = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -51,6 +54,7 @@ class ListYamlBlocksCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters and reject unknown project ids."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -58,6 +62,7 @@ class ListYamlBlocksCommand(BaseMCPCommand):
     async def execute(
         self, project_id: str, file_path: str, **kwargs: Any
     ) -> SuccessResult:
+        """Parse a YAML file and return stable addressable block descriptors."""
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
@@ -131,6 +136,7 @@ class ListYamlBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["ListYamlBlocksCommand"]) -> Dict[str, Any]:
+        """Return metadata for the YAML block listing command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(
@@ -141,5 +147,7 @@ class ListYamlBlocksCommand(BaseMCPCommand):
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "config/app.yaml",
             },
-            extra_errors={"YAML_LIST_ERROR": {"description": "Failed to list YAML blocks."}},
+            extra_errors={
+                "YAML_LIST_ERROR": {"description": "Failed to list YAML blocks."}
+            },
         )

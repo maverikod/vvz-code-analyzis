@@ -65,6 +65,7 @@ def _apply_compose_only_spans(tree: YamlTree, spans: PointerSpans) -> None:
 
 
 def _yaml_kind(value: Any) -> str:
+    """Return yaml kind."""
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -144,6 +145,7 @@ def _parse_yaml_text(source: str) -> Tuple[Any, PointerSpans]:
 
 
 def _build_index(tree: YamlTree, *, line_spans: Optional[PointerSpans] = None) -> None:
+    """Return build index."""
     tree.metadata_map.clear()
     tree.parent_map.clear()
     tree.pointer_by_id.clear()
@@ -157,6 +159,7 @@ def _build_index(tree: YamlTree, *, line_spans: Optional[PointerSpans] = None) -
         key: Optional[str],
         index: Optional[int],
     ) -> str:
+        """Return visit."""
         node_id = stable_node_id_for_pointer(pointer)
         tree.pointer_by_id[node_id] = pointer
         tree.parent_map[node_id] = parent_id
@@ -257,10 +260,12 @@ def build_yaml_tree_from_data(
 
 
 def get_tree(tree_id: str) -> Optional[YamlTree]:
+    """Return get tree."""
     return _trees.get(tree_id)
 
 
 def remove_tree(tree_id: str) -> bool:
+    """Return remove tree."""
     if tree_id in _trees:
         del _trees[tree_id]
         return True

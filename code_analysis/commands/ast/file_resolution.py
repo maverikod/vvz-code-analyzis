@@ -14,6 +14,7 @@ from ...core.path_normalization import file_lookup_paths_for_project
 
 
 def _candidate_fs_path(file_path: str, project_root: Path) -> Path:
+    """Return candidate fs path."""
     p = Path(file_path)
     if p.is_absolute():
         return p.resolve()

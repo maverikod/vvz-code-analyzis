@@ -160,6 +160,7 @@ def _extract_schema_from_help(client: Any, command: str) -> dict[str, Any]:
     required_params: set[str] = set()
 
     def walk(node: Any) -> None:
+        """Return walk."""
         if isinstance(node, dict):
             props = node.get("properties") or {}
             if isinstance(props, dict):

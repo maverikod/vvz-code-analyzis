@@ -77,11 +77,13 @@ class PythonEditGateError(ValueError):
 
 
 def _short_id_from_comment_value(value: str) -> Optional[int]:
+    """Return short id from comment value."""
     match = _ID_COMMENT_VALUE_RE.search(value)
     return int(match.group(1)) if match else None
 
 
 def _extra_meta_from_comment_value(value: str) -> Dict[str, Any]:
+    """Return extra meta from comment value."""
     match = _META_IN_COMMENT_RE.search(value)
     if match is None:
         return {}
@@ -95,6 +97,7 @@ def _extra_meta_from_comment_value(value: str) -> Dict[str, Any]:
 def _format_marker_comment(
     sid: int, extra_meta: Optional[Dict[str, Any]] = None
 ) -> str:
+    """Return format marker comment."""
     comment = f"# ___id___:{sid}"
     if extra_meta:
         comment += f" ___meta___:{json.dumps(extra_meta, sort_keys=True, separators=(',', ':'))}"
@@ -102,6 +105,7 @@ def _format_marker_comment(
 
 
 def _extra_meta_from_cst_node(node: cst.CSTNode) -> Dict[str, Any]:
+    """Return extra meta from cst node."""
     metadata = getattr(node, "metadata", None)
     if isinstance(metadata, dict):
         stored = metadata.get(_META_KEY)
@@ -118,13 +122,17 @@ def _extra_meta_from_cst_node(node: cst.CSTNode) -> Dict[str, Any]:
 
 
 def _collect_sid_extra_meta(marked_text: str) -> Dict[int, Dict[str, Any]]:
+    """Return collect sid extra meta."""
     module = cst.parse_module(marked_text)
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
     positions = wrapper.resolve(PositionProvider)
     result: Dict[int, Dict[str, Any]] = {}
 
     class _MetaCollector(cst.CSTVisitor):
+        """Represent MetaCollector."""
+
         def on_leave(self, node: cst.CSTNode) -> None:
+            """Return on leave."""
             tname = type(node).__name__
             if tname not in _ADDRESSABLE_TYPES:
                 return
@@ -141,6 +149,7 @@ def _collect_sid_extra_meta(marked_text: str) -> Dict[int, Dict[str, Any]]:
 
 
 def _short_id_from_cst_node(node: cst.CSTNode) -> Optional[int]:
+    """Return short id from cst node."""
     metadata = getattr(node, "metadata", None)
     if isinstance(metadata, dict) and _METADATA_ID_KEY in metadata:
         return int(metadata[_METADATA_ID_KEY])
@@ -157,11 +166,15 @@ def _short_id_from_cst_node(node: cst.CSTNode) -> Optional[int]:
 
 
 class _MarkedShortIdCollector(cst.CSTVisitor):
+    """Represent MarkedShortIdCollector."""
+
     def __init__(self, positions: Mapping[cst.CSTNode, Any]) -> None:
+        """Initialize the instance."""
         self._positions = positions
         self.entries: List[Tuple[int, int, str]] = []
 
     def on_leave(self, node: cst.CSTNode) -> None:
+        """Return on leave."""
         tname = type(node).__name__
         if tname not in _ADDRESSABLE_TYPES:
             return
@@ -186,6 +199,7 @@ def _extract_line_span(content: str, start_line: int, end_line: int) -> str:
 
 
 def _is_shebang_line(content: str, start_line: int) -> bool:
+    """Return is shebang line."""
     lines = content.splitlines()
     if start_line != 1 or not lines:
         return False
@@ -197,6 +211,7 @@ def _comment_trailing(
     sid: int,
     extra_meta: Optional[Dict[str, Any]] = None,
 ) -> cst.TrailingWhitespace:
+    """Return comment trailing."""
     ws = existing.whitespace
     if not ws.value:
         ws = cst.SimpleWhitespace(" ")
@@ -265,6 +280,7 @@ def _attach_metadata_marker(
 def _attach_trailing_marker(
     node: _CSTNodeT, sid: int, extra_meta: Optional[Dict[str, Any]] = None
 ) -> _CSTNodeT:
+    """Return attach trailing marker."""
     if not hasattr(node, "trailing_whitespace"):
         return node
     tw = node.trailing_whitespace
@@ -277,6 +293,7 @@ def _attach_trailing_marker(
 
 
 def _clear_metadata_marker(node: _CSTNodeT) -> _CSTNodeT:
+    """Return clear metadata marker."""
     metadata = getattr(node, "metadata", None)
     if isinstance(metadata, dict) and _METADATA_ID_KEY in metadata:
         cleaned = dict(metadata)
@@ -307,6 +324,7 @@ def _clear_metadata_marker(node: _CSTNodeT) -> _CSTNodeT:
 
 
 def _clear_trailing_marker(node: _CSTNodeT) -> _CSTNodeT:
+    """Return clear trailing marker."""
     if not hasattr(node, "trailing_whitespace"):
         return node
     tw = node.trailing_whitespace
@@ -319,22 +337,28 @@ def _clear_trailing_marker(node: _CSTNodeT) -> _CSTNodeT:
 
 
 class _MarkTransformer(cst.CSTTransformer):
+    """Represent MarkTransformer."""
+
     def __init__(self, allocator: ShortIdAllocator) -> None:
+        """Initialize the instance."""
         self._allocator = allocator
 
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
+        """Return leave FunctionDef."""
         return _attach_metadata_marker(updated_node, self._allocator.allocate())
 
     def leave_ClassDef(
         self, original_node: cst.ClassDef, updated_node: cst.ClassDef
     ) -> cst.ClassDef:
+        """Return leave ClassDef."""
         return _attach_metadata_marker(updated_node, self._allocator.allocate())
 
     def leave_Decorator(
         self, original_node: cst.Decorator, updated_node: cst.Decorator
     ) -> cst.Decorator:
+        """Return leave Decorator."""
         return _attach_metadata_marker(updated_node, self._allocator.allocate())
 
     def leave_SimpleStatementLine(
@@ -342,41 +366,51 @@ class _MarkTransformer(cst.CSTTransformer):
         original_node: cst.SimpleStatementLine,
         updated_node: cst.SimpleStatementLine,
     ) -> cst.SimpleStatementLine:
+        """Return leave SimpleStatementLine."""
         return _attach_trailing_marker(updated_node, self._allocator.allocate())
 
     def leave_Expr(self, original_node: cst.Expr, updated_node: cst.Expr) -> cst.Expr:
+        """Return leave Expr."""
         return _attach_trailing_marker(updated_node, self._allocator.allocate())
 
     def leave_AnnAssign(
         self, original_node: cst.AnnAssign, updated_node: cst.AnnAssign
     ) -> cst.AnnAssign:
+        """Return leave AnnAssign."""
         return _attach_trailing_marker(updated_node, self._allocator.allocate())
 
     def leave_Assign(
         self, original_node: cst.Assign, updated_node: cst.Assign
     ) -> cst.Assign:
+        """Return leave Assign."""
         return _attach_trailing_marker(updated_node, self._allocator.allocate())
 
     def leave_AugAssign(
         self, original_node: cst.AugAssign, updated_node: cst.AugAssign
     ) -> cst.AugAssign:
+        """Return leave AugAssign."""
         return _attach_trailing_marker(updated_node, self._allocator.allocate())
 
 
 class _UnmarkTransformer(cst.CSTTransformer):
+    """Represent UnmarkTransformer."""
+
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.FunctionDef:
+        """Return leave FunctionDef."""
         return _clear_metadata_marker(updated_node)
 
     def leave_ClassDef(
         self, original_node: cst.ClassDef, updated_node: cst.ClassDef
     ) -> cst.ClassDef:
+        """Return leave ClassDef."""
         return _clear_metadata_marker(updated_node)
 
     def leave_Decorator(
         self, original_node: cst.Decorator, updated_node: cst.Decorator
     ) -> cst.Decorator:
+        """Return leave Decorator."""
         return _clear_metadata_marker(updated_node)
 
     def leave_SimpleStatementLine(
@@ -384,24 +418,29 @@ class _UnmarkTransformer(cst.CSTTransformer):
         original_node: cst.SimpleStatementLine,
         updated_node: cst.SimpleStatementLine,
     ) -> cst.SimpleStatementLine:
+        """Return leave SimpleStatementLine."""
         return _clear_trailing_marker(updated_node)
 
     def leave_Expr(self, original_node: cst.Expr, updated_node: cst.Expr) -> cst.Expr:
+        """Return leave Expr."""
         return _clear_trailing_marker(updated_node)
 
     def leave_AnnAssign(
         self, original_node: cst.AnnAssign, updated_node: cst.AnnAssign
     ) -> cst.AnnAssign:
+        """Return leave AnnAssign."""
         return _clear_trailing_marker(updated_node)
 
     def leave_Assign(
         self, original_node: cst.Assign, updated_node: cst.Assign
     ) -> cst.Assign:
+        """Return leave Assign."""
         return _clear_trailing_marker(updated_node)
 
     def leave_AugAssign(
         self, original_node: cst.AugAssign, updated_node: cst.AugAssign
     ) -> cst.AugAssign:
+        """Return leave AugAssign."""
         return _clear_trailing_marker(updated_node)
 
 
@@ -422,6 +461,7 @@ def _index_short_ids(marked_text: str, tree: CSTTree) -> Dict[int, str]:
 
 
 def _stable_to_internal(tree: CSTTree, stable_id: str) -> str:
+    """Return stable to internal."""
     meta = tree.find_by_stable_id(stable_id)
     if meta is None:
         raise ValueError(f"stable_id not found in tree: {stable_id!r}")
@@ -431,6 +471,7 @@ def _stable_to_internal(tree: CSTTree, stable_id: str) -> str:
 
 
 def _require_node_id(tree: CSTTree, short_id: NodeId, sid_index: Dict[int, str]) -> str:
+    """Return require node id."""
     stable = sid_index.get(int(short_id))
     if stable is None:
         raise UnknownNodeIdError(short_id)
@@ -438,6 +479,7 @@ def _require_node_id(tree: CSTTree, short_id: NodeId, sid_index: Dict[int, str])
 
 
 def _load_marked_tree(marked_text: str) -> Tuple[CSTTree, Dict[int, str]]:
+    """Return load marked tree."""
     clean = _strip_trailing_id_comments(marked_text)
     tree = create_tree_from_code(
         "<python_tree_edit>",
@@ -449,6 +491,7 @@ def _load_marked_tree(marked_text: str) -> Tuple[CSTTree, Dict[int, str]]:
 
 
 def _mutate_tree(tree: CSTTree, operation: TreeOperation) -> CSTTree:
+    """Return mutate tree."""
     previous_metadata_map = dict(tree.metadata_map)
     previous_module = tree.module
     decorator_map = extract_stable_data(tree)
@@ -466,12 +509,14 @@ def _mutate_tree(tree: CSTTree, operation: TreeOperation) -> CSTTree:
 
 
 def _stable_map_from_index(sid_index: Dict[int, str]) -> Dict[str, int]:
+    """Return stable map from index."""
     return {stable: sid for sid, stable in sid_index.items()}
 
 
 def _assign_new_stable_ids(
     tree: CSTTree, stable_to_sid: Dict[str, int], next_free: int
 ) -> Dict[str, int]:
+    """Return assign new stable ids."""
     updated = dict(stable_to_sid)
     allocator = ShortIdAllocator(next_free)
     for meta in tree.metadata_map.values():
@@ -488,6 +533,7 @@ def _emit_marked(
     *,
     sid_extra_meta: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> str:
+    """Return emit marked."""
     module = tree.module
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
     positions = wrapper.resolve(PositionProvider)
@@ -500,6 +546,7 @@ def _emit_marked(
             line_type_sid[(meta.start_line, meta.type)] = sid
 
     def _mark_node(original_node: _CSTNodeT, updated_node: _CSTNodeT) -> _CSTNodeT:
+        """Return mark node."""
         tname = type(updated_node).__name__
         pos = positions.get(original_node)
         if pos is None:
@@ -513,19 +560,24 @@ def _emit_marked(
         return _attach_trailing_marker(updated_node, sid, extra_meta)
 
     class _AssignMarkTransformer(cst.CSTTransformer):
+        """Represent AssignMarkTransformer."""
+
         def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
         ) -> cst.FunctionDef:
+            """Return leave FunctionDef."""
             return _mark_node(original_node, updated_node)
 
         def leave_ClassDef(
             self, original_node: cst.ClassDef, updated_node: cst.ClassDef
         ) -> cst.ClassDef:
+            """Return leave ClassDef."""
             return _mark_node(original_node, updated_node)
 
         def leave_Decorator(
             self, original_node: cst.Decorator, updated_node: cst.Decorator
         ) -> cst.Decorator:
+            """Return leave Decorator."""
             return _mark_node(original_node, updated_node)
 
         def leave_SimpleStatementLine(
@@ -533,32 +585,38 @@ def _emit_marked(
             original_node: cst.SimpleStatementLine,
             updated_node: cst.SimpleStatementLine,
         ) -> cst.SimpleStatementLine:
+            """Return leave SimpleStatementLine."""
             return _mark_node(original_node, updated_node)
 
         def leave_Expr(
             self, original_node: cst.Expr, updated_node: cst.Expr
         ) -> cst.Expr:
+            """Return leave Expr."""
             return _mark_node(original_node, updated_node)
 
         def leave_AnnAssign(
             self, original_node: cst.AnnAssign, updated_node: cst.AnnAssign
         ) -> cst.AnnAssign:
+            """Return leave AnnAssign."""
             return _mark_node(original_node, updated_node)
 
         def leave_Assign(
             self, original_node: cst.Assign, updated_node: cst.Assign
         ) -> cst.Assign:
+            """Return leave Assign."""
             return _mark_node(original_node, updated_node)
 
         def leave_AugAssign(
             self, original_node: cst.AugAssign, updated_node: cst.AugAssign
         ) -> cst.AugAssign:
+            """Return leave AugAssign."""
             return _mark_node(original_node, updated_node)
 
     return module.visit(_AssignMarkTransformer()).code
 
 
 def _check_position(position: str) -> None:
+    """Return check position."""
     if position not in _VALID_POSITIONS:
         raise ValueError(f"invalid position: {position!r}")
 
@@ -566,6 +624,7 @@ def _check_position(position: str) -> None:
 def _insert_operation(
     tree: CSTTree, anchor_id: str, position: str, new_content: str
 ) -> TreeOperation:
+    """Return insert operation."""
     if position in ("before", "after"):
         return TreeOperation(
             action=TreeOperationType.INSERT,
@@ -592,6 +651,7 @@ def _insert_operation(
 def _move_operation(
     tree: CSTTree, node_id: str, anchor_id: str, position: str
 ) -> TreeOperation:
+    """Return move operation."""
     if position in ("first_child", "last_child"):
         parent_id = anchor_id
         meta = tree.metadata_map.get(anchor_id)
@@ -646,6 +706,7 @@ def _apply_and_emit(
     *,
     next_free: Optional[int] = None,
 ) -> str:
+    """Return apply and emit."""
     tree = _mutate_tree(tree, operation)
     stable_to_sid = _stable_map_from_index(sid_index)
     if next_free is not None:
@@ -673,6 +734,7 @@ def _resolve_addressable_parent_short_id(
 
 
 def _strip_trailing_id_comments(source: str) -> str:
+    """Return strip trailing id comments."""
     lines = source.splitlines(keepends=True)
     out: List[str] = []
     for line in lines:
@@ -684,14 +746,19 @@ def _strip_trailing_id_comments(source: str) -> str:
 
 
 class PythonHandler(FormatHandler):
+    """Represent PythonHandler."""
+
     def __init__(self, id_map: Any = None) -> None:
+        """Initialize the instance."""
         super().__init__(id_map)
         self._tree_is_valid = True
 
     def set_tree_validity(self, is_valid: bool) -> None:
+        """Return set tree validity."""
         self._tree_is_valid = is_valid
 
     def _enforce_short_id_edit_gate(self) -> None:
+        """Return enforce short id edit gate."""
         if not self._tree_is_valid:
             raise PythonEditGateError(
                 "tree is invalid (text mode); short_id edit operations forbidden "
@@ -699,6 +766,7 @@ class PythonHandler(FormatHandler):
             )
 
     def parse_content(self, file_path: Path, content: str) -> List[TreeNode]:
+        """Return parse content."""
         if content.strip() == "":
             return []
         tree: CSTTree = create_tree_from_code(
@@ -748,6 +816,7 @@ class PythonHandler(FormatHandler):
         return nodes
 
     def mark(self, content: str) -> str:
+        """Return mark."""
         if content == "":
             return ""
         if content.strip() == "":
@@ -757,6 +826,7 @@ class PythonHandler(FormatHandler):
         return marked.code
 
     def unmark(self, marked_text: str) -> str:
+        """Return unmark."""
         if marked_text == "":
             return ""
         if marked_text.strip() == "":
@@ -766,6 +836,7 @@ class PythonHandler(FormatHandler):
         return _strip_trailing_id_comments(cleaned.code)
 
     def sidecar_path(self, source_abs: Path) -> Path:
+        """Return sidecar path."""
         return source_abs.parent / (source_abs.name + ".tree")
 
     def op_insert(
@@ -776,6 +847,7 @@ class PythonHandler(FormatHandler):
         new_content: str,
         next_free: int,
     ) -> str:
+        """Return op insert."""
         self._enforce_short_id_edit_gate()
         if next_free < 1:
             raise ValueError("next_free must be >= 1")
@@ -786,6 +858,7 @@ class PythonHandler(FormatHandler):
         return _apply_and_emit(tree, sid_index, op, next_free=next_free)
 
     def op_delete(self, marked_text: str, short_id: NodeId) -> str:
+        """Return op delete."""
         self._enforce_short_id_edit_gate()
         tree, sid_index = _load_marked_tree(marked_text)
         node_id = _require_node_id(tree, short_id, sid_index)
@@ -797,6 +870,7 @@ class PythonHandler(FormatHandler):
         return _emit_marked(tree, _stable_map_from_index(sid_index))
 
     def op_replace(self, marked_text: str, short_id: NodeId, new_content: str) -> str:
+        """Return op replace."""
         self._enforce_short_id_edit_gate()
         tree, sid_index = _load_marked_tree(marked_text)
         node_id = _require_node_id(tree, short_id, sid_index)
@@ -806,6 +880,7 @@ class PythonHandler(FormatHandler):
         return _apply_and_emit(tree, sid_index, op)
 
     def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        """Return extract move payload."""
         self._enforce_short_id_edit_gate()
         tree, sid_index = _load_marked_tree(marked_text)
         node_id = _require_node_id(tree, short_id, sid_index)
@@ -819,6 +894,7 @@ class PythonHandler(FormatHandler):
         anchor_short_id: NodeId,
         position: str,
     ) -> str:
+        """Return op move."""
         self._enforce_short_id_edit_gate()
         next_free = self.peak_short_id_in_marked(marked_text) + 1
         return self.op_move_via_delete_insert(
@@ -832,6 +908,7 @@ class PythonHandler(FormatHandler):
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]
     ) -> str:
+        """Return op edit attributes."""
         self._enforce_short_id_edit_gate()
         tree, sid_index = _load_marked_tree(marked_text)
         _require_node_id(tree, short_id, sid_index)
@@ -848,6 +925,7 @@ class PythonHandler(FormatHandler):
     def op_edit_content(
         self, marked_text: str, short_id: NodeId, new_content: str
     ) -> str:
+        """Return op edit content."""
         self._enforce_short_id_edit_gate()
         tree, sid_index = _load_marked_tree(marked_text)
         node_id = _require_node_id(tree, short_id, sid_index)
@@ -868,6 +946,7 @@ if hasattr(cst, "AsyncFunctionDef"):
         original_node: _AsyncFunctionDefType,
         updated_node: _AsyncFunctionDefType,
     ) -> _AsyncFunctionDefType:
+        """Return mark leave async function def."""
         return _attach_metadata_marker(updated_node, self._allocator.allocate())
 
     def _unmark_leave_async_function_def(
@@ -875,6 +954,7 @@ if hasattr(cst, "AsyncFunctionDef"):
         original_node: _AsyncFunctionDefType,
         updated_node: _AsyncFunctionDefType,
     ) -> _AsyncFunctionDefType:
+        """Return unmark leave async function def."""
         return _clear_metadata_marker(updated_node)
 
     _MarkTransformer.leave_AsyncFunctionDef = _mark_leave_async_function_def  # type: ignore[attr-defined]

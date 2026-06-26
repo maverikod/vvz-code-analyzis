@@ -1,4 +1,4 @@
-# Self-managed execute / execute_batch retry behavior (fakes, no live PostgreSQL).
+"""Tests for self-managed execute and execute_batch retry behavior."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ _LOG = "code_analysis.core.database_driver_pkg.drivers.postgres"
 
 
 def _driver() -> PostgreSQLDriver:
+    """Return driver."""
     d = PostgreSQLDriver()
     d._retry_policy = RetryPolicy(
         attempts=3,
@@ -36,6 +37,7 @@ def _driver() -> PostgreSQLDriver:
 
     @contextmanager
     def _acquire(write: bool = False):
+        """Return acquire."""
         try:
             yield d.conn
         except BaseException as exc:
@@ -57,11 +59,13 @@ def _driver() -> PostgreSQLDriver:
 def test_execute_batch_retries_self_managed_transient(
     _sleep: MagicMock,
 ) -> None:
+    """Verify test execute batch retries self managed transient."""
     d = _driver()
     n = 0
     out = [{"affected_rows": 1, "lastrowid": None, "data": None}]
 
     def side(*a: object, **k: object) -> list:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -81,11 +85,13 @@ def test_execute_batch_retries_self_managed_transient(
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_execute_retries_self_managed_transient(_sleep: MagicMock) -> None:
+    """Verify test execute retries self managed transient."""
     d = _driver()
     n = 0
     result = {"affected_rows": 0, "lastrowid": None, "data": None}
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -138,6 +144,7 @@ def test_external_transaction_execute_and_batch_skips_pool_acquire() -> None:
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_external_transaction_id_not_retried(_sleep: MagicMock) -> None:
+    """Verify test external transaction id not retried."""
     d = _driver()
     d._transaction_manager = MagicMock()
     ext = MagicMock()
@@ -145,6 +152,7 @@ def test_external_transaction_id_not_retried(_sleep: MagicMock) -> None:
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         raise TransientDatabaseError(
@@ -162,10 +170,12 @@ def test_external_transaction_id_not_retried(_sleep: MagicMock) -> None:
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_rollback_before_transient_retry(_sleep: MagicMock) -> None:
+    """Verify test rollback before transient retry."""
     d = _driver()
     calls: list[str] = []
 
     def se(*a: object, **k: object) -> list:
+        """Return se."""
         calls.append("run")
         if len(calls) < 2:
             raise TransientDatabaseError(
@@ -182,6 +192,7 @@ def test_rollback_before_transient_retry(_sleep: MagicMock) -> None:
         ]
 
     def rb() -> None:
+        """Return rb."""
         calls.append("rollback")
         return None
 
@@ -195,10 +206,12 @@ def test_rollback_before_transient_retry(_sleep: MagicMock) -> None:
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_no_retry_when_commit_outcome_unknown(_sleep: MagicMock) -> None:
+    """Verify test no retry when commit outcome unknown."""
     d = _driver()
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         raise TransientDatabaseError(
@@ -218,10 +231,12 @@ def test_no_retry_when_commit_outcome_unknown(_sleep: MagicMock) -> None:
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_db_retry_log_line_includes_fields(_sleep: MagicMock, caplog) -> None:
+    """Verify test db retry log line includes fields."""
     d = _driver()
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:
@@ -250,10 +265,12 @@ def test_db_retry_log_line_includes_fields(_sleep: MagicMock, caplog) -> None:
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
 def test_rollback_fails_stops_with_driver_error(_sleep: MagicMock) -> None:
+    """Verify test rollback fails stops with driver error."""
     d = _driver()
     n = 0
 
     def side(*a: object, **k: object) -> dict:
+        """Return side."""
         nonlocal n
         n += 1
         if n < 2:

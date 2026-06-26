@@ -83,6 +83,7 @@ def build_from_libcst(
     stack: List[MutableNode] = []
 
     def visit(node: cst.CSTNode) -> None:
+        """Return visit."""
         node_type = node.__class__.__name__
         pos = positions.get(node)
         if pos is None:
@@ -185,6 +186,7 @@ def build_from_libcst(
     mutable_node_map: Dict[str, MutableNode] = {}
 
     def collect(n: MutableNode) -> None:
+        """Return collect."""
         mutable_node_map[n.node_id] = n
         for ch in n.children:
             collect(ch)

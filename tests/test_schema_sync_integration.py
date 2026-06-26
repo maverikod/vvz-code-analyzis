@@ -54,6 +54,7 @@ def cleanup_workers():
 
 
 def _sqlite_client(db_path: Path, *, backup_dir: Path | None = None):
+    """Return sqlite client."""
     bd = backup_dir if backup_dir is not None else (db_path.parent / "backups")
     bd.mkdir(parents=True, exist_ok=True)
     original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
@@ -62,6 +63,7 @@ def _sqlite_client(db_path: Path, *, backup_dir: Path | None = None):
 
 
 def _disconnect_client(client, original_env):
+    """Return disconnect client."""
     client.disconnect()
     if original_env is None:
         os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
@@ -70,6 +72,7 @@ def _disconnect_client(client, original_env):
 
 
 def _schema_version_from_db_settings(db) -> str:
+    """Return schema version from db settings."""
     r = db.execute(
         "SELECT value FROM db_settings WHERE key = 'schema_version' LIMIT 1",
         (),
@@ -143,14 +146,12 @@ class TestDriverIntegration:
         """Test that schema changes are applied correctly."""
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE db_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
-            """
-        )
+            """)
         cursor.execute("INSERT INTO db_settings (key, value) VALUES ('test', 'value')")
         cursor.execute(
             "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
@@ -192,14 +193,12 @@ class TestServerStartup:
         """Test that backup is created before schema changes."""
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE db_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
-            """
-        )
+            """)
         cursor.execute("INSERT INTO db_settings (key, value) VALUES ('test', 'value')")
         conn.commit()
         conn.close()
@@ -223,14 +222,12 @@ class TestServerStartup:
         """Test that version is updated after sync."""
         conn = sqlite3.connect(str(temp_db_path))
         cursor = conn.cursor()
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE db_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )
-            """
-        )
+            """)
         cursor.execute(
             "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
         )

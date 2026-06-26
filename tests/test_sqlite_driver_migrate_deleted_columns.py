@@ -19,19 +19,23 @@ class _RawSqliteSchemaAdapter:
     """Minimal DB surface (execute/fetch/get_table_info) for run_create_schema + migrations."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._c = conn
         self._c.row_factory = sqlite3.Row
 
     def _execute(self, sql: str, params: Any = None) -> None:
+        """Return execute."""
         if params is not None and params != ():
             self._c.execute(sql, params)
         else:
             self._c.execute(sql)
 
     def _commit(self) -> None:
+        """Return commit."""
         self._c.commit()
 
     def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        """Return get table info."""
         cur = self._c.cursor()
         cur.execute(f"PRAGMA table_info({table_name})")
         rows = cur.fetchall()
@@ -39,6 +43,7 @@ class _RawSqliteSchemaAdapter:
         return [{"name": r[1], "type": r[2]} for r in rows]
 
     def _fetchone(self, sql: str, params: Any = None) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         cur = self._c.cursor()
         if params is not None and params != ():
             cur.execute(sql, params)
@@ -51,6 +56,7 @@ class _RawSqliteSchemaAdapter:
         return dict(row)
 
     def _fetchall(self, sql: str, params: Any = None) -> List[Dict[str, Any]]:
+        """Return fetchall."""
         cur = self._c.cursor()
         if params is not None and params != ():
             cur.execute(sql, params)

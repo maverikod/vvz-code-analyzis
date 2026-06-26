@@ -12,11 +12,13 @@ from code_analysis.core.exceptions import ValidationError
 
 @pytest.fixture
 def cmd() -> FsGrepCommand:
+    """Return cmd."""
     return FsGrepCommand()
 
 
 @pytest.fixture
 def base_params() -> dict[str, object]:
+    """Return base params."""
     return {"project_id": str(uuid.uuid4()), "pattern": "needle"}
 
 
@@ -24,6 +26,7 @@ def test_validate_params_accepts_bounded_params_in_range(
     cmd: FsGrepCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts bounded params in range."""
     out = cmd.validate_params(
         {
             **base_params,
@@ -48,6 +51,7 @@ def test_validate_params_rejects_max_matches_out_of_range(
     base_params: dict[str, object],
     max_matches: int,
 ) -> None:
+    """Verify test validate params rejects max matches out of range."""
     with pytest.raises(ValidationError, match="max_matches") as exc_info:
         cmd.validate_params({**base_params, "max_matches": max_matches})
     assert exc_info.value.field == "max_matches"
@@ -59,6 +63,7 @@ def test_validate_params_rejects_enrich_max_results_out_of_range(
     base_params: dict[str, object],
     enrich_max_results: int,
 ) -> None:
+    """Verify test validate params rejects enrich max results out of range."""
     with pytest.raises(ValidationError, match="enrich_max_results") as exc_info:
         cmd.validate_params({**base_params, "enrich_max_results": enrich_max_results})
     assert exc_info.value.field == "enrich_max_results"
@@ -70,6 +75,7 @@ def test_validate_params_rejects_max_file_bytes_out_of_range(
     base_params: dict[str, object],
     max_file_bytes: int,
 ) -> None:
+    """Verify test validate params rejects max file bytes out of range."""
     with pytest.raises(ValidationError, match="max_file_bytes") as exc_info:
         cmd.validate_params({**base_params, "max_file_bytes": max_file_bytes})
     assert exc_info.value.field == "max_file_bytes"
@@ -81,6 +87,7 @@ def test_validate_params_rejects_line_preview_len_out_of_range(
     base_params: dict[str, object],
     line_preview_len: int,
 ) -> None:
+    """Verify test validate params rejects line preview len out of range."""
     with pytest.raises(ValidationError, match="line_preview_len") as exc_info:
         cmd.validate_params({**base_params, "line_preview_len": line_preview_len})
     assert exc_info.value.field == "line_preview_len"
@@ -92,6 +99,7 @@ def test_validate_params_rejects_grep_sync_max_wall_seconds_out_of_range(
     base_params: dict[str, object],
     grep_sync_max_wall_seconds: float,
 ) -> None:
+    """Verify test validate params rejects grep sync max wall seconds out of range."""
     with pytest.raises(ValidationError, match="grep_sync_max_wall_seconds") as exc_info:
         cmd.validate_params(
             {**base_params, "grep_sync_max_wall_seconds": grep_sync_max_wall_seconds}
@@ -105,6 +113,7 @@ def test_validate_params_rejects_hard_timeout_seconds_out_of_range(
     base_params: dict[str, object],
     hard_timeout_seconds: float,
 ) -> None:
+    """Verify test validate params rejects hard timeout seconds out of range."""
     with pytest.raises(ValidationError, match="hard_timeout_seconds") as exc_info:
         cmd.validate_params(
             {**base_params, "hard_timeout_seconds": hard_timeout_seconds}
@@ -118,6 +127,7 @@ def test_validate_params_rejects_inline_timeout_seconds_out_of_range(
     base_params: dict[str, object],
     inline_timeout_seconds: float,
 ) -> None:
+    """Verify test validate params rejects inline timeout seconds out of range."""
     with pytest.raises(ValidationError, match="inline_timeout_seconds") as exc_info:
         cmd.validate_params(
             {**base_params, "inline_timeout_seconds": inline_timeout_seconds}

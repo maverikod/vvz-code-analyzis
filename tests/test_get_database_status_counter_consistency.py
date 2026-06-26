@@ -57,6 +57,7 @@ def test_active_equals_indexed_plus_needing_indexing(
     )
 
     def add_py(name: str, body: str) -> str:
+        """Return add py."""
         p = tmp_path / name
         p.write_text(body, encoding="utf-8")
         return db.add_file(

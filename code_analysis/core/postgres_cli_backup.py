@@ -45,6 +45,7 @@ class PostgresDriverCliConfig:
 
 
 def _cfg_str(cfg: Mapping[str, Any], key: str, default: str) -> str:
+    """Return cfg str."""
     v = cfg.get(key)
     if v is None or (isinstance(v, str) and not v.strip()):
         return default
@@ -52,6 +53,7 @@ def _cfg_str(cfg: Mapping[str, Any], key: str, default: str) -> str:
 
 
 def _cfg_int(cfg: Mapping[str, Any], key: str, default: int) -> int:
+    """Return cfg int."""
     v = cfg.get(key, default)
     try:
         return int(v)
@@ -99,6 +101,7 @@ def load_postgres_cli_config(driver_cfg: Mapping[str, Any]) -> PostgresDriverCli
 
 
 def _pg_subprocess_env(cli: PostgresDriverCliConfig) -> Dict[str, str]:
+    """Return pg subprocess env."""
     env = os.environ.copy()
     env["PGHOST"] = cli.host
     env["PGPORT"] = str(cli.port)
@@ -111,6 +114,7 @@ def _pg_subprocess_env(cli: PostgresDriverCliConfig) -> Dict[str, str]:
 
 
 def _resolve_binary(preferred: Optional[str], default_name: str) -> str:
+    """Return resolve binary."""
     if preferred and Path(preferred).expanduser().is_file():
         return str(Path(preferred).expanduser().resolve())
     path = shutil.which(default_name)
@@ -129,6 +133,7 @@ def _run_checked(
     timeout: Optional[float],
     label: str,
 ) -> None:
+    """Return run checked."""
     logger.info(
         "Running %s: %s", label, " ".join(argv[:6]) + (" ..." if len(argv) > 6 else "")
     )

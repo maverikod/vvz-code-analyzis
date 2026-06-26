@@ -81,6 +81,7 @@ def _apply_libcst_codegen_compat() -> None:
         state: object,
         **kwargs: object,
     ) -> None:
+        """Return codegen impl compat."""
         orig(self, state)  # type: ignore[arg-type]
 
     cst.SimpleStatementLine._codegen_impl = _codegen_impl_compat  # type: ignore[method-assign]
@@ -90,6 +91,7 @@ _apply_libcst_codegen_compat()
 
 
 def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> bool:
+    """Return use mutable batch path."""
     return False  # disabled: mutable_cst path breaks stable_id preservation
     """Use mutable CST batch path only for a single lone DELETE.
 
@@ -420,7 +422,10 @@ def _replace_node_header(
 
     # Swap the node in place using a CSTTransformer
     class _HeaderPatcher(cst.CSTTransformer):
+        """Represent HeaderPatcher."""
+
         def __init__(self, target: cst.CSTNode, replacement: cst.CSTNode) -> None:
+            """Initialize the instance."""
             self._target = target
             self._replacement = replacement
             self._replaced = False
@@ -428,6 +433,7 @@ def _replace_node_header(
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode:
+            """Return on leave."""
             if original_node is self._target and not self._replaced:
                 self._replaced = True
                 return self._replacement

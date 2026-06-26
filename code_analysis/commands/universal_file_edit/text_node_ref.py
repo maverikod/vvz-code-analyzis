@@ -35,6 +35,7 @@ _LINE_INDEX_SUFFIXES = frozenset({".jsonl", ".ndjson"})
 
 
 def _read_source(path: Path) -> str:
+    """Return read source."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -83,9 +84,7 @@ def _resolve_flat_line_index(source: str, node_ref: str) -> Tuple[int, int]:
     idx = int(node_ref)
     lines = source.splitlines()
     if idx < 0 or idx >= len(lines):
-        raise ValueError(
-            f"Line index {idx} out of range [0, {len(lines)})."
-        )
+        raise ValueError(f"Line index {idx} out of range [0, {len(lines)}).")
     start_line = idx + 1
     return start_line, start_line
 
@@ -187,6 +186,7 @@ def _coalesce_text_move_node_refs(op: Dict[str, Any]) -> None:
 
 
 def _map_move_position_to_insert_side(position: str) -> str:
+    """Return map move position to insert side."""
     pos = str(position or "after").lower()
     if pos in ("before", "first", "first_child"):
         return "before"

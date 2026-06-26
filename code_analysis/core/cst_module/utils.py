@@ -15,6 +15,7 @@ import libcst as cst
 
 
 def _is_module_docstring(stmt: cst.BaseStatement) -> bool:
+    """Return is module docstring."""
     if not isinstance(stmt, cst.SimpleStatementLine):
         return False
     if len(stmt.body) != 1:
@@ -73,6 +74,7 @@ def compile_module(source: str, filename: str = "<cst_module>") -> tuple[bool, s
 
 
 def unified_diff(old: str, new: str, path: str) -> str:
+    """Return unified diff."""
     diff = difflib.unified_diff(
         old.splitlines(keepends=True),
         new.splitlines(keepends=True),
@@ -85,6 +87,7 @@ def unified_diff(old: str, new: str, path: str) -> str:
 def write_with_backup(
     target_file: Path, new_source: str, create_backup: bool = True
 ) -> Optional[Path]:
+    """Return write with backup."""
     if create_backup and target_file.exists():
         backup_dir = target_file.parent / ".code_mapper_backups"
         backup_dir.mkdir(parents=True, exist_ok=True)

@@ -63,6 +63,7 @@ def _merge_queue_stats(into: Dict[str, Any], part: Dict[str, Any]) -> None:
 
 
 def _abspath_dedup_ts(value: Any) -> float:
+    """Return abspath dedup ts."""
     if value is None:
         return float("inf")
     try:
@@ -175,6 +176,7 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                 )
 
                 def _pair_sort_key(t: Tuple[str, Any, Any]) -> Tuple[float, float, str]:
+                    """Return pair sort key."""
                     return (
                         _abspath_dedup_ts(t[2]),
                         _abspath_dedup_ts(t[1]),

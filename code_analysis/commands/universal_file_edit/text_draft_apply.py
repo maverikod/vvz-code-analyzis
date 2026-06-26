@@ -54,10 +54,12 @@ from code_analysis.tree.edit_operations import EditOperationError
 
 
 def _line_count(buffer: List[str]) -> int:
+    """Return line count."""
     return len(buffer)
 
 
 def _resolve_line_range(op: Dict[str, Any]) -> tuple[int, int]:
+    """Return resolve line range."""
     start_line = int(op.get("start_line", 1))
     end_raw = op.get("end_line")
     end_line = start_line if end_raw is None else int(end_raw)
@@ -233,6 +235,7 @@ def _run_valid_text_tree_apply(
     source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
 
     def _rollback() -> None:
+        """Return rollback."""
         session.core.session_tree_path.write_text(tree_snapshot, encoding="utf-8")
         session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
 

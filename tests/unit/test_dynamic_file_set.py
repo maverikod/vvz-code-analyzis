@@ -10,6 +10,7 @@ from code_analysis.core.search_session.file_sets.indexed import IndexedFileSet
 
 
 def test_build_dynamic_file_set_excludes_indexed_members() -> None:
+    """Verify test build dynamic file set excludes indexed members."""
     indexed = IndexedFileSet(files=frozenset({"src/indexed.py"}))
     disk_files = ["src/indexed.py", "src/dynamic.py"]
 
@@ -19,6 +20,7 @@ def test_build_dynamic_file_set_excludes_indexed_members() -> None:
 
 
 def test_build_dynamic_file_set_excludes_log_files_by_default() -> None:
+    """Verify test build dynamic file set excludes log files by default."""
     indexed = IndexedFileSet(files=frozenset())
     disk_files = ["logs/app.log", "src/app.py"]
 
@@ -29,6 +31,7 @@ def test_build_dynamic_file_set_excludes_log_files_by_default() -> None:
 
 
 def test_build_dynamic_file_set_includes_logs_with_broad_scan_policy() -> None:
+    """Verify test build dynamic file set includes logs with broad scan policy."""
     indexed = IndexedFileSet(files=frozenset())
     disk_files = ["logs/app.log", "src/app.py"]
     broad_scan = BroadScanPolicy(enabled=True, include_logs=True)

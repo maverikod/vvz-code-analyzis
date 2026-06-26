@@ -39,6 +39,7 @@ class GetFileLinesCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -74,6 +75,7 @@ class GetFileLinesCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["GetFileLinesCommand"]) -> Dict[str, Any]:
+        """Return metadata for raw file line-range reads."""
         from .command_metadata_helpers import (
             build_command_metadata,
             parameters_from_schema,
@@ -121,6 +123,7 @@ class GetFileLinesCommand(BaseMCPCommand):
         allow_healthy_line_ops: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Read an inclusive line range after project and CST-gate validation."""
         try:
             params: Dict[str, Any] = {
                 "project_id": project_id,

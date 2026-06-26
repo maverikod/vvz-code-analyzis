@@ -48,6 +48,7 @@ _JSON_REL = "cfg/app.json"
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -57,6 +58,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _db(tmp: Path) -> MagicMock:
+    """Return db."""
     m = MagicMock()
     p = MagicMock()
     p.root_path = str(tmp.resolve())
@@ -66,6 +68,7 @@ def _db(tmp: Path) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset_yaml_trees() -> None:
+    """Return reset yaml trees."""
     ytb._trees.clear()
     yield
     ytb._trees.clear()
@@ -106,6 +109,7 @@ def test_merge_edit_session_injects_draft_path_for_tree_temp(tmp_path: Path) -> 
 
 
 async def _open_yaml(tmp: Path) -> str:
+    """Return open yaml."""
     _ensure_project_root(tmp)
     p = tmp / _YAML_REL
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +133,7 @@ async def _open_yaml(tmp: Path) -> str:
 
 
 def _range_starts_from_blocks(data: dict[str, Any]) -> list[int]:
+    """Return range starts from blocks."""
     blocks = cast(list[dict[str, Any]], data.get("blocks") or [])
     starts: list[int] = []
     for block in blocks:
@@ -147,6 +152,7 @@ def _preview_params(
     session_id: str | None = None,
     node_ref: str | None = None,
 ) -> dict[str, Any]:
+    """Return preview params."""
     raw: dict[str, Any] = {
         "project_id": project_id,
         "file_path": rel,
@@ -163,6 +169,7 @@ def _preview_params(
 async def test_yaml_tree_temp_insert_visible_in_session_preview(
     tmp_path: Path,
 ) -> None:
+    """Verify test yaml tree temp insert visible in session preview."""
     sid = await _open_yaml(tmp_path)
     ed = UniversalFileEditCommand()
     preview = UniversalFilePreviewCommand()
@@ -207,6 +214,7 @@ async def test_yaml_tree_temp_insert_visible_in_session_preview(
 async def test_yaml_tree_temp_replace_visible_in_session_preview(
     tmp_path: Path,
 ) -> None:
+    """Verify test yaml tree temp replace visible in session preview."""
     sid = await _open_yaml(tmp_path)
     ed = UniversalFileEditCommand()
     preview = UniversalFilePreviewCommand()
@@ -250,6 +258,7 @@ async def test_yaml_tree_temp_replace_visible_in_session_preview(
 
 
 async def _open_json(tmp: Path) -> str:
+    """Return open json."""
     _ensure_project_root(tmp)
     p = tmp / _JSON_REL
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -275,6 +284,7 @@ async def _scalar_preview_value(
     session_id: str,
     node_ref: str,
 ) -> str:
+    """Return scalar preview value."""
     preview = UniversalFilePreviewCommand()
     with patch.object(
         BaseMCPCommand, "_open_database_from_config", return_value=_db(tmp)
@@ -291,6 +301,7 @@ async def _scalar_preview_value(
 
 @pytest.mark.asyncio
 async def test_json_tree_temp_preview_matches_draft(tmp_path: Path) -> None:
+    """Verify test json tree temp preview matches draft."""
     sid = await _open_json(tmp_path)
     ed = UniversalFileEditCommand()
     preview = UniversalFilePreviewCommand()
@@ -365,6 +376,7 @@ async def test_json_tree_temp_preview_matches_draft(tmp_path: Path) -> None:
 async def test_tree_temp_preview_without_commit_leaves_source_unchanged(
     tmp_path: Path,
 ) -> None:
+    """Verify test tree temp preview without commit leaves source unchanged."""
     sid = await _open_yaml(tmp_path)
     source_path = tmp_path / _YAML_REL
     before = source_path.read_text(encoding="utf-8")

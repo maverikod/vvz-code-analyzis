@@ -24,6 +24,7 @@ def test_type_check_success_when_mypy_fails_only_other_files(tmp_path) -> None:
     line = f"{other.resolve()}:1: error: Incompatible types in assignment"
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
+        """Return fake run."""
         return CompletedProcess(cmd, 1, stdout=line + "\n", stderr="")
 
     with patch("code_analysis.core.code_quality.type_checker.subprocess.run", fake_run):
@@ -35,11 +36,13 @@ def test_type_check_success_when_mypy_fails_only_other_files(tmp_path) -> None:
 
 
 def test_type_check_failure_when_target_file_has_errors(tmp_path) -> None:
+    """Verify test type check failure when target file has errors."""
     target = tmp_path / "bad.py"
     target.write_text("x: str = 1\n")
     line = f"{target.resolve()}:1: error: Incompatible types in assignment"
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
+        """Return fake run."""
         return CompletedProcess(cmd, 1, stdout=line + "\n", stderr="")
 
     with patch("code_analysis.core.code_quality.type_checker.subprocess.run", fake_run):
@@ -52,10 +55,12 @@ def test_type_check_failure_when_target_file_has_errors(tmp_path) -> None:
 
 
 def test_type_check_success_when_mypy_exit_zero(tmp_path) -> None:
+    """Verify test type check success when mypy exit zero."""
     target = tmp_path / "ok.py"
     target.write_text("x = 1\n")
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
+        """Return fake run."""
         return CompletedProcess(cmd, 0, stdout="", stderr="")
 
     with patch("code_analysis.core.code_quality.type_checker.subprocess.run", fake_run):
@@ -69,7 +74,10 @@ def test_type_check_success_when_mypy_exit_zero(tmp_path) -> None:
 def test_project_mypy_success_when_nonzero_but_no_parsed_file_errors(
     tmp_path,
 ) -> None:
+    """Verify test project mypy success when nonzero but no parsed file errors."""
+
     def fake_run(cmd, **kwargs):  # noqa: ANN001
+        """Return fake run."""
         return CompletedProcess(cmd, 1, stdout="unstructured mypy noise\n", stderr="")
 
     with patch("code_analysis.core.code_quality.type_checker.subprocess.run", fake_run):
@@ -80,6 +88,7 @@ def test_project_mypy_success_when_nonzero_but_no_parsed_file_errors(
 
 
 def test_resolve_mypy_config_explicit_wins(tmp_path) -> None:
+    """Verify test resolve mypy config explicit wins."""
     f = tmp_path / "a.py"
     f.write_text("x = 1\n")
     cfg = tmp_path / "custom.toml"
@@ -89,6 +98,7 @@ def test_resolve_mypy_config_explicit_wins(tmp_path) -> None:
 
 
 def test_resolve_mypy_config_finds_pyproject_parent(tmp_path) -> None:
+    """Verify test resolve mypy config finds pyproject parent."""
     root = tmp_path
     (root / "pyproject.toml").write_text("[tool.mypy]\n")
     pkg = root / "pkg"
@@ -100,6 +110,7 @@ def test_resolve_mypy_config_finds_pyproject_parent(tmp_path) -> None:
 
 
 def test_resolve_mypy_config_skips_repo_root_with_code_analysis_dir(tmp_path) -> None:
+    """Verify test resolve mypy config skips repo root with code analysis dir."""
     root = tmp_path
     (root / "pyproject.toml").write_text("[tool.mypy]\n")
     (root / "code_analysis").mkdir()
@@ -112,17 +123,20 @@ def test_resolve_mypy_config_skips_repo_root_with_code_analysis_dir(tmp_path) ->
 
 
 def test_resolve_mypy_config_none_when_no_pyproject(tmp_path) -> None:
+    """Verify test resolve mypy config none when no pyproject."""
     f = tmp_path / "lonely.py"
     f.write_text("x = 1\n")
     assert resolve_mypy_config_for_single_file(f, explicit_config=None) is None
 
 
 def test_project_mypy_failure_when_parsed_errors_exist(tmp_path) -> None:
+    """Verify test project mypy failure when parsed errors exist."""
     f = tmp_path / "a.py"
     f.write_text("x: str = 1\n")
     line = f"{f.resolve()}:1: error: Incompatible types in assignment"
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
+        """Return fake run."""
         return CompletedProcess(cmd, 1, stdout=line + "\n", stderr="")
 
     with patch("code_analysis.core.code_quality.type_checker.subprocess.run", fake_run):

@@ -257,6 +257,7 @@ CLIENT_API_COVERAGE = frozenset(
 
 
 def _ok(cond: bool, msg: str) -> None:
+    """Return ok."""
     if not cond:
         raise AssertionError(msg)
 
@@ -430,6 +431,7 @@ async def ex_validated_client_methods(client: CodeAnalysisAsyncClient) -> None:
     events: List[str] = []
 
     async def _hook(_: Dict[str, Any]) -> None:
+        """Return hook."""
         events.append("tick")
 
     r2 = await client.call_unified_validated(

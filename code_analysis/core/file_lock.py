@@ -57,6 +57,7 @@ class FileLockHandle:
         project_id: Optional[str] = None,
         file_path: Optional[str] = None,
     ) -> None:
+        """Initialize the instance."""
         self.path = path
         self.lock_file = lock_file
         self.lock_path = lock_path
@@ -104,9 +105,11 @@ class FileLockHandle:
             logger.debug("Remove lock file %s: %s", self.lock_path, e)
 
     def __enter__(self) -> "FileLockHandle":
+        """Return enter."""
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        """Return exit."""
         self.release()
 
 
@@ -114,15 +117,18 @@ class PersistentFileLock:
     """Backward-compatible process-held advisory lock for a target file."""
 
     def __init__(self, path: Path, *, shared: bool = False) -> None:
+        """Initialize the instance."""
         self.path = Path(path)
         self.shared = bool(shared)
         self._handle: Optional[FileLockHandle] = None
 
     @property
     def is_held(self) -> bool:
+        """Return is held."""
         return self._handle is not None and not self._handle.released
 
     def acquire(self) -> "PersistentFileLock":
+        """Return acquire."""
         if self.is_held:
             return self
         self._handle = acquire_file_lock(
@@ -132,15 +138,18 @@ class PersistentFileLock:
         return self
 
     def release(self) -> None:
+        """Return release."""
         handle = self._handle
         self._handle = None
         if handle is not None:
             handle.release()
 
     def __enter__(self) -> "PersistentFileLock":
+        """Return enter."""
         return self.acquire()
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        """Return exit."""
         self.release()
 
 
@@ -149,6 +158,7 @@ _persistent_locks: Dict[Tuple[str, str, str], FileLockHandle] = {}
 
 
 def _fcntl_flag_for_mode(mode: str) -> int:
+    """Return fcntl flag for mode."""
     normalized = normalize_lock_mode(mode)
     if normalized == "shared":
         return fcntl.LOCK_SH if fcntl is not None else 0

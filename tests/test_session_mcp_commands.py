@@ -47,6 +47,7 @@ _SESSION_COMMANDS = (
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_session_commands() -> None:
+    """Return register session commands."""
     hooks.execute_custom_commands_hooks(registry)
 
 
@@ -54,6 +55,7 @@ async def _register_session_commands() -> None:
 def test_session_commands_registered_as_session_management(
     name: str, expected_cls: type
 ) -> None:
+    """Verify test session commands registered as session management."""
     cls = registry.get_command(name)
     assert cls is expected_cls
     assert cls.category == "session_management"
@@ -62,6 +64,7 @@ def test_session_commands_registered_as_session_management(
 
 @pytest.mark.parametrize("name,expected_cls", _SESSION_COMMANDS)
 def test_session_command_metadata_meets_standard(name: str, expected_cls: type) -> None:
+    """Verify test session command metadata meets standard."""
     cls = registry.get_command(name)
     meta = cls.metadata()
     for key in REQUIRED_METADATA_KEYS:
@@ -76,6 +79,7 @@ def test_session_command_metadata_meets_standard(name: str, expected_cls: type) 
 
 @pytest.mark.asyncio
 async def test_session_create_execute_returns_session_id() -> None:
+    """Verify test session create execute returns session id."""
     row = {
         "session_id": "11111111-1111-4111-8111-111111111111",
         "comment": "test",
@@ -104,6 +108,7 @@ async def test_session_create_execute_returns_session_id() -> None:
 
 @pytest.mark.asyncio
 async def test_session_list_session_id_required_when_show_ids_true() -> None:
+    """Verify test session list session id required when show ids true."""
     mock_db = MagicMock()
     config = {
         "sessions": {"show_session_ids": True},
@@ -128,6 +133,7 @@ async def test_session_list_session_id_required_when_show_ids_true() -> None:
 
 @pytest.mark.asyncio
 async def test_session_validate_execute_returns_valid_flag() -> None:
+    """Verify test session validate execute returns valid flag."""
     row = {
         "session_id": "11111111-1111-4111-8111-111111111111",
         "comment": "test",
@@ -166,6 +172,7 @@ async def test_session_validate_execute_returns_valid_flag() -> None:
 
 @pytest.mark.asyncio
 async def test_session_validate_not_found() -> None:
+    """Verify test session validate not found."""
     mock_db = MagicMock()
     config = {
         "registration": {"instance_uuid": "880e8400-e29b-41d4-a716-446655440003"},
@@ -212,6 +219,7 @@ def test_session_delete_schema_and_metadata_force_default_aligned() -> None:
 
 @pytest.mark.asyncio
 async def test_session_delete_execute_defaults_force_false() -> None:
+    """Verify test session delete execute defaults force false."""
     mock_db = MagicMock()
     config = {
         "registration": {"instance_uuid": "880e8400-e29b-41d4-a716-446655440003"},

@@ -160,10 +160,12 @@ class TestRequestQueue:
         results_lock = threading.Lock()
 
         def enqueue_worker(worker_id):
+            """Return enqueue worker."""
             for i in range(100):
                 queue.enqueue(f"req_{worker_id}_{i}", {"data": i})
 
         def dequeue_worker():
+            """Return dequeue worker."""
             for _ in range(100):
                 request = queue.dequeue()
                 if request:

@@ -118,6 +118,7 @@ def classify_postgres_error(
 def _raise_classified(
     e: BaseException, *, for_commit: bool, message_prefix: str
 ) -> NoReturn:
+    """Return raise classified."""
     info = classify_postgres_error(e, for_commit=for_commit)
     if info.retryable and not info.commit_outcome_unknown:
         raise TransientDatabaseError(
@@ -138,6 +139,7 @@ _INSERT_INTO_RE = re.compile(
 
 
 def _norm_sql_one_line(sql: str) -> str:
+    """Return norm sql one line."""
     return " ".join(sql.strip().rstrip(";").split())
 
 
@@ -366,6 +368,7 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
 def _sqlite_qmarks_to_psycopg(
     sql: str, params: Optional[tuple]
 ) -> Tuple[str, Optional[tuple]]:
+    """Return sqlite qmarks to psycopg."""
     if params is None:
         if "?" in sql:
             raise DriverOperationError("SQL contains ? but params is None")
@@ -396,6 +399,7 @@ def _returning_column_for_table(
 
 
 def _maybe_append_returning(stmt: str, schema_tables: Dict[str, Any]) -> str:
+    """Return maybe append returning."""
     s = stmt.strip()
     up = s.upper()
     if not up.startswith("INSERT"):
@@ -414,6 +418,7 @@ def _maybe_append_returning(stmt: str, schema_tables: Dict[str, Any]) -> str:
 
 
 def _rows_to_dicts(cursor: Any) -> List[Dict[str, Any]]:
+    """Return rows to dicts."""
     if cursor.description is None:
         return []
     cols = [d[0] for d in cursor.description]

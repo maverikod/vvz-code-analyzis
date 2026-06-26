@@ -34,6 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _open_schema_client(db_path: Path) -> DatabaseClient:
+    """Return open schema client."""
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     driver = create_driver(
@@ -48,6 +49,7 @@ def _open_schema_client(db_path: Path) -> DatabaseClient:
 
 
 def _fetch_sql_one_row(client: DatabaseClient, sql: str, params: tuple) -> dict | None:
+    """Return fetch sql one row."""
     r = client.execute(sql, params)
     rows = r.get("data") if isinstance(r, dict) else None
     if not rows:
@@ -57,6 +59,7 @@ def _fetch_sql_one_row(client: DatabaseClient, sql: str, params: tuple) -> dict 
 
 
 def _fetch_count(client: DatabaseClient, sql: str, params: tuple) -> int:
+    """Return fetch count."""
     row = _fetch_sql_one_row(client, sql, params)
     if not row:
         return 0
@@ -66,6 +69,7 @@ def _fetch_count(client: DatabaseClient, sql: str, params: tuple) -> int:
 
 @pytest.fixture(autouse=True)
 def _sqlite_worker_env():
+    """Return sqlite worker env."""
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
     yield

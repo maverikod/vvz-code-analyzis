@@ -56,6 +56,7 @@ async def _drain_queue_jobs_before_shutdown() -> None:
 
 @pytest_asyncio.fixture
 async def queue_manager():
+    """Return queue manager."""
     hooks.execute_custom_commands_hooks(registry)
     await shutdown_global_queue_manager()
     await init_global_queue_manager(
@@ -72,6 +73,7 @@ async def queue_manager():
 
 @pytest.mark.asyncio
 async def test_inline_fast_search_returns_result(tmp_path) -> None:
+    """Verify test inline fast search returns result."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "hit.txt").write_text("needle here\n", encoding="utf-8")
@@ -96,11 +98,13 @@ async def test_inline_fast_search_returns_result(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_inline_slow_search_auto_queues(tmp_path, queue_manager) -> None:
+    """Verify test inline slow search auto queues."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "slow.txt").write_text("needle\n", encoding="utf-8")
 
     def _slow_sync(*_args: object, **_kwargs: object) -> SuccessResult:
+        """Return slow sync."""
         time.sleep(SEARCH_INLINE_TIMEOUT_SECONDS + 2)
         return SuccessResult(data={"matches": [], "match_count": 0, "files_scanned": 0})
 
@@ -124,6 +128,7 @@ async def test_inline_slow_search_auto_queues(tmp_path, queue_manager) -> None:
 
 @pytest.mark.asyncio
 async def test_queued_job_does_not_requeue(tmp_path, queue_manager) -> None:
+    """Verify test queued job does not requeue."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "a.txt").write_text("needle\n", encoding="utf-8")
@@ -153,11 +158,13 @@ async def test_queued_job_does_not_requeue(tmp_path, queue_manager) -> None:
 
 @pytest.mark.asyncio
 async def test_queued_job_hard_timeout(tmp_path) -> None:
+    """Verify test queued job hard timeout."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "slow.txt").write_text("needle\n", encoding="utf-8")
 
     def _slow_sync(*_args: object, **_kwargs: object) -> SuccessResult:
+        """Return slow sync."""
         time.sleep(3)
         return SuccessResult(data={"matches": [], "match_count": 0, "files_scanned": 0})
 
@@ -180,11 +187,13 @@ async def test_queued_job_hard_timeout(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_project_cross_search_auto_queue(tmp_path, queue_manager) -> None:
+    """Verify test project cross search auto queue."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "one.py").write_text("xpath\n", encoding="utf-8")
 
     async def _slow_cross_search(**_kwargs: object) -> SuccessResult:
+        """Return slow cross search."""
         await __import__("asyncio").sleep(SEARCH_INLINE_TIMEOUT_SECONDS + 2)
         return SuccessResult(data={"success": True, "results": []})
 

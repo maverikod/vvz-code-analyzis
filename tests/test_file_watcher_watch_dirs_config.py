@@ -16,6 +16,7 @@ from code_analysis.core.file_watcher_pkg.watch_dirs_config import (
 
 
 def _minimal_config(watch_dirs: list) -> dict:
+    """Return minimal config."""
     return {
         "code_analysis": {
             "worker": {
@@ -32,6 +33,7 @@ def _minimal_config(watch_dirs: list) -> dict:
 
 
 def test_parse_worker_watch_dirs_raw_validates_format() -> None:
+    """Verify test parse worker watch dirs raw validates format."""
     cfg = {
         "worker": {
             "watch_dirs": [
@@ -47,6 +49,7 @@ def test_parse_worker_watch_dirs_raw_validates_format() -> None:
 
 
 def test_load_file_watcher_runtime_settings(tmp_path: Path) -> None:
+    """Verify test load file watcher runtime settings."""
     watch = tmp_path / "watch"
     watch.mkdir()
     config_path = tmp_path / "config.json"
@@ -66,6 +69,7 @@ def test_load_file_watcher_runtime_settings(tmp_path: Path) -> None:
 
 
 def test_load_file_watcher_runtime_settings_empty_watch_dirs(tmp_path: Path) -> None:
+    """Verify test load file watcher runtime settings empty watch dirs."""
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(_minimal_config([])), encoding="utf-8")
 
@@ -74,7 +78,11 @@ def test_load_file_watcher_runtime_settings_empty_watch_dirs(tmp_path: Path) -> 
 
 
 def test_apply_runtime_settings_to_worker_updates_specs() -> None:
+    """Verify test apply runtime settings to worker updates specs."""
+
     class _Worker:
+        """Represent Worker."""
+
         watch_dirs = [
             WatchDirSpec(
                 watch_dir=Path("/old"),

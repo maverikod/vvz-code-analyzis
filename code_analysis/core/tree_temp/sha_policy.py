@@ -29,6 +29,7 @@ class ShaSyncDecision:
 
 
 def _require_digest(name: str, value: Optional[str]) -> None:
+    """Return require digest."""
     if value is None:
         return
     if not isinstance(value, str) or not _lower_hex_64.match(value):

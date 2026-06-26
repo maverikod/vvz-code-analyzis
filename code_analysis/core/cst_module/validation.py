@@ -132,6 +132,7 @@ def validate_file_in_temp(
         t_parallel = time.perf_counter()
 
         def _flake8_job() -> Tuple[Tuple[bool, Optional[str], List[str]], float]:
+            """Return flake8 job."""
             t0 = time.perf_counter()
             return (
                 lint_with_flake8(temp_file_path, ignore=None),
@@ -139,6 +140,7 @@ def validate_file_in_temp(
             )
 
         def _mypy_job() -> Tuple[Tuple[bool, Optional[str], List[str]], float]:
+            """Return mypy job."""
             t0 = time.perf_counter()
             return (
                 type_check_with_mypy(

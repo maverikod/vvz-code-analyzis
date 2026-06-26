@@ -35,6 +35,7 @@ def _make_db_mock() -> MagicMock:
     def _execute_side_effect(
         sql: str, params: tuple = (), *args: object, **kwargs: object
     ) -> dict:
+        """Return execute side effect."""
         s = str(sql)
         if "SELECT editing_pid" in s:
             return {"affected_rows": 0, "data": [{"editing_pid": None}]}
@@ -145,6 +146,7 @@ def test_save_tree_to_file_validation_failure_cleans_tmp(
     real_compile = builtins.compile
 
     def failing_compile(source, filename, *args, **kwargs):
+        """Return failing compile."""
         if ".tmp" in str(filename):
             raise SyntaxError("fake validation failure")
         return real_compile(source, filename, *args, **kwargs)

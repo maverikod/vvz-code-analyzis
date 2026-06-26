@@ -57,6 +57,7 @@ def join_code_lines(lines: List[str]) -> str:
 
 
 def _snippet_as_string(code: Optional[str], code_lines: Optional[List[str]]) -> str:
+    """Return snippet as string."""
     if code_lines is not None:
         if code is not None:
             raise ValueError("Cannot provide both code and code_lines")
@@ -146,6 +147,7 @@ def parse_annotation_snippet(
 
 
 def _normalize_snippet_indentation(code: str) -> str:
+    """Return normalize snippet indentation."""
     lines = code.splitlines()
     if not lines:
         return code
@@ -171,6 +173,7 @@ def _normalize_snippet_indentation(code: str) -> str:
 
 
 def _indent_non_empty_lines(code: str, prefix: str) -> str:
+    """Return indent non empty lines."""
     lines: List[str] = []
     for line in code.splitlines():
         if line.strip():
@@ -218,6 +221,7 @@ def _align_code_for_node_move_snippet(code: str, source_container: str) -> str:
 
 
 def _parse_function_def_module_level(code: str) -> cst.FunctionDef:
+    """Return parse function def module level."""
     normalized = _normalize_snippet_indentation(code)
     try:
         mod = cst.parse_module(normalized)
@@ -303,6 +307,7 @@ def def_snippet_container_kind(tree: "CSTTree", metadata: Any) -> str:
 def _first_stmt_of_type(
     body: List[cst.BaseStatement], node_type: type
 ) -> Optional[cst.CSTNode]:
+    """Return first stmt of type."""
     for stmt in body:
         if isinstance(stmt, node_type):
             return stmt
@@ -312,6 +317,7 @@ def _first_stmt_of_type(
 def _parse_function_def_in_class_stub_with_indent(
     code: str, class_body_indent: str
 ) -> cst.FunctionDef:
+    """Return parse function def in class stub with indent."""
     normalized = _normalize_snippet_indentation(code)
     prefix = class_body_indent or "    "
     wrapped = (
@@ -338,10 +344,12 @@ def _parse_function_def_in_class_stub_with_indent(
 
 
 def _parse_function_def_in_class_stub(code: str) -> cst.FunctionDef:
+    """Return parse function def in class stub."""
     return _parse_function_def_in_class_stub_with_indent(code, "    ")
 
 
 def _parse_function_def_in_function_stub(code: str) -> cst.FunctionDef:
+    """Return parse function def in function stub."""
     normalized = _normalize_snippet_indentation(code)
     wrapped = (
         f"def {_SNIPPET_FUNC_NAME}():\n"
@@ -369,6 +377,7 @@ def _parse_function_def_in_function_stub(code: str) -> cst.FunctionDef:
 
 
 def _parse_class_def_in_class_stub(code: str) -> cst.ClassDef:
+    """Return parse class def in class stub."""
     normalized = _normalize_snippet_indentation(code)
     wrapped = (
         f"class {_SNIPPET_CLASS_NAME}:\n"

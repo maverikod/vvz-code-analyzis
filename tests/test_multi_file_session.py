@@ -32,6 +32,7 @@ PROJECT = "cafebabe-cafe-4caf-babe-cafebabecafe"
 
 
 def _db_for(tmp: Path) -> MagicMock:
+    """Return db for."""
     m = MagicMock()
     row = {
         "id": PROJECT,
@@ -47,14 +48,20 @@ def _db_for(tmp: Path) -> MagicMock:
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(json.dumps({"id": PROJECT}) + "\n", encoding="utf-8")
 
 
 def _sqlite_facade(conn: sqlite3.Connection):
+    """Return sqlite facade."""
+
     class Facade:
+        """Represent Facade."""
+
         def execute(self, sql, params=(), **kw):
+            """Execute the command."""
             cur = conn.execute(sql, params)
             if sql.strip().upper().startswith("SELECT"):
                 return {"data": [dict(r) for r in cur.fetchall()]}
@@ -62,18 +69,22 @@ def _sqlite_facade(conn: sqlite3.Connection):
             return {"affected_rows": cur.rowcount, "data": []}
 
         def begin_transaction(self):
+            """Return begin transaction."""
             return "t1"
 
         def commit_transaction(self, tid):
+            """Return commit transaction."""
             return None
 
         def rollback_transaction(self, tid):
+            """Return rollback transaction."""
             return None
 
     return Facade()
 
 
 def test_open_session_file_allows_multiple_files_one_session() -> None:
+    """Verify test open session file allows multiple files one session."""
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         conn = sqlite3.connect(str(tmp / "x.db"))
@@ -120,6 +131,7 @@ def test_open_session_file_allows_multiple_files_one_session() -> None:
 
 
 def test_open_session_file_rejects_other_session_holder() -> None:
+    """Verify test open session file rejects other session holder."""
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         conn = sqlite3.connect(str(tmp / "x.db"))
@@ -157,6 +169,7 @@ def test_open_session_file_rejects_other_session_holder() -> None:
 
 @pytest.mark.asyncio
 async def test_universal_file_open_multi_file_same_session_id(tmp_path: Path) -> None:
+    """Verify test universal file open multi file same session id."""
     _ensure_project_root(tmp_path)
     rel_a = "src/a.txt"
     rel_b = "src/b.txt"
@@ -201,6 +214,7 @@ async def test_universal_file_open_multi_file_same_session_id(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_session_open_file_command_returns_file_locked() -> None:
+    """Verify test session open file command returns file locked."""
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         conn = sqlite3.connect(str(tmp / "x.db"))

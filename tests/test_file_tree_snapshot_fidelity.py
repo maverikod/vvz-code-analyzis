@@ -32,18 +32,22 @@ class _FileTreeReadCompatFacade:
     """Delegates to SqliteLegacyRpcFacade; exposes dict-shaped ``get_project`` for read helpers."""
 
     def __init__(self, facade: SqliteLegacyRpcFacade) -> None:
+        """Initialize the instance."""
         object.__setattr__(self, "_facade", facade)
 
     def get_project(self, project_id: str):
+        """Return get project."""
         p = self._facade._client.get_project(project_id)
         if p is None:
             return None
         return {"id": p.id, "root_path": p.root_path}
 
     def __getattr__(self, name: str):
+        """Return getattr."""
         return getattr(self._facade, name)
 
     def __setattr__(self, name: str, value) -> None:  # noqa: ANN001
+        """Return setattr."""
         if name == "_facade":
             object.__setattr__(self, name, value)
         else:
@@ -327,6 +331,7 @@ def test_rerun_after_failure_restores_full_file_state(
     call_count = [0]
 
     def fail_once_then_ok(*args, **kwargs):
+        """Return fail once then ok."""
         from code_analysis.core.database import file_tree_sync as m
 
         call_count[0] += 1

@@ -1,4 +1,4 @@
-# PostgreSQLConnectionPool behavior (mocked psycopg, no live server).
+"""Tests for PostgreSQLConnectionPool behavior with mocked psycopg."""
 
 from __future__ import annotations
 
@@ -21,9 +21,11 @@ _PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
 
 @pytest.fixture()
 def mock_psycopg_module() -> MagicMock:
+    """Return mock psycopg module."""
     mod = MagicMock()
 
     def _connect(**_kwargs: object) -> MagicMock:
+        """Return connect."""
         c = MagicMock()
         c.autocommit = False
         c.rollback = MagicMock()
@@ -39,6 +41,7 @@ def _tracking_psycopg_module() -> Tuple[MagicMock, List[MagicMock]]:
     mod = MagicMock()
 
     def _connect(**_kwargs: object) -> MagicMock:
+        """Return connect."""
         c = MagicMock()
         c.autocommit = False
         c.rollback = MagicMock()
@@ -50,6 +53,7 @@ def _tracking_psycopg_module() -> Tuple[MagicMock, List[MagicMock]]:
 
 
 def test_pool_opens_five_connections(mock_psycopg_module: MagicMock) -> None:
+    """Verify test pool opens five connections."""
     with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
             PostgreSQLConnectionPool,
@@ -70,6 +74,7 @@ def test_pool_opens_five_connections(mock_psycopg_module: MagicMock) -> None:
 
 
 def test_acquire_release_marks_idle(mock_psycopg_module: MagicMock) -> None:
+    """Verify test acquire release marks idle."""
     with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
             PostgreSQLConnectionPool,
@@ -88,7 +93,10 @@ def test_acquire_release_marks_idle(mock_psycopg_module: MagicMock) -> None:
 def test_rollback_failure_raises_driver_operation(
     mock_psycopg_module: MagicMock,
 ) -> None:
+    """Verify test rollback failure raises driver operation."""
+
     def _connect(**_kwargs: object) -> MagicMock:
+        """Return connect."""
         c = MagicMock()
         c.autocommit = False
         c.rollback.side_effect = OSError("rb fail")
@@ -113,6 +121,7 @@ def test_rollback_failure_raises_driver_operation(
 
 
 def test_close_all_prevents_acquire(mock_psycopg_module: MagicMock) -> None:
+    """Verify test close all prevents acquire."""
     with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
             PostgreSQLConnectionPool,
@@ -126,6 +135,7 @@ def test_close_all_prevents_acquire(mock_psycopg_module: MagicMock) -> None:
 
 
 def test_four_threads_share_write_pool(mock_psycopg_module: MagicMock) -> None:
+    """Verify test four threads share write pool."""
     with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
             PostgreSQLConnectionPool,
@@ -136,6 +146,7 @@ def test_four_threads_share_write_pool(mock_psycopg_module: MagicMock) -> None:
         errors: list[BaseException] = []
 
         def worker() -> None:
+            """Return worker."""
             try:
                 barrier.wait()
                 with pool.acquire(write=True):
@@ -184,6 +195,7 @@ def test_first_free_write_skips_busy_lower_index() -> None:
         release = threading.Event()
 
         def hold_slot0() -> None:
+            """Return hold slot0."""
             with pool.acquire(write=True) as c:
                 assert c is conns[0]
                 release.wait(timeout=5.0)
@@ -213,6 +225,7 @@ def test_first_free_read_skips_busy_lower_index() -> None:
         release = threading.Event()
 
         def hold_read0() -> None:
+            """Return hold read0."""
             with pool.acquire(write=False) as c:
                 assert c is conns[3]
                 release.wait(timeout=5.0)
@@ -242,6 +255,7 @@ def test_acquire_write_timeout_when_all_slots_busy(
         release = threading.Event()
 
         def hold_write() -> None:
+            """Return hold write."""
             with pool.acquire(write=True):
                 release.wait(timeout=5.0)
 
@@ -276,6 +290,7 @@ def test_snapshot_reports_nonzero_write_waiters(mock_psycopg_module: MagicMock) 
         holding_state = {"n": 0}
 
         def hold_three() -> None:
+            """Return hold three."""
             with pool.acquire(write=True):
                 with hold_lock:
                     holding_state["n"] += 1
@@ -289,6 +304,7 @@ def test_snapshot_reports_nonzero_write_waiters(mock_psycopg_module: MagicMock) 
         assert three_holding.wait(timeout=5.0)
 
         def fourth_acquire() -> None:
+            """Return fourth acquire."""
             with pool.acquire(write=True):
                 pass
 
@@ -331,6 +347,7 @@ def test_read_lease_not_blocked_when_all_write_slots_busy() -> None:
         errors: list[BaseException] = []
 
         def hold_write() -> None:
+            """Return hold write."""
             try:
                 with pool.acquire(write=True):
                     started.wait()
@@ -393,6 +410,7 @@ def test_live_pg_pool_read_not_blocked_when_writes_saturated() -> None:
     errors: list[BaseException] = []
 
     def hold_write() -> None:
+        """Return hold write."""
         try:
             with pool.acquire(write=True):
                 release_writes.wait(timeout=60.0)

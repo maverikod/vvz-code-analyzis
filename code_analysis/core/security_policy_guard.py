@@ -20,6 +20,7 @@ class CommandForbiddenError(ValueError):
         server_uuid: str,
         policy_mode: str,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             f"Command {command_name!r} is forbidden for session {session_id!r} "
             f"under policy {policy_mode!r} on server {server_uuid!r}."

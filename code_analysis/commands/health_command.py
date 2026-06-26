@@ -36,6 +36,7 @@ class HealthCommand(Command):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         from code_analysis.commands.command_metadata_helpers import empty_params_schema
 
         return empty_params_schema(
@@ -44,6 +45,7 @@ class HealthCommand(Command):
 
     @classmethod
     def metadata(cls: type["HealthCommand"]) -> Dict[str, Any]:
+        """Return metadata for the zero-argument health command."""
         from code_analysis.commands.zero_arg_commands_metadata import (
             health_command_metadata,
         )
@@ -55,6 +57,7 @@ class HealthCommand(Command):
         return super().validate_params(params)
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+        """Return process, configuration, queue, dependency, and quality-tool health."""
         params = {k: v for k, v in kwargs.items() if k != "context"}
         try:
             self.validate_params(params)
@@ -137,6 +140,7 @@ class HealthCommand(Command):
 
     @staticmethod
     def _safe_get_queue_config() -> Dict[str, Any]:
+        """Read queue-manager config without allowing config errors to break health."""
         try:
             from mcp_proxy_adapter.config import get_config
 

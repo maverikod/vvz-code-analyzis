@@ -263,7 +263,10 @@ async def _fetch_embedding_from_svo(
     """Request embedding from SVO; optionally save to DB. Returns array or None."""
 
     class _TmpChunk:
+        """Represent TmpChunk."""
+
         def __init__(self: "_TmpChunk", text: str) -> None:
+            """Initialize the instance."""
             self.body = text
             self.text = text
 

@@ -9,6 +9,7 @@ from code_analysis.main_server_presentation import (
 
 
 def test_resolve_from_server_presentation() -> None:
+    """Verify test resolve from server presentation."""
     app_config = {
         "server_presentation": {
             "title": "My Server",
@@ -24,6 +25,7 @@ def test_resolve_from_server_presentation() -> None:
 
 
 def test_sync_registration_for_proxy() -> None:
+    """Verify test sync registration for proxy."""
     app_config = {
         "server_presentation": {
             "title": "My Server",
@@ -42,6 +44,7 @@ def test_sync_registration_for_proxy() -> None:
 
 
 def test_sync_registration_reachable_host_overrides_wildcard_bind() -> None:
+    """Verify test sync registration reachable host overrides wildcard bind."""
     app_config = {
         "server": {
             "host": "0.0.0.0",

@@ -14,6 +14,7 @@ TEMPLATE = REPO_ROOT / "packaging" / "config.json.template"
 
 
 def _run_install_config(etc_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Return run install config."""
     doc_template = etc_dir / "doc" / "config.json.template"
     doc_template.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(TEMPLATE, doc_template)
@@ -26,6 +27,7 @@ def _run_install_config(etc_dir: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_install_config_creates_config_when_missing(tmp_path: Path) -> None:
+    """Verify test install config creates config when missing."""
     etc = tmp_path / "etc" / "casmgr"
     result = _run_install_config(etc)
     config = etc / "config.json"
@@ -40,6 +42,7 @@ def test_install_config_creates_config_when_missing(tmp_path: Path) -> None:
 def test_install_config_preserves_existing_and_writes_template_beside(
     tmp_path: Path,
 ) -> None:
+    """Verify test install config preserves existing and writes template beside."""
     etc = tmp_path / "etc" / "casmgr"
     etc.mkdir(parents=True)
     existing = etc / "config.json"
@@ -54,6 +57,7 @@ def test_install_config_preserves_existing_and_writes_template_beside(
 
 
 def test_install_config_finalizes_pristine_package_config(tmp_path: Path) -> None:
+    """Verify test install config finalizes pristine package config."""
     etc = tmp_path / "etc" / "casmgr"
     etc.mkdir(parents=True)
     shutil.copy(TEMPLATE, etc / "config.json")
@@ -67,6 +71,7 @@ def test_install_config_finalizes_pristine_package_config(tmp_path: Path) -> Non
 
 
 def test_install_config_accepts_gzipped_doc_template(tmp_path: Path) -> None:
+    """Verify test install config accepts gzipped doc template."""
     import gzip
 
     etc = tmp_path / "etc" / "casmgr"
@@ -81,7 +86,13 @@ def test_install_config_accepts_gzipped_doc_template(tmp_path: Path) -> None:
         fh.write(TEMPLATE.read_bytes())
 
     result = subprocess.run(
-        ["bash", str(INSTALL_CONFIG), str(etc), str(doc_dir / "config.json.template"), "casgrp"],
+        [
+            "bash",
+            str(INSTALL_CONFIG),
+            str(etc),
+            str(doc_dir / "config.json.template"),
+            "casgrp",
+        ],
         check=True,
         capture_output=True,
         text=True,

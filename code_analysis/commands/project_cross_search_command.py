@@ -67,6 +67,7 @@ _BOUNDED_INT_PARAMS = ("limit", "semantic_limit", "fulltext_limit", "grep_limit"
 
 
 def get_project_cross_search_schema() -> Dict[str, Any]:
+    """Build the input schema for the cross-source project search command."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -283,6 +284,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for configuring cross-source project searches."""
         return get_project_cross_search_schema()
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -386,6 +388,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         inline_timeout_seconds: Optional[float] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Validate parameters and route cross-search inline or to the queue."""
         extra = dict(kwargs)
         context = extra.pop("context", None) or {}
         if not isinstance(context, dict):
@@ -500,6 +503,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         }
 
         async def _run() -> SuccessResult | ErrorResult:
+            """Execute the captured cross-search request for timeout routing."""
             return await self._execute_project_cross_search(
                 project_id=project_id,
                 query=query,
@@ -572,6 +576,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
         fast_text_only: bool,
         context: Dict[str, Any],
     ) -> SuccessResult | ErrorResult:
+        """Run semantic, full-text, and grep searches and merge their evidence."""
         warnings: List[Dict[str, Any]] = []
         successes = 0
         in_queue = is_queued_search_execution(context=context)
@@ -1058,6 +1063,7 @@ class ProjectCrossSearchCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return detailed metadata for the project cross-search command."""
         return {
             "name": cls.name,
             "version": cls.version,

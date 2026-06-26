@@ -29,11 +29,13 @@ INITIAL_JSON = '{"n": 1}\n'
 
 
 def _sha_hex(path: Path) -> str:
+    """Return sha hex."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @pytest.fixture
 def open_mutated_session(tmp_path: Path) -> Generator[EditSession, None, None]:
+    """Return open mutated session."""
     source_abs = tmp_path / REL
     source_abs.parent.mkdir(parents=True, exist_ok=True)
     source_abs.write_text(INITIAL_JSON, encoding="utf-8")
@@ -60,6 +62,7 @@ async def test_preview_does_not_modify_external_files(
     tmp_path: Path,
     open_mutated_session: EditSession,
 ) -> None:
+    """Verify test preview does not modify external files."""
     session = open_mutated_session
     source = tmp_path / REL
     tree = sibling_tree_path(source)
@@ -88,6 +91,7 @@ async def test_confirm_copies_when_confirm_true(
     tmp_path: Path,
     open_mutated_session: EditSession,
 ) -> None:
+    """Verify test confirm copies when confirm true."""
     session = open_mutated_session
     cmd = SessionWriteCommand()
 
@@ -117,6 +121,7 @@ async def test_confirm_copies_when_confirm_true(
 
 @pytest.mark.asyncio
 async def test_missing_session_id_errors(tmp_path: Path) -> None:
+    """Verify test missing session id errors."""
     _ = tmp_path
     res = await SessionWriteCommand().execute(
         project_id=PROJECT_ID,

@@ -27,6 +27,7 @@ from code_analysis.commands.log_viewer_mcp_commands.list_worker_logs import (
 
 @pytest.mark.asyncio
 async def test_list_backup_files_filters_by_file_pattern(tmp_path) -> None:
+    """Verify test list backup files filters by file pattern."""
     root = tmp_path / "proj"
     root.mkdir()
     mock_mgr = MagicMock()
@@ -40,7 +41,9 @@ async def test_list_backup_files_filters_by_file_pattern(tmp_path) -> None:
     mock_db = MagicMock()
 
     with (
-        patch.object(ListBackupFilesMCPCommand, "_resolve_project_root", return_value=root),
+        patch.object(
+            ListBackupFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
         patch(
             "code_analysis.commands.backup_mcp_commands.list_backup_files.BackupManager",
             return_value=mock_mgr,
@@ -59,6 +62,7 @@ async def test_list_backup_files_filters_by_file_pattern(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_backup_files_glob_alias_and_prefix(tmp_path) -> None:
+    """Verify test list backup files glob alias and prefix."""
     root = tmp_path / "proj"
     root.mkdir()
     mock_mgr = MagicMock()
@@ -71,7 +75,9 @@ async def test_list_backup_files_glob_alias_and_prefix(tmp_path) -> None:
     mock_mgr._load_index.return_value = {"u1": {}}
 
     with (
-        patch.object(ListBackupFilesMCPCommand, "_resolve_project_root", return_value=root),
+        patch.object(
+            ListBackupFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
         patch(
             "code_analysis.commands.backup_mcp_commands.list_backup_files.BackupManager",
             return_value=mock_mgr,
@@ -97,6 +103,7 @@ async def test_list_backup_files_glob_alias_and_prefix(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_deleted_files_pattern_on_original_path(tmp_path) -> None:
+    """Verify test list deleted files pattern on original path."""
     root = tmp_path / "proj"
     root.mkdir()
     rows = [
@@ -120,7 +127,9 @@ async def test_list_deleted_files_pattern_on_original_path(tmp_path) -> None:
     mock_db.disconnect = MagicMock()
 
     with (
-        patch.object(ListDeletedFilesMCPCommand, "_resolve_project_root", return_value=root),
+        patch.object(
+            ListDeletedFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
         patch.object(
             ListDeletedFilesMCPCommand,
             "_open_database_from_config",
@@ -139,6 +148,7 @@ async def test_list_deleted_files_pattern_on_original_path(tmp_path) -> None:
 
 
 def test_deleted_entry_rel_posix_prefers_original_relative(tmp_path) -> None:
+    """Verify test deleted entry rel posix prefers original relative."""
     root = tmp_path / "proj"
     root.mkdir()
     item = {"original_path": "a/b.py", "path": str(root / "elsewhere")}
@@ -147,6 +157,7 @@ def test_deleted_entry_rel_posix_prefers_original_relative(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_long_files_filters_after_query(tmp_path) -> None:
+    """Verify test list long files filters after query."""
     root = tmp_path / "proj"
     root.mkdir()
     pid = "00000000-0000-0000-0000-000000000004"
@@ -160,6 +171,7 @@ async def test_list_long_files_filters_after_query(tmp_path) -> None:
     mock_db.disconnect = MagicMock()
 
     async def fake_execute() -> dict:
+        """Return fake execute."""
         return {
             "files": [
                 {"path": str(abs_py), "lines": 900},
@@ -171,7 +183,9 @@ async def test_list_long_files_filters_after_query(tmp_path) -> None:
         }
 
     with (
-        patch.object(ListLongFilesMCPCommand, "_resolve_project_root", return_value=root),
+        patch.object(
+            ListLongFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
         patch.object(
             ListLongFilesMCPCommand,
             "_open_database_from_config",
@@ -197,6 +211,7 @@ async def test_list_long_files_filters_after_query(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_long_files_glob_alias(tmp_path) -> None:
+    """Verify test list long files glob alias."""
     root = tmp_path / "proj"
     root.mkdir()
     pid = "00000000-0000-0000-0000-000000000005"
@@ -206,6 +221,7 @@ async def test_list_long_files_glob_alias(tmp_path) -> None:
     mock_db.disconnect = MagicMock()
 
     async def fake_execute() -> dict:
+        """Return fake execute."""
         return {
             "files": [{"path": str(p), "lines": 500}],
             "count": 1,
@@ -214,7 +230,9 @@ async def test_list_long_files_glob_alias(tmp_path) -> None:
         }
 
     with (
-        patch.object(ListLongFilesMCPCommand, "_resolve_project_root", return_value=root),
+        patch.object(
+            ListLongFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
         patch.object(
             ListLongFilesMCPCommand,
             "_open_database_from_config",
@@ -233,6 +251,7 @@ async def test_list_long_files_glob_alias(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_worker_logs_file_pattern_on_absolute_path(tmp_path) -> None:
+    """Verify test list worker logs file pattern on absolute path."""
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     fw = log_dir / "file_watcher.log"
@@ -263,7 +282,9 @@ async def test_list_worker_logs_prefix_directory_on_absolute(tmp_path) -> None:
 
     cmd = ListWorkerLogsMCPCommand()
     prefix = str(d).replace("\\", "/")
-    result = await cmd.execute(log_dirs=[str(d)], worker_type="server", file_pattern=prefix)
+    result = await cmd.execute(
+        log_dirs=[str(d)], worker_type="server", file_pattern=prefix
+    )
 
     assert result.data is not None
     names = {Path(x["path"]).name for x in result.data.get("log_files", [])}

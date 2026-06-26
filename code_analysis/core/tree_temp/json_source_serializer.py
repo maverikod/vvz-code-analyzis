@@ -16,10 +16,12 @@ _ERR_PREFIX = "Invalid tree for JSON serialization:"
 
 
 def _fail(msg: str) -> NoReturn:
+    """Return fail."""
     raise ValueError(f"{_ERR_PREFIX} {msg}")
 
 
 def _validate_scalar(node: TreeNode) -> None:
+    """Return validate scalar."""
     if node.children is not None:
         _fail("scalar node must not set children")
     if node.type == "string":
@@ -80,6 +82,7 @@ def validate_tree_json(node: TreeNode, *, object_member: bool = False) -> None:
 
 
 def _emit_before(comment_before: str | None) -> List[str]:
+    """Return emit before."""
     if not comment_before:
         return []
     out: List[str] = []
@@ -90,6 +93,7 @@ def _emit_before(comment_before: str | None) -> List[str]:
 
 
 def _scalar_body(node: TreeNode) -> str:
+    """Return scalar body."""
     if node.type == "string":
         return json.dumps(node.value, ensure_ascii=False)
     if node.type == "number":
@@ -106,6 +110,7 @@ def _scalar_body(node: TreeNode) -> str:
 
 
 def _append_inline(line: str, comment_inline: str | None) -> str:
+    """Return append inline."""
     if comment_inline:
         return line + " " + comment_inline
     return line
@@ -114,6 +119,7 @@ def _append_inline(line: str, comment_inline: str | None) -> str:
 def _emit_lines(
     node: TreeNode, depth: int, *, object_member_key: str | None
 ) -> List[str]:
+    """Return emit lines."""
     ind = "  " * depth
     out: List[str] = []
     out.extend(_emit_before(node.comment_before))

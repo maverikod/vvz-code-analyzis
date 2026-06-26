@@ -12,11 +12,13 @@ from code_analysis.core.exceptions import ValidationError
 
 @pytest.fixture
 def cmd() -> ExportGraphMCPCommand:
+    """Return cmd."""
     return ExportGraphMCPCommand()
 
 
 @pytest.fixture
 def base_params() -> dict[str, object]:
+    """Return base params."""
     return {"project_id": str(uuid.uuid4())}
 
 
@@ -24,6 +26,7 @@ def test_validate_params_accepts_limit_in_range(
     cmd: ExportGraphMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts limit in range."""
     out = cmd.validate_params({**base_params, "limit": 1000})
     assert out["limit"] == 1000
 
@@ -34,6 +37,7 @@ def test_validate_params_rejects_limit_out_of_range(
     base_params: dict[str, object],
     limit: int,
 ) -> None:
+    """Verify test validate params rejects limit out of range."""
     with pytest.raises(ValidationError, match="limit") as exc_info:
         cmd.validate_params({**base_params, "limit": limit})
     assert exc_info.value.field == "limit"
@@ -43,6 +47,7 @@ def test_validate_params_accepts_limit_at_bounds(
     cmd: ExportGraphMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test validate params accepts limit at bounds."""
     out_min = cmd.validate_params({**base_params, "limit": 1})
     out_max = cmd.validate_params({**base_params, "limit": 50000})
     assert out_min["limit"] == 1
@@ -73,6 +78,7 @@ async def test_execute_rejects_limit_out_of_range_at_entry(
     cmd: ExportGraphMCPCommand,
     base_params: dict[str, object],
 ) -> None:
+    """Verify test execute rejects limit out of range at entry."""
     from mcp_proxy_adapter.commands.result import ErrorResult
 
     result = await cmd.execute(**{**base_params, "limit": 0})

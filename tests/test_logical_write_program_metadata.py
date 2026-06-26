@@ -14,15 +14,20 @@ from code_analysis.core.database_client.protocol.rpc_protocol import RPCResponse
 
 
 class _RecordingFakeRpc:
+    """Represent RecordingFakeRpc."""
+
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.calls: List[Tuple[str, Dict[str, Any]]] = []
 
     def call(self, method: str, params: Dict[str, Any]) -> RPCResponse:
+        """Return call."""
         self.calls.append((method, params))
         return RPCResponse(result={"success": True, "data": {}})
 
 
 def _one_batch_program(**extra: Any) -> Dict[str, Any]:
+    """Return one batch program."""
     base: Dict[str, Any] = {
         "batches": [
             [
@@ -35,6 +40,7 @@ def _one_batch_program(**extra: Any) -> Dict[str, Any]:
 
 
 def test_program_with_only_batches_preserves_old_behavior() -> None:
+    """Verify test program with only batches preserves old behavior."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program()
@@ -49,6 +55,7 @@ def test_program_with_only_batches_preserves_old_behavior() -> None:
 
 
 def test_defer_constraints_is_preserved() -> None:
+    """Verify test defer constraints is preserved."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program(defer_constraints=True)
@@ -67,6 +74,7 @@ def test_defer_constraints_is_preserved() -> None:
 
 
 def test_metadata_fields_are_forwarded() -> None:
+    """Verify test metadata fields are forwarded."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program(
@@ -82,6 +90,7 @@ def test_metadata_fields_are_forwarded() -> None:
 
 
 def test_valid_lock_scope_values() -> None:
+    """Verify test valid lock scope values."""
     for lock_scope in ("none", "project_write", "project_read"):
         fake = _RecordingFakeRpc()
         client = DatabaseClient(rpc_client=fake)
@@ -91,6 +100,7 @@ def test_valid_lock_scope_values() -> None:
 
 
 def test_invalid_operation_name_type_raises_value_error() -> None:
+    """Verify test invalid operation name type raises value error."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program(operation_name=123)  # type: ignore[dict-item]
@@ -100,6 +110,7 @@ def test_invalid_operation_name_type_raises_value_error() -> None:
 
 
 def test_invalid_project_id_type_raises_value_error() -> None:
+    """Verify test invalid project id type raises value error."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program(project_id=456)  # type: ignore[dict-item]
@@ -109,6 +120,7 @@ def test_invalid_project_id_type_raises_value_error() -> None:
 
 
 def test_invalid_lock_scope_raises_value_error() -> None:
+    """Verify test invalid lock scope raises value error."""
     fake = _RecordingFakeRpc()
     client = DatabaseClient(rpc_client=fake)
     program = _one_batch_program(lock_scope="invalid")  # type: ignore[dict-item]
@@ -118,6 +130,7 @@ def test_invalid_lock_scope_raises_value_error() -> None:
 
 
 def test_metadata_forwarding_does_not_retry_client_side() -> None:
+    """Verify test metadata forwarding does not retry client side."""
     src = inspect.getsource(
         _ClientOperationsMixin.execute_logical_write_operation,
     )
@@ -138,6 +151,7 @@ def test_metadata_forwarding_does_not_retry_client_side() -> None:
 
 
 def test_metadata_forwarding_does_not_acquire_project_activity_locks() -> None:
+    """Verify test metadata forwarding does not acquire project activity locks."""
     mod = inspect.getmodule(_ClientOperationsMixin)
     assert mod is not None
     import code_analysis.core.database_client.client_operations as co

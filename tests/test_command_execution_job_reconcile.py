@@ -16,6 +16,7 @@ from code_analysis.core.command_execution_job_patch import (
 
 @pytest.fixture
 def command_job() -> CommandExecutionJob:
+    """Return command job."""
     return CommandExecutionJob(
         "reconcile-test-job",
         {"command": "noop", "params": {}, "context": {}},
@@ -25,6 +26,7 @@ def command_job() -> CommandExecutionJob:
 def test_reconcile_logs_error_on_failure(
     command_job: CommandExecutionJob, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test reconcile logs error on failure."""
     envelope = {
         "job_id": command_job.job_id,
         "command": "clear_trash",
@@ -47,6 +49,7 @@ def test_reconcile_logs_error_on_failure(
 def test_reconcile_sets_failed_when_nested_result_has_success_false(
     command_job: CommandExecutionJob,
 ) -> None:
+    """Verify test reconcile sets failed when nested result has success false."""
     envelope = {
         "job_id": command_job.job_id,
         "command": "clear_trash",
@@ -68,6 +71,7 @@ def test_reconcile_sets_failed_when_nested_result_has_success_false(
 
 
 def test_reconcile_noop_when_success(command_job: CommandExecutionJob) -> None:
+    """Verify test reconcile noop when success."""
     envelope = {
         "job_id": command_job.job_id,
         "command": "list_projects",
@@ -83,6 +87,7 @@ def test_reconcile_noop_when_success(command_job: CommandExecutionJob) -> None:
 def test_reconcile_handles_mcp_result_field_shape(
     command_job: CommandExecutionJob,
 ) -> None:
+    """Verify test reconcile handles mcp result field shape."""
     envelope = {
         "job_id": command_job.job_id,
         "command": "clear_trash",
@@ -106,6 +111,7 @@ def test_reconcile_handles_direct_command_result_shape(
     command_job: CommandExecutionJob,
 ) -> None:
     # Some adapters may store command result directly under state["result"].
+    """Verify test reconcile handles direct command result shape."""
     state = {
         "command": "clear_trash",
         "result": {"success": False, "message": "CLEAR_TRASH_ERROR"},

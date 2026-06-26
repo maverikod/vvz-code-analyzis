@@ -32,6 +32,7 @@ class SharedDatabaseNotInitializedError(Exception):
     """
 
     def __init__(self, message: str = "Shared database is not initialized") -> None:
+        """Initialize the instance."""
         super().__init__(message)
 
 
@@ -45,6 +46,7 @@ class _SharedDatabaseProxy:
     __slots__ = ("_client",)
 
     def __init__(self, client: DatabaseClient) -> None:
+        """Initialize the instance."""
         self._client = client
 
     def disconnect(self) -> None:

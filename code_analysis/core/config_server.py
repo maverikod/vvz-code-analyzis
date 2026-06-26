@@ -98,6 +98,7 @@ class FileLockConfig(BaseModel):
     @field_validator("timeout_seconds")
     @classmethod
     def validate_timeout_seconds(cls, v: float) -> float:
+        """Return validate timeout seconds."""
         if v < 0:
             raise ValueError("file_lock.timeout_seconds must be >= 0")
         return float(v)
@@ -105,6 +106,7 @@ class FileLockConfig(BaseModel):
     @field_validator("poll_interval_seconds")
     @classmethod
     def validate_poll_interval_seconds(cls, v: float) -> float:
+        """Return validate poll interval seconds."""
         if v <= 0:
             raise ValueError("file_lock.poll_interval_seconds must be > 0")
         return float(v)
@@ -473,6 +475,7 @@ class ServerConfig(BaseModel):
     )
     @classmethod
     def validate_positive_preview_defaults(cls, v: int) -> int:
+        """Return validate positive preview defaults."""
         if v < 1:
             raise ValueError("preview/grep length defaults must be >= 1")
         return v

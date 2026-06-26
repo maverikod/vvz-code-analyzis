@@ -27,6 +27,7 @@ from code_analysis.commands.base_mcp_command import BaseMCPCommand
 async def test_ast_statistics_file_path_uses_project_relative_resolution(
     tmp_path: Path,
 ) -> None:
+    """Verify test ast statistics file path uses project relative resolution."""
     project_root = tmp_path / "proj"
     target = project_root / "ai_admin" / "commands" / "base.py"
     target.parent.mkdir(parents=True)
@@ -66,6 +67,7 @@ async def test_ast_statistics_file_path_uses_project_relative_resolution(
 
 @pytest.mark.asyncio
 async def test_list_code_entities_file_path_filter() -> None:
+    """Verify test list code entities file path filter."""
     node_id_class = str(uuid.uuid4())
     node_id_method = str(uuid.uuid4())
     mock_db = MagicMock()
@@ -122,6 +124,7 @@ async def test_list_code_entities_file_path_filter() -> None:
 
 @pytest.mark.asyncio
 async def test_get_code_entity_info_method_target_class() -> None:
+    """Verify test get code entity info method target class."""
     node_id = str(uuid.uuid4())
     mock_db = MagicMock()
     mock_db.execute.return_value = {
@@ -163,6 +166,7 @@ async def test_get_code_entity_info_method_target_class() -> None:
 
 @pytest.mark.asyncio
 async def test_get_imports_import_from_filter_maps_to_stored_from() -> None:
+    """Verify test get imports import from filter maps to stored from."""
     mock_db = MagicMock()
     mock_db.execute.return_value = {
         "data": [
@@ -202,6 +206,7 @@ async def test_get_imports_import_from_filter_maps_to_stored_from() -> None:
 
 @pytest.mark.asyncio
 async def test_get_class_hierarchy_includes_leaf_class() -> None:
+    """Verify test get class hierarchy includes leaf class."""
     mock_db = MagicMock()
     mock_db.execute.return_value = {
         "data": [
@@ -233,6 +238,7 @@ async def test_get_class_hierarchy_includes_leaf_class() -> None:
 
 @pytest.mark.asyncio
 async def test_get_class_hierarchy_project_level_includes_all_classes() -> None:
+    """Verify test get class hierarchy project level includes all classes."""
     mock_db = MagicMock()
     mock_db.execute.return_value = {
         "data": [
@@ -274,6 +280,7 @@ async def test_get_class_hierarchy_project_level_includes_all_classes() -> None:
 async def test_get_ast_existing_file_without_ast_returns_ast_not_indexed(
     tmp_path: Path,
 ) -> None:
+    """Verify test get ast existing file without ast returns ast not indexed."""
     project_root = tmp_path / "proj"
     target = project_root / "code_analysis" / "commands" / "json_save_tree_command.py"
     target.parent.mkdir(parents=True)

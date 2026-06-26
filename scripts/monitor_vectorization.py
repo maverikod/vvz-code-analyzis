@@ -22,6 +22,7 @@ from code_analysis.core.database_client.client import DatabaseClient
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     db_path = Path("data/code_analysis.db")
     if not db_path.exists():
         db_path = Path(__file__).resolve().parent.parent / "data" / "code_analysis.db"

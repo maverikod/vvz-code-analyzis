@@ -53,6 +53,7 @@ def _preview_ref_for_match(
     file_path: str,
     tree_ref: TreeRepresentationRef,
 ) -> dict[str, Any] | None:
+    """Build a preview reference dictionary for a structurally resolved match."""
     node_id = match.get("node_ref") or match.get("block_id")
     selector = match.get("selector")
     draft_session_id = match.get("session_id")
@@ -89,7 +90,7 @@ def enrich_line_matches_structural(
             project_root=project_root,
             file_path=file_path,
         )
-    except (NotImplementedError, FileNotFoundError, ValueError, OSError):
+    except NotImplementedError, FileNotFoundError, ValueError, OSError:
         return list(line_matches)
 
     enriched: list[dict[str, Any]] = []

@@ -61,6 +61,7 @@ def run_db_worker(
     shutdown_event = False
 
     def signal_handler(signum, frame):
+        """Return signal handler."""
         nonlocal shutdown_event
         logger.info(f"Received signal {signum}, shutting down...")
         shutdown_event = True
@@ -72,6 +73,7 @@ def run_db_worker(
     jobs_lock = threading.Lock()
 
     def cleanup_worker():
+        """Return cleanup worker."""
         while not shutdown_event:
             time.sleep(cleanup_interval)
             if not shutdown_event:

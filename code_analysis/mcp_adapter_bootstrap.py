@@ -19,6 +19,7 @@ _PATCHED = False
 
 
 def _resolve_log_dir() -> str | None:
+    """Return resolve log dir."""
     from code_analysis.core.server_log_dir import (
         append_server_startup_log,
         resolve_server_log_dir,
@@ -44,16 +45,19 @@ def _install_os_log_dir_hooks(log_root_abs: str) -> None:
     orig_makedirs = os.makedirs
 
     def join(first: str, *parts: str) -> str:
+        """Return join."""
         if first in ("./logs", "logs"):
             return orig_join(log_root_abs, *parts)
         return orig_join(first, *parts)
 
     def exists(path: object) -> bool:
+        """Return exists."""
         if path in ("./logs", "logs"):
             return orig_exists(log_root_abs)
         return orig_exists(path)  # type: ignore[arg-type]
 
     def makedirs(name: object, *margs: object, **mkwargs: object) -> None:
+        """Return makedirs."""
         if name in ("./logs", "logs"):
             orig_makedirs(log_root_abs, *margs, **mkwargs)  # type: ignore[arg-type]
             return

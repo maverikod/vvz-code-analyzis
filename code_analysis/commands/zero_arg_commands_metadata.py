@@ -25,6 +25,7 @@ def _zero_arg_meta(
     return_value: Dict[str, Any],
     best_practices: list[str],
 ) -> Dict[str, Any]:
+    """Return zero arg meta."""
     return build_command_metadata(
         cls,
         detailed_description=detailed_description,
@@ -37,6 +38,7 @@ def _zero_arg_meta(
 
 
 def list_watch_dirs_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return list watch dirs metadata."""
     return _zero_arg_meta(
         cls,
         detailed_description=(
@@ -72,6 +74,7 @@ def list_watch_dirs_metadata(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def cst_list_trees_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return cst list trees metadata."""
     return _zero_arg_meta(
         cls,
         detailed_description=(
@@ -95,6 +98,7 @@ def cst_list_trees_metadata(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def cst_unload_tree_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return cst unload tree metadata."""
     return build_command_metadata(
         cls,
         detailed_description=cls.descr,
@@ -122,6 +126,7 @@ def cst_unload_tree_metadata(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def health_command_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return health command metadata."""
     return _zero_arg_meta(
         cls,
         detailed_description=(
@@ -148,6 +153,7 @@ def health_command_metadata(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def queue_health_command_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return queue health command metadata."""
     return _zero_arg_meta(
         cls,
         detailed_description=(
@@ -173,6 +179,7 @@ def queue_health_command_metadata(cls: Type[Any]) -> Dict[str, Any]:
 
 
 def qa_sleep_command_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return qa sleep command metadata."""
     return build_command_metadata(
         cls,
         detailed_description=(

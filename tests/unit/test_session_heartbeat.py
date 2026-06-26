@@ -25,6 +25,7 @@ from code_analysis.core.search_session.manifest import (
 
 
 def _layout(tmp_path: Path) -> SearchSessionDirectoryLayout:
+    """Return layout."""
     root = tmp_path / "session-1"
     root.mkdir()
     return SearchSessionDirectoryLayout(
@@ -44,6 +45,7 @@ def _write_manifest(
     heartbeat_at: float | None,
     status: str = "running",
 ) -> None:
+    """Return write manifest."""
     manifest = SearchSessionManifest(
         search_id="session-1",
         created_at=100.0,
@@ -59,6 +61,7 @@ def _write_manifest(
 
 
 def test_touch_heartbeat_updates_manifest(tmp_path: Path) -> None:
+    """Verify test touch heartbeat updates manifest."""
     layout = _layout(tmp_path)
     _write_manifest(layout, heartbeat_at=50.0)
 
@@ -70,6 +73,7 @@ def test_touch_heartbeat_updates_manifest(tmp_path: Path) -> None:
 
 
 def test_is_heartbeat_stale_respects_hard_timeout() -> None:
+    """Verify test is heartbeat stale respects hard timeout."""
     manifest = SearchSessionManifest(
         search_id="session-1",
         created_at=0.0,
@@ -100,6 +104,7 @@ def test_is_heartbeat_stale_respects_hard_timeout() -> None:
 
 
 def test_is_heartbeat_stale_ignores_non_running() -> None:
+    """Verify test is heartbeat stale ignores non running."""
     manifest = SearchSessionManifest(
         search_id="session-1",
         created_at=0.0,

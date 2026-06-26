@@ -101,6 +101,7 @@ class TransientDatabaseError(DriverOperationError):
         attempts: int | None = None,
         commit_outcome_unknown: bool = False,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(message)
         self.sqlstate = sqlstate
         self.error_kind = error_kind
@@ -114,6 +115,7 @@ class TransientDatabaseError(DriverOperationError):
         operation_name: str | None = None,
         attempts: int | None = None,
     ) -> dict[str, Any]:
+        """Return to details."""
         return {
             "sqlstate": self.sqlstate,
             "error_kind": self.error_kind,

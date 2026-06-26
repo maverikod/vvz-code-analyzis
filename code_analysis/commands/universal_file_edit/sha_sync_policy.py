@@ -12,6 +12,8 @@ from typing import Optional
 
 
 class ShaSyncBranch(str, Enum):
+    """Represent ShaSyncBranch."""
+
     NO_SIDECAR = "no_sidecar"
     SHA_MATCH = "sha_match"
     SHA_MISMATCH_NO_SESSION = "sha_mismatch_no_session"
@@ -20,6 +22,8 @@ class ShaSyncBranch(str, Enum):
 
 @dataclass(frozen=True)
 class ShaSyncDecision:
+    """Represent ShaSyncDecision."""
+
     branch: ShaSyncBranch
     missing_sidecar: bool
     sha_equal: bool
@@ -34,6 +38,7 @@ def resolve_sha_sync_policy(
     current_source_sha256: str,
     active_session_holds_file: bool,
 ) -> ShaSyncDecision:
+    """Return resolve sha sync policy."""
     if not sidecar_exists:
         return ShaSyncDecision(
             branch=ShaSyncBranch.NO_SIDECAR,

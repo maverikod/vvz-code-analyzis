@@ -17,6 +17,7 @@ from code_analysis.core.database.file_tree_sync import (
 
 
 def test_snapshot_node_inserts_use_multi_row_values_per_chunk() -> None:
+    """Verify test snapshot node inserts use multi row values per chunk."""
     rows = [
         ("n0", None, 0),
         ("n1", "n0", 0),
@@ -42,6 +43,7 @@ def test_snapshot_node_inserts_use_multi_row_values_per_chunk() -> None:
 
 
 def test_snapshot_node_op_count_scales_with_chunk_not_row_count() -> None:
+    """Verify test snapshot node op count scales with chunk not row count."""
     n = 450
     rows = [(f"id{i}", f"p{i}" if i else None, i % 5) for i in range(n)]
     ops = _build_snapshot_node_insert_ops(1, rows)
@@ -54,10 +56,12 @@ def test_snapshot_node_op_count_scales_with_chunk_not_row_count() -> None:
 
 
 def test_empty_node_rows_yields_no_ops() -> None:
+    """Verify test empty node rows yields no ops."""
     assert _build_snapshot_node_insert_ops(1, []) == []
 
 
 def test_single_row_one_insert_op() -> None:
+    """Verify test single row one insert op."""
     ops = _build_snapshot_node_insert_ops(99, [("root", None, 0)])
     assert len(ops) == 1
     sql, params = ops[0]
@@ -70,6 +74,7 @@ def test_single_row_one_insert_op() -> None:
 
 
 def _meta(node_id: str, children_ids: list[str]) -> SimpleNamespace:
+    """Return meta."""
     return SimpleNamespace(node_id=node_id, children_ids=children_ids)
 
 
@@ -100,6 +105,7 @@ def test_build_snapshot_node_rows_orphan_not_in_children_ids_gets_unique_index()
 
 
 def test_build_snapshot_node_rows_duplicate_child_id_in_list_assigns_once() -> None:
+    """Verify test build snapshot node rows duplicate child id in list assigns once."""
     tree = SimpleNamespace(
         metadata_map={
             "root": _meta("root", ["a", "a", "b"]),

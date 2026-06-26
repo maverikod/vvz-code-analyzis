@@ -26,19 +26,23 @@ class TestQueryCSTCommandReplacements:
     async def test_replacements_applies_different_code_per_match(
         self, project_root, mock_db
     ):
+        """Verify test replacements applies different code per match."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "from a import x\nfrom b import y\nfrom c import z\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -67,14 +71,17 @@ class TestQueryCSTCommandReplacements:
             py_file,
             "def a():\n    pass\ndef b():\n    pass\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -97,14 +104,17 @@ class TestQueryCSTCommandReplacements:
             py_file,
             "x = 1\ny = 2\nz = 3\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -126,16 +136,20 @@ class TestQueryCSTCommandReplacements:
 
     @pytest.mark.asyncio
     async def test_replacements_no_match_returns_error(self, project_root, mock_db):
+        """Verify test replacements no match returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "x = 1\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -149,19 +163,23 @@ class TestQueryCSTCommandReplacements:
 
     @pytest.mark.asyncio
     async def test_replacements_match_index_out_of_range(self, project_root, mock_db):
+        """Verify test replacements match index out of range."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "from a import x\nfrom b import y\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -180,19 +198,23 @@ class TestQueryCSTCommandReplacements:
     async def test_replacements_duplicate_match_index_returns_error(
         self, project_root, mock_db
     ):
+        """Verify test replacements duplicate match index returns error."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "from a import x\nfrom b import y\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -209,16 +231,20 @@ class TestQueryCSTCommandReplacements:
 
     @pytest.mark.asyncio
     async def test_replacements_missing_code_returns_error(self, project_root, mock_db):
+        """Verify test replacements missing code returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "from a import x\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -232,16 +258,20 @@ class TestQueryCSTCommandReplacements:
 
     @pytest.mark.asyncio
     async def test_replacements_both_code_returns_error(self, project_root, mock_db):
+        """Verify test replacements both code returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "from a import x\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -269,17 +299,21 @@ class TestQueryCSTCommandReplacements:
             py_file,
             "from a import x\nfrom b import y\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch(
-            "code_analysis.commands.query_cst_handler.BackupManager",
-        ) as mock_bm_class:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.query_cst_handler.BackupManager",
+            ) as mock_bm_class,
+        ):
             mock_bm = MagicMock()
             mock_bm.create_backup.return_value = "backup-uuid-1"
             mock_bm_class.return_value = mock_bm

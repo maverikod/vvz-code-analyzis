@@ -6,17 +6,20 @@ from code_analysis.commands.list_cst_blocks_command import ListCSTBlocksCommand
 
 
 def test_list_cst_blocks_schema_requires_project_and_file() -> None:
+    """Verify test list cst blocks schema requires project and file."""
     schema = ListCSTBlocksCommand.get_schema()
     assert schema["required"] == ["project_id", "file_path"]
     assert "file_path" in schema["properties"]
 
 
 def test_list_cst_blocks_command_attrs() -> None:
+    """Verify test list cst blocks command attrs."""
     assert ListCSTBlocksCommand.name == "list_cst_blocks"
     assert ListCSTBlocksCommand.category == "cst"
 
 
 def test_list_cst_blocks_metadata_rich() -> None:
+    """Verify test list cst blocks metadata rich."""
     meta = ListCSTBlocksCommand.metadata()
     assert meta["name"] == "list_cst_blocks"
     for key in (

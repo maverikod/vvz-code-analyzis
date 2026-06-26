@@ -61,6 +61,7 @@ def patch_app_openapi_for_mcp_proxy(app: Any) -> None:
     orig = app.openapi
 
     def _wrapped() -> Any:
+        """Return wrapped."""
         app_id = id(app)
         with _openapi_lock:
             cached = _cached_openapi_by_app.get(app_id)

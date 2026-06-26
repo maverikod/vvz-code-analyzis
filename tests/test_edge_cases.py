@@ -36,7 +36,7 @@ class TestEdgeCasesEmptyPaths:
             result = normalize_path_simple("")
             # If it does not raise, empty input may return "" or a path
             assert result == "" or result is not None
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
     def test_normalize_none_path(self):
@@ -49,7 +49,7 @@ class TestEdgeCasesEmptyPaths:
         try:
             result = find_project_root_for_path("", [])
             assert result is None
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
 
@@ -75,7 +75,7 @@ class TestEdgeCasesInvalidCharacters:
                 result = normalize_path_simple(invalid_path)
                 # If it doesn't raise, result should be valid
                 assert result is not None
-            except (ValueError, OSError):
+            except ValueError, OSError:
                 # Expected for invalid characters
                 pass
 
@@ -171,10 +171,10 @@ class TestEdgeCasesSymbolicLinks:
                     normalized = normalize_path_simple(str(link))
                     # If it resolves, should be valid
                     assert normalized is not None
-                except (OSError, FileNotFoundError):
+                except OSError, FileNotFoundError:
                     # Expected for broken symlink
                     pass
-            except (OSError, NotImplementedError):
+            except OSError, NotImplementedError:
                 # Symlinks not supported on this platform
                 pytest.skip("Symlinks not supported")
 
@@ -187,6 +187,7 @@ class TestEdgeCasesConcurrentAccess:
         settings = get_settings()
 
         def get_setting():
+            """Return get setting."""
             for _ in range(100):
                 _ = settings.get("max_file_lines")
                 _ = settings.poll_interval
@@ -224,6 +225,7 @@ class TestEdgeCasesConcurrentAccess:
             watch_dirs = [Path(tmpdir)]
 
             def find_root():
+                """Return find root."""
                 for _ in range(50):
                     result = find_project_root_for_path(test_file, watch_dirs)
                     assert result is not None
@@ -339,12 +341,12 @@ class TestEdgeCasesFilePermissions:
                 # Should raise appropriate error
                 with pytest.raises((PermissionError, OSError)):
                     load_project_info(project_root)
-            except (OSError, NotImplementedError):
+            except OSError, NotImplementedError:
                 # Permission changes not supported on this platform
                 pytest.skip("Permission changes not supported")
             finally:
                 # Restore permissions
                 try:
                     projectid_file.chmod(stat.S_IREAD | stat.S_IWRITE)
-                except (OSError, NotImplementedError):
+                except OSError, NotImplementedError:
                     pass

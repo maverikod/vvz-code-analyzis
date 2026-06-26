@@ -131,6 +131,7 @@ def _project_to_disk_entry(
     spec: WatchDirSpec,
     project: ProjectRoot,
 ) -> DiscoveredProjectOnDisk:
+    """Return project to disk entry."""
     from .project_resolution import load_project_info
 
     root_abs = project.root_path.resolve()

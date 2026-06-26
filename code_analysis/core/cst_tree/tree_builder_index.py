@@ -196,6 +196,7 @@ def _build_tree_index(
     node_to_uuid: Dict[int, str] = {}
 
     def visit(node: cst.CSTNode, depth: int, path_indices: tuple[int, ...]) -> None:
+        """Return visit."""
         if max_depth is not None and depth > max_depth:
             return
 

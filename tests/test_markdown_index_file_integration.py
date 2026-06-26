@@ -21,7 +21,6 @@ from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
-
 DOCS_INDEXING_ENABLED = {
     "enabled": True,
     "roots": ["docs"],
@@ -32,12 +31,14 @@ DOCS_INDEXING_ENABLED = {
 
 @pytest.fixture
 def tmp_root():
+    """Return tmp root."""
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
 
 
 @pytest.fixture
 def project_id() -> str:
+    """Return project id."""
     return str(uuid.uuid4())
 
 

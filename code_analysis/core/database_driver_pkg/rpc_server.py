@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 def _short_request_id(request_id: Optional[str]) -> str:
+    """Return short request id."""
     if not request_id:
         return "none"
     s = str(request_id)

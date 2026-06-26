@@ -38,6 +38,7 @@ from code_analysis.core.search_session.service_metadata import (
 def _write_manifest(
     layout, *, status: str = "running", phase: str = "block_writing"
 ) -> None:
+    """Return write manifest."""
     now = time.time()
     manifest = SearchSessionManifest(
         search_id=layout.root.name,
@@ -55,6 +56,7 @@ def _write_manifest(
 
 
 def test_handle_get_index_refreshes_service_metadata(tmp_path) -> None:
+    """Verify test handle get index refreshes service metadata."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -81,6 +83,7 @@ def test_handle_get_index_refreshes_service_metadata(tmp_path) -> None:
 def test_handle_get_block_returns_block_not_ready_for_unpublished_position(
     tmp_path,
 ) -> None:
+    """Verify test handle get block returns block not ready for unpublished position."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -100,6 +103,7 @@ def test_handle_get_block_returns_block_not_ready_for_unpublished_position(
 
 
 def test_handle_get_block_returns_published_block(tmp_path) -> None:
+    """Verify test handle get block returns published block."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -110,9 +114,7 @@ def test_handle_get_block_returns_published_block(tmp_path) -> None:
         size_bytes=10,
         completeness=COMPLETENESS_RUNNING,
     )
-    block = SearchResultBlock(
-        position=1, items=({"id": "a"},), serialized_size_bytes=0
-    )
+    block = SearchResultBlock(position=1, items=({"id": "a"},), serialized_size_bytes=0)
     block_path = layout.blocks_dir / "block_1.json"
     block_path.write_bytes(serialize_block(block))
     ctx = HttpAccessContext(sessions_root=tmp_path / "search_sessions")
@@ -125,6 +127,7 @@ def test_handle_get_block_returns_published_block(tmp_path) -> None:
 
 
 def test_handle_get_status_reads_manifest_and_refreshes_access(tmp_path) -> None:
+    """Verify test handle get status reads manifest and refreshes access."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -144,6 +147,7 @@ def test_handle_get_status_reads_manifest_and_refreshes_access(tmp_path) -> None
 
 
 def test_handle_get_index_returns_not_found_for_missing_session(tmp_path) -> None:
+    """Verify test handle get index returns not found for missing session."""
     ctx = HttpAccessContext(sessions_root=tmp_path / "search_sessions")
 
     status_code, payload = handle_get_index(ctx, str(uuid.uuid4()))

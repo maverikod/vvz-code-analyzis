@@ -126,6 +126,7 @@ def is_same_absolute_file(path_a: PathLike, path_b: PathLike) -> bool:
 
 
 def _posix_relative_key(relative_path: str) -> str:
+    """Return posix relative key."""
     return Path(relative_path).as_posix()
 
 

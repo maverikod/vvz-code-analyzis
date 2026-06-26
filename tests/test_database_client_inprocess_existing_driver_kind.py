@@ -49,6 +49,7 @@ def _resolve_existing_pkg_driver_facade(
 
 
 def test_existing_driver_postgres_sets_driver_type_and_config_type() -> None:
+    """Verify test existing driver postgres sets driver type and config type."""
     driver = PostgreSQLDriver.__new__(PostgreSQLDriver)
     resolved_dt, cfg = _resolve_existing_pkg_driver_facade(driver)
 
@@ -61,6 +62,7 @@ def test_existing_driver_postgres_sets_driver_type_and_config_type() -> None:
 
 
 def test_existing_driver_sqlite_rpc_sets_driver_type_and_config_type() -> None:
+    """Verify test existing driver sqlite rpc sets driver type and config type."""
     driver = SQLiteDriver.__new__(SQLiteDriver)
     driver.db_path = None
     explicit_cfg = {"type": "sqlite", "config": {}}

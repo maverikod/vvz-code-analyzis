@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _short_request_id(request_id: Optional[str]) -> str:
+    """Return short request id."""
     if not request_id:
         return "none"
     s = str(request_id)
@@ -41,17 +42,20 @@ class InProcessRpcClient:
         *,
         call_lock: Optional[threading.Lock] = None,
     ) -> None:
+        """Initialize the instance."""
         self.handlers = handlers
         self._call_lock = call_lock if call_lock is not None else threading.Lock()
         self._closed = False
         self._connected = False
 
     def connect(self) -> None:
+        """Return connect."""
         if self._closed:
             raise ConnectionError("In-process RPC client is closed")
         self._connected = True
 
     def disconnect(self, *, close_driver: bool = True) -> None:
+        """Return disconnect."""
         self._closed = True
         self._connected = False
         if not close_driver:
@@ -64,9 +68,11 @@ class InProcessRpcClient:
             )
 
     def is_connected(self) -> bool:
+        """Return is connected."""
         return self._connected and not self._closed
 
     def health_check(self) -> bool:
+        """Return health check."""
         return self.is_connected()
 
     def call(
@@ -77,6 +83,7 @@ class InProcessRpcClient:
         *,
         priority: int = 0,
     ) -> RPCResponse:
+        """Return call."""
         if not request_id:
             request_id = str(uuid.uuid4())
         request = RPCRequest(

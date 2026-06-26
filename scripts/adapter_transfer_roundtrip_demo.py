@@ -43,6 +43,7 @@ from code_analysis.core.env_loader import load_dotenv_near_config
 
 
 def _unwrap_command_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Return unwrap command payload."""
     if not result.get("success"):
         err = result.get("error") or result.get("message") or result
         raise RuntimeError(f"Command failed: {err!r}")
@@ -53,6 +54,7 @@ def _unwrap_command_payload(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _load_config(config_path: Path) -> Dict[str, Any]:
+    """Return load config."""
     with open(config_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     if not isinstance(raw, dict):
@@ -61,6 +63,7 @@ def _load_config(config_path: Path) -> Dict[str, Any]:
 
 
 def _resolve_ssl_path(repo_root: Path, value: Optional[str]) -> Optional[str]:
+    """Return resolve ssl path."""
     if not value or not str(value).strip():
         return None
     p = Path(value)
@@ -77,6 +80,7 @@ def _build_jsonrpc_client(
     connect_port: Optional[int],
     timeout: float,
 ) -> JsonRpcClient:
+    """Return build jsonrpc client."""
     srv = config.get("server")
     if not isinstance(srv, dict):
         srv = {}
@@ -147,19 +151,18 @@ def _pick_two_files_from_rows(
 
 
 def _fetch_file_pairs_sqlite(db_path: Path) -> Tuple[str, str, str, str, str, bool]:
+    """Return fetch file pairs sqlite."""
     conn = sqlite3.connect(str(db_path))
     try:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            """
+        cur = conn.execute("""
             SELECT id, project_id,
                    COALESCE(NULLIF(TRIM(relative_path), ''), NULLIF(TRIM(path), '')) AS rel
             FROM files
             WHERE COALESCE(deleted, 0) = 0
               AND COALESCE(NULLIF(TRIM(relative_path), ''), NULLIF(TRIM(path), '')) IS NOT NULL
             ORDER BY project_id, rel
-            """
-        )
+            """)
         rows = [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -169,6 +172,7 @@ def _fetch_file_pairs_sqlite(db_path: Path) -> Tuple[str, str, str, str, str, bo
 def _fetch_file_pairs_postgres(
     driver_config: Dict[str, Any],
 ) -> Tuple[str, str, str, str, str, bool]:
+    """Return fetch file pairs postgres."""
     from code_analysis.core.database_driver_pkg.drivers.postgres import (
         _connect_kwargs_from_config,
     )
@@ -179,8 +183,7 @@ def _fetch_file_pairs_postgres(
     conn = psycopg.connect(**kwargs)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT id::text AS id, project_id::text AS project_id,
                        COALESCE(
                          NULLIF(BTRIM(relative_path), ''),
@@ -193,8 +196,7 @@ def _fetch_file_pairs_postgres(
                         NULLIF(BTRIM(path), '')
                       ) IS NOT NULL
                 ORDER BY project_id, rel
-                """
-            )
+                """)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
@@ -205,6 +207,7 @@ def _fetch_file_pairs_postgres(
 def _resolve_db_file_pairs(
     config: Dict[str, Any], repo_root: Path
 ) -> Tuple[str, str, str, str, str, bool]:
+    """Return resolve db file pairs."""
     ca = config.get("code_analysis")
     if not isinstance(ca, dict):
         raise ValueError("config.code_analysis missing")
@@ -237,6 +240,7 @@ async def _run_roundtrip(
     upload_compression: str,
     timeout: float,
 ) -> None:
+    """Return run roundtrip."""
     load_dotenv_near_config(config_path, override=False)
     config = _load_config(config_path)
     repo_root = config_path.resolve().parent
@@ -348,6 +352,7 @@ async def _run_roundtrip(
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",

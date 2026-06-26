@@ -53,6 +53,7 @@ class LogViewerCommand:
         offset: int = 0,
         block_position: int = 1,
     ):
+        """Store log path, paging options, and compiled filters for viewing logs."""
         self.log_path = Path(log_path)
         self.worker_type = worker_type
         self.from_time = self._parse_time(from_time) if from_time else None
@@ -80,6 +81,7 @@ class LogViewerCommand:
             self.event_patterns = {}
 
     def _parse_time(self, time_str: str) -> Optional[datetime]:
+        """Parse supported timestamp/date strings for range filtering."""
         if not time_str:
             return None
         try:
@@ -98,6 +100,7 @@ class LogViewerCommand:
         return None
 
     def _parse_log_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parse one raw log line into normalized viewer entry fields."""
         if not line.strip():
             return None
 
@@ -107,6 +110,7 @@ class LogViewerCommand:
             msg: str,
             imp: Optional[int] = None,
         ) -> Dict[str, Any]:
+            """Build a normalized log entry from parsed fields."""
             importance = imp if imp is not None else importance_from_level(lvl)
             return {
                 "timestamp": ts,
@@ -131,7 +135,7 @@ class LogViewerCommand:
                 imp = None
                 try:
                     imp = int(importance_str.strip())
-                except (ValueError, AttributeError):
+                except ValueError, AttributeError:
                     pass
                 return make_entry(timestamp, level.strip(), message.strip(), imp)
             except ValueError:
@@ -169,6 +173,7 @@ class LogViewerCommand:
         return make_entry(None, "UNKNOWN", line)
 
     def _matches_event_type(self, parsed_line: Dict[str, Any]) -> bool:
+        """Return whether a parsed entry matches configured event patterns."""
         if not self.event_types:
             return True
         message = parsed_line.get("message", "")
@@ -179,6 +184,7 @@ class LogViewerCommand:
         return False
 
     def _matches_filters(self, parsed_line: Dict[str, Any]) -> bool:
+        """Return whether a parsed entry satisfies all active filters."""
         timestamp = parsed_line.get("timestamp")
         if timestamp:
             if self.from_time and timestamp < self.from_time:
@@ -233,6 +239,7 @@ class LogViewerCommand:
         try:
 
             def _read_all_log_files_sync() -> List[str]:
+                """Read all selected log files on the worker thread."""
                 out_lines: List[str] = []
                 for p in files_to_read:
                     try:

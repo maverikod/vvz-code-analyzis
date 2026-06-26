@@ -34,6 +34,7 @@ def _write_session(
     heartbeat_at: float,
     last_access_at: float,
 ) -> Path:
+    """Return write session."""
     session_dir = sessions_root / search_id
     session_dir.mkdir(parents=True)
     layout = layout_from_directory(session_dir)
@@ -55,6 +56,7 @@ def _write_session(
 
 @pytest.fixture
 def config_dir(tmp_path: Path) -> Path:
+    """Return config dir."""
     config = {
         "code_analysis": {
             "storage": {"db_path": str(tmp_path / "data" / "code_analysis.db")},
@@ -69,6 +71,7 @@ def config_dir(tmp_path: Path) -> Path:
 
 
 def test_expired_idle_session_deleted(config_dir: Path) -> None:
+    """Verify test expired idle session deleted."""
     sessions_root = config_dir / "data" / "search_sessions"
     session_dir = _write_session(
         sessions_root,
@@ -89,6 +92,7 @@ def test_expired_idle_session_deleted(config_dir: Path) -> None:
 
 
 def test_live_running_session_with_fresh_heartbeat_retained(config_dir: Path) -> None:
+    """Verify test live running session with fresh heartbeat retained."""
     sessions_root = config_dir / "data" / "search_sessions"
     session_dir = _write_session(
         sessions_root,

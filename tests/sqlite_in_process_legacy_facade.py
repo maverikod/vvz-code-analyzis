@@ -31,6 +31,7 @@ class SqliteLegacyRpcFacade:
     _driver_type = "sqlite"
 
     def __init__(self, client: DatabaseClient) -> None:
+        """Initialize the instance."""
         self._client = client
         self._last_execute_result: Dict[str, Any] = {}
         self._transaction_active = False
@@ -57,12 +58,14 @@ class SqliteLegacyRpcFacade:
         )
 
     def begin_transaction(self) -> str:
+        """Return begin transaction."""
         tid = self._client.begin_transaction()
         self._transaction_id = tid or None
         self._transaction_active = bool(tid)
         return str(tid)
 
     def commit_transaction(self, transaction_id: Optional[str] = None) -> None:
+        """Return commit transaction."""
         tid = transaction_id if transaction_id is not None else self._transaction_id
         if tid:
             self._client.commit_transaction(tid)
@@ -70,6 +73,7 @@ class SqliteLegacyRpcFacade:
         self._transaction_active = False
 
     def rollback_transaction(self, transaction_id: Optional[str] = None) -> None:
+        """Return rollback transaction."""
         tid = transaction_id if transaction_id is not None else self._transaction_id
         if tid:
             self._client.rollback_transaction(tid)
@@ -77,26 +81,32 @@ class SqliteLegacyRpcFacade:
         self._transaction_active = False
 
     def close(self) -> None:
+        """Return close."""
         self._client.disconnect()
 
     def _in_transaction(self) -> bool:
+        """Return in transaction."""
         return self._transaction_active
 
     def _driver_transaction_id(self) -> Optional[str]:
+        """Return driver transaction id."""
         return self._transaction_id if self._transaction_active else None
 
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
+        """Return execute."""
         tid = self._driver_transaction_id()
         self._last_execute_result = self._client.execute(
             sql, params, transaction_id=tid
         )
 
     def _commit(self) -> None:
+        """Return commit."""
         return None
 
     def _fetchone(
         self, sql: str, params: Optional[tuple] = None
     ) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         tid = self._driver_transaction_id()
         out = self._client.execute(sql, params, transaction_id=tid)
         rows = out.get("data") or []
@@ -105,11 +115,13 @@ class SqliteLegacyRpcFacade:
     def _fetchall(
         self, sql: str, params: Optional[tuple] = None
     ) -> List[Dict[str, Any]]:
+        """Return fetchall."""
         tid = self._driver_transaction_id()
         out = self._client.execute(sql, params, transaction_id=tid)
         return list(out.get("data") or [])
 
     def _lastrowid(self) -> Any:
+        """Return lastrowid."""
         return self._last_execute_result.get("lastrowid")
 
     def execute(
@@ -120,6 +132,7 @@ class SqliteLegacyRpcFacade:
         *,
         priority: int = 0,
     ) -> Dict[str, Any]:
+        """Execute the command."""
         tid = (
             transaction_id
             if transaction_id is not None
@@ -133,6 +146,7 @@ class SqliteLegacyRpcFacade:
         operations: List[Tuple[str, Optional[Union[tuple, list]]]],
         transaction_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return execute batch."""
         tid = (
             transaction_id
             if transaction_id is not None
@@ -142,6 +156,7 @@ class SqliteLegacyRpcFacade:
         return cast(List[Dict[str, Any]], raw)
 
     def __getattr__(self, item: str) -> Any:
+        """Return getattr."""
         return getattr(self._client, item)
 
 

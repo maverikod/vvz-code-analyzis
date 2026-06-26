@@ -53,6 +53,7 @@ def _run_paginated_cross_in_thread(
     """Run the full paginated search in a dedicated thread + event loop."""
 
     async def _runner() -> None:
+        """Return runner."""
         try:
             await run_paginated_cross(
                 command=ProjectCrossSearchCommand(),
@@ -95,6 +96,7 @@ class SearchMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "additionalProperties": False,
@@ -200,6 +202,7 @@ class SearchMCPCommand(BaseMCPCommand):
 
     @staticmethod
     def _normalize_file_pattern_params(params: Dict[str, Any]) -> None:
+        """Return normalize file pattern params."""
         file_pattern = str(params.get("file_pattern") or "").strip()
         path_filter = str(params.get("path_filter") or "").strip()
         if file_pattern and path_filter and file_pattern != path_filter:
@@ -211,6 +214,7 @@ class SearchMCPCommand(BaseMCPCommand):
         params["file_pattern"] = file_pattern or path_filter
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return validate params."""
         params = super().validate_params(params)
         self._normalize_file_pattern_params(params)
         query = str(params.get("query") or "").strip()
@@ -222,6 +226,7 @@ class SearchMCPCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         try:
             params = self.validate_params(
                 {k: v for k, v in kwargs.items() if k != "context"}
@@ -315,6 +320,7 @@ class SearchMCPCommand(BaseMCPCommand):
         background_thread: threading.Thread,
         timeout_seconds: float,
     ) -> Optional[int]:
+        """Return wait for first block."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         block_path = layout.blocks_dir / "block_1.json"
         while True:
@@ -328,6 +334,7 @@ class SearchMCPCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return command metadata."""
         return build_command_metadata(
             cls,
             detailed_description=(

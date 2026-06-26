@@ -36,6 +36,7 @@ _CYCLE_DB_NAME = "cycle.db"
 
 
 def _sqlite_full_schema_client(tmp_path: Path) -> DatabaseClient:
+    """Return sqlite full schema client."""
     db_path = tmp_path / _CYCLE_DB_NAME
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +52,7 @@ def _sqlite_full_schema_client(tmp_path: Path) -> DatabaseClient:
 
 
 def _seed_docstring_file(db: DatabaseClient, tmp_path: Path, project_id: str) -> str:
+    """Return seed docstring file."""
     mod = tmp_path / "mod.py"
     mod.write_text(
         '"""Module docstring long enough for chunking minimum length rules."""\n'
@@ -69,6 +71,7 @@ def _seed_docstring_file(db: DatabaseClient, tmp_path: Path, project_id: str) ->
 
 
 def _worker(tmp_path: Path, db_path: Path) -> VectorizationWorker:
+    """Return worker."""
     cfg = tmp_path / "config.json"
     cfg.write_text(
         '{"database": {"type": "sqlite", "config": {"path": "%s"}}}' % db_path
@@ -86,6 +89,7 @@ def _worker(tmp_path: Path, db_path: Path) -> VectorizationWorker:
 
 @pytest.fixture(autouse=True)
 def _sqlite_worker_env():
+    """Return sqlite worker env."""
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
     yield
@@ -357,6 +361,7 @@ async def test_step1_failure_on_first_project_second_still_chunks(
 
 
 def _fetch_count(client: DatabaseClient, sql: str, params: tuple) -> int:
+    """Return fetch count."""
     r = client.execute(sql, params)
     rows = r.get("data") or []
     if not rows:

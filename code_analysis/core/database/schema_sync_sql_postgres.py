@@ -16,6 +16,7 @@ from .schema_sync_models import IndexDef
 
 
 def _map_column_type(sqlite_type: str) -> str:
+    """Return map column type."""
     t = (sqlite_type or "TEXT").upper().strip()
     if t in ("UUID",):
         return "UUID"
@@ -33,6 +34,7 @@ def _map_column_type(sqlite_type: str) -> str:
 
 
 def _default_sqlite_to_postgres(default_val: str, *, pg_type: str) -> str:
+    """Return default sqlite to postgres."""
     s = default_val.strip()
     if pg_type == "BOOLEAN" and s in ("0", "1"):
         return "FALSE" if s == "0" else "TRUE"
@@ -123,9 +125,7 @@ def generate_create_table_sql_postgres(
         fk_cols = ", ".join(fk["columns"])
         ref_cols_sql = ", ".join(ref_cols)
         on_delete = fk.get("on_delete", "")
-        fk_sql = (
-            f"FOREIGN KEY ({fk_cols}) REFERENCES {ref_table}({ref_cols_sql})"
-        )
+        fk_sql = f"FOREIGN KEY ({fk_cols}) REFERENCES {ref_table}({ref_cols_sql})"
         if on_delete:
             fk_sql += f" ON DELETE {on_delete}"
         col_defs.append(fk_sql)

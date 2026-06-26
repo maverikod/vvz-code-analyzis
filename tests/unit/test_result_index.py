@@ -21,6 +21,7 @@ from code_analysis.core.search_session.result_index import (
 
 
 def test_append_block_entry_preserves_order(tmp_path) -> None:
+    """Verify test append block entry preserves order."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions",
@@ -56,6 +57,7 @@ def test_append_block_entry_preserves_order(tmp_path) -> None:
 
 
 def test_mark_index_finished_sets_completeness_atomically(tmp_path) -> None:
+    """Verify test mark index finished sets completeness atomically."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions",
@@ -78,6 +80,7 @@ def test_mark_index_finished_sets_completeness_atomically(tmp_path) -> None:
 
 
 def test_read_index_raises_when_missing(tmp_path) -> None:
+    """Verify test read index raises when missing."""
     missing = tmp_path / "missing" / "index.json"
     with pytest.raises(FileNotFoundError):
         read_index(missing)

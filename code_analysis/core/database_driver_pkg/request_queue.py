@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _short_request_id(request_id: str) -> str:
+    """Return short request id."""
     s = str(request_id)
     return (s[:8] + "…") if len(s) > 8 else s
 

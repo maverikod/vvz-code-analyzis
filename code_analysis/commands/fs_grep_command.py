@@ -86,6 +86,7 @@ class FsGrepCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -402,6 +403,7 @@ class FsGrepCommand(BaseMCPCommand):
         cancel_event = threading.Event()
 
         async def _run() -> SuccessResult | ErrorResult:
+            """Execute grep with the captured parameters for inline-or-queue routing."""
             return await self._execute_grep(
                 project_id=project_id,
                 pattern=pattern,
@@ -590,6 +592,7 @@ class FsGrepCommand(BaseMCPCommand):
         """Phase-1 fast text scan; optional phase-2 stable block enrichment."""
 
         def _set_stage(name: str) -> None:
+            """Expose the current grep phase for timeout diagnostics."""
             if stage_holder is not None:
                 stage_holder["stage"] = name
 
@@ -744,6 +747,7 @@ class FsGrepCommand(BaseMCPCommand):
             enrich_applied = 0
 
             def _deliver_file_matches(file_batch: List[Dict[str, Any]]) -> None:
+                """Enrich and stream a per-file match batch to the caller."""
                 nonlocal enrich_applied
                 if on_match_batch is None or not file_batch:
                     return
@@ -886,6 +890,7 @@ class FsGrepCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsGrepCommand"]) -> Dict[str, Any]:
+        """Return finalized metadata for the filesystem grep command."""
         return finalize_command_metadata(
             cls,
             {
@@ -968,6 +973,7 @@ def _grep_match_source_label(
     scan_all: bool,
     coverage_by_rel: Dict[str, Any],
 ) -> str:
+    """Classify a grep match source for response metadata."""
     if target.source == "draft_session":
         return "grep_draft"
     rel = target.relative_path
@@ -986,6 +992,7 @@ def _grep_match_source_label(
 
 
 def _set_line_only_match(row: Dict[str, Any], status: str) -> None:
+    """Strip structural fields and mark a match as line-only."""
     for key in (
         "block_id",
         "block_type",
@@ -1017,6 +1024,7 @@ def _phase1_text_scan_targets(
     coverage_by_rel: Optional[Dict[str, Any]] = None,
     on_file_matches: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Scan target files line by line and collect raw grep matches."""
     matches: List[Dict[str, Any]] = []
     files_scanned = 0
     files_skipped_large = 0
@@ -1117,6 +1125,7 @@ def _line_matches(
     case_sensitive: bool,
     regex: Optional[re.Pattern[str]],
 ) -> bool:
+    """Return whether a line satisfies the literal or regex search pattern."""
     if literal:
         hay = raw_line if case_sensitive else raw_line.lower()
         nd = needle if case_sensitive else needle.lower()
@@ -1135,6 +1144,7 @@ def _phase2_enrich_blocks(
     tree_stats: TreeResolutionStats,
     counters: EnrichmentCounters,
 ) -> None:
+    """Attach structural block metadata to grep matches within budget."""
     if enrich_max_results <= 0:
         budget.add_warning(
             GREP_STRUCTURAL_ENRICHMENT_SKIPPED,
@@ -1218,6 +1228,7 @@ def _phase2_enrich_blocks(
 
 
 def _trim_response_payload(payload: Dict[str, Any], budget: FsGrepBudgetState) -> None:
+    """Trim matches until the serialized response fits the byte budget."""
     try:
         size = len(json.dumps(payload, default=str).encode("utf-8"))
     except Exception:

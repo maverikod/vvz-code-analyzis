@@ -20,6 +20,7 @@ from code_analysis.commands.universal_file_preview.response import build_envelop
 
 
 def _structural_budget() -> PreviewBudget:
+    """Return structural budget."""
     return PreviewBudget(
         preview_lines=20,
         value_preview_len=120,
@@ -28,6 +29,7 @@ def _structural_budget() -> PreviewBudget:
 
 
 def _assert_no_content_child(envelope: dict) -> None:
+    """Return assert no content child."""
     blocks = envelope["blocks"]
     refs = [b.get("node_ref", "") for b in blocks]
     assert not any(str(ref).endswith("/__content") for ref in refs)

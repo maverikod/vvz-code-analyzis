@@ -34,6 +34,7 @@ SERVER_UUID = "880e8400-e29b-41d4-a716-446655440003"
 
 
 def test_ensure_subordinate_session_tables_idempotent() -> None:
+    """Verify test ensure subordinate session tables idempotent."""
     with tempfile.TemporaryDirectory() as td:
         conn = sqlite3.connect(f"{td}/test.db")
         ensure_client_session_tables(conn)
@@ -47,6 +48,7 @@ def test_ensure_subordinate_session_tables_idempotent() -> None:
 
 
 def test_legacy_schema_migrated_on_ensure() -> None:
+    """Verify test legacy schema migrated on ensure."""
     with tempfile.TemporaryDirectory() as td:
         conn = sqlite3.connect(f"{td}/test.db")
         ensure_client_session_tables(conn)
@@ -69,6 +71,7 @@ def test_legacy_schema_migrated_on_ensure() -> None:
 
 
 def test_subordinate_session_crud() -> None:
+    """Verify test subordinate session crud."""
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:
@@ -122,6 +125,7 @@ def test_subordinate_session_crud() -> None:
 
 
 def test_create_duplicate_raises() -> None:
+    """Verify test create duplicate raises."""
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:
@@ -139,6 +143,7 @@ def test_create_duplicate_raises() -> None:
 
 
 def test_update_missing_raises() -> None:
+    """Verify test update missing raises."""
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:

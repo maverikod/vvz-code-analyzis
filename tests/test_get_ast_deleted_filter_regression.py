@@ -21,18 +21,26 @@ from code_analysis.commands.base_mcp_command import BaseMCPCommand
 
 
 class _ObjectWithData:
+    """Represent ObjectWithData."""
+
     def __init__(self, data: Any) -> None:
+        """Initialize the instance."""
         self.data = data
 
 
 class _RowMapping:
+    """Represent RowMapping."""
+
     def __init__(self, data: Dict[str, Any]) -> None:
+        """Initialize the instance."""
         self._data = data
 
     def keys(self):
+        """Return keys."""
         return self._data.keys()
 
     def __getitem__(self, key: str) -> Any:
+        """Return getitem."""
         return self._data[key]
 
 
@@ -40,10 +48,12 @@ class _SQLiteAdapter:
     """Minimal DB adapter exposing execute() like DatabaseClient."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self.conn = conn
         self.last_sql: str = ""
 
     def execute(self, sql: str, params: Tuple[Any, ...]) -> Dict[str, Any]:
+        """Execute the command."""
         self.last_sql = sql
         cur = self.conn.execute(sql, params)
         rows = [dict(row) for row in cur.fetchall()]
@@ -63,6 +73,7 @@ def test_get_ast_project_relative_path_postgres_deleted_filter(
     deleted_value: int | None,
     should_resolve: bool,
 ) -> None:
+    """Verify test get ast project relative path postgres deleted filter."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -71,8 +82,7 @@ def test_get_ast_project_relative_path_postgres_deleted_filter(
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE files (
             id INTEGER PRIMARY KEY,
             project_id TEXT NOT NULL,
@@ -80,8 +90,7 @@ def test_get_ast_project_relative_path_postgres_deleted_filter(
             relative_path TEXT,
             deleted BOOLEAN
         )
-        """
-    )
+        """)
     conn.execute(
         """
         INSERT INTO files(id, project_id, path, relative_path, deleted)
@@ -107,6 +116,7 @@ def test_get_ast_project_relative_path_postgres_deleted_filter(
 
 @pytest.mark.asyncio
 async def test_get_ast_valid_indexed_file_success(tmp_path: Path) -> None:
+    """Verify test get ast valid indexed file success."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -149,6 +159,7 @@ async def test_get_ast_valid_indexed_file_success(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_ast_existing_file_without_ast_not_indexed(tmp_path: Path) -> None:
+    """Verify test get ast existing file without ast not indexed."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -189,6 +200,7 @@ async def test_get_ast_existing_file_without_ast_not_indexed(tmp_path: Path) -> 
 
 
 def test_get_ast_searchable_index_when_db_execute_returns_dict_data() -> None:
+    """Verify test get ast searchable index when db execute returns dict data."""
     db = MagicMock()
     db.execute.return_value = {
         "data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]
@@ -200,6 +212,7 @@ def test_get_ast_searchable_index_when_db_execute_returns_dict_data() -> None:
 
 
 def test_get_ast_searchable_index_when_db_execute_returns_sequence_rows() -> None:
+    """Verify test get ast searchable index when db execute returns sequence rows."""
     db = MagicMock()
     db.execute.return_value = [(0, 1, 0)]
 
@@ -209,6 +222,7 @@ def test_get_ast_searchable_index_when_db_execute_returns_sequence_rows() -> Non
 
 
 def test_get_ast_searchable_index_when_db_execute_returns_object_rows() -> None:
+    """Verify test get ast searchable index when db execute returns object rows."""
     db = MagicMock()
     db.execute.return_value = _ObjectWithData(
         [_RowMapping({"classes_count": 0, "functions_count": 0, "methods_count": 1})]
@@ -221,6 +235,7 @@ def test_get_ast_searchable_index_when_db_execute_returns_object_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_get_ast_matches_search_ast_nodes_indexed_file(tmp_path: Path) -> None:
+    """Verify test get ast matches search ast nodes indexed file."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -269,6 +284,7 @@ async def test_get_ast_matches_search_ast_nodes_indexed_file(tmp_path: Path) -> 
 async def test_get_ast_project_relative_and_absolute_path_same_result(
     tmp_path: Path,
 ) -> None:
+    """Verify test get ast project relative and absolute path same result."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -332,6 +348,7 @@ async def test_get_ast_project_relative_and_absolute_path_same_result(
 async def test_get_ast_returns_success_for_searchable_file_without_ast_tree(
     tmp_path: Path,
 ) -> None:
+    """Verify test get ast returns success for searchable file without ast tree."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -380,6 +397,7 @@ async def test_get_ast_returns_success_for_searchable_file_without_ast_tree(
 async def test_get_ast_returns_success_with_json_for_searchable_file_without_ast_tree(
     tmp_path: Path,
 ) -> None:
+    """Verify test get ast returns success with json for searchable file without ast tree."""
     project_root = tmp_path / "proj"
     target_rel = "ai_admin/commands/base.py"
     target_abs = project_root / target_rel
@@ -426,6 +444,7 @@ async def test_get_ast_returns_success_with_json_for_searchable_file_without_ast
 
 
 def test_get_ast_source_does_not_use_coalesce_deleted_filter() -> None:
+    """Verify test get ast source does not use coalesce deleted filter."""
     source_text = Path("code_analysis/commands/ast/get_ast.py").read_text(
         encoding="utf-8"
     )
@@ -436,6 +455,7 @@ def test_get_ast_source_does_not_use_coalesce_deleted_filter() -> None:
 async def test_get_ast_existing_file_without_any_index_returns_ast_not_indexed(
     tmp_path: Path,
 ) -> None:
+    """Verify test get ast existing file without any index returns ast not indexed."""
     project_root = tmp_path / "proj"
     target_rel = "pkg/no_index.py"
     target_abs = project_root / target_rel
@@ -480,6 +500,7 @@ async def test_get_ast_existing_file_without_any_index_returns_ast_not_indexed(
 
 @pytest.mark.asyncio
 async def test_get_ast_missing_file_returns_file_not_found(tmp_path: Path) -> None:
+    """Verify test get ast missing file returns file not found."""
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True)
 

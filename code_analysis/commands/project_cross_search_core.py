@@ -185,11 +185,11 @@ def json_safe_scalar(value: Any) -> Any:
     if callable(item):
         try:
             return item()
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(value)
 
 
@@ -199,7 +199,7 @@ def json_safe_line_number(value: Any) -> Optional[int]:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -265,6 +265,7 @@ def build_grep_pattern_list(
     seen: Set[str] = set()
 
     def _add(p: str) -> None:
+        """Append a non-empty pattern once, case-insensitively."""
         p = (p or "").strip()
         if not p:
             return
@@ -347,6 +348,7 @@ def path_passes_filters(
 def normalize_semantic_hit(
     row: Dict[str, Any], project_root: Optional[Path]
 ) -> Dict[str, Any]:
+    """Normalize a semantic-search row into cross-search evidence."""
     raw_score = row.get("score")
     score = json_safe_scalar(raw_score) if raw_score is not None else None
     line = json_safe_line_number(row.get("line"))
@@ -378,6 +380,7 @@ def normalize_semantic_hit(
 def normalize_fulltext_hit(
     row: Dict[str, Any], project_root: Optional[Path]
 ) -> Dict[str, Any]:
+    """Normalize a full-text row into cross-search evidence."""
     raw_score = row.get("bm25_score")
     if raw_score is None:
         raw_score = row.get("score")
@@ -447,6 +450,7 @@ def normalize_grep_hit(
     pattern: str,
     project_root: Optional[Path],
 ) -> Dict[str, Any]:
+    """Normalize a grep row and its pattern into cross-search evidence."""
     rel = row.get("relative_path")
     if rel is None:
         rel = row.get("file_path") or ""
@@ -493,6 +497,7 @@ def normalize_grep_hit(
 
 
 def _confidence_label(evidence_score: int) -> Confidence:
+    """Map independent evidence count to a confidence label."""
     if evidence_score >= 3:
         return "high"
     if evidence_score == 2:
@@ -501,6 +506,7 @@ def _confidence_label(evidence_score: int) -> Confidence:
 
 
 def _normalized_fulltext_score(items: Sequence[Dict[str, Any]]) -> float:
+    """Convert the best negative BM25 score into a positive rank signal."""
     scores: List[float] = []
     for item in items:
         raw = item.get("score")
@@ -508,7 +514,7 @@ def _normalized_fulltext_score(items: Sequence[Dict[str, Any]]) -> float:
             continue
         try:
             scores.append(float(raw))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     if not scores:
         return 0.0
@@ -518,6 +524,7 @@ def _normalized_fulltext_score(items: Sequence[Dict[str, Any]]) -> float:
 
 
 def _best_semantic_score(items: Sequence[Dict[str, Any]]) -> float:
+    """Return the highest valid semantic score in an evidence group."""
     best = 0.0
     for item in items:
         raw = item.get("score")
@@ -525,7 +532,7 @@ def _best_semantic_score(items: Sequence[Dict[str, Any]]) -> float:
             continue
         try:
             best = max(best, float(raw))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return best
 
@@ -552,6 +559,7 @@ def merge_evidence(
     grouped: Dict[str, Dict[str, Any]] = {}
 
     def _ensure(path: str) -> Optional[Dict[str, Any]]:
+        """Return or create a filtered evidence bucket for a file path."""
         if not path:
             return None
         if not path_passes_filters(path, path_filters):
@@ -619,6 +627,7 @@ def merge_evidence(
     _confidence_rank = {"high": 3, "medium": 2, "low": 1}
 
     def _sort_key(cand: Dict[str, Any]) -> tuple:
+        """Sort candidates by confidence, evidence, rank, and path."""
         conf = cand.get("confidence")
         if conf not in _confidence_rank:
             conf = _confidence_label(int(cand.get("evidence_score") or 0))
@@ -666,10 +675,12 @@ def apply_mode(
 
 
 def _grep_text_blob(grep_items: Sequence[Dict[str, Any]]) -> str:
+    """Join grep evidence text for profile-specific inspection."""
     return "\n".join(str(i.get("text") or "") for i in grep_items)
 
 
 def _infer_command_name(file_path: str) -> Optional[str]:
+    """Infer a command name from a Python command module path."""
     name = Path(file_path).name
     if name.endswith("_command.py"):
         return name[: -len("_command.py")]

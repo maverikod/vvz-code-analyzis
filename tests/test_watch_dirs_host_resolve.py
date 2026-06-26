@@ -25,6 +25,7 @@ def _write_config(
     mount_root: str | None = "/watched",
     watch_dirs: list | None = None,
 ) -> None:
+    """Return write config."""
     fw: dict = {"watch_mount_root": mount_root} if mount_root else {}
     if catalog:
         fw["host_watch_catalog"] = catalog
@@ -38,6 +39,7 @@ def _write_config(
 
 
 def test_collect_catalog_uuid_dir_and_config(tmp_path: Path) -> None:
+    """Verify test collect catalog uuid dir and config."""
     catalog = tmp_path / "catalog"
     catalog.mkdir()
     wid = str(uuid.uuid4())
@@ -59,6 +61,7 @@ def test_collect_catalog_uuid_dir_and_config(tmp_path: Path) -> None:
 
 
 def test_collect_conflict_same_id_different_path(tmp_path: Path) -> None:
+    """Verify test collect conflict same id different path."""
     catalog = tmp_path / "catalog"
     catalog.mkdir()
     wid = str(uuid.uuid4())
@@ -80,6 +83,7 @@ def test_collect_conflict_same_id_different_path(tmp_path: Path) -> None:
 
 
 def test_runtime_mount_root_scan(tmp_path: Path) -> None:
+    """Verify test runtime mount root scan."""
     mount = tmp_path / "watched"
     mount.mkdir()
     wid = str(uuid.uuid4())
@@ -95,6 +99,7 @@ def test_runtime_mount_root_scan(tmp_path: Path) -> None:
 
 
 def test_discover_projects_under_mount(tmp_path: Path) -> None:
+    """Verify test discover projects under mount."""
     mount = tmp_path / "watched"
     mount.mkdir()
     wid = str(uuid.uuid4())
@@ -141,6 +146,7 @@ def test_runtime_only_mount_uuid_not_config_paths(tmp_path: Path) -> None:
 
 
 def test_format_compose_volumes(tmp_path: Path) -> None:
+    """Verify test format compose volumes."""
     wid = str(uuid.uuid4())
     host = tmp_path / "host"
     host.mkdir()

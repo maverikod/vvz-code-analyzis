@@ -16,16 +16,19 @@ _VALID_PROJECT_ID = str(uuid.uuid4())
 
 
 def _mock_project_db() -> MagicMock:
+    """Return mock project db."""
     mock_db = MagicMock()
     mock_db.get_project.return_value = {"id": _VALID_PROJECT_ID}
     return mock_db
 
 
 def _base_params() -> dict[str, object]:
+    """Return base params."""
     return {"project_id": _VALID_PROJECT_ID, "query": "database connection"}
 
 
 def test_validate_params_accepts_limit_in_range() -> None:
+    """Verify test validate params accepts limit in range."""
     cmd = FulltextSearchMCPCommand()
     with patch.object(
         BaseMCPCommand,
@@ -38,6 +41,7 @@ def test_validate_params_accepts_limit_in_range() -> None:
 
 @pytest.mark.parametrize("limit", [0, -1, 1001, 5000])
 def test_validate_params_rejects_limit_out_of_range(limit: int) -> None:
+    """Verify test validate params rejects limit out of range."""
     cmd = FulltextSearchMCPCommand()
     with patch.object(
         BaseMCPCommand,
@@ -51,6 +55,7 @@ def test_validate_params_rejects_limit_out_of_range(limit: int) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_rejects_limit_out_of_range_at_entry() -> None:
+    """Verify test execute rejects limit out of range at entry."""
     cmd = FulltextSearchMCPCommand()
     result = await cmd.execute(
         project_id=_VALID_PROJECT_ID,
@@ -63,12 +68,14 @@ async def test_execute_rejects_limit_out_of_range_at_entry() -> None:
 
 
 def test_fulltext_search_validate_params_rejects_unknown_param() -> None:
+    """Verify test fulltext search validate params rejects unknown param."""
     cmd = FulltextSearchMCPCommand()
     with pytest.raises(ValidationError, match="unknown parameter"):
         cmd.validate_params({**_base_params(), "__unknown_param__": "x"})
 
 
 def test_fulltext_search_validate_params_rejects_unknown_project_id() -> None:
+    """Verify test fulltext search validate params rejects unknown project id."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     mock_db.get_project.return_value = None
@@ -88,6 +95,7 @@ def test_fulltext_search_validate_params_rejects_unknown_project_id() -> None:
 def test_fulltext_search_validate_params_rejects_invalid_entity_type(
     entity_type: str,
 ) -> None:
+    """Verify test fulltext search validate params rejects invalid entity type."""
     cmd = FulltextSearchMCPCommand()
     with pytest.raises(ValidationError, match="entity_type"):
         cmd.validate_params({**_base_params(), "entity_type": entity_type})
@@ -95,6 +103,7 @@ def test_fulltext_search_validate_params_rejects_invalid_entity_type(
 
 @pytest.mark.asyncio
 async def test_fulltext_search_execute_rejects_unknown_param() -> None:
+    """Verify test fulltext search execute rejects unknown param."""
     cmd = FulltextSearchMCPCommand()
     result = await cmd.execute(
         project_id=_VALID_PROJECT_ID,
@@ -108,6 +117,7 @@ async def test_fulltext_search_execute_rejects_unknown_param() -> None:
 
 @pytest.mark.asyncio
 async def test_fulltext_search_execute_rejects_unknown_project_id() -> None:
+    """Verify test fulltext search execute rejects unknown project id."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     mock_db.get_project.return_value = None

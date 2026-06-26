@@ -57,6 +57,7 @@ class WatchDirSettings:
 
 
 def _settings_path(watch_dir: Path) -> Path:
+    """Return settings path."""
     return watch_dir / WATCH_DIR_SETTINGS_FILENAME
 
 
@@ -77,6 +78,7 @@ def merge_watch_ignore_patterns(
 
 
 def _coerce_ignore_patterns(raw: Any) -> tuple[str, ...]:
+    """Return coerce ignore patterns."""
     if not isinstance(raw, list):
         return tuple(DEFAULT_WATCH_DIR_IGNORE_PATTERNS)
     patterns = tuple(str(p) for p in raw if p)

@@ -34,6 +34,7 @@ class _FakeAnalysisResultsDb:
         saved_by_file_id: Optional[Dict[str, Dict[str, Any]]] = None,
         file_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
+        """Initialize fake rows and lookup tables used by command tests."""
         self.rows = rows or []
         self.saved_by_file_id = saved_by_file_id or {}
         self.file_by_id = file_by_id or {}
@@ -265,6 +266,7 @@ async def test_file_path_lookup_uses_resolver_and_returns_selected_result(
     calls: List[Dict[str, Any]] = []
 
     def _resolve_project_file_record(**kwargs: Any) -> Dict[str, Any]:
+        """Capture resolver arguments and return the prepared project row."""
         calls.append(kwargs)
         return {"file_record": row}
 

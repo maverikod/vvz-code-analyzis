@@ -14,14 +14,19 @@ from code_analysis.core.integrity_analysis.issues_registry import (
 
 
 class _DB:
+    """Represent DB."""
+
     def __init__(self):
+        """Initialize the instance."""
         self.issues = []
 
     def create_issue(self, issue):
+        """Return create issue."""
         self.issues.append(issue)
 
 
 def test_counts_two_node_cycle_and_drops_self_loop():
+    """Verify test counts two node cycle and drops self loop."""
     db = _DB()
     cycles = [["fa", "fb"], ["fc"], ["fd", "fe", "ff"]]  # 2-node, self-loop, 3-node
     count = register_circular_import_issues(

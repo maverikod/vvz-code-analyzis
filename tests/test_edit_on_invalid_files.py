@@ -38,6 +38,7 @@ _PROJECT_UUID = "cafebabe-cafe-4caf-babe-cafebabecafe"
 
 
 def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
+    """Return db for."""
     m = MagicMock()
     row = {
         "id": project_id,
@@ -53,6 +54,7 @@ def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
 
 
 def _ensure_project_root(tmp: Path, project_id: str = _PROJECT_UUID) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -62,6 +64,7 @@ def _ensure_project_root(tmp: Path, project_id: str = _PROJECT_UUID) -> None:
 
 
 def test_json_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
+    """Verify test json handler invalid returns raw source node."""
     bad = tmp_path / "broken.json"
     bad.write_text('{"a": ', encoding="utf-8")
     node = JsonFileHandler().open_root(
@@ -75,6 +78,7 @@ def test_json_handler_invalid_returns_raw_source_node(tmp_path: Path) -> None:
 
 
 def test_python_invalid_returns_raw_source_via_marked_tree(tmp_path: Path) -> None:
+    """Verify test python invalid returns raw source via marked tree."""
     _ensure_project_root(tmp_path)
     bad = tmp_path / "broken.py"
     bad.write_text("def f(\n", encoding="utf-8")
@@ -246,6 +250,7 @@ async def test_create_invalid_json_writes_raw_and_sets_is_invalid(
 async def test_open_invalid_json_sets_is_invalid_and_allows_raw_edit(
     tmp_path: Path,
 ) -> None:
+    """Verify test open invalid json sets is invalid and allows raw edit."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     p = tmp_path / rel
@@ -337,6 +342,7 @@ async def test_preview_broken_json_with_uuid_node_ref_requires_line_addressing(
 
 @pytest.mark.asyncio
 async def test_open_invalid_yaml_sets_is_invalid_and_warning(tmp_path: Path) -> None:
+    """Verify test open invalid yaml sets is invalid and warning."""
     _ensure_project_root(tmp_path)
     rel = "broken.yaml"
     (tmp_path / rel).write_text("key: [unclosed\n", encoding="utf-8")
@@ -355,6 +361,7 @@ async def test_open_invalid_yaml_sets_is_invalid_and_warning(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_open_invalid_py_falls_back_to_text(tmp_path: Path) -> None:
+    """Verify test open invalid py falls back to text."""
     _ensure_project_root(tmp_path)
     rel = "broken.py"
     (tmp_path / rel).write_text("def f(\n", encoding="utf-8")
@@ -372,6 +379,7 @@ async def test_open_invalid_py_falls_back_to_text(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_edit_invalid_session_returns_warning(tmp_path: Path) -> None:
+    """Verify test edit invalid session returns warning."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     (tmp_path / rel).write_text('{"a": ', encoding="utf-8")
@@ -402,6 +410,7 @@ async def test_edit_invalid_session_returns_warning(tmp_path: Path) -> None:
 async def test_write_commit_invalid_session_still_broken_returns_error(
     tmp_path: Path,
 ) -> None:
+    """Verify test write commit invalid session still broken returns error."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     (tmp_path / rel).write_text('{"a": ', encoding="utf-8")
@@ -438,6 +447,7 @@ async def test_write_commit_invalid_session_still_broken_returns_error(
 async def test_write_commit_invalid_session_fixed_restores_structural_editing(
     tmp_path: Path,
 ) -> None:
+    """Verify test write commit invalid session fixed restores structural editing."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     p = tmp_path / rel
@@ -477,6 +487,7 @@ async def test_write_commit_invalid_session_fixed_restores_structural_editing(
 
 @pytest.mark.asyncio
 async def test_write_preview_invalid_session_always_succeeds(tmp_path: Path) -> None:
+    """Verify test write preview invalid session always succeeds."""
     _ensure_project_root(tmp_path)
     rel = "broken.json"
     (tmp_path / rel).write_text('{"a": ', encoding="utf-8")

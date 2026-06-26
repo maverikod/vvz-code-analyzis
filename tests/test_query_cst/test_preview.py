@@ -22,17 +22,21 @@ class TestQueryCSTCommandPreview:
     async def test_preview_returns_diff_and_modified_source(
         self, project_root, mock_db
     ):
+        """Verify test preview returns diff and modified source."""
         py_file = project_root / "m.py"
         original = "x = 1\ny = 2\n"
         write_py_file(py_file, original)
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -52,17 +56,21 @@ class TestQueryCSTCommandPreview:
 
     @pytest.mark.asyncio
     async def test_dry_run_same_as_preview(self, project_root, mock_db):
+        """Verify test dry run same as preview."""
         py_file = project_root / "m.py"
         original = "a = 1\n"
         write_py_file(py_file, original)
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

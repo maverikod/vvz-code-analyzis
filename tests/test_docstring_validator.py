@@ -11,6 +11,7 @@ from code_analysis.core.cst_module.docstring_validator import (
 
 
 def test_extract_class_attributes_includes_init_and_property() -> None:
+    """Verify test extract class attributes includes init and property."""
     src = '''
 class Foo:
     """Doc."""
@@ -32,6 +33,7 @@ class Foo:
 
 
 def test_validate_class_docstring_accepts_attributes_section() -> None:
+    """Verify test validate class docstring accepts attributes section."""
     src = '''
 """Module."""
 
@@ -84,6 +86,7 @@ class Shape:
 
 
 def test_validate_class_docstring_reports_missing_init_attr() -> None:
+    """Verify test validate class docstring reports missing init attr."""
     src = '''
 """Module."""
 

@@ -16,15 +16,18 @@ from code_analysis.core.database_driver_pkg.drivers.sqlite_operations import (
 
 
 def test_normalize_postgres_returning_pk_int() -> None:
+    """Verify test normalize postgres returning pk int."""
     assert _normalize_postgres_returning_pk(42) == 42
 
 
 def test_normalize_postgres_returning_pk_uuid_object() -> None:
+    """Verify test normalize postgres returning pk uuid object."""
     u = uuid.uuid4()
     assert _normalize_postgres_returning_pk(u) == str(u)
 
 
 def test_normalize_postgres_returning_pk_uuid_string() -> None:
+    """Verify test normalize postgres returning pk uuid string."""
     s = str(uuid.uuid4())
     assert _normalize_postgres_returning_pk(s) is s
 
@@ -45,6 +48,7 @@ def test_postgres_insert_returns_uuid_string_not_zero() -> None:
 
 
 def test_postgres_insert_returns_int_pk() -> None:
+    """Verify test postgres insert returns int pk."""
     conn = MagicMock()
     cursor = MagicMock()
     cursor.fetchone.return_value = (7,)
@@ -55,6 +59,7 @@ def test_postgres_insert_returns_int_pk() -> None:
 
 
 def test_postgres_insert_returns_none_when_no_returning_row() -> None:
+    """Verify test postgres insert returns none when no returning row."""
     conn = MagicMock()
     cursor = MagicMock()
     cursor.fetchone.return_value = None
@@ -65,6 +70,7 @@ def test_postgres_insert_returns_none_when_no_returning_row() -> None:
 
 
 def test_sqlite_insert_explicit_text_uuid_pk_returns_string(tmp_path) -> None:
+    """Verify test sqlite insert explicit text uuid pk returns string."""
     db = tmp_path / "t.db"
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
@@ -83,6 +89,7 @@ def test_sqlite_insert_explicit_text_uuid_pk_returns_string(tmp_path) -> None:
 
 
 def test_sqlite_insert_autoincrement_integer_pk_returns_int(tmp_path) -> None:
+    """Verify test sqlite insert autoincrement integer pk returns int."""
     db = tmp_path / "t.db"
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
@@ -98,6 +105,7 @@ def test_sqlite_insert_autoincrement_integer_pk_returns_int(tmp_path) -> None:
 
 
 def test_sqlite_insert_explicit_integer_id_returns_int(tmp_path) -> None:
+    """Verify test sqlite insert explicit integer id returns int."""
     db = tmp_path / "t.db"
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row

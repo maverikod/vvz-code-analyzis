@@ -30,16 +30,17 @@ from code_analysis.core.file_handlers.yaml_handler import (
     parse_yaml_path,
 )
 
-
 # --- Registry: structured suffixes do not route to text ---
 
 
 def test_resolve_json_handler() -> None:
+    """Verify test resolve json handler."""
     assert resolve_handler("dir/config.json", "replace") == HANDLER_JSON
     assert resolve_handler("dir/config.json", "read") == HANDLER_JSON
 
 
 def test_resolve_yaml_handler() -> None:
+    """Verify test resolve yaml handler."""
     assert resolve_handler("dir/config.yaml", "replace") == HANDLER_YAML
     assert resolve_handler("dir/config.yml", "read") == HANDLER_YAML
 
@@ -48,6 +49,7 @@ def test_resolve_yaml_handler() -> None:
 
 
 def test_text_handler_rejects_json_path_for_replace(tmp_path: Path) -> None:
+    """Verify test text handler rejects json path for replace."""
     f = tmp_path / "x.json"
     f.write_text("{}\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -68,6 +70,7 @@ def test_text_handler_rejects_json_path_for_replace(tmp_path: Path) -> None:
 
 
 def test_text_handler_rejects_yaml_suffix_for_replace(tmp_path: Path) -> None:
+    """Verify test text handler rejects yaml suffix for replace."""
     f = tmp_path / "x.yaml"
     f.write_text("a: 1\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -88,6 +91,7 @@ def test_text_handler_rejects_yaml_suffix_for_replace(tmp_path: Path) -> None:
 
 
 def test_text_handler_rejects_yml_suffix_for_replace(tmp_path: Path) -> None:
+    """Verify test text handler rejects yml suffix for replace."""
     f = tmp_path / "x.yml"
     f.write_text("a: 1\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -111,6 +115,7 @@ def test_text_handler_rejects_yml_suffix_for_replace(tmp_path: Path) -> None:
 
 
 def test_json_read_rejects_line_range_params(tmp_path: Path) -> None:
+    """Verify test json read rejects line range params."""
     f = tmp_path / "a.json"
     f.write_text('{"k": 1}\n', encoding="utf-8")
     req = FileHandlerRequest(
@@ -126,6 +131,7 @@ def test_json_read_rejects_line_range_params(tmp_path: Path) -> None:
 
 
 def test_json_replace_rejects_line_range_params(tmp_path: Path) -> None:
+    """Verify test json replace rejects line range params."""
     f = tmp_path / "linekeys.json"
     f.write_text('{"x": 1}\n', encoding="utf-8")
     req = FileHandlerRequest(
@@ -151,6 +157,7 @@ def test_json_replace_rejects_line_range_params(tmp_path: Path) -> None:
 
 
 def test_json_read_loads_nodes(tmp_path: Path) -> None:
+    """Verify test json read loads nodes."""
     f = tmp_path / "b.json"
     f.write_text('{"a": 1}\n', encoding="utf-8")
     req = FileHandlerRequest(
@@ -170,6 +177,7 @@ def test_json_read_loads_nodes(tmp_path: Path) -> None:
 
 
 def test_json_replace_invalid_node_validates_before_save(tmp_path: Path) -> None:
+    """Verify test json replace invalid node validates before save."""
     f = tmp_path / "c.json"
     f.write_text('{"x": 1}\n', encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -202,6 +210,7 @@ def test_json_replace_invalid_node_validates_before_save(tmp_path: Path) -> None
 def test_json_replace_invalid_json_pointer_validates_before_save(
     tmp_path: Path,
 ) -> None:
+    """Verify test json replace invalid json pointer validates before save."""
     f = tmp_path / "ptr.json"
     f.write_text('{"x": 1}\n', encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -232,6 +241,7 @@ def test_json_replace_invalid_json_pointer_validates_before_save(
 
 
 def test_json_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
+    """Verify test json replace dry run leaves file unchanged."""
     f = tmp_path / "d.json"
     f.write_text('{"x": 1}\n', encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -265,6 +275,7 @@ def test_json_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
 
 
 def test_json_save_dry_run_serializes_without_write(tmp_path: Path) -> None:
+    """Verify test json save dry run serializes without write."""
     f = tmp_path / "save.json"
     f.write_text('{"a": 1}\n', encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -289,6 +300,7 @@ def test_json_save_dry_run_serializes_without_write(tmp_path: Path) -> None:
 
 
 def test_json_handler_registration_ready() -> None:
+    """Verify test json handler registration ready."""
     h = JsonFileHandler()
     assert h.handler_id == "json"
     assert h.ready_for_all_operations_schema()
@@ -298,6 +310,7 @@ def test_json_handler_registration_ready() -> None:
 
 
 def test_parse_yaml_path_root_and_indices() -> None:
+    """Verify test parse yaml path root and indices."""
     assert parse_yaml_path("") == []
     assert parse_yaml_path("/a/0") == ["a", "0"]
     assert parse_yaml_path("/d~1e") == ["d/e"]
@@ -305,12 +318,14 @@ def test_parse_yaml_path_root_and_indices() -> None:
 
 
 def test_get_at_path() -> None:
+    """Verify test get at path."""
     doc = {"x": [{"y": 2}]}
     assert get_at_path(doc, "") is doc
     assert get_at_path(doc, "/x/0/y") == 2
 
 
 def test_delete_at_path() -> None:
+    """Verify test delete at path."""
     doc = {"a": 1, "b": 2}
     delete_at_path(doc, "/a")
     assert doc == {"b": 2}
@@ -320,6 +335,7 @@ def test_delete_at_path() -> None:
 
 
 def test_yaml_read_rejects_line_range_params(tmp_path: Path) -> None:
+    """Verify test yaml read rejects line range params."""
     f = tmp_path / "a.yaml"
     f.write_text("k: 1\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -335,6 +351,7 @@ def test_yaml_read_rejects_line_range_params(tmp_path: Path) -> None:
 
 
 def test_yaml_read_document_and_paths(tmp_path: Path) -> None:
+    """Verify test yaml read document and paths."""
     f = tmp_path / "b.yaml"
     f.write_text("a: 1\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -355,6 +372,7 @@ def test_yaml_read_document_and_paths(tmp_path: Path) -> None:
 
 
 def test_yaml_replace_invalid_path_before_backup(tmp_path: Path) -> None:
+    """Verify test yaml replace invalid path before backup."""
     f = tmp_path / "c.yaml"
     f.write_text("x: 1\n", encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -389,6 +407,7 @@ def test_yaml_replace_invalid_path_before_backup(tmp_path: Path) -> None:
 
 
 def test_yaml_replace_invalid_pointer_syntax_before_backup(tmp_path: Path) -> None:
+    """Verify test yaml replace invalid pointer syntax before backup."""
     f = tmp_path / "d.yaml"
     f.write_text("x: 1\n", encoding="utf-8")
     root = tmp_path
@@ -413,6 +432,7 @@ def test_yaml_replace_invalid_pointer_syntax_before_backup(tmp_path: Path) -> No
 
 
 def test_yaml_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
+    """Verify test yaml replace dry run leaves file unchanged."""
     f = tmp_path / "e.yaml"
     f.write_text("x: 1\n", encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -445,6 +465,7 @@ def test_yaml_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
 
 
 def test_yaml_save_round_trip_dry_run(tmp_path: Path) -> None:
+    """Verify test yaml save round trip dry run."""
     f = tmp_path / "f.yaml"
     f.write_text("a: 1\n", encoding="utf-8")
     req = FileHandlerRequest(
@@ -468,6 +489,7 @@ def test_yaml_save_round_trip_dry_run(tmp_path: Path) -> None:
 
 
 def test_yaml_nested_replace_yaml_path_dry_run(tmp_path: Path) -> None:
+    """Verify test yaml nested replace yaml path dry run."""
     f = tmp_path / "nest.yaml"
     f.write_text("root:\n  k: old\n", encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -493,6 +515,7 @@ def test_yaml_nested_replace_yaml_path_dry_run(tmp_path: Path) -> None:
 
 
 def test_delete_path_invalid_before_backup(tmp_path: Path) -> None:
+    """Verify test delete path invalid before backup."""
     f = tmp_path / "g.yaml"
     f.write_text("x: 1\n", encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
@@ -518,6 +541,7 @@ def test_delete_path_invalid_before_backup(tmp_path: Path) -> None:
 
 
 def test_yaml_handler_registration_ready() -> None:
+    """Verify test yaml handler registration ready."""
     h = YamlFileHandler()
     assert h.handler_id == "yaml"
     assert h.ready_for_all_operations_schema()

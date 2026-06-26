@@ -1,3 +1,5 @@
+"""Inspect LibCST structure for decorated class methods."""
+
 import libcst as cst
 
 src = """
@@ -22,5 +24,7 @@ for stmt in cls_node.body.body:
         for d in stmt.decorators:
             print(f"  Decorator type: {type(d).__name__}")
             print(f"  d.decorator: {d.decorator}")
-        print(f"  FunctionDef children types: {[type(c).__name__ for c in stmt.children]}")
+        print(
+            f"  FunctionDef children types: {[type(c).__name__ for c in stmt.children]}"
+        )
         print()

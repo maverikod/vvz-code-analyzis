@@ -26,6 +26,7 @@ REPLACEMENT = '''
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     lines = BASE_PY.read_text(encoding="utf-8").splitlines(keepends=True)
     # Find "def _create_schema_REMOVED_BLOCK_START" and "def close"
     start_i = None

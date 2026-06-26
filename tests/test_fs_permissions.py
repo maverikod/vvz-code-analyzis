@@ -30,14 +30,17 @@ _skip_as_root = pytest.mark.skipif(
 
 
 def test_is_readable_dir_true_for_normal_dir(tmp_path: Path) -> None:
+    """Verify test is readable dir true for normal dir."""
     assert is_readable_dir(tmp_path) is True
 
 
 def test_is_writable_dir_true_for_normal_dir(tmp_path: Path) -> None:
+    """Verify test is writable dir true for normal dir."""
     assert is_writable_dir(tmp_path) is True
 
 
 def test_is_readable_file_true_for_normal_file(tmp_path: Path) -> None:
+    """Verify test is readable file true for normal file."""
     f = tmp_path / "a.txt"
     f.write_text("x", encoding="utf-8")
     assert is_readable_file(f) is True
@@ -47,6 +50,7 @@ def test_is_readable_file_true_for_normal_file(tmp_path: Path) -> None:
 def test_is_writable_dir_false_and_logs_on_denied(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test is writable dir false and logs on denied."""
     d = tmp_path / "ro"
     d.mkdir()
     d.chmod(0o500)  # r-x: not writable
@@ -60,6 +64,7 @@ def test_is_writable_dir_false_and_logs_on_denied(
 
 @_skip_as_root
 def test_is_readable_file_false_on_denied(tmp_path: Path) -> None:
+    """Verify test is readable file false on denied."""
     f = tmp_path / "secret.txt"
     f.write_text("x", encoding="utf-8")
     f.chmod(0o000)
@@ -88,6 +93,7 @@ def test_write_watch_dir_settings_skips_on_unwritable_dir(
 
 
 def test_write_then_load_watch_dir_settings_roundtrip(tmp_path: Path) -> None:
+    """Verify test write then load watch dir settings roundtrip."""
     watch_dir = tmp_path / "wd"
     watch_dir.mkdir()
     assert write_watch_dir_settings(watch_dir, default_watch_dir_settings()) is True
@@ -97,6 +103,7 @@ def test_write_then_load_watch_dir_settings_roundtrip(tmp_path: Path) -> None:
 
 @_skip_as_root
 def test_load_watch_dir_settings_defaults_on_unreadable_file(tmp_path: Path) -> None:
+    """Verify test load watch dir settings defaults on unreadable file."""
     watch_dir = tmp_path / "wd"
     watch_dir.mkdir()
     assert write_watch_dir_settings(watch_dir, default_watch_dir_settings()) is True

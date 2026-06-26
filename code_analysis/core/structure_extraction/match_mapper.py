@@ -31,10 +31,13 @@ _UNSTABLE_ID_KEYS = (
 
 @dataclass
 class EnrichmentCounters:
+    """Represent EnrichmentCounters."""
+
     enrichment_skipped: int = 0
     enrichment_failed: int = 0
 
     def as_dict(self) -> dict[str, int]:
+        """Return as dict."""
         return {
             "enrichment_skipped": self.enrichment_skipped,
             "enrichment_failed": self.enrichment_failed,
@@ -43,11 +46,14 @@ class EnrichmentCounters:
 
 @dataclass
 class EnrichmentPolicy:
+    """Represent EnrichmentPolicy."""
+
     ensure_persisted_tree: bool = True
     stable_ids_required: bool = True
 
 
 def _clear_unstable_ids(row: Dict[str, Any]) -> None:
+    """Return clear unstable ids."""
     for key in _UNSTABLE_ID_KEYS:
         row.pop(key, None)
 
@@ -58,6 +64,7 @@ def _set_line_only(
     *,
     grep_source: Optional[str] = None,
 ) -> None:
+    """Return set line only."""
     _clear_unstable_ids(row)
     row["enrichment_status"] = status
     if grep_source is not None:
@@ -157,6 +164,7 @@ def _apply_block_to_row(
     *,
     source: str,
 ) -> None:
+    """Return apply block to row."""
     block = find_smallest_block_containing_line(document, line_number)
     if block is None or not block.node_ref:
         _set_line_only(row, "skipped_extractor_error", grep_source=source)

@@ -21,16 +21,19 @@ PROJECT_ID = "900fe94a-1d93-41be-bba1-0ebddbd1e5d1"
 
 
 async def _run_command(command_name: str, **params: Any) -> Dict[str, Any]:
+    """Return run command."""
     cmd_cls = registry.get_command(command_name)
     result_obj = await cmd_cls.run(**params)
     return result_obj.to_dict()
 
 
 def _job_id(prefix: str) -> str:
+    """Return job id."""
     return f"qa_queuefix_{int(time.time() * 1000)}_{prefix}"
 
 
 def _extract_queue_job_id(response: Dict[str, Any]) -> Optional[str]:
+    """Return extract queue job id."""
     for key in ("job_id", "queue_job_id"):
         value = response.get(key)
         if isinstance(value, str) and value:
@@ -51,6 +54,7 @@ def _extract_queue_job_id(response: Dict[str, Any]) -> Optional[str]:
 
 
 async def _poll_terminal_status(job_id: str, timeout: float = 40.0) -> Dict[str, Any]:
+    """Return poll terminal status."""
     deadline = time.time() + timeout
     last: Dict[str, Any] = {}
     while time.time() < deadline:
@@ -65,6 +69,7 @@ async def _poll_terminal_status(job_id: str, timeout: float = 40.0) -> Dict[str,
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _queue_manager_lifecycle():
+    """Return queue manager lifecycle."""
     hooks.execute_custom_commands_hooks(registry)
     await shutdown_global_queue_manager()
     await init_global_queue_manager(
@@ -80,6 +85,7 @@ async def _queue_manager_lifecycle():
 
 @pytest.mark.asyncio
 async def test_health_reports_queue_dependency_versions() -> None:
+    """Verify test health reports queue dependency versions."""
     health = await _run_command("health")
     assert health.get("success") is True
     deps = health["data"]["components"]["queue_dependencies"]
@@ -93,6 +99,7 @@ async def test_health_reports_queue_dependency_versions() -> None:
 
 @pytest.mark.asyncio
 async def test_queue_health_reports_dependency_versions() -> None:
+    """Verify test queue health reports dependency versions."""
     queue_health = await _run_command("queue_health")
     assert queue_health.get("success") is True
     qh_data = queue_health["data"]
@@ -104,6 +111,7 @@ async def test_queue_health_reports_dependency_versions() -> None:
 
 @pytest.mark.asyncio
 async def test_command_execution_health_completed_diagnostics() -> None:
+    """Verify test command execution health completed diagnostics."""
     job_id = _job_id("health")
     added = await _run_command(
         "queue_add_job",
@@ -127,6 +135,7 @@ async def test_command_execution_health_completed_diagnostics() -> None:
 
 @pytest.mark.asyncio
 async def test_command_execution_inner_failure_retained_and_not_successful() -> None:
+    """Verify test command execution inner failure retained and not successful."""
     job_id = _job_id("delete_missing")
     missing_rel_path = f"notes/queue_missing_{int(time.time())}.txt"
     added = await _run_command(
@@ -160,6 +169,7 @@ async def test_command_execution_inner_failure_retained_and_not_successful() -> 
 
 @pytest.mark.asyncio
 async def test_deleted_retention_status_list_logs() -> None:
+    """Verify test deleted retention status list logs."""
     job_id = _job_id("deleted_retention")
     added = await _run_command(
         "queue_add_job",
@@ -198,6 +208,7 @@ async def test_deleted_retention_status_list_logs() -> None:
 )
 @pytest.mark.asyncio
 async def test_qa_sleep_stop_interrupts_not_natural_completion() -> None:
+    """Verify test qa sleep stop interrupts not natural completion."""
     requested_seconds = 60.0
     queued = await _run_command(
         "qa_sleep",

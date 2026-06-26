@@ -40,6 +40,7 @@ def transform_body(lines: list[str], is_create_schema: bool = False) -> list[str
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     text = BASE_PY.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
 

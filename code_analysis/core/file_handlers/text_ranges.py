@@ -26,6 +26,7 @@ class LineRange:
 
 
 def _strip_brackets(spec: str) -> str:
+    """Return strip brackets."""
     s = spec.strip()
     if not (s.startswith("[") and s.endswith("]")):
         raise ValueError(f"Range must be bracketed, e.g. [12,15]: {spec!r}")
@@ -33,6 +34,7 @@ def _strip_brackets(spec: str) -> str:
 
 
 def _reject_non_positive(name: str, value: int) -> None:
+    """Return reject non positive."""
     if value < 1:
         raise ValueError(f"{name} must be >= 1 (1-based); got {value}")
 

@@ -67,6 +67,7 @@ def _merge_pip_log_data(
 
 
 def _strip_packages(packages: Optional[List[str]]) -> List[str]:
+    """Return non-empty package specifications with surrounding space removed."""
     out: List[str] = []
     if not packages:
         return out
@@ -253,6 +254,7 @@ class ProjectPipInstallCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate install options and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -468,6 +470,7 @@ class ProjectPipInstallCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Install packages or a requirements file in the project sandbox."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             pkgs = _strip_packages(packages)
@@ -611,6 +614,7 @@ class ProjectPipListCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate list options and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -780,6 +784,7 @@ class ProjectPipListCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """List distributions installed in the project sandbox."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             fmt = (list_format or "columns").strip().lower()
@@ -916,6 +921,7 @@ class ProjectPipShowCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate package names and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -1077,6 +1083,7 @@ class ProjectPipShowCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Show pip metadata for packages in the project sandbox."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             pkgs = _strip_packages(packages)
@@ -1205,6 +1212,7 @@ class ProjectPipUninstallCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate uninstall package names and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -1366,6 +1374,7 @@ class ProjectPipUninstallCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Uninstall packages from the project sandbox without prompting."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             pkgs = _strip_packages(packages)
@@ -1438,6 +1447,7 @@ class ProjectPipCheckCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ProjectPipCheckCommand"]) -> Dict[str, Any]:
+        """Return the schema for checking installed distribution names."""
         return {
             "type": "object",
             "description": (
@@ -1491,12 +1501,14 @@ class ProjectPipCheckCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate requested distributions and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
 
     @classmethod
     def metadata(cls: type["ProjectPipCheckCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for installed-package checks."""
         return {
             "name": cls.name,
             "version": cls.version,
@@ -1657,6 +1669,7 @@ class ProjectPipCheckCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Report which requested distributions are installed in the sandbox."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             pkgs = _strip_packages(packages)
@@ -1750,6 +1763,7 @@ class ProjectPipSearchCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ProjectPipSearchCommand"]) -> Dict[str, Any]:
+        """Return the schema for filtering installed project distributions."""
         return {
             "type": "object",
             "description": (
@@ -1806,12 +1820,14 @@ class ProjectPipSearchCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate search options and require an existing project."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
 
     @classmethod
     def metadata(cls: type["ProjectPipSearchCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for installed-package searches."""
         return {
             "name": cls.name,
             "version": cls.version,
@@ -1970,6 +1986,7 @@ class ProjectPipSearchCommand(BaseMCPCommand):
         query: str,
         match_mode: str,
     ) -> List[Dict[str, Any]]:
+        """Filter pip-list rows by normalized exact, prefix, or substring match."""
         q = (query or "").strip()
         if not q:
             return list(rows)
@@ -1999,6 +2016,7 @@ class ProjectPipSearchCommand(BaseMCPCommand):
         timeout_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """List installed distributions and filter them without querying PyPI."""
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             fmt = (match_mode or "substring").strip().lower()

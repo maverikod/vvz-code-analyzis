@@ -13,23 +13,27 @@ from code_analysis.main_workers_file_watcher import build_file_watcher_watch_dir
 
 
 def test_describe_watch_dir_access_missing(tmp_path: Path) -> None:
+    """Verify test describe watch dir access missing."""
     missing = tmp_path / "does-not-exist"
     assert describe_watch_dir_access(missing) == "directory does not exist"
 
 
 def test_describe_watch_dir_access_file_not_dir(tmp_path: Path) -> None:
+    """Verify test describe watch dir access file not dir."""
     file_path = tmp_path / "file.txt"
     file_path.write_text("x", encoding="utf-8")
     assert describe_watch_dir_access(file_path) == "path is not a directory"
 
 
 def test_describe_watch_dir_access_ok(tmp_path: Path) -> None:
+    """Verify test describe watch dir access ok."""
     assert describe_watch_dir_access(tmp_path) is None
 
 
 def test_build_file_watcher_watch_dir_entries_keeps_inaccessible(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test build file watcher watch dir entries keeps inaccessible."""
     missing = tmp_path / "missing"
     config = [{"id": "wd-1", "path": str(missing)}]
     with caplog.at_level(logging.WARNING):
@@ -44,6 +48,7 @@ def test_build_file_watcher_watch_dir_entries_keeps_inaccessible(
 def test_build_file_watcher_watch_dir_entries_preserves_ignore_patterns(
     tmp_path: Path,
 ) -> None:
+    """Verify test build file watcher watch dir entries preserves ignore patterns."""
     config = [
         {
             "id": "wd-1",
@@ -57,6 +62,7 @@ def test_build_file_watcher_watch_dir_entries_preserves_ignore_patterns(
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can read all dirs")
 def test_describe_watch_dir_access_not_readable(tmp_path: Path) -> None:
+    """Verify test describe watch dir access not readable."""
     unreadable = tmp_path / "secret"
     unreadable.mkdir()
     unreadable.chmod(0o000)

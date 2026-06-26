@@ -21,6 +21,7 @@ SOURCE_FILE_INVARIANT: str = (
 
 
 def sibling_tree_path(source_abs: Path) -> Path:
+    """Return sibling tree path."""
     if not source_abs.name:
         raise ValueError(
             f"source_abs must be a file path with a name, got: {source_abs!r}"

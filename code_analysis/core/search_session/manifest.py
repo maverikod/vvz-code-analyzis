@@ -92,6 +92,8 @@ def capture_server_process_identity() -> ServerProcessIdentity:
         main_pid=os.getpid(),
         process_start_time=time.time(),
     )
+
+
 def create_initial_manifest(
     *,
     layout: SearchSessionDirectoryLayout,
@@ -134,11 +136,13 @@ def create_initial_manifest(
 
 
 def _manifest_to_dict(manifest: SearchSessionManifest) -> dict[str, Any]:
+    """Return manifest to dict."""
     data = asdict(manifest)
     return data
 
 
 def _manifest_from_dict(data: dict[str, Any]) -> SearchSessionManifest:
+    """Return manifest from dict."""
     process_raw = data.get("process") or {}
     process = ServerProcessIdentity(
         main_pid=int(process_raw["main_pid"]),
@@ -167,6 +171,7 @@ def _manifest_from_dict(data: dict[str, Any]) -> SearchSessionManifest:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Return atomic write json."""
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(tmp_path, "w", encoding="utf-8") as handle:
@@ -177,6 +182,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _lock_path(manifest_path: Path) -> Path:
+    """Return lock path."""
     return manifest_path.with_suffix(manifest_path.suffix + ".lock")
 
 

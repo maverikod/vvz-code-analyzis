@@ -60,6 +60,7 @@ class FileStructureCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -93,6 +94,7 @@ class FileStructureCommand(BaseMCPCommand):
         include_functions: bool = True,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Parse a Python file and return class, method, and function structure."""
         try:
             root_path = self._resolve_project_root(project_id)
             target = root_path / file_path

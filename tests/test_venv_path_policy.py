@@ -26,11 +26,13 @@ from code_analysis.core.venv_path_policy import (
 
 
 def test_normalize_pep503_distribution_name() -> None:
+    """Verify test normalize pep503 distribution name."""
     assert normalize_pep503_distribution_name("Some_Package") == "some-package"
     assert normalize_pep503_distribution_name("requests") == "requests"
 
 
 def test_path_is_under_project_local_venv(tmp_path: Path) -> None:
+    """Verify test path is under project local venv."""
     root = tmp_path / "proj"
     root.mkdir()
     py = root / ".venv" / "lib" / "python3.12" / "site-packages" / "x.py"
@@ -41,6 +43,7 @@ def test_path_is_under_project_local_venv(tmp_path: Path) -> None:
 
 
 def test_build_allowlisted_site_packages_py_files_from_record(tmp_path: Path) -> None:
+    """Verify test build allowlisted site packages py files from record."""
     root = tmp_path / "proj"
     sp = root / ".venv" / "lib" / "python3.12" / "site-packages"
     sp.mkdir(parents=True)
@@ -58,6 +61,7 @@ def test_build_allowlisted_site_packages_py_files_from_record(tmp_path: Path) ->
 
 
 def test_collect_python_files_for_indexing_merges(tmp_path: Path) -> None:
+    """Verify test collect python files for indexing merges."""
     root = tmp_path / "proj"
     (root / "src").mkdir(parents=True)
     (root / "src" / "app.py").write_text("a = 1\n")
@@ -81,6 +85,7 @@ def test_collect_python_files_for_indexing_merges(tmp_path: Path) -> None:
 
 
 def test_expand_ignore_exception_py_files_under_venv(tmp_path: Path) -> None:
+    """Verify test expand ignore exception py files under venv."""
     root = tmp_path / "proj"
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "keep.py"
     vpy.parent.mkdir(parents=True)
@@ -94,6 +99,7 @@ def test_expand_ignore_exception_py_files_under_venv(tmp_path: Path) -> None:
 def test_collect_python_files_for_indexing_does_not_merge_venv_ignore_exceptions(
     tmp_path: Path,
 ) -> None:
+    """Verify test collect python files for indexing does not merge venv ignore exceptions."""
     root = tmp_path / "proj"
     (root / "src").mkdir(parents=True)
     (root / "src" / "app.py").write_text("a = 1\n")
@@ -110,6 +116,7 @@ def test_collect_python_files_for_indexing_does_not_merge_venv_ignore_exceptions
 
 
 def test_load_ignore_exceptions_from_explicit_config_path(tmp_path: Path) -> None:
+    """Verify test load ignore exceptions from explicit config path."""
     cfg = tmp_path / "config.json"
     cfg.write_text(
         (
@@ -125,6 +132,7 @@ def test_load_ignore_exceptions_from_explicit_config_path(tmp_path: Path) -> Non
 
 
 def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> None:
+    """Verify test should ignore path respects allowlisted venv file."""
     root = tmp_path / "p"
     root.mkdir()
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "a.py"
@@ -157,10 +165,12 @@ def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> No
 
 
 def test_format_message_non_empty() -> None:
+    """Verify test format message non empty."""
     assert "read-only" in format_project_venv_write_forbidden_message().lower()
 
 
 def test_iter_project_files_excluding_venv_skips_pyc(tmp_path: Path) -> None:
+    """Verify test iter project files excluding venv skips pyc."""
     root = tmp_path / "proj"
     (root / "src").mkdir(parents=True)
     (root / "src" / "app.py").write_text("a = 1\n")
@@ -174,6 +184,7 @@ def test_iter_project_files_excluding_venv_skips_pyc(tmp_path: Path) -> None:
 def test_iter_project_files_excluding_venv_show_hidden_descends_mypy_and_dot_dir(
     tmp_path: Path,
 ) -> None:
+    """Verify test iter project files excluding venv show hidden descends mypy and dot dir."""
     root = tmp_path / "proj"
     root.mkdir()
     cache_dir = root / ".mypy_cache" / "3.12"
@@ -193,6 +204,7 @@ def test_iter_project_files_excluding_venv_show_hidden_descends_mypy_and_dot_dir
 
 
 def test_expand_ignore_exception_all_files_includes_non_py(tmp_path: Path) -> None:
+    """Verify test expand ignore exception all files includes non py."""
     root = tmp_path / "proj"
     root.mkdir()
     vdir = root / ".venv"

@@ -230,7 +230,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     try:
 
                         class _QChunk:
+                            """Represent QChunk."""
+
                             def __init__(self, text: str) -> None:
+                                """Initialize the instance."""
                                 self.body = text
                                 self.text = text
 
@@ -443,7 +446,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
                     # Create dummy chunk object for embedding
                     class QueryChunk:
+                        """Represent QueryChunk."""
+
                         def __init__(self, text: str):
+                            """Initialize the instance."""
                             self.body = text
                             self.text = text
 

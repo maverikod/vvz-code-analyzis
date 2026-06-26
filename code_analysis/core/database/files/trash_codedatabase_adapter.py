@@ -30,13 +30,17 @@ class TrashSqlDriver(Protocol):
         sql: str,
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
-    ) -> Any: ...
+    ) -> Any:
+        """Execute SQL and return an RPC-shaped payload."""
+        ...
 
     def execute_batch(
         self,
         operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]: ...
+    ) -> List[Dict[str, Any]]:
+        """Execute a batch of SQL operations."""
+        ...
 
 
 class TrashCodeDatabaseDriverFacade:
@@ -45,6 +49,7 @@ class TrashCodeDatabaseDriverFacade:
     __slots__ = ("_db", "_trash_facade_underlying_driver")
 
     def __init__(self, db: CodeDatabase) -> None:
+        """Initialize the instance."""
         self._db = db
         self._trash_facade_underlying_driver = db.driver
 
@@ -54,6 +59,7 @@ class TrashCodeDatabaseDriverFacade:
         params: Optional[Tuple[Any, ...]] = None,
         transaction_id: Optional[str] = None,
     ) -> Any:
+        """Execute the command."""
         del transaction_id  # active tx via :meth:`CodeDatabase._driver_transaction_id`
         if sql.strip().upper().startswith("SELECT"):
             rows = self._db._fetchall(sql, params)
@@ -69,6 +75,7 @@ class TrashCodeDatabaseDriverFacade:
         operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Return execute batch."""
         return cast(
             List[Dict[str, Any]],
             self._db.execute_batch(operations, transaction_id),
@@ -76,4 +83,5 @@ class TrashCodeDatabaseDriverFacade:
 
 
 def trash_driver_for_codedatabase(db: CodeDatabase) -> TrashCodeDatabaseDriverFacade:
+    """Return trash driver for codedatabase."""
     return TrashCodeDatabaseDriverFacade(db)

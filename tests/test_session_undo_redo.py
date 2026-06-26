@@ -48,12 +48,14 @@ _PROJECT_UUID = "00000000-0000-4000-8000-000000000099"
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text('{"id": "00000000-0000-0000-0000-000000000001"}\n')
 
 
 def _db(tmp: Path) -> MagicMock:
+    """Return db."""
     bundle = MagicMock()
     proj = MagicMock()
     proj.root_path = str(tmp.resolve())
@@ -73,6 +75,7 @@ def _db(tmp: Path) -> MagicMock:
 
 @contextmanager
 def _mcp_project(tmp: Path) -> Iterator[MagicMock]:
+    """Return mcp project."""
     db = _db(tmp)
     with patch.object(BaseMCPCommand, "_open_database_from_config", return_value=db):
         with patch.object(
@@ -98,6 +101,7 @@ def _mcp_project(tmp: Path) -> Iterator[MagicMock]:
 
 
 def _build_tree(tmp: Path, rel: str, content: str) -> None:
+    """Return build tree."""
     source = tmp / rel
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text(content, encoding="utf-8")
@@ -110,6 +114,7 @@ def _build_tree(tmp: Path, rel: str, content: str) -> None:
 
 
 def _json_scalar_short_id(source: Path, rel: str, field: str) -> int:
+    """Return json scalar short id."""
     handler = HandlerRegistry.default_registry().resolve(source)
     nodes = handler.parse_content(Path(rel), source.read_text(encoding="utf-8"))
     ptr = f"/{field}"
@@ -120,6 +125,7 @@ def _json_scalar_short_id(source: Path, rel: str, field: str) -> int:
 
 
 def _python_function_stable_id(session_id: str, *, name: str = "value") -> str:
+    """Return python function stable id."""
     from code_analysis.core.cst_tree.tree_builder import get_tree
 
     session = get_session(session_id)
@@ -135,6 +141,7 @@ def _python_function_stable_id(session_id: str, *, name: str = "value") -> str:
 
 
 def _python_stable_uuid(source: Path, rel: str) -> str:
+    """Return python stable uuid."""
     from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
     from code_analysis.tree.sibling_convention import sibling_tree_path
 
@@ -148,6 +155,7 @@ def _python_stable_uuid(source: Path, rel: str) -> str:
 
 
 def test_session_history_truncates_redo_branch() -> None:
+    """Verify test session history truncates redo branch."""
     history = SessionHistory()
     history.reset("a" * 40)
     history.record("b" * 40)
@@ -160,6 +168,7 @@ def test_session_history_truncates_redo_branch() -> None:
 
 
 def test_core_undo_redo_and_edit_truncates_redo(tmp_path: Path) -> None:
+    """Verify test core undo redo and edit truncates redo."""
     rel = "state/counter.json"
     _build_tree(tmp_path, rel, '{"counter": 1}\n')
     session = EditSession.open(
@@ -171,6 +180,7 @@ def test_core_undo_redo_and_edit_truncates_redo(tmp_path: Path) -> None:
         sid = NodeId(_json_scalar_short_id(tmp_path / rel, rel, "counter"))
 
         def replace_with(value: str) -> None:
+            """Return replace with."""
             session.apply_tree_operation(
                 EditOperation(
                     kind=EditOperationKind.REPLACE,
@@ -197,6 +207,7 @@ def test_core_undo_redo_and_edit_truncates_redo(tmp_path: Path) -> None:
 
 
 async def _open(tmp: Path, rel: str) -> str:
+    """Return open."""
     _ensure_project_root(tmp)
     cmd = UniversalFileOpenCommand()
     with _mcp_project(tmp):
@@ -208,6 +219,7 @@ async def _open(tmp: Path, rel: str) -> str:
 
 
 async def _edit(tmp: Path, session_id: str, operations: list[dict[str, Any]]) -> None:
+    """Return edit."""
     cmd = UniversalFileEditCommand()
     with _mcp_project(tmp):
         res = await cmd.execute(
@@ -223,6 +235,7 @@ async def _edit(tmp: Path, session_id: str, operations: list[dict[str, Any]]) ->
 
 
 async def _undo(tmp: Path, session_id: str) -> dict[str, Any]:
+    """Return undo."""
     with _mcp_project(tmp):
         res = await SessionUndoCommand().execute(
             project_id=_PROJECT_UUID, session_id=session_id
@@ -232,6 +245,7 @@ async def _undo(tmp: Path, session_id: str) -> dict[str, Any]:
 
 
 async def _redo(tmp: Path, session_id: str) -> dict[str, Any]:
+    """Return redo."""
     with _mcp_project(tmp):
         res = await SessionRedoCommand().execute(
             project_id=_PROJECT_UUID, session_id=session_id
@@ -241,6 +255,7 @@ async def _redo(tmp: Path, session_id: str) -> dict[str, Any]:
 
 
 def _draft_text(tmp: Path, rel: str, session_id: str) -> str:
+    """Return draft text."""
     session = get_session(session_id)
     assert session.file_path.replace("\\", "/") == rel.replace("\\", "/")
     return session.core.session_source_path.read_text(encoding="utf-8")
@@ -264,6 +279,7 @@ async def _assert_undo_redo_flow(
         | None
     ) = None,
 ) -> None:
+    """Return assert undo redo flow."""
     setup(tmp_path)
     session_id = await _open(tmp_path, rel)
     if resolve_edits is not None:
@@ -304,6 +320,7 @@ async def _assert_undo_redo_flow(
 
 @pytest.mark.asyncio
 async def test_session_undo_redo_json(tmp_path: Path) -> None:
+    """Verify test session undo redo json."""
     rel = "formats/data.json"
     await _assert_undo_redo_flow(
         tmp_path,
@@ -322,6 +339,7 @@ async def test_session_undo_redo_json(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_undo_redo_yaml(tmp_path: Path) -> None:
+    """Verify test session undo redo yaml."""
     rel = "formats/config.yml"
     await _assert_undo_redo_flow(
         tmp_path,
@@ -340,9 +358,11 @@ async def test_session_undo_redo_yaml(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_undo_redo_text(tmp_path: Path) -> None:
+    """Verify test session undo redo text."""
     rel = "formats/notes.txt"
 
     def setup(tmp: Path) -> None:
+        """Return setup."""
         path = tmp / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("alpha\nbeta\n", encoding="utf-8")
@@ -385,9 +405,11 @@ async def test_session_undo_redo_text(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_undo_redo_markdown(tmp_path: Path) -> None:
+    """Verify test session undo redo markdown."""
     rel = "formats/readme.md"
 
     def setup(tmp: Path) -> None:
+        """Return setup."""
         path = tmp / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# Title\n\nBody one.\n", encoding="utf-8")
@@ -430,10 +452,12 @@ async def test_session_undo_redo_markdown(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_undo_redo_python(tmp_path: Path) -> None:
+    """Verify test session undo redo python."""
     rel = "formats/module.py"
     _build_tree(tmp_path, rel, "def value():\n    return 1\n")
 
     def read_return(text: str) -> int:
+        """Return read return."""
         match = re.search(r"return\s+(\d+)", text)
         assert match is not None
         return int(match.group(1))
@@ -441,9 +465,11 @@ async def test_session_undo_redo_python(tmp_path: Path) -> None:
     def resolve_edits(
         session_id: str,
     ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]:
+        """Return resolve edits."""
         fn_stable = _python_function_stable_id(session_id)
 
         def replace(n: int) -> dict[str, Any]:
+            """Return replace."""
             return {
                 "type": "replace",
                 "node_id": fn_stable,

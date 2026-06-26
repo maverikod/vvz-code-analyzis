@@ -28,6 +28,7 @@ class SessionServiceMetadata:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
+    """Return atomic write json."""
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(tmp_path, "w", encoding="utf-8") as handle:

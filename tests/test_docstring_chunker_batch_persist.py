@@ -28,10 +28,12 @@ def mock_db_with_execute_batch():
     mock.upsert_code_chunks_batch_calls: list = []
 
     def execute_batch(operations):
+        """Return execute batch."""
         mock.execute_batch_calls.append(operations)
         return [{"affected_rows": 1, "lastrowid": i} for i in range(len(operations))]
 
     def upsert_code_chunks_batch(param_rows):
+        """Return upsert code chunks batch."""
         mock.upsert_code_chunks_batch_calls.append(list(param_rows))
         return execute_batch(build_code_chunk_upsert_batch(param_rows))
 

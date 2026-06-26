@@ -9,7 +9,10 @@ from code_analysis.core.integrity_analysis.entity_index_check import check_entit
 
 
 class FakeDB:
+    """Represent FakeDB."""
+
     def __init__(self, files, functions, classes, methods):
+        """Initialize the instance."""
         self._counts = {
             "functions": functions,
             "classes": classes,
@@ -18,6 +21,7 @@ class FakeDB:
         }
 
     def execute(self, sql, params=None):
+        """Execute the command."""
         if "FROM functions" in sql:
             key = "functions"
         elif "FROM methods" in sql:
@@ -30,6 +34,7 @@ class FakeDB:
 
 
 def test_ok_when_entities_present():
+    """Verify test ok when entities present."""
     r = check_entity_index(FakeDB(600, 2837, 372, 1053), "p")
     assert r["ok"] is True
     assert r["entities"] == 2837 + 372 + 1053
@@ -37,6 +42,7 @@ def test_ok_when_entities_present():
 
 def test_not_ok_when_files_present_but_entities_empty():
     # the desync signature: files indexed, all entity tables empty
+    """Verify test not ok when files present but entities empty."""
     r = check_entity_index(FakeDB(600, 0, 0, 0), "p")
     assert r["ok"] is False
     assert r["files"] == 600 and r["entities"] == 0
@@ -44,5 +50,6 @@ def test_not_ok_when_files_present_but_entities_empty():
 
 def test_ok_when_project_truly_empty():
     # no files at all -> not the desync condition (nothing to index)
+    """Verify test ok when project truly empty."""
     r = check_entity_index(FakeDB(0, 0, 0, 0), "p")
     assert r["ok"] is True

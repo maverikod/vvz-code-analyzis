@@ -26,6 +26,7 @@ from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 def _row_count(client, sql: str, params: tuple = ()) -> int:
+    """Return row count."""
     rows = client.execute(sql, params)
     data = rows.get("data", []) if isinstance(rows, dict) else []
     if not data:
@@ -37,6 +38,7 @@ def _row_count(client, sql: str, params: tuple = ()) -> int:
 
 
 def _insert_watch_dir(client, wid: str, path: str, *, deleted: int = 0) -> None:
+    """Return insert watch dir."""
     from code_analysis.core.server_instance import get_server_instance_id
 
     sid = get_server_instance_id()
@@ -63,6 +65,7 @@ def _insert_project(
     watch_dir_id: str,
     deleted: int = 0,
 ) -> None:
+    """Return insert project."""
     from code_analysis.core.server_instance import get_server_instance_id
 
     sid = get_server_instance_id()
@@ -86,12 +89,14 @@ def _insert_project(
 
 @pytest.fixture
 def db_client(tmp_path: Path):
+    """Return db client."""
     client = sqlite_inprocess_database_client(tmp_path / "test.db")
     yield client
     client.disconnect()
 
 
 def test_discover_uuid_dirs_ignores_non_uuid(tmp_path: Path) -> None:
+    """Verify test discover uuid dirs ignores non uuid."""
     mount = tmp_path / "watched"
     mount.mkdir()
     wid = str(uuid.uuid4())
@@ -108,6 +113,7 @@ def test_discover_uuid_dirs_ignores_non_uuid(tmp_path: Path) -> None:
 def test_resolve_effective_watch_mount_root_native_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test resolve effective watch mount root native fallback."""
     from code_analysis.core.file_watcher_pkg.watch_dirs_mount_sync import (
         resolve_effective_watch_mount_root,
     )
@@ -121,6 +127,7 @@ def test_resolve_effective_watch_mount_root_native_fallback(
 
 
 def test_new_dir_inserts_db_and_creates_settings(db_client, tmp_path: Path) -> None:
+    """Verify test new dir inserts db and creates settings."""
     mount = tmp_path / "watched"
     mount.mkdir()
     wid = str(uuid.uuid4())
@@ -148,6 +155,7 @@ def test_new_dir_inserts_db_and_creates_settings(db_client, tmp_path: Path) -> N
 def test_absent_dir_soft_deletes_watch_dir_and_projects(
     db_client, tmp_path: Path
 ) -> None:
+    """Verify test absent dir soft deletes watch dir and projects."""
     from code_analysis.core.server_instance import get_server_instance_id
     from code_analysis.core.file_watcher_pkg.watch_dirs_mount_sync import (
         _fetch_db_watch_dirs,
@@ -188,6 +196,7 @@ def test_absent_dir_soft_deletes_watch_dir_and_projects(
 
 
 def test_mark_absent_program_includes_files_update() -> None:
+    """Verify test mark absent program includes files update."""
     wid = str(uuid.uuid4())
     sid = TEST_SERVER_INSTANCE_ID
     program = build_mark_watch_dir_absent_program(wid, server_instance_id=sid)
@@ -200,6 +209,7 @@ def test_mark_absent_program_includes_files_update() -> None:
 def test_reappear_clears_watch_dir_deleted_projects_stay_deleted(
     db_client, tmp_path: Path
 ) -> None:
+    """Verify test reappear clears watch dir deleted projects stay deleted."""
     mount = tmp_path / "watched"
     mount.mkdir()
     wid = str(uuid.uuid4())
@@ -241,6 +251,7 @@ def test_reappear_clears_watch_dir_deleted_projects_stay_deleted(
 
 
 def test_settings_round_trip_ignore_patterns(tmp_path: Path) -> None:
+    """Verify test settings round trip ignore patterns."""
     watch_dir = tmp_path / "wd"
     watch_dir.mkdir()
     custom = ("**/only-this/**", "**/other/**")

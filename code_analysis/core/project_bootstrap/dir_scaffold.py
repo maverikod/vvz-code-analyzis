@@ -1,3 +1,5 @@
+"""Create the standard directory scaffold for new projects."""
+
 from __future__ import annotations
 
 import logging
@@ -25,6 +27,8 @@ class ScaffoldResult:
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     message: str = ""
+
+
 # @node-id: b9852a52-77aa-414f-bbed-2e655057d90c
 
 
@@ -34,6 +38,7 @@ class DirScaffold:
     Directories are created with parents; existing dirs are silently skipped.
     Each dir gets a `.gitkeep` so it is tracked by git.
     """
+
     # @node-id: 30d5fa47-bcbd-4402-aab2-3e0469b49ace
 
     def __init__(self, project_root: Path, extra_dirs: list[str] | None = None) -> None:
@@ -45,6 +50,7 @@ class DirScaffold:
         """
         self.project_root = Path(project_root)
         self.dirs = list(STANDARD_DIRS) + (extra_dirs or [])
+
     # @node-id: bec07744-40e3-4802-9366-59237ae5b0ea
 
     def scaffold(self) -> ScaffoldResult:

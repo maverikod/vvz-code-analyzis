@@ -115,6 +115,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -179,6 +180,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
         target_class: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         try:
             self._resolve_project_root(project_id)
             db = self._open_database()
@@ -230,6 +232,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -294,6 +297,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
         target_class: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         try:
             self._resolve_project_root(project_id)
             db = self._open_database()

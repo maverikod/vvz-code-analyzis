@@ -44,6 +44,7 @@ def discover_config_path_from_env() -> Optional[Path]:
 
 
 def _normalize_config_path(raw: str) -> Path:
+    """Return normalize config path."""
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = (Path.cwd() / path).resolve()

@@ -21,6 +21,7 @@ KeyPathInput = Union[str, List[Any]]
 
 
 def pointer_exists(tree: JSONTree, pointer: str) -> bool:
+    """Return pointer exists."""
     try:
         get_value_at(tree.root_data, pointer)
         return True
@@ -29,6 +30,7 @@ def pointer_exists(tree: JSONTree, pointer: str) -> bool:
 
 
 def normalize_key_path(key_path: KeyPathInput) -> str:
+    """Return normalize key path."""
     if isinstance(key_path, str):
         raw = parse_simple_key_path(key_path)
     else:
@@ -38,6 +40,7 @@ def normalize_key_path(key_path: KeyPathInput) -> str:
 
 
 def resolve_node_id_from_pointer(tree: JSONTree, pointer: str) -> Optional[str]:
+    """Return resolve node id from pointer."""
     if not pointer_exists(tree, pointer):
         return None
     nid = stable_node_id_for_pointer(pointer)

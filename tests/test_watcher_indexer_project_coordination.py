@@ -49,6 +49,7 @@ _PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
 
 
 def _row_count(db: DatabaseClient, sql: str, params: Tuple[Any, ...] = ()) -> int:
+    """Return row count."""
     r = db.execute(sql, params)
     data = r.get("data", []) if isinstance(r, dict) else []
     if not data:
@@ -60,6 +61,7 @@ def _row_count(db: DatabaseClient, sql: str, params: Tuple[Any, ...] = ()) -> in
 def _file_cols_snapshot(
     db: DatabaseClient, project_id: str
 ) -> Tuple[int, int, int, int]:
+    """Return file cols snapshot."""
     n_files = _row_count(
         db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (project_id,)
     )
@@ -87,6 +89,7 @@ def _file_cols_snapshot(
 
 @pytest.fixture
 def coord_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return coord client."""
     db_path = tmp_path / "wic.db"
     backup_dir = tmp_path / "backups"
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
@@ -105,6 +108,7 @@ def coord_client(tmp_path: Path) -> Iterator[DatabaseClient]:
 
 
 def _insert_project(client: DatabaseClient, root: Path, pid: str) -> None:
+    """Return insert project."""
     client.execute(
         "INSERT OR REPLACE INTO projects (id, root_path, name, updated_at) "
         "VALUES (?, ?, ?, julianday('now'))",
@@ -113,6 +117,7 @@ def _insert_project(client: DatabaseClient, root: Path, pid: str) -> None:
 
 
 def _create_projectid(root: Path, pid: str) -> None:
+    """Return create projectid."""
     (root / "projectid").write_text(
         json.dumps({"id": pid, "description": "wic test"}), encoding="utf-8"
     )
@@ -208,6 +213,7 @@ def test_watcher_skips_project_owned_by_indexer(
 def test_mutating_command_owner_blocks_watcher_and_indexer(
     coord_client: DatabaseClient,
 ) -> None:
+    """Verify test mutating command owner blocks watcher and indexer."""
     assert try_acquire_project_activity(
         coord_client, PA, "command", "c1", "command_mutation", 200.0
     )
@@ -228,6 +234,7 @@ def test_mutating_command_owner_blocks_watcher_and_indexer(
 def test_watcher_owned_project_does_not_block_indexer_on_other_project(
     coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
+    """Verify test watcher owned project does not block indexer on other project."""
     a_root = tmp_path / "ar"
     b_root = tmp_path / "broot"
     a_root.mkdir(parents=True, exist_ok=True)
@@ -265,6 +272,7 @@ def test_watcher_owned_project_does_not_block_indexer_on_other_project(
 def test_indexer_owned_project_does_not_block_watcher_on_other_project(
     coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
+    """Verify test indexer owned project does not block watcher on other project."""
     a_root = tmp_path / "a2"
     b_root = tmp_path / "b2"
     a_root.mkdir(parents=True, exist_ok=True)
@@ -315,6 +323,7 @@ def test_indexer_owned_project_does_not_block_watcher_on_other_project(
 def test_busy_project_does_not_stop_whole_watch_dir_cycle(
     coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
+    """Verify test busy project does not stop whole watch dir cycle."""
     coord_client.execute("DELETE FROM files WHERE project_id IN (?, ?)", (PA, PB))
     watch = tmp_path / "wd"
     watch.mkdir(parents=True)
@@ -384,6 +393,7 @@ def test_filesystem_scan_groups_staged_delta_per_project(
 
 
 def test_project_relative_path_is_posix_style(tmp_path: Path) -> None:
+    """Verify test project relative path is posix style."""
     pr = tmp_path / "pr"
     pr.mkdir()
     _create_projectid(pr, PA)
@@ -401,6 +411,7 @@ def test_project_relative_path_is_posix_style(tmp_path: Path) -> None:
 def test_queue_batch_rejects_path_outside_project_root(
     coord_client: DatabaseClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test queue batch rejects path outside project root."""
     proot = tmp_path / "pout"
     proot.mkdir()
     _create_projectid(proot, PA)
@@ -486,6 +497,7 @@ def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
     coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
+    """Verify test watcher order inserts before updates and unmatched unchanged."""
     pr = tmp_path / "ord"
     pr.mkdir()
     _create_projectid(pr, PA)
@@ -535,6 +547,7 @@ def test_double_queue_same_new_file_does_not_duplicate_row(
     coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
+    """Verify test double queue same new file does not duplicate row."""
     pr = tmp_path / "idp"
     pr.mkdir()
     _create_projectid(pr, PA)
@@ -569,6 +582,7 @@ def test_rerun_watcher_does_not_delete_active_file(
     coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
+    """Verify test rerun watcher does not delete active file."""
     pr = tmp_path / "r1"
     pr.mkdir()
     _create_projectid(pr, PA)
@@ -599,6 +613,7 @@ def test_rerun_watcher_does_not_delete_active_file(
 
 
 def test_unknown_commit_outcome_is_not_treated_as_safe_logical_retry() -> None:
+    """Verify test unknown commit outcome is not treated as safe logical retry."""
     assert (
         is_structured_retryable_error(
             {"retryable": True, "commit_outcome_unknown": True}
@@ -613,6 +628,7 @@ def test_unknown_commit_outcome_is_not_treated_as_safe_logical_retry() -> None:
 def test_sqlite_code_database_lock_acquire_and_release_round_trip(
     coord_client: DatabaseClient,
 ) -> None:
+    """Verify test sqlite code database lock acquire and release round trip."""
     assert try_acquire_project_activity(
         coord_client, "w6-sql", "watcher", "w1", "watcher_staging", 30.0
     )
@@ -639,6 +655,7 @@ def test_postgres_try_acquire_lock_if_dsn_configured() -> None:
 
 
 def test_postgres_adapter_rewrites_julianday() -> None:
+    """Verify test postgres adapter rewrites julianday."""
     out = _adapt_sqlite_dml_for_postgres(
         "UPDATE t SET x = 1, updated_at = julianday('now') WHERE id = ?"
     )
@@ -650,6 +667,7 @@ def test_postgres_adapter_rewrites_julianday() -> None:
 
 
 def test_watcher_scan_source_has_no_update_indexes_thread() -> None:
+    """Verify test watcher scan source has no update indexes thread."""
     here = Path(__file__).resolve().parent.parent
     src = here / "code_analysis/core/file_watcher_pkg/multi_project_worker_scan.py"
     text = src.read_text(encoding="utf-8")
@@ -659,12 +677,14 @@ def test_watcher_scan_source_has_no_update_indexes_thread() -> None:
 
 
 def test_auto_indexing_not_allowed_owner() -> None:
+    """Verify test auto indexing not allowed owner."""
     from code_analysis.core import worker_project_activity as wpa
 
     assert "auto_indexing" not in wpa.ALLOWED_OWNER_TYPES
 
 
 def test_watcher_log_documents_normal_indexer_path_for_new_projects() -> None:
+    """Verify test watcher log documents normal indexer path for new projects."""
     here = Path(__file__).resolve().parent.parent
     p = here / "code_analysis/core/file_watcher_pkg/multi_project_worker_scan.py"
     t = p.read_text(encoding="utf-8")
@@ -676,6 +696,7 @@ def test_watcher_log_documents_normal_indexer_path_for_new_projects() -> None:
 
 
 def test_indexer_skip_message_in_indexing_worker_source() -> None:
+    """Verify test indexer skip message in indexing worker source."""
     here = Path(__file__).resolve().parent.parent
     p = here / "code_analysis/core/indexing_worker_pkg/processing.py"
     t = p.read_text(encoding="utf-8")
@@ -686,6 +707,7 @@ def test_indexer_skip_message_in_indexing_worker_source() -> None:
 def test_watcher_skip_log_uses_work_coord_prefix(
     coord_client: DatabaseClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test watcher skip log uses work coord prefix."""
     root = tmp_path / "wsk"
     root.mkdir()
     _create_projectid(root, PA)

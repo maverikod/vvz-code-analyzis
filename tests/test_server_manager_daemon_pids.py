@@ -41,6 +41,7 @@ def test_find_venv_keeps_symlink_path_not_system_target(
 def test_python_executable_for_daemon_prefers_dot_venv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test python executable for daemon prefers dot venv."""
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     venv_py = tmp_path / ".venv" / "bin" / "python"
@@ -56,15 +57,19 @@ def test_python_executable_for_daemon_prefers_dot_venv(
 def test_spawn_daemon_sets_cwd_to_config_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test spawn daemon sets cwd to config parent."""
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     pidfile = tmp_path / "x.pid"
     captured: dict[str, object] = {}
 
     class _Proc:
+        """Represent Proc."""
+
         pid = 99999
 
     def fake_popen(args: list[str], **kwargs: object) -> _Proc:
+        """Return fake popen."""
         captured["cwd"] = str(kwargs.get("cwd", ""))
         captured["args"] = args
         assert kwargs.get("env") is not None
@@ -90,6 +95,7 @@ def test_activate_project_root_uses_relative_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test activate project root uses relative config."""
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     other = tmp_path / "other"
@@ -107,6 +113,7 @@ def test_activate_project_root_uses_relative_config(
 def test_wait_until_daemon_stable_or_dead_false_when_exits_immediately(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test wait until daemon stable or dead false when exits immediately."""
     monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: False)
     assert not server_manager_cli._wait_until_daemon_stable_or_dead(
         1, stable_seconds=0.2, max_wait_seconds=1.0
@@ -116,6 +123,7 @@ def test_wait_until_daemon_stable_or_dead_false_when_exits_immediately(
 def test_wait_until_daemon_stable_or_dead_true_when_stays_alive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test wait until daemon stable or dead true when stays alive."""
     monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
     assert server_manager_cli._wait_until_daemon_stable_or_dead(
         1, stable_seconds=0.15, max_wait_seconds=1.0
@@ -124,6 +132,7 @@ def test_wait_until_daemon_stable_or_dead_true_when_stays_alive(
 
 @pytest.mark.skipif(sys.platform != "linux", reason="/proc/<pid>/cwd is Linux-specific")
 def test_resolved_config_path_relative_uses_proc_cwd(tmp_path: Path) -> None:
+    """Verify test resolved config path relative uses proc cwd."""
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     old = os.getcwd()
@@ -138,6 +147,7 @@ def test_resolved_config_path_relative_uses_proc_cwd(tmp_path: Path) -> None:
 
 
 def test_resolved_config_path_absolute(tmp_path: Path) -> None:
+    """Verify test resolved config path absolute."""
     cfg = tmp_path / "x.json"
     cfg.write_text("{}", encoding="utf-8")
     got = server_manager_cli._resolved_config_path_for_daemon_pid(os.getpid(), str(cfg))
@@ -147,6 +157,7 @@ def test_resolved_config_path_absolute(tmp_path: Path) -> None:
 def test_find_daemon_pids_matches_via_resolved_relative(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test find daemon pids matches via resolved relative."""
     cfg = tmp_path / "config.json"
     cfg.write_text("{}", encoding="utf-8")
     cfg_res = str(cfg.resolve())
@@ -162,6 +173,7 @@ def test_find_daemon_pids_matches_via_resolved_relative(
     )
 
     def fake_resolve(pid: int, cfg_argv: str) -> str | None:
+        """Return fake resolve."""
         if pid == 5000 and cfg_argv == "config.json":
             return cfg_res
         return None
@@ -201,6 +213,7 @@ def test_find_daemon_pids_matches_same_inode_different_path_strings(
     )
 
     def fake_resolve(pid: int, cfg_argv: str) -> str | None:
+        """Return fake resolve."""
         if pid == 5000 and cfg_argv == "config.json":
             return host_resolved
         return None
@@ -220,6 +233,7 @@ def test_root_daemon_pids_only_drops_fork_children_with_same_cmdline(
     """Children keep parent's argv until exec; only session roots must count."""
 
     def ppid_of(pid: int) -> int | None:
+        """Return ppid of."""
         return {100: 1, 101: 100, 102: 100}.get(pid)
 
     monkeypatch.setattr(server_manager_cli, "_read_ppid", ppid_of)
@@ -262,6 +276,7 @@ def test_find_daemon_pids_excludes_orphaned_daemon_group_children(
 def test_find_daemon_pids_excludes_known_worker_pid_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test find daemon pids excludes known worker pid files."""
     cfg = tmp_path / "config.json"
     cfg.write_text('{"server": {"log_dir": "logs"}}', encoding="utf-8")
     cfg_res = str(cfg.resolve())

@@ -17,6 +17,7 @@ from code_analysis_client import (
 
 @pytest.mark.asyncio
 async def test_create_session_returns_session_id() -> None:
+    """Verify test create session returns session id."""
     mock_rpc = MagicMock()
     mock_rpc.execute_command = AsyncMock(
         return_value={
@@ -52,6 +53,7 @@ async def test_create_session_returns_session_id() -> None:
 
 @pytest.mark.asyncio
 async def test_assert_session_exists_raises_on_missing() -> None:
+    """Verify test assert session exists raises on missing."""
     mock_rpc = MagicMock()
     mock_rpc.execute_command = AsyncMock(
         return_value={
@@ -85,9 +87,11 @@ async def test_assert_session_exists_raises_on_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_lock_file_without_transfer() -> None:
+    """Verify test lock file without transfer."""
     calls: list[tuple[str, dict]] = []
 
     async def _exec(command: str, params: dict, **_: object) -> dict:
+        """Return exec."""
         calls.append((command, params))
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
@@ -130,9 +134,11 @@ async def test_lock_file_without_transfer() -> None:
 
 @pytest.mark.asyncio
 async def test_download_by_file_id_without_project_id() -> None:
+    """Verify test download by file id without project id."""
     calls: list[tuple[str, dict]] = []
 
     async def _exec(command: str, params: dict, **_: object) -> dict:
+        """Return exec."""
         calls.append((command, params))
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
@@ -185,9 +191,11 @@ async def test_download_by_file_id_without_project_id() -> None:
 
 @pytest.mark.asyncio
 async def test_download_lock_false_uses_none_mode() -> None:
+    """Verify test download lock false uses none mode."""
     calls: list[tuple[str, dict]] = []
 
     async def _exec(command: str, params: dict, **_: object) -> dict:
+        """Return exec."""
         calls.append((command, params))
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
@@ -236,6 +244,7 @@ async def test_download_lock_false_uses_none_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_download_requires_file_id() -> None:
+    """Verify test download requires file id."""
     mock_rpc = MagicMock()
     mock_rpc.execute_command = AsyncMock()
     mock_rpc.help = AsyncMock()
@@ -252,9 +261,11 @@ async def test_download_requires_file_id() -> None:
 
 @pytest.mark.asyncio
 async def test_upload_existing_file_by_file_id() -> None:
+    """Verify test upload existing file by file id."""
     calls: list[tuple[str, dict]] = []
 
     async def _exec(command: str, params: dict, **_: object) -> dict:
+        """Return exec."""
         calls.append((command, params))
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
@@ -307,9 +318,11 @@ async def test_upload_existing_file_by_file_id() -> None:
 
 @pytest.mark.asyncio
 async def test_upload_unlock_false() -> None:
+    """Verify test upload unlock false."""
     calls: list[tuple[str, dict]] = []
 
     async def _exec(command: str, params: dict, **_: object) -> dict:
+        """Return exec."""
         calls.append((command, params))
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
@@ -358,6 +371,7 @@ async def test_upload_unlock_false() -> None:
 
 @pytest.mark.asyncio
 async def test_upload_new_requires_project_and_path() -> None:
+    """Verify test upload new requires project and path."""
     mock_rpc = MagicMock()
     mock_rpc.execute_command = AsyncMock()
     mock_rpc.help = AsyncMock()
@@ -374,6 +388,7 @@ async def test_upload_new_requires_project_and_path() -> None:
 
 @pytest.mark.asyncio
 async def test_commit_upload_rejects_file_id_and_file_path() -> None:
+    """Verify test commit upload rejects file id and file path."""
     mock_rpc = MagicMock()
     mock_rpc.execute_command = AsyncMock()
     mock_rpc.help = AsyncMock()

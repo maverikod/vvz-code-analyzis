@@ -82,6 +82,7 @@ def install_transfer_lock_hooks() -> None:
     def read_download_chunk(
         self: Any, transfer_id: str, *args: Any, **kwargs: Any
     ) -> Any:
+        """Return read download chunk."""
         try:
             chunk_result = original_read_download_chunk(
                 self, transfer_id, *args, **kwargs
@@ -98,6 +99,7 @@ def install_transfer_lock_hooks() -> None:
     def acknowledge_download_transfer(
         self: Any, transfer_id: str, *args: Any, **kwargs: Any
     ) -> Any:
+        """Return acknowledge download transfer."""
         try:
             return original_ack(self, transfer_id, *args, **kwargs)
         finally:
@@ -106,6 +108,7 @@ def install_transfer_lock_hooks() -> None:
     def complete_upload_session(
         self: Any, transfer_id: str, *args: Any, **kwargs: Any
     ) -> Any:
+        """Return complete upload session."""
         try:
             return original_complete_upload(self, transfer_id, *args, **kwargs)
         except Exception:
@@ -113,6 +116,7 @@ def install_transfer_lock_hooks() -> None:
             raise
 
     def expire_stale_sessions(self: Any, *args: Any, **kwargs: Any) -> Any:
+        """Return expire stale sessions."""
         result = original_expire(self, *args, **kwargs)
         for expired in getattr(result, "expired", ()) or ():
             try:

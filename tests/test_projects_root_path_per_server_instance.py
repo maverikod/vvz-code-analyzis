@@ -14,18 +14,24 @@ from code_analysis.core.database.migrations.projects_root_path_per_server_instan
 
 
 class _SqliteMigrationDb:
+    """Represent SqliteMigrationDb."""
+
     _driver_type = "sqlite"
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._conn = conn
 
     def _execute(self, sql: str, params: tuple = ()) -> None:
+        """Return execute."""
         self._conn.execute(sql, params)
 
     def _commit(self) -> None:
+        """Return commit."""
         self._conn.commit()
 
     def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
+        """Return fetchone."""
         cur = self._conn.execute(sql, params)
         row = cur.fetchone()
         if row is None:
@@ -33,17 +39,20 @@ class _SqliteMigrationDb:
         return dict(zip([d[0] for d in cur.description], row, strict=False))
 
     def _fetchall(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Return fetchall."""
         cur = self._conn.execute(sql, params)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
 
     def _get_table_info(self, table: str) -> list[dict]:
+        """Return get table info."""
         cur = self._conn.execute(f"PRAGMA table_info({table})")
         return [{"name": row[1], "type": row[2]} for row in cur.fetchall()]
 
 
 @pytest.fixture
 def db() -> _SqliteMigrationDb:
+    """Return db."""
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE db_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     conn.execute("""
@@ -65,6 +74,7 @@ def db() -> _SqliteMigrationDb:
 
 
 def test_same_root_path_allowed_on_different_server_instances(db) -> None:
+    """Verify test same root path allowed on different server instances."""
     wid = str(uuid.uuid4())
     stored = "code_analysis"
     db._execute(
@@ -82,6 +92,7 @@ def test_same_root_path_allowed_on_different_server_instances(db) -> None:
 
 
 def test_same_root_path_rejected_on_same_server_instance(db) -> None:
+    """Verify test same root path rejected on same server instance."""
     wid = str(uuid.uuid4())
     stored = "code_analysis"
     db._execute(

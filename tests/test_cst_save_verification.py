@@ -61,6 +61,7 @@ def _make_db_mock() -> MagicMock:
     def _execute_side_effect(
         sql: str, params: tuple = (), *args: object, **kwargs: object
     ) -> dict:
+        """Return execute side effect."""
         s = str(sql)
         if "SELECT editing_pid" in s:
             return {"affected_rows": 0, "data": [{"editing_pid": None}]}
@@ -73,6 +74,7 @@ def _make_db_mock() -> MagicMock:
 
 
 def _simple_statement_line_at_line(tree_id: str, line: int) -> str:
+    """Return simple statement line at line."""
     tree = get_tree(tree_id)
     assert tree is not None
     for node_id, meta in tree.metadata_map.items():
@@ -84,6 +86,7 @@ def _simple_statement_line_at_line(tree_id: str, line: int) -> str:
 def test_disk_matches_tree_snapshot_true_when_file_matches_snapshot(
     tmp_path: Path,
 ) -> None:
+    """Verify test disk matches tree snapshot true when file matches snapshot."""
     path = tmp_path / "m.py"
     text = "x = 1\n"
     path.write_text(text, encoding="utf-8")
@@ -93,6 +96,7 @@ def test_disk_matches_tree_snapshot_true_when_file_matches_snapshot(
 
 
 def test_assert_disk_matches_raises_file_changed_since_load(tmp_path: Path) -> None:
+    """Verify test assert disk matches raises file changed since load."""
     path = tmp_path / "m.py"
     text = "x = 1\n"
     path.write_text(text, encoding="utf-8")

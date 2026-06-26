@@ -29,7 +29,10 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 class _FakeDatabase:
+    """Represent FakeDatabase."""
+
     def __init__(self, root: Path, indexed: Optional[set[str]] = None) -> None:
+        """Initialize the instance."""
         self.root = root
         self.indexed = indexed or set()
         self._rows: Dict[str, Dict[str, Any]] = {}
@@ -38,6 +41,7 @@ class _FakeDatabase:
         self.leases: List[Dict[str, Any]] = []
 
     def execute(self, sql: str, params: Any = None, **kwargs: Any) -> Dict[str, Any]:
+        """Execute the command."""
         text = " ".join(sql.split()).lower()
         params = tuple(params or ())
         if "select session_id from runtime_lock_sessions where pid" in text:
@@ -117,6 +121,7 @@ class _FakeDatabase:
         where: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
+        """Return select."""
         if table_name == "runtime_lock_sessions":
             sid = str((where or {}).get("session_id") or "")
             return [{"session_id": sid}] if sid in self.sessions else []
@@ -134,6 +139,7 @@ class _FakeDatabase:
         return []
 
     def get_project(self, project_id: str) -> Any:
+        """Return get project."""
         if project_id == "project-1":
             return SimpleNamespace(root_path=str(self.root))
         return None
@@ -141,6 +147,7 @@ class _FakeDatabase:
     def get_file_by_path(
         self, abs_path: str, project_id: str, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
+        """Return get file by path."""
         rel = str(Path(abs_path).resolve().relative_to(self.root))
         if project_id == "project-1" and rel in self.indexed:
             return {"id": f"id:{rel}", "project_id": project_id, "relative_path": rel}
@@ -157,6 +164,7 @@ class _FakeDatabase:
         has_docstring: bool,
         project_id: str,
     ) -> str:
+        """Return add file."""
         rel = str(Path(path).resolve().relative_to(self.root))
         file_id = f"id:{rel}"
         self._rows[rel] = {
@@ -172,9 +180,11 @@ class _FakeDatabase:
 def test_validate_upload_selector_allows_file_id_without_project_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test validate upload selector allows file id without project id."""
     called: list[str] = []
 
     def _validate(pid: str) -> None:
+        """Return validate."""
         called.append(pid)
 
     monkeypatch.setattr(
@@ -188,22 +198,27 @@ def test_validate_upload_selector_allows_file_id_without_project_id(
 def test_validate_upload_selector_requires_project_id_for_file_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test validate upload selector requires project id for file path."""
     monkeypatch.setattr(
         "code_analysis.commands.project_file_transfer_by_id_commands.BaseMCPCommand._validate_project_id_exists",
         lambda pid: None,
     )
-    with pytest.raises(ValidationError, match="project_id is required when file_id is omitted"):
+    with pytest.raises(
+        ValidationError, match="project_id is required when file_id is omitted"
+    ):
         _validate_upload_selector_params(
             {"file_path": "src/app.py", "compression": "identity"}
         )
 
 
 def test_validate_download_params_requires_file_id() -> None:
+    """Verify test validate download params requires file id."""
     with pytest.raises(ValidationError, match="file_id is required"):
         _validate_download_params({"compression": "identity"})
 
 
 def test_validate_download_params_rejects_file_path() -> None:
+    """Verify test validate download params rejects file path."""
     with pytest.raises(ValidationError, match="file_path is not supported"):
         _validate_download_params(
             {
@@ -219,6 +234,7 @@ async def test_project_file_advisory_lock_batch_partial_failures(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Verify test project file advisory lock batch partial failures."""
     target = tmp_path / "src" / "app.py"
     target.parent.mkdir()
     target.write_text("print('ok')\n", encoding="utf-8")
@@ -273,6 +289,7 @@ async def test_project_file_advisory_lock_batch_partial_failures(
 async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Verify test transfer download begin accepts and binds lock mode."""
     target = tmp_path / "src" / "app.py"
     target.parent.mkdir()
     target.write_text("print('ok')\n", encoding="utf-8")
@@ -281,6 +298,7 @@ async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     database.client_sessions.add(client_session)
 
     async def _fake_create_download_session(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return fake create download session."""
         assert payload["source_path"] == str(target)
         return {
             "transfer_id": "transfer-1",
@@ -324,6 +342,7 @@ async def test_transfer_download_begin_fails_when_db_row_but_missing_on_disk(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Verify test transfer download begin fails when db row but missing on disk."""
     database = _FakeDatabase(tmp_path)
 
     def _select(
@@ -331,6 +350,7 @@ async def test_transfer_download_begin_fails_when_db_row_but_missing_on_disk(
         where: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
+        """Return select."""
         if table_name == "files" and str((where or {}).get("id") or "") == "file-1":
             return [
                 {
@@ -368,10 +388,12 @@ async def test_transfer_upload_save_registers_and_returns_file_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Verify test transfer upload save registers and returns file id."""
     database = _FakeDatabase(tmp_path)
     target = tmp_path / "incoming.py"
 
     async def _fake_save(_self: Any, **kwargs: Any) -> SuccessResult:
+        """Return fake save."""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(str(kwargs.get("content") or ""), encoding="utf-8")
         return SuccessResult(

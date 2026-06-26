@@ -78,6 +78,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "title": "universal_file_save",
@@ -160,12 +161,14 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         from .universal_file_save_metadata import get_universal_file_save_metadata
 
         return get_universal_file_save_metadata(cls)
 
     @staticmethod
     def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
+        """Return validate save payload."""
         if content is None:
             return ErrorResult(
                 message="content is required",
@@ -195,6 +198,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         create_parent_dirs: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         try:
             try:
                 handler_id = resolve_handler(file_path, "save")
@@ -376,6 +380,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
         """Text save with BackupManager (handler does not) and files-table metadata."""
 
         def _restore(rel: str, uuid_: str) -> None:
+            """Return restore."""
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
 

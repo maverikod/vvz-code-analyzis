@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_document(root_data: Any) -> str:
+    """Return serialize document."""
     return json.dumps(root_data, indent=2, ensure_ascii=False) + "\n"
 
 
 def _format_error(exc: BaseException) -> str:
+    """Return format error."""
     msg = str(exc).strip()
     if msg:
         return msg

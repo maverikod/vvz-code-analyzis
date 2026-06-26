@@ -14,6 +14,7 @@ from code_analysis.core.structure_extraction.format_registry import should_scan_
 
 
 def test_extractor_python_function_block_without_db(tmp_path: Path) -> None:
+    """Verify test extractor python function block without db."""
     py_path = tmp_path / "sample.py"
     content = "def hello():\n    return 1\n\nclass C:\n    pass\n"
     py_path.write_text(content, encoding="utf-8")
@@ -32,17 +33,20 @@ def test_extractor_python_function_block_without_db(tmp_path: Path) -> None:
 
 
 def test_scan_all_false_excludes_log() -> None:
+    """Verify test scan all false excludes log."""
     assert should_scan_path("logs/app.log", scan_all=False) is False
     assert should_scan_path("src/foo.py", scan_all=False) is True
 
 
 def test_scan_all_true_allows_txt_not_log_by_default() -> None:
+    """Verify test scan all true allows txt not log by default."""
     assert should_scan_path("notes.txt", scan_all=True) is True
     assert should_scan_path("debug.log", scan_all=True, include_logs=False) is False
     assert should_scan_path("debug.log", scan_all=True, include_logs=True) is True
 
 
 def test_extractor_matches_sidecar_when_present(tmp_path: Path) -> None:
+    """Verify test extractor matches sidecar when present."""
     py_path = tmp_path / "mod.py"
     py_path.write_text("def f():\n    x = 1\n", encoding="utf-8")
     from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_tree

@@ -21,6 +21,7 @@ from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
 
 
 def _build_json_marked_tree(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Return build json marked tree."""
     name = "sample.json"
     source_abs = tmp_path / name
     content = '{"alpha": 1, "beta": 2}\n'
@@ -37,6 +38,7 @@ def _build_json_marked_tree(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def test_denude_restore_preserves_map_uuids(tmp_path: Path) -> None:
+    """Verify test denude restore preserves map uuids."""
     source_abs, _sidecar, marked = _build_json_marked_tree(tmp_path)
     before = parse_tree_file(marked)
     before_uuids = sorted(e.uuid for e in before.map.entries)
@@ -56,6 +58,7 @@ def test_denude_restore_preserves_map_uuids(tmp_path: Path) -> None:
 
 
 def test_restore_uses_prior_map_next_free(tmp_path: Path) -> None:
+    """Verify test restore uses prior map next free."""
     source_abs, _sidecar, marked = _build_json_marked_tree(tmp_path)
     sections = parse_tree_file(marked)
     prior_next_free = sections.map.next_free

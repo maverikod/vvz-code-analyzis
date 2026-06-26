@@ -157,6 +157,7 @@ class CreateProjectCommand:
         created: List[str] = []
 
         def _write(rel: str, content: str) -> None:
+            """Create a missing scaffold file and record its relative path."""
             p = project_path / rel
             if not p.exists():
                 p.parent.mkdir(parents=True, exist_ok=True)

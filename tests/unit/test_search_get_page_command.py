@@ -28,6 +28,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
 def _make_layout(tmp_path: Path):
+    """Return make layout."""
     search_id = str(uuid.uuid4())
     layout = provision_search_session_directory(
         sessions_root=tmp_path / "search_sessions", search_id=search_id
@@ -36,6 +37,7 @@ def _make_layout(tmp_path: Path):
 
 
 def _write_manifest(layout, status: str = "running") -> None:
+    """Return write manifest."""
     import time
 
     now = time.time()
@@ -55,6 +57,7 @@ def _write_manifest(layout, status: str = "running") -> None:
 
 
 def _write_block(layout, position: int = 1) -> None:
+    """Return write block."""
     block_path = layout.blocks_dir / f"block_{position}.json"
     block_path.write_text(
         json.dumps({"position": position, "items": [{"result_id": f"r{position}"}]})
@@ -62,6 +65,7 @@ def _write_block(layout, position: int = 1) -> None:
 
 
 def _cmd_with_sessions_root(tmp_path: Path) -> SearchGetPageCommand:
+    """Return cmd with sessions root."""
     cmd = SearchGetPageCommand()
     sessions_root = tmp_path / "search_sessions"
     cmd._get_search_sessions_root = MagicMock(return_value=sessions_root)
@@ -73,6 +77,7 @@ _cmd_with_storage = _cmd_with_sessions_root
 
 @pytest.mark.asyncio
 async def test_session_not_found(tmp_path: Path) -> None:
+    """Verify test session not found."""
     cmd = _cmd_with_storage(tmp_path)
     result = await cmd.execute(job_id="nonexistent-job")
     assert isinstance(result, ErrorResult)
@@ -81,6 +86,7 @@ async def test_session_not_found(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_block_not_ready_when_running_and_no_block(tmp_path: Path) -> None:
+    """Verify test block not ready when running and no block."""
     layout = _make_layout(tmp_path)
     _write_manifest(layout, status="running")
     cmd = _cmd_with_storage(tmp_path)
@@ -91,6 +97,7 @@ async def test_block_not_ready_when_running_and_no_block(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_returns_block_items_when_published(tmp_path: Path) -> None:
+    """Verify test returns block items when published."""
     layout = _make_layout(tmp_path)
     _write_manifest(layout, status="completed")
     _write_block(layout, position=1)
@@ -105,6 +112,7 @@ async def test_returns_block_items_when_published(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_closed_session_returns_closed_error(tmp_path: Path) -> None:
+    """Verify test closed session returns closed error."""
     layout = _make_layout(tmp_path)
     _write_manifest(layout, status="closed")
     _write_block(layout, position=1)
@@ -116,6 +124,7 @@ async def test_closed_session_returns_closed_error(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_block_position_uses_default_1(tmp_path: Path) -> None:
+    """Verify test block position uses default 1."""
     layout = _make_layout(tmp_path)
     _write_manifest(layout, status="completed")
     _write_block(layout, position=1)

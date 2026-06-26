@@ -33,6 +33,7 @@ INVALID_FILE = "_tmp_demo_broken_preview.json"
 
 
 def _data(resp: dict[str, Any]) -> dict[str, Any]:
+    """Return data."""
     if resp.get("success") is not True:
         raise RuntimeError(resp)
     payload = resp.get("data")
@@ -42,6 +43,7 @@ def _data(resp: dict[str, Any]) -> dict[str, Any]:
 
 
 async def main() -> None:
+    """Run the command-line entry point."""
     broken = _REPO / INVALID_FILE
     broken.write_text('{"items": [' + ("1," * 200) + "", encoding="utf-8")
     try:

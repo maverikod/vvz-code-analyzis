@@ -72,6 +72,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -116,6 +117,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
         offset: int = 0,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         params: Dict[str, Any] = {
             "project_id": project_id,
             "entity_name": entity_name,

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="Delete all projects except the one given by name (server must be running)."
     )
@@ -52,6 +53,7 @@ def main() -> int:
         return 1
 
     async def run() -> int:
+        """Return run."""
         from code_analysis.commands.base_mcp_command import (
             BaseMCPCommand,
             _get_socket_path_from_db_path,
@@ -66,6 +68,7 @@ def main() -> int:
         )
 
         def resolve_config() -> Path:
+            """Return resolve config."""
             return config_path
 
         db = open_database_from_config_impl(
@@ -105,7 +108,9 @@ def main() -> int:
                 return 0
 
             for i, p in enumerate(to_delete, 1):
-                logger.info("[%s/%s] Deleting %s (%s)...", i, len(to_delete), p.name, p.id)
+                logger.info(
+                    "[%s/%s] Deleting %s (%s)...", i, len(to_delete), p.name, p.id
+                )
                 cmd = DeleteProjectCommand(
                     database=db,
                     project_id=p.id,

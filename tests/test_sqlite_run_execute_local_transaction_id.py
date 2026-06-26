@@ -19,6 +19,7 @@ from code_analysis.core.database_driver_pkg.drivers.sqlite_run import run_execut
 
 
 def test_sqlite_run_execute_skips_commit_when_transaction_id_local() -> None:
+    """Verify test sqlite run execute skips commit when transaction id local."""
     conn = MagicMock()
     cursor = MagicMock()
     conn.cursor.return_value = cursor

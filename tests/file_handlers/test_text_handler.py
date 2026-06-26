@@ -24,31 +24,37 @@ from code_analysis.core.file_handlers.text_handler import (
 
 
 def _reject_ast(*args: object, **kwargs: object) -> None:
+    """Return reject ast."""
     raise AssertionError("ast.parse must not be called for markdown/text")
 
 
 def _reject_batch(*args: object, **kwargs: object) -> None:
+    """Return reject batch."""
     raise AssertionError("update_file_data_atomic_batch must not be called for text")
 
 
 def test_write_project_text_lines_module_has_no_atomic_batch_import() -> None:
+    """Verify test write project text lines module has no atomic batch import."""
     import code_analysis.commands.write_project_text_lines_command as m
 
     assert not hasattr(m, "update_file_data_atomic_batch")
 
 
 def test_validate_write_range_out_of_bounds_raises() -> None:
+    """Verify test validate write range out of bounds raises."""
     with pytest.raises(ValueError, match="bounds"):
         validate_write_range(10, 12, 3)
 
 
 def test_compute_replace_multi_rejects_overlapping_ranges() -> None:
+    """Verify test compute replace multi rejects overlapping ranges."""
     lines = ["a", "b", "c", "d"]
     with pytest.raises(ValueError, match="Overlapping"):
         compute_replace_lines_multi(lines, [(1, 2, ["x"]), (2, 3, ["y"])])
 
 
 def test_compute_replace_multi_same_result_regardless_of_input_order() -> None:
+    """Verify test compute replace multi same result regardless of input order."""
     lines = ["l1", "l2", "l3", "l4", "l5"]
     forward = [(1, 1, ["A"]), (4, 5, ["B", "C"])]
     backward = list(reversed(forward))
@@ -72,6 +78,7 @@ def test_persist_plain_text_file_metadata_updates_files_row_only(
     _mock_acquire: MagicMock,
     tmp_path: Path,
 ) -> None:
+    """Verify test persist plain text file metadata updates files row only."""
     f = tmp_path / "n.md"
     f.write_text("# hi\n", encoding="utf-8")
     db = MagicMock()
@@ -95,6 +102,7 @@ def test_persist_plain_text_file_metadata_updates_files_row_only(
 
 
 def test_text_file_handler_registration_ready() -> None:
+    """Verify test text file handler registration ready."""
     h = TextFileHandler()
     assert h.handler_id == HANDLER_TEXT
     assert h.ready_for_all_operations_schema()
@@ -110,6 +118,7 @@ def test_md_save_apply_does_not_call_ast_or_batch_file_data(
     _mock_batch: MagicMock,
     tmp_path: Path,
 ) -> None:
+    """Verify test md save apply does not call ast or batch file data."""
     fp = tmp_path / "readme.md"
     fp.write_text("before\n", encoding="utf-8")
     h = TextFileHandler()
@@ -142,6 +151,7 @@ def test_txt_replace_apply_no_ast_or_batch(
     _mock_batch: MagicMock,
     tmp_path: Path,
 ) -> None:
+    """Verify test txt replace apply no ast or batch."""
     fp = tmp_path / "note.txt"
     fp.write_text("one\ntwo\nthree\n", encoding="utf-8")
     h = TextFileHandler()
@@ -175,6 +185,7 @@ def test_save_dry_run_returns_diff_without_writing_disk(
     _mock_batch: MagicMock,
     tmp_path: Path,
 ) -> None:
+    """Verify test save dry run returns diff without writing disk."""
     fp = tmp_path / "x.md"
     fp.write_text("alpha\nbeta\n", encoding="utf-8")
     before = fp.read_bytes()
@@ -207,6 +218,7 @@ def test_replace_diff_true_unified_diff_and_changed_ranges(
     suffix: str,
     tmp_path: Path,
 ) -> None:
+    """Verify test replace diff true unified diff and changed ranges."""
     fp = tmp_path / f"d.{suffix}"
     fp.write_text("keep\nDROP\ntail\n", encoding="utf-8")
     h = TextFileHandler()
@@ -237,6 +249,7 @@ def test_replace_diff_true_unified_diff_and_changed_ranges(
 def test_multi_range_replace_second_range_out_of_bounds_file_unchanged(
     tmp_path: Path,
 ) -> None:
+    """Verify test multi range replace second range out of bounds file unchanged."""
     fp = tmp_path / "m.md"
     fp.write_text("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n", encoding="utf-8")  # 10 lines
     before = fp.read_bytes()
@@ -263,6 +276,7 @@ def test_multi_range_replace_second_range_out_of_bounds_file_unchanged(
 def test_overlapping_replacements_rejected_before_replace_write(
     tmp_path: Path,
 ) -> None:
+    """Verify test overlapping replacements rejected before replace write."""
     fp = tmp_path / "o.md"
     fp.write_text("a\nb\nc\n", encoding="utf-8")
     before = fp.read_bytes()
@@ -299,6 +313,7 @@ def test_text_handler_rejects_wrong_suffix(
     basename: str,
     tmp_path: Path,
 ) -> None:
+    """Verify test text handler rejects wrong suffix."""
     fp = tmp_path / basename
     (
         fp.write_text("{}", encoding="utf-8")
@@ -342,6 +357,7 @@ def test_text_handler_rejects_wrong_suffix(
 
 
 def test_read_md_and_txt_return_lines(tmp_path: Path) -> None:
+    """Verify test read md and txt return lines."""
     h = TextFileHandler()
     for name in ("h.md", "h.txt"):
         fp = tmp_path / name
@@ -367,6 +383,7 @@ def test_read_md_and_txt_return_lines(tmp_path: Path) -> None:
 
 
 def test_delete_range_dry_run_leaves_bytes_unchanged(tmp_path: Path) -> None:
+    """Verify test delete range dry run leaves bytes unchanged."""
     fp = tmp_path / "d.md"
     fp.write_text("a\nb\nc\n", encoding="utf-8")
     before = fp.read_bytes()
@@ -392,6 +409,7 @@ def test_delete_range_dry_run_leaves_bytes_unchanged(tmp_path: Path) -> None:
 
 
 def test_delete_range_apply_writes(tmp_path: Path) -> None:
+    """Verify test delete range apply writes."""
     fp = tmp_path / "d.md"
     fp.write_text("a\nb\nc\n", encoding="utf-8")
     h = TextFileHandler()

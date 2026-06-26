@@ -16,6 +16,7 @@ from code_analysis.core.config_validator.helpers import is_valid_uuid4
 
 
 def test_needs_fix_for_placeholder_and_invalid() -> None:
+    """Verify test needs fix for placeholder and invalid."""
     assert needs_instance_uuid_fix(
         {"registration": {"instance_uuid": "REPLACE_ON_INSTALL"}}
     )
@@ -27,6 +28,7 @@ def test_needs_fix_for_placeholder_and_invalid() -> None:
 
 
 def test_replace_preserves_comments() -> None:
+    """Verify test replace preserves comments."""
     text = (
         "{\n"
         "  # server identity\n"
@@ -45,6 +47,7 @@ def test_replace_preserves_comments() -> None:
 
 
 def test_ensure_instance_uuid_in_config(tmp_path: Path) -> None:
+    """Verify test ensure instance uuid in config."""
     config = tmp_path / "config.json"
     config.write_text(
         "{\n"
@@ -63,6 +66,7 @@ def test_ensure_instance_uuid_in_config(tmp_path: Path) -> None:
 
 
 def test_ensure_instance_uuid_dry_run(tmp_path: Path) -> None:
+    """Verify test ensure instance uuid dry run."""
     config = tmp_path / "config.json"
     config.write_text(
         '{"registration": {"instance_uuid": "bad"}}\n',
@@ -78,6 +82,7 @@ def test_ensure_instance_uuid_dry_run(tmp_path: Path) -> None:
 
 
 def test_registration_instance_uuid_value_nested() -> None:
+    """Verify test registration instance uuid value nested."""
     assert registration_instance_uuid_value({}) == ""
     assert registration_instance_uuid_value({"registration": "x"}) == ""
     assert (
@@ -96,10 +101,12 @@ def test_registration_instance_uuid_value_nested() -> None:
     ],
 )
 def test_invalid_uuid4_values(invalid: str) -> None:
+    """Verify test invalid uuid4 values."""
     assert needs_instance_uuid_fix({"registration": {"instance_uuid": invalid}})
 
 
 def test_valid_uuid4_not_replaced(tmp_path: Path) -> None:
+    """Verify test valid uuid4 not replaced."""
     valid = "550e8400-e29b-41d4-a716-446655440000"
     config = tmp_path / "config.json"
     config.write_text(

@@ -46,6 +46,8 @@ from code_analysis.tree.handler_registry import HandlerRegistry
 
 
 class SessionTreeValidity(str, enum.Enum):
+    """Represent SessionTreeValidity."""
+
     VALID = "valid"
     INVALID = "invalid"
 
@@ -125,6 +127,7 @@ class EditSession:
         file_path: str,
         content: Optional[str] = None,
     ) -> EditSession:
+        """Return open."""
         if content is not None and source_abs.is_file():
             if _external_source_and_tree_valid(
                 source_abs=source_abs,
@@ -236,6 +239,7 @@ class EditSession:
         self,
         mutation_fn: Callable[[str], str],
     ) -> None:
+        """Return apply valid tree mutation."""
         if not self.is_open or self.tree_validity != SessionTreeValidity.VALID:
             raise RuntimeError(
                 "Valid-tree mutation requires open session with valid tree"
@@ -255,6 +259,7 @@ class EditSession:
         self._post_mutation_full()
 
     def apply_plaintext_mutation(self, new_source_text: str) -> None:
+        """Return apply plaintext mutation."""
         if not self.is_open or self.tree_validity != SessionTreeValidity.INVALID:
             raise RuntimeError(
                 "Plaintext mutation requires open session with invalid tree"
@@ -284,6 +289,7 @@ class EditSession:
         self._record_history_commit(self.session_repo.log()[0].hash)
 
     def _post_mutation_full(self) -> None:
+        """Return post mutation full."""
         self._export_source_via_unmark()
         self.source_checksum = compute_content_checksum(
             self.session_source_path.read_text(encoding="utf-8")
@@ -296,6 +302,7 @@ class EditSession:
         self._record_history_commit(self.session_repo.log()[0].hash)
 
     def _post_mutation_degraded(self) -> None:
+        """Return post mutation degraded."""
         self.source_checksum = compute_content_checksum(
             self.session_source_path.read_text(encoding="utf-8")
         )
@@ -304,9 +311,11 @@ class EditSession:
         self._record_history_commit(self.session_repo.log()[0].hash)
 
     def _record_history_commit(self, commit_hash: str) -> None:
+        """Return record history commit."""
         self.history.record(commit_hash)
 
     def _sync_state_after_checkout(self, *, mode: str) -> None:
+        """Return sync state after checkout."""
         source_text = self.session_source_path.read_text(encoding="utf-8")
         self.source_checksum = compute_content_checksum(source_text)
         if mode == "full":
@@ -365,6 +374,7 @@ class EditSession:
         return new_commit
 
     def _export_source_via_unmark(self) -> None:
+        """Return export source via unmark."""
         handler = HandlerRegistry.default_registry().resolve(self.source_abs)
         sections = parse_tree_file(self.session_tree_path.read_text(encoding="utf-8"))
         clean = handler.unmark(sections.tree)
@@ -424,6 +434,7 @@ class EditSession:
         return True
 
     def _try_revalidate(self) -> None:
+        """Return try revalidate."""
         if self.tree_validity != SessionTreeValidity.INVALID:
             return
         source_text = self.session_source_path.read_text(encoding="utf-8")
@@ -542,12 +553,14 @@ class EditSession:
                 raise
 
     def close(self) -> None:
+        """Return close."""
         _active_sessions.pop(self.session_id, None)
         if self.session_dir.exists():
             shutil.rmtree(self.session_dir)
         self.is_open = False
 
     def record_tree_modification(self) -> None:
+        """Return record tree modification."""
         raise RuntimeError("use apply_valid_tree_mutation or apply_tree_operation")
 
 

@@ -17,11 +17,13 @@ _ESC_CH = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r":
 
 
 def _comment_text(source_text: str, span: Tuple[int, int]) -> str:
+    """Return comment text."""
     start, end = span
     return source_text[start:end]
 
 
 def _before_comment_ok(s: str, line_begin: int, i: int) -> bool:
+    """Return before comment ok."""
     j = line_begin
     while j < i and s[j] in " \t\r":
         j += 1
@@ -37,33 +39,41 @@ def _before_comment_ok(s: str, line_begin: int, i: int) -> bool:
 
 @dataclass
 class _Lexer:
+    """Represent Lexer."""
+
     s: str
     n: int = field(init=False)
     i: int = 0
     line_begin: int = 0
 
     def __post_init__(self) -> None:
+        """Return post init."""
         self.n = len(self.s)
 
     def _peek(self) -> str:
+        """Return peek."""
         return "" if self.i >= self.n else self.s[self.i]
 
     def _eof(self) -> bool:
+        """Return eof."""
         return self.i >= self.n
 
     def _advance(self) -> None:
+        """Return advance."""
         if self.i < self.n:
             if self.s[self.i] == "\n":
                 self.line_begin = self.i + 1
             self.i += 1
 
     def _read_line_comment(self) -> Tuple[int, int]:
+        """Return read line comment."""
         start = self.i
         while not self._eof() and self._peek() != "\n":
             self._advance()
         return start, self.i
 
     def _read_block_comment(self) -> Tuple[int, int]:
+        """Return read block comment."""
         start = self.i
         self.i += 2
         while self.i < self.n - 1:
@@ -76,6 +86,7 @@ class _Lexer:
         raise ValueError("Invalid tolerant JSON: unclosed block comment")
 
     def _same_line_has_more_tokens(self) -> bool:
+        """Return same line has more tokens."""
         j = self.i
         while j < self.n and self.s[j] in " \t\r":
             j += 1
@@ -83,18 +94,23 @@ class _Lexer:
 
 
 class _Parser:
+    """Represent Parser."""
+
     def __init__(self, source_text: str) -> None:
+        """Initialize the instance."""
         self.s = source_text
         self.lex = _Lexer(source_text)
         self.pending_before: Optional[str] = None
 
     def _append_pending(self, text: str) -> None:
+        """Return append pending."""
         if self.pending_before is None:
             self.pending_before = text
         else:
             self.pending_before = self.pending_before + "\n" + text
 
     def _skip_ws(self) -> None:
+        """Return skip ws."""
         while not self.lex._eof():
             c = self.lex._peek()
             if c in " \t":
@@ -118,20 +134,24 @@ class _Parser:
             break
 
     def _skip_horizontal_ws(self) -> None:
+        """Return skip horizontal ws."""
         while not self.lex._eof() and self.lex._peek() in " \t\r":
             self.lex._advance()
 
     def _expect(self, ch: str) -> None:
+        """Return expect."""
         if self.lex._peek() != ch:
             raise ValueError(f"Invalid tolerant JSON: expected {ch!r}")
         self.lex._advance()
 
     def _attach_pending(self, node: TreeNode) -> None:
+        """Return attach pending."""
         if self.pending_before is not None:
             node.comment_before = self.pending_before
             self.pending_before = None
 
     def _try_inline_comment(self, node: TreeNode) -> None:
+        """Return try inline comment."""
         if not self.lex._same_line_has_more_tokens():
             return
         saved_i, saved_lb = self.lex.i, self.lex.line_begin
@@ -151,6 +171,7 @@ class _Parser:
             self.lex.i, self.lex.line_begin = saved_i, saved_lb
 
     def _parse_string_raw(self) -> Tuple[str, int, int]:
+        """Return parse string raw."""
         start_outer = self.lex.i
         self._expect('"')
         chunks: List[str] = []
@@ -186,6 +207,7 @@ class _Parser:
         raise ValueError("Invalid tolerant JSON: unterminated string")
 
     def _parse_number_node(self) -> TreeNode:
+        """Return parse number node."""
         start = self.lex.i
         if self.lex._peek() == "-":
             self.lex._advance()
@@ -221,6 +243,7 @@ class _Parser:
     def _parse_keyword(
         self, word: str, node_type: TreeNodeType, pyval: Any
     ) -> TreeNode:
+        """Return parse keyword."""
         if not self.s.startswith(word, self.lex.i):
             raise ValueError(f"Invalid tolerant JSON: expected {word!r}")
         self.lex.i += len(word)
@@ -231,6 +254,7 @@ class _Parser:
         return TreeNode(stable_id=str(uuid.uuid4()), type=node_type, value=pyval)
 
     def _parse_value(self) -> TreeNode:
+        """Return parse value."""
         self._skip_ws()
         if self.lex._eof():
             raise ValueError("Invalid tolerant JSON: value expected")
@@ -268,6 +292,7 @@ class _Parser:
         raise ValueError("Invalid tolerant JSON: unexpected token")
 
     def _parse_object(self) -> TreeNode:
+        """Return parse object."""
         self._expect("{")
         obj_children: List[TreeNode] = []
         obj = TreeNode(
@@ -304,6 +329,7 @@ class _Parser:
         return obj
 
     def _parse_array_container(self) -> TreeNode:
+        """Return parse array container."""
         self._expect("[")
         arr_children: List[TreeNode] = []
         arr = TreeNode(
@@ -333,6 +359,7 @@ class _Parser:
         return arr
 
     def _finish_doc(self) -> None:
+        """Return finish doc."""
         self._skip_ws()
         if self.pending_before is not None:
             raise ValueError(
@@ -342,6 +369,7 @@ class _Parser:
             raise ValueError("Invalid tolerant JSON: trailing data after document")
 
     def parse_document(self) -> List[TreeNode]:
+        """Return parse document."""
         self._skip_ws()
         if self.lex._eof():
             raise ValueError("Invalid tolerant JSON: empty document")

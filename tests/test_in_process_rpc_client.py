@@ -15,6 +15,7 @@ from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
 @pytest.fixture
 def sqlite_handlers(tmp_path: Path) -> RPCHandlers:
+    """Return sqlite handlers."""
     db_path = tmp_path / "t.db"
     driver = create_driver("sqlite", {"path": str(db_path)})
     schema = {
@@ -26,6 +27,7 @@ def sqlite_handlers(tmp_path: Path) -> RPCHandlers:
 
 
 def test_process_rpc_request_unknown_method(sqlite_handlers: RPCHandlers) -> None:
+    """Verify test process rpc request unknown method."""
     req = RPCRequest(method="no_such_method", params={}, request_id="r1")
     resp = process_rpc_request(sqlite_handlers, req)
     assert resp.is_error()
@@ -34,6 +36,7 @@ def test_process_rpc_request_unknown_method(sqlite_handlers: RPCHandlers) -> Non
 
 
 def test_in_process_client_select_roundtrip(sqlite_handlers: RPCHandlers) -> None:
+    """Verify test in process client select roundtrip."""
     client = InProcessRpcClient(sqlite_handlers)
     client.connect()
     try:
@@ -56,6 +59,7 @@ def test_in_process_client_select_roundtrip(sqlite_handlers: RPCHandlers) -> Non
 
 
 def test_in_process_client_success_path(sqlite_handlers: RPCHandlers) -> None:
+    """Verify test in process client success path."""
     client = InProcessRpcClient(sqlite_handlers)
     client.connect()
     try:

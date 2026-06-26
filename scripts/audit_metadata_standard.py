@@ -33,6 +33,7 @@ REQUIRED_KEYS = (
 
 
 def _load_commands() -> Dict[str, Any]:
+    """Return load commands."""
     from mcp_proxy_adapter.commands.command_registry import CommandRegistry
     from code_analysis.hooks import register_code_analysis_commands
 
@@ -42,6 +43,7 @@ def _load_commands() -> Dict[str, Any]:
 
 
 def _audit(cmd_name: str, cmd_class: type) -> Dict[str, Any]:
+    """Return audit."""
     from mcp_proxy_adapter.commands.base import Command
 
     issues: List[str] = []
@@ -62,9 +64,7 @@ def _audit(cmd_name: str, cmd_class: type) -> Dict[str, Any]:
         meta = meta_fn() or {}
 
     props_for_empty = schema.get("properties") or {}
-    has_schema_params = bool(
-        isinstance(props_for_empty, dict) and props_for_empty
-    )
+    has_schema_params = bool(isinstance(props_for_empty, dict) and props_for_empty)
 
     for key in REQUIRED_KEYS:
         val = meta.get(key)
@@ -95,6 +95,7 @@ def _audit(cmd_name: str, cmd_class: type) -> Dict[str, Any]:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     import logging
 
     logging.disable(logging.CRITICAL)

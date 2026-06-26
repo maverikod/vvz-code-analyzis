@@ -28,6 +28,7 @@ _FORMAT_SAMPLES: tuple[tuple[str, str, str], ...] = (
 
 
 def test_apply_edit_operation_rejects_invalid_tree() -> None:
+    """Verify test apply edit operation rejects invalid tree."""
     with pytest.raises(EditOperationError, match="tree is invalid"):
         apply_edit_operation(
             registry=_REGISTRY,
@@ -39,6 +40,7 @@ def test_apply_edit_operation_rejects_invalid_tree() -> None:
 
 
 def test_insert_returns_incremented_next_free() -> None:
+    """Verify test insert returns incremented next free."""
     handler = _REGISTRY.resolve(Path("sample.txt"))
     marked = handler.mark("hello\n")
     _, new_next_free = apply_edit_operation(
@@ -58,16 +60,19 @@ def test_insert_returns_incremented_next_free() -> None:
 
 
 def test_validate_short_id_rejects_zero() -> None:
+    """Verify test validate short id rejects zero."""
     with pytest.raises(ValueError, match=">= 1"):
         validate_short_id(0)
 
 
 def test_validate_short_id_rejects_bool() -> None:
+    """Verify test validate short id rejects bool."""
     with pytest.raises(ValueError, match="must be int"):
         validate_short_id(True)
 
 
 def test_apply_edit_operation_rejects_zero_short_id() -> None:
+    """Verify test apply edit operation rejects zero short id."""
     with pytest.raises(EditOperationError, match="short_id"):
         apply_edit_operation(
             registry=_REGISTRY,
@@ -81,6 +86,7 @@ def test_apply_edit_operation_rejects_zero_short_id() -> None:
 def _target_short_id(
     handler: object, source_path: Path, content: str, marked: str
 ) -> NodeId:
+    """Return target short id."""
     if source_path.suffix == ".py":
         match = re.search(r"___id___:(\d+)", marked)
         assert match is not None, "expected Python marker in marked text"
@@ -95,6 +101,7 @@ def _target_short_id(
 def test_handler_smoke_replace_via_registry(
     extension: str, content: str, new_content: str
 ) -> None:
+    """Verify test handler smoke replace via registry."""
     source_path = Path(f"sample{extension}")
     handler = _REGISTRY.resolve(source_path)
     marked = handler.mark(content)

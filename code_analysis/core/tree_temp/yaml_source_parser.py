@@ -18,10 +18,12 @@ from code_analysis.core.tree_temp.tree_node import TreeNode, TreeNodeType
 
 
 def _token_text(tok: Any) -> str:
+    """Return token text."""
     return str(getattr(tok, "value", tok))
 
 
 def _join_comment_tokens(tokens: Optional[List[Any]]) -> Optional[str]:
+    """Return join comment tokens."""
     if not tokens:
         return None
     parts: List[str] = []
@@ -35,6 +37,7 @@ def _join_comment_tokens(tokens: Optional[List[Any]]) -> Optional[str]:
 
 
 def _doc_pre_comment(data: Any) -> Optional[str]:
+    """Return doc pre comment."""
     ca = getattr(data, "ca", None)
     if not ca or not ca.comment or len(ca.comment) < 2:
         return None
@@ -59,6 +62,7 @@ def _split_inline_and_spill(raw: str) -> tuple[Optional[str], Optional[str]]:
 
 
 def _merge_before(*parts: Optional[str]) -> Optional[str]:
+    """Return merge before."""
     out: List[str] = []
     for p in parts:
         if p:
@@ -69,12 +73,14 @@ def _merge_before(*parts: Optional[str]) -> Optional[str]:
 
 
 def _yaml_key_str(key: Any) -> str:
+    """Return yaml key str."""
     if isinstance(key, str):
         return key
     return str(key)
 
 
 def _tree_type_for_value(val: Any) -> str:
+    """Return tree type for value."""
     if val is None:
         return "null"
     if isinstance(val, bool):
@@ -91,6 +97,7 @@ def _tree_type_for_value(val: Any) -> str:
 
 
 def _build_scalar(val: Any) -> TreeNode:
+    """Return build scalar."""
     t = _tree_type_for_value(val)
     if t == "object" or t == "array":
         raise ValueError("Internal: expected scalar")
@@ -111,6 +118,7 @@ def _build_scalar(val: Any) -> TreeNode:
 
 
 def _build_object(data: Union[CommentedMap, Dict[Any, Any]]) -> TreeNode:
+    """Return build object."""
     children: List[TreeNode] = []
     doc_top = _doc_pre_comment(data)
     obj = TreeNode(
@@ -156,6 +164,7 @@ def _build_object(data: Union[CommentedMap, Dict[Any, Any]]) -> TreeNode:
 
 
 def _build_array_container(data: Union[CommentedSeq, List[Any]]) -> TreeNode:
+    """Return build array container."""
     ch: List[TreeNode] = []
     doc_top = _doc_pre_comment(data)
     arr = TreeNode(
@@ -195,6 +204,7 @@ def _build_array_container(data: Union[CommentedSeq, List[Any]]) -> TreeNode:
 
 
 def _build_value(data: Any) -> TreeNode:
+    """Return build value."""
     if isinstance(data, CommentedSeq) or (
         isinstance(data, list) and not isinstance(data, CommentedMap)
     ):

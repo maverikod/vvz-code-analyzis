@@ -19,6 +19,7 @@ from code_analysis.commands.comprehensive_analysis_mcp.execute_single import (
 
 
 def _empty_results() -> dict:
+    """Return empty results."""
     return {
         "placeholders": [],
         "stubs": [],
@@ -34,6 +35,7 @@ def _empty_results() -> dict:
 
 
 def _base_ctx(tmp_path, proj_id: str, rel_file: str) -> dict:
+    """Return base ctx."""
     return {
         "db": MagicMock(),
         "root_path": tmp_path,
@@ -60,6 +62,7 @@ def _base_ctx(tmp_path, proj_id: str, rel_file: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_resolves_when_file_row_under_requested_project(tmp_path) -> None:
+    """Verify test resolves when file row under requested project."""
     (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
     abs_path = str((tmp_path / "mod.py").resolve())
 
@@ -69,7 +72,12 @@ async def test_resolves_when_file_row_under_requested_project(tmp_path) -> None:
         return_value={"id": 42, "project_id": "proj-a", "deleted": 0}
     )
     db.should_analyze_file = MagicMock(
-        return_value={"should_analyze": True, "reason": "stale", "db_mtime": 0, "disk_mtime": 1}
+        return_value={
+            "should_analyze": True,
+            "reason": "stale",
+            "db_mtime": 0,
+            "disk_mtime": 1,
+        }
     )
     db.disconnect = MagicMock()
     db.save_comprehensive_analysis_results = MagicMock()
@@ -94,6 +102,7 @@ async def test_resolves_when_file_row_under_requested_project(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_same_abs_path_other_project_no_clear_no_update_no_add(tmp_path) -> None:
+    """Verify test same abs path other project no clear no update no add."""
     (tmp_path / "shared.py").write_text("y = 2\n", encoding="utf-8")
     abs_path = str((tmp_path / "shared.py").resolve())
 

@@ -21,6 +21,7 @@ class _MockDbForGate(_ClientAPIComprehensiveAnalysisMixin):
     """Minimal mock that returns controlled execute() data for gate tests."""
 
     def __init__(self, execute_returns: Dict[str, Any]) -> None:
+        """Initialize the instance."""
         self._execute_returns = execute_returns
 
     def execute(
@@ -29,6 +30,7 @@ class _MockDbForGate(_ClientAPIComprehensiveAnalysisMixin):
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Execute the command."""
         return self._execute_returns
 
 

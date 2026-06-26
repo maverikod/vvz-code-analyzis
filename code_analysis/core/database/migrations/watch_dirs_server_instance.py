@@ -16,6 +16,7 @@ _MIGRATION_KEY = "watch_dirs_server_instance_v1"
 
 
 def _db_settings_has(database: Any, key: str) -> bool:
+    """Return db settings has."""
     try:
         row = database._fetchone(
             "SELECT 1 FROM db_settings WHERE key = ? LIMIT 1", (key,)
@@ -26,6 +27,7 @@ def _db_settings_has(database: Any, key: str) -> bool:
 
 
 def _db_settings_set(database: Any, key: str, value: str) -> None:
+    """Return db settings set."""
     database._execute(
         "INSERT INTO db_settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -35,11 +37,13 @@ def _db_settings_set(database: Any, key: str, value: str) -> None:
 
 
 def _column_exists(database: Any, table: str, column: str) -> bool:
+    """Return column exists."""
     info = database._get_table_info(table)
     return any(col.get("name") == column for col in info)
 
 
 def _partition_columns_present(database: Any) -> bool:
+    """Return partition columns present."""
     return (
         _column_exists(database, "watch_dirs", "server_instance_id")
         and _column_exists(database, "watch_dir_paths", "server_instance_id")
@@ -48,6 +52,7 @@ def _partition_columns_present(database: Any) -> bool:
 
 
 def _postgres_primary_key_columns(database: Any, table: str) -> List[str]:
+    """Return postgres primary key columns."""
     if getattr(database, "_driver_type", None) != "postgres":
         return []
     rows = database._fetchall(
@@ -68,6 +73,7 @@ def _postgres_primary_key_columns(database: Any, table: str) -> List[str]:
 
 
 def _watch_dirs_composite_pk_present(database: Any) -> bool:
+    """Return watch dirs composite pk present."""
     return _postgres_primary_key_columns(database, "watch_dirs") == [
         "server_instance_id",
         "id",

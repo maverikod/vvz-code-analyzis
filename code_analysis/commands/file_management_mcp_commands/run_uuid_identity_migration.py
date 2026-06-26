@@ -51,6 +51,7 @@ def _executed_via_job_queue(context: Any) -> bool:
 
 
 def _json_safe(obj: Any) -> Any:
+    """Convert dataclass payloads to JSON-serializable primitive values."""
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -61,14 +62,17 @@ def _json_safe(obj: Any) -> Any:
 
 
 def _preflight_to_dict(r: PreflightReport) -> Dict[str, Any]:
+    """Serialize a phase 1 preflight report for the MCP response."""
     return cast(Dict[str, Any], _json_safe(asdict(r)))
 
 
 def _phase2_to_dict(r: Phase2Report) -> Dict[str, Any]:
+    """Serialize a phase 2 mapping-build report for the MCP response."""
     return cast(Dict[str, Any], _json_safe(asdict(r)))
 
 
 def _phase345_to_dict(r: Phase345Report) -> Dict[str, Any]:
+    """Serialize phases 3-5 report and truncate long SQL logs."""
     d = asdict(r)
     log: List[str] = list(d.get("sql_log") or [])
     total = len(log)
@@ -83,6 +87,7 @@ def _phase345_to_dict(r: Phase345Report) -> Dict[str, Any]:
 
 
 def _phase6_stmts_to_dict(stmts: List[str]) -> Dict[str, Any]:
+    """Serialize phase 6 rename statements with response-size limits."""
     total = len(stmts)
     truncated = total > _MAX_SQL_LOG_STMTS_IN_RESPONSE
     out = stmts[:_MAX_SQL_LOG_STMTS_IN_RESPONSE] if truncated else stmts
@@ -112,6 +117,7 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -160,6 +166,7 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
         skip_mapping_validation: bool,
         shadow_prefix: Optional[str],
     ) -> Dict[str, Any]:
+        """Build keyword arguments for phases 3-5 migration helpers."""
         kw: Dict[str, Any] = {
             "dry_run": dry_run,
             "skip_mapping_validation": skip_mapping_validation,
@@ -175,6 +182,7 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
         migration_tag: Optional[str],
         i_confirm_maintenance_swap: bool,
     ) -> Dict[str, Any]:
+        """Build keyword arguments for destructive phase 6 swap helpers."""
         kw: Dict[str, Any] = {
             "i_confirm_maintenance_swap": i_confirm_maintenance_swap,
         }
@@ -194,6 +202,7 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
         i_confirm_maintenance_swap: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Run the requested UUID migration action through the job-queue path."""
         if action not in _ACTIONS:
             return ErrorResult(
                 message=f"Invalid action {action!r}; expected one of {sorted(_ACTIONS)}",
@@ -330,6 +339,7 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["RunUuidIdentityMigrationMCPCommand"]) -> Dict[str, Any]:
+        """Return detailed safety-focused metadata for the migration command."""
         return {
             "name": cls.name,
             "version": cls.version,

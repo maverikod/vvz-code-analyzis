@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 class ListCSTBlocksCommand(BaseMCPCommand):
+    """List stable logical CST blocks from a Python project file."""
+
     name = "list_cst_blocks"
     version = "1.0.0"
     descr = (
@@ -38,6 +40,7 @@ class ListCSTBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for selecting a Python project file."""
         base = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -54,9 +57,11 @@ class ListCSTBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return metadata for the CST block listing command."""
         return get_list_cst_blocks_metadata(cls)
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters and reject unknown project ids."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -64,6 +69,7 @@ class ListCSTBlocksCommand(BaseMCPCommand):
     async def execute(
         self, project_id: str, file_path: str, **kwargs: Any
     ) -> SuccessResult | ErrorResult:
+        """Parse a Python file and return stable CST block descriptors."""
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)

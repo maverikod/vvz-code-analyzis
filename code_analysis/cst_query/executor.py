@@ -92,6 +92,7 @@ def _legacy_node_id(info: NodeInfo) -> str:
 
 
 def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
+    """Return eval query."""
     parent_map: dict[cst.CSTNode, Optional[cst.CSTNode]] = {
         n.node: n.parent for n in nodes
     }
@@ -111,6 +112,7 @@ def _apply_combinator(
     *,
     parent_map: dict[cst.CSTNode, Optional[cst.CSTNode]],
 ) -> list[NodeInfo]:
+    """Return apply combinator."""
     if not prev or not nxt:
         return []
     prev_nodes = {p.node for p in prev}
@@ -134,6 +136,7 @@ def _apply_combinator(
 
 
 def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
+    """Return apply step."""
     matched = [n for n in nodes if _matches_step(n, step)]
     for pseudo in step.pseudos:
         if pseudo.kind == PseudoKind.FIRST:
@@ -147,6 +150,7 @@ def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
 
 
 def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
+    """Return matches step."""
     if not _matches_node_type(node, step.node_type):
         return False
     for pred in step.predicates:
@@ -161,6 +165,7 @@ def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
 
 
 def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
+    """Return matches node type."""
     if not node_type or node_type == "*":
         return True
     t = node_type.strip()
@@ -198,6 +203,7 @@ def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
 
 
 def _matches_predicate(node: NodeInfo, pred: Predicate) -> bool:
+    """Return matches predicate."""
     val = _get_attr(node, pred.attr)
     if val is None:
         return False
@@ -227,6 +233,7 @@ def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
 
 
 def _compare(left: str, op: PredicateOp, right: str) -> bool:
+    """Return compare."""
     if op == PredicateOp.EQ:
         return left == right
     if op == PredicateOp.NE:

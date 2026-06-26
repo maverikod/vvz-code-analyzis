@@ -17,12 +17,14 @@ from code_analysis.core.search_session.policy import (
 
 @pytest.fixture()
 def generator() -> CodeAnalysisConfigGenerator:
+    """Return generator."""
     return CodeAnalysisConfigGenerator()
 
 
 def test_generate_default_port_and_code_analysis_sections(
     generator: CodeAnalysisConfigGenerator, tmp_path: Path
 ) -> None:
+    """Verify test generate default port and code analysis sections."""
     out = tmp_path / "config.json"
     path = generator.generate(protocol="https", out_path=str(out))
     assert path == str(out)
@@ -42,6 +44,7 @@ def test_generate_default_port_and_code_analysis_sections(
 def test_generate_with_proxy_defaults_registration(
     generator: CodeAnalysisConfigGenerator, tmp_path: Path
 ) -> None:
+    """Verify test generate with proxy defaults registration."""
     out = tmp_path / "config.json"
     generator.generate(
         protocol="https",
@@ -60,6 +63,7 @@ def test_generate_with_proxy_defaults_registration(
 def test_generate_postgres_driver_and_queue_overrides(
     generator: CodeAnalysisConfigGenerator, tmp_path: Path
 ) -> None:
+    """Verify test generate postgres driver and queue overrides."""
     out = tmp_path / "config.json"
     generator.generate(
         protocol="https",

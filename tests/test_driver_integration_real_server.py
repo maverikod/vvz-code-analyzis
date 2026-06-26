@@ -203,6 +203,7 @@ class TestDriverIntegrationRealServer:
             import concurrent.futures
 
             def make_request(i):
+                """Return make request."""
                 request = {
                     "jsonrpc": "2.0",
                     "method": "insert",

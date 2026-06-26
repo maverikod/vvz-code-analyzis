@@ -23,7 +23,10 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 @pytest.mark.asyncio
 class TestUniversalFileDeleteRouting:
+    """Represent TestUniversalFileDeleteRouting."""
+
     async def test_toml_unsupported_before_db(self) -> None:
+        """Verify test toml unsupported before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -36,6 +39,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_empty_delete_mode_before_db(self) -> None:
+        """Verify test empty delete mode before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -48,6 +52,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_text_wrong_mode_yaml_path_before_db(self) -> None:
+        """Verify test text wrong mode yaml path before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -61,6 +66,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_json_wrong_mode_range_before_db(self) -> None:
+        """Verify test json wrong mode range before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -75,6 +81,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_yaml_wrong_mode_node_before_db(self) -> None:
+        """Verify test yaml wrong mode node before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -88,6 +95,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_python_wrong_mode_range_before_db(self) -> None:
+        """Verify test python wrong mode range before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -102,6 +110,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_python_cst_selector_missing_ops_before_db(self) -> None:
+        """Verify test python cst selector missing ops before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -115,6 +124,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_python_node_id_missing_tree_before_db(self) -> None:
+        """Verify test python node id missing tree before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -129,6 +139,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_json_missing_operations_before_db(self) -> None:
+        """Verify test json missing operations before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -142,6 +153,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_range_missing_lines_before_db(self) -> None:
+        """Verify test range missing lines before db."""
         cmd = UniversalFileDeleteCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -155,6 +167,7 @@ class TestUniversalFileDeleteRouting:
         assert result.code == "VALIDATION_ERROR"
 
     async def test_file_not_found_after_resolve(self, tmp_path: Path) -> None:
+        """Verify test file not found after resolve."""
         missing = tmp_path / "gone.md"
         mock_db = MagicMock()
         mock_project = MagicMock()

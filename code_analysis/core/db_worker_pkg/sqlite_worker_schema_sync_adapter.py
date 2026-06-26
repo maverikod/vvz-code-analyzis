@@ -32,23 +32,29 @@ class SqliteWorkerSchemaSyncAdapter:
     """Wraps database_driver_pkg SQLiteDriver for worker-side full schema sync."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._driver = SQLiteDriver()
 
     def connect(self, config: Dict[str, Any]) -> None:
+        """Return connect."""
         self._driver.connect(config)
 
     def disconnect(self) -> None:
+        """Return disconnect."""
         self._driver.disconnect()
 
     @property
     def conn(self) -> Optional[sqlite3.Connection]:
+        """Return conn."""
         return cast(Optional[sqlite3.Connection], self._driver.conn)
 
     @property
     def db_path(self) -> Optional[Path]:
+        """Return db path."""
         return cast(Optional[Path], self._driver.db_path)
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
+        """Execute the command."""
         if not self._driver.conn:
             raise RuntimeError("Database connection not established")
         cursor = self._driver.conn.cursor()
@@ -60,6 +66,7 @@ class SqliteWorkerSchemaSyncAdapter:
     def fetchone(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         if not self._driver.conn:
             raise RuntimeError("Database connection not established")
         cursor = self._driver.conn.cursor()
@@ -73,6 +80,7 @@ class SqliteWorkerSchemaSyncAdapter:
     def fetchall(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> List[Dict[str, Any]]:
+        """Return fetchall."""
         if not self._driver.conn:
             raise RuntimeError("Database connection not established")
         cursor = self._driver.conn.cursor()
@@ -84,17 +92,21 @@ class SqliteWorkerSchemaSyncAdapter:
         return [dict(row) for row in rows]
 
     def commit(self) -> None:
+        """Return commit."""
         self._driver.commit()
 
     def rollback(self) -> None:
+        """Return rollback."""
         self._driver.rollback()
 
     def begin_transaction(self) -> None:
+        """Return begin transaction."""
         if not self._driver.conn:
             raise RuntimeError("Database connection not established")
         self._driver.conn.execute("BEGIN TRANSACTION")
 
     def _get_schema_version(self) -> Optional[str]:
+        """Return get schema version."""
         try:
             result = self.fetchone(
                 "SELECT value FROM db_settings WHERE key = ?", ("schema_version",)
@@ -104,6 +116,7 @@ class SqliteWorkerSchemaSyncAdapter:
             return None
 
     def _set_schema_version(self, version: str) -> None:
+        """Return set schema version."""
         self.execute(
             """
             INSERT OR REPLACE INTO db_settings (key, value, updated_at)
@@ -204,6 +217,7 @@ class SqliteWorkerSchemaSyncAdapter:
             result["backup_uuid"] = backup_uuid
 
             def _version_compare(v1: str, v2: str) -> int:
+                """Return version compare."""
                 v1_parts = [int(x) for x in v1.split(".")]
                 v2_parts = [int(x) for x in v2.split(".")]
                 max_len = max(len(v1_parts), len(v2_parts))

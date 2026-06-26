@@ -22,6 +22,7 @@ _trees: Dict[str, JSONTree] = {}
 
 
 def _json_kind(value: Any) -> str:
+    """Return json kind."""
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -38,6 +39,7 @@ def _json_kind(value: Any) -> str:
 
 
 def _build_index(tree: JSONTree) -> None:
+    """Return build index."""
     tree.metadata_map.clear()
     tree.parent_map.clear()
     tree.pointer_by_id.clear()
@@ -50,6 +52,7 @@ def _build_index(tree: JSONTree) -> None:
         key: Optional[str],
         index: Optional[int],
     ) -> str:
+        """Return visit."""
         node_id = stable_node_id_for_pointer(pointer)
         tree.pointer_by_id[node_id] = pointer
         tree.parent_map[node_id] = parent_id
@@ -119,10 +122,12 @@ def build_tree_from_data(
 
 
 def get_tree(tree_id: str) -> Optional[JSONTree]:
+    """Return get tree."""
     return _trees.get(tree_id)
 
 
 def remove_tree(tree_id: str) -> bool:
+    """Return remove tree."""
     if tree_id in _trees:
         del _trees[tree_id]
         return True

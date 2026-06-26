@@ -22,9 +22,7 @@ class CSTUnloadTreeCommand(BaseMCPCommand):
 
     name = "cst_unload_tree"
     version = "1.0.0"
-    descr = (
-        "Remove a CST tree from memory by tree_id. Use to free RAM after analysis."
-    )
+    descr = "Remove a CST tree from memory by tree_id. Use to free RAM after analysis."
     category = "cst"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -32,6 +30,7 @@ class CSTUnloadTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -46,12 +45,12 @@ class CSTUnloadTreeCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["CSTUnloadTreeCommand"]) -> Dict[str, Any]:
+        """Return metadata for unloading a CST tree from memory."""
         from .zero_arg_commands_metadata import cst_unload_tree_metadata
 
         return cst_unload_tree_metadata(cls)
 
     async def execute(self, tree_id: str, **kwargs: Any) -> SuccessResult:
+        """Remove a loaded CST tree and report whether it was present."""
         was_present = remove_tree(tree_id)
-        return SuccessResult(
-            data={"tree_id": tree_id, "was_present": was_present}
-        )
+        return SuccessResult(data={"tree_id": tree_id, "was_present": was_present})

@@ -12,6 +12,7 @@ MIN_QUEUEMGR_VERSION = "1.0.19"
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
+    """Return parse version."""
     parts: list[int] = []
     for token in str(version).split("."):
         digits = "".join(ch for ch in token if ch.isdigit())
@@ -23,10 +24,12 @@ def _parse_version(version: str) -> tuple[int, ...]:
 
 
 def _version_gte(actual: str, minimum: str) -> bool:
+    """Return version gte."""
     return _parse_version(actual) >= _parse_version(minimum)
 
 
 def _safe_dist_version(distribution: str) -> str:
+    """Return safe dist version."""
     try:
         return metadata.version(distribution)
     except Exception:
@@ -34,6 +37,7 @@ def _safe_dist_version(distribution: str) -> str:
 
 
 def collect_dependency_compatibility(queue_enabled: bool) -> Dict[str, Any]:
+    """Return collect dependency compatibility."""
     code_analysis_version = _safe_dist_version("code-analysis")
     adapter_version = _safe_dist_version("mcp-proxy-adapter")
     queuemgr_version = _safe_dist_version("queuemgr")
@@ -79,6 +83,7 @@ def collect_dependency_compatibility(queue_enabled: bool) -> Dict[str, Any]:
 
 
 def assert_queue_dependencies_compatible(queue_enabled: bool) -> None:
+    """Return assert queue dependencies compatible."""
     check = collect_dependency_compatibility(queue_enabled=queue_enabled)
     if check["queue_ready"]:
         return

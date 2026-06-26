@@ -60,6 +60,7 @@ _JSON_VAL_KEY = "v"
 
 
 def _require_integer_short_id(raw: Any, field_name: str) -> int:
+    """Return require integer short id."""
     if isinstance(raw, bool):
         raise ValueError(f"{field_name} must be integer short_id, got {raw!r}")
     if isinstance(raw, int):
@@ -75,22 +76,26 @@ def _require_integer_short_id(raw: Any, field_name: str) -> int:
 
 
 def _optional_integer_short_id(raw: Any, field_name: str) -> int | None:
+    """Return optional integer short id."""
     if raw is None or raw == "":
         return None
     return _require_integer_short_id(raw, field_name)
 
 
 def _session_tree_sections(session: EditSession) -> Any:
+    """Return session tree sections."""
     tree_text = session.core.session_tree_path.read_text(encoding="utf-8")
     return parse_tree_file(tree_text)
 
 
 def _session_marked_root(session: EditSession) -> Any:
+    """Return session marked root."""
     sections = _session_tree_sections(session)
     return _parse_marked_tree_root(sections, session.handler_id)
 
 
 def _json_object_entry_short_id(obj_node: dict[str, Any], key: str) -> int:
+    """Return json object entry short id."""
     if _JSON_VAL_KEY in obj_node:
         inner = obj_node[_JSON_VAL_KEY]
         if not isinstance(inner, dict) or key not in inner:
@@ -102,6 +107,7 @@ def _json_object_entry_short_id(obj_node: dict[str, Any], key: str) -> int:
 
 
 def _resolve_json_target_short_id(session: EditSession, mop: Dict[str, Any]) -> int:
+    """Return resolve json target short id."""
     sections = _session_tree_sections(session)
     for field in ("node_ref", "node_id", "target_node_id"):
         raw = mop.get(field)
@@ -129,6 +135,7 @@ def _resolve_json_target_short_id(session: EditSession, mop: Dict[str, Any]) -> 
 
 
 def _serialize_insert_value(handler_id: str, value: Any) -> str:
+    """Return serialize insert value."""
     if handler_id == "json":
         return json.dumps(value, ensure_ascii=False)
     if handler_id == "yaml":
@@ -144,6 +151,7 @@ def _serialize_insert_value(handler_id: str, value: Any) -> str:
 def _resolve_optional_anchor_short_id(
     session: EditSession, raw: Any, field_name: str
 ) -> int | None:
+    """Return resolve optional anchor short id."""
     if raw is None or raw == "":
         return None
     sid = _optional_integer_short_id(raw, field_name)
@@ -163,6 +171,7 @@ def _resolve_json_insert_anchor_and_position(
     session: EditSession,
     mop: Dict[str, Any],
 ) -> tuple[int, str]:
+    """Return resolve json insert anchor and position."""
     sections = _session_tree_sections(session)
     target_raw = mop.get("target_node_id")
     if target_raw not in (None, ""):
@@ -293,6 +302,7 @@ def _tree_temp_op_to_edit_operation(
     mop: Dict[str, Any],
     handler_id: str,
 ) -> EditOperation:
+    """Return tree temp op to edit operation."""
     action = str(mop.get("action") or mop.get("type") or "").lower()
     if action == "replace":
         if "value" not in mop and "content" not in mop:
@@ -386,6 +396,7 @@ def _apply_valid_tree_temp_mutations(
     session: EditSession,
     operations: List[Dict[str, Any]],
 ) -> SuccessResult | ErrorResult:
+    """Return apply valid tree temp mutations."""
     try:
         for op in operations:
             for sub in _expand_list_pointer_replace(
@@ -489,6 +500,7 @@ def _run_legacy_tree_temp_apply(
     session: EditSession,
     operations: List[Dict[str, Any]],
 ) -> SuccessResult | ErrorResult:
+    """Return run legacy tree temp apply."""
     tid = session.tree_id
     if not tid:
         return error_result_for_edit(
@@ -572,6 +584,7 @@ def apply_tree_temp_mutations(
     session: EditSession,
     operations: List[Dict[str, Any]],
 ) -> SuccessResult | ErrorResult:
+    """Return apply tree temp mutations."""
     if session.format_group != FORMAT_TREE_TEMP:
         return error_result_for_edit(
             "Session format_group is not tree-temp.",
@@ -618,6 +631,7 @@ def apply_tree_temp_mutations(
     roots = session.tree_temp_roots
 
     def rollback() -> None:
+        """Return rollback."""
         session.tree_temp_roots = deepcopy(roots_snap)
         apply_source_mutation(
             session,

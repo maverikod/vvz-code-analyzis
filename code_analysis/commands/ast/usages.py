@@ -95,6 +95,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -142,6 +143,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
         offset: int = 0,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         call_params: Dict[str, Any] = {
             "project_id": project_id,
             "target_name": target_name,

@@ -25,14 +25,33 @@ PROJECT_ID = "22222222-2222-4222-8222-222222222222"
 
 # Field lists from spec TZ-CA-DEADCODE-VERIFY-001 § target_under_test.output_contract
 TOP_LEVEL_FIELDS = (
-    "mode", "roots", "staleness", "symbols", "removable", "summary", "note", "format",
+    "mode",
+    "roots",
+    "staleness",
+    "symbols",
+    "removable",
+    "summary",
+    "note",
+    "format",
 )
 SYMBOL_FIELDS = (
-    "name", "kind", "class_name", "file", "line",
-    "classification", "production_callers", "test_callers", "importers",
+    "name",
+    "kind",
+    "class_name",
+    "file",
+    "line",
+    "classification",
+    "production_callers",
+    "test_callers",
+    "importers",
 )
 SUMMARY_FIELDS = (
-    "total_symbols", "live", "test_only", "import_only", "unused", "removable_count",
+    "total_symbols",
+    "live",
+    "test_only",
+    "import_only",
+    "unused",
+    "removable_count",
 )
 
 
@@ -40,9 +59,11 @@ class FakeDB:
     """Minimal DatabaseClient stand-in: returns canned rows keyed by SQL table."""
 
     def __init__(self, tables):
+        """Initialize the instance."""
         self._tables = tables
 
     def execute(self, sql, params=None):
+        """Execute the command."""
         if "FROM imports" in sql:
             key = "imports"
         elif "FROM usages" in sql:
@@ -60,10 +81,12 @@ class FakeDB:
         return {"data": list(self._tables.get(key, []))}
 
     def disconnect(self):
+        """Return disconnect."""
         pass
 
 
 def _write(root: Path, rel: str, content: str) -> None:
+    """Return write."""
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
@@ -78,25 +101,47 @@ def _build_four_class_project(root: Path) -> FakeDB:
     import_only_fn — imported by pkg/consumer.py but never called
     orphan_fn      — defined, never referenced anywhere
     """
-    _write(root, "pkg/sub/a.py", (
-        "def live_fn(): pass\n"
-        "def test_only_fn(): pass\n"
-        "def import_only_fn(): pass\n"
-        "def orphan_fn(): pass\n"
-    ))
+    _write(
+        root,
+        "pkg/sub/a.py",
+        (
+            "def live_fn(): pass\n"
+            "def test_only_fn(): pass\n"
+            "def import_only_fn(): pass\n"
+            "def orphan_fn(): pass\n"
+        ),
+    )
     _write(root, "pkg/prod_caller.py", "from pkg.sub.a import live_fn\nlive_fn()\n")
-    _write(root, "tests/test_a.py", "from pkg.sub.a import test_only_fn\ntest_only_fn()\n")
+    _write(
+        root, "tests/test_a.py", "from pkg.sub.a import test_only_fn\ntest_only_fn()\n"
+    )
     _write(root, "pkg/consumer.py", "from pkg.sub.a import import_only_fn\n")
 
     files = [
-        {"id": "1", "path": str(root / "pkg/sub/a.py"),
-         "relative_path": "pkg/sub/a.py", "tree_checksum": "x"},
-        {"id": "2", "path": str(root / "pkg/prod_caller.py"),
-         "relative_path": "pkg/prod_caller.py", "tree_checksum": "x"},
-        {"id": "3", "path": str(root / "tests/test_a.py"),
-         "relative_path": "tests/test_a.py", "tree_checksum": "x"},
-        {"id": "4", "path": str(root / "pkg/consumer.py"),
-         "relative_path": "pkg/consumer.py", "tree_checksum": "x"},
+        {
+            "id": "1",
+            "path": str(root / "pkg/sub/a.py"),
+            "relative_path": "pkg/sub/a.py",
+            "tree_checksum": "x",
+        },
+        {
+            "id": "2",
+            "path": str(root / "pkg/prod_caller.py"),
+            "relative_path": "pkg/prod_caller.py",
+            "tree_checksum": "x",
+        },
+        {
+            "id": "3",
+            "path": str(root / "tests/test_a.py"),
+            "relative_path": "tests/test_a.py",
+            "tree_checksum": "x",
+        },
+        {
+            "id": "4",
+            "path": str(root / "pkg/consumer.py"),
+            "relative_path": "pkg/consumer.py",
+            "tree_checksum": "x",
+        },
     ]
     functions = [
         {"file_id": "1", "name": "live_fn", "line": 1, "end_line": 1},
@@ -109,20 +154,38 @@ def _build_four_class_project(root: Path) -> FakeDB:
         {"target_name": "test_only_fn", "file_id": "3"},
     ]
     imports = [
-        {"file_id": "2", "name": "live_fn", "module": "pkg.sub.a", "import_type": "from"},
-        {"file_id": "3", "name": "test_only_fn", "module": "pkg.sub.a", "import_type": "from"},
-        {"file_id": "4", "name": "import_only_fn", "module": "pkg.sub.a", "import_type": "from"},
+        {
+            "file_id": "2",
+            "name": "live_fn",
+            "module": "pkg.sub.a",
+            "import_type": "from",
+        },
+        {
+            "file_id": "3",
+            "name": "test_only_fn",
+            "module": "pkg.sub.a",
+            "import_type": "from",
+        },
+        {
+            "file_id": "4",
+            "name": "import_only_fn",
+            "module": "pkg.sub.a",
+            "import_type": "from",
+        },
     ]
-    return FakeDB({
-        "files": files,
-        "functions": functions,
-        "usages": usages,
-        "imports": imports,
-        "leases": [],
-    })
+    return FakeDB(
+        {
+            "files": files,
+            "functions": functions,
+            "usages": usages,
+            "imports": imports,
+            "leases": [],
+        }
+    )
 
 
 def _call_dead_code(db: FakeDB, root: Path) -> dict:
+    """Return call dead code."""
     return analyze_tree_json(
         db=db,
         project_id=PROJECT_ID,
@@ -139,6 +202,7 @@ def _call_dead_code(db: FakeDB, root: Path) -> dict:
 # R-1: full output contract
 # ---------------------------------------------------------------------------
 
+
 def test_dead_code_full_contract(tmp_path):
     """R-1: every top-level, per-symbol, and summary field is present; format=json."""
     db = _build_four_class_project(tmp_path)
@@ -152,7 +216,9 @@ def test_dead_code_full_contract(tmp_path):
     assert data["symbols"], "symbols list must be non-empty for this fixture"
     for sym in data["symbols"]:
         for field in SYMBOL_FIELDS:
-            assert field in sym, f"missing symbol field {field!r} on symbol {sym.get('name')!r}"
+            assert (
+                field in sym
+            ), f"missing symbol field {field!r} on symbol {sym.get('name')!r}"
 
     summary = data["summary"]
     for field in SUMMARY_FIELDS:
@@ -162,6 +228,7 @@ def test_dead_code_full_contract(tmp_path):
 # ---------------------------------------------------------------------------
 # R-4: note field + removable_count invariant
 # ---------------------------------------------------------------------------
+
 
 def test_dead_code_note_and_removable_count(tmp_path):
     """R-4: note is present and non-empty; removable_count == len(removable)."""
@@ -176,22 +243,38 @@ def test_dead_code_note_and_removable_count(tmp_path):
 # R-5: staleness block in dead_code output
 # ---------------------------------------------------------------------------
 
+
 def test_dead_code_staleness_rebuilt(tmp_path):
     """R-5 (rebuilt path): staleness block present; diverged file lands in rebuilt."""
     _write(tmp_path, "pkg/sub/a.py", "def fn(): pass\n")
     _write(tmp_path, "pkg/sub/b.py", "def gn(): pass\n")
     a_sha = compute_content_checksum((tmp_path / "pkg/sub/a.py").read_text())
     files = [
-        {"id": "1", "path": str(tmp_path / "pkg/sub/a.py"),
-         "relative_path": "pkg/sub/a.py", "tree_checksum": a_sha},
-        {"id": "2", "path": str(tmp_path / "pkg/sub/b.py"),
-         "relative_path": "pkg/sub/b.py", "tree_checksum": "STALE"},
+        {
+            "id": "1",
+            "path": str(tmp_path / "pkg/sub/a.py"),
+            "relative_path": "pkg/sub/a.py",
+            "tree_checksum": a_sha,
+        },
+        {
+            "id": "2",
+            "path": str(tmp_path / "pkg/sub/b.py"),
+            "relative_path": "pkg/sub/b.py",
+            "tree_checksum": "STALE",
+        },
     ]
-    db = FakeDB({"files": files, "functions": [], "usages": [], "imports": [], "leases": []})
+    db = FakeDB(
+        {"files": files, "functions": [], "usages": [], "imports": [], "leases": []}
+    )
     data = analyze_tree_json(
-        db=db, project_id=PROJECT_ID, project_root=tmp_path,
-        roots=["pkg/sub/"], mode="dead_code",
-        include_stdlib=False, with_verdict=False, limit=50000,
+        db=db,
+        project_id=PROJECT_ID,
+        project_root=tmp_path,
+        roots=["pkg/sub/"],
+        mode="dead_code",
+        include_stdlib=False,
+        with_verdict=False,
+        limit=50000,
     )
 
     stale = data["staleness"]
@@ -213,19 +296,37 @@ def test_dead_code_staleness_skipped_active_session(tmp_path):
     _write(tmp_path, "pkg/sub/b.py", "def gn(): pass\n")
     a_sha = compute_content_checksum((tmp_path / "pkg/sub/a.py").read_text())
     files = [
-        {"id": "1", "path": str(tmp_path / "pkg/sub/a.py"),
-         "relative_path": "pkg/sub/a.py", "tree_checksum": a_sha},
-        {"id": "2", "path": str(tmp_path / "pkg/sub/b.py"),
-         "relative_path": "pkg/sub/b.py", "tree_checksum": "STALE"},
+        {
+            "id": "1",
+            "path": str(tmp_path / "pkg/sub/a.py"),
+            "relative_path": "pkg/sub/a.py",
+            "tree_checksum": a_sha,
+        },
+        {
+            "id": "2",
+            "path": str(tmp_path / "pkg/sub/b.py"),
+            "relative_path": "pkg/sub/b.py",
+            "tree_checksum": "STALE",
+        },
     ]
-    db = FakeDB({
-        "files": files, "functions": [], "usages": [], "imports": [],
-        "leases": [{"file_path": "pkg/sub/b.py"}],
-    })
+    db = FakeDB(
+        {
+            "files": files,
+            "functions": [],
+            "usages": [],
+            "imports": [],
+            "leases": [{"file_path": "pkg/sub/b.py"}],
+        }
+    )
     data = analyze_tree_json(
-        db=db, project_id=PROJECT_ID, project_root=tmp_path,
-        roots=["pkg/sub/"], mode="dead_code",
-        include_stdlib=False, with_verdict=False, limit=50000,
+        db=db,
+        project_id=PROJECT_ID,
+        project_root=tmp_path,
+        roots=["pkg/sub/"],
+        mode="dead_code",
+        include_stdlib=False,
+        with_verdict=False,
+        limit=50000,
     )
 
     stale = data["staleness"]

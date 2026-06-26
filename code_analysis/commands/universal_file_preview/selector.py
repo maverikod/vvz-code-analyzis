@@ -110,6 +110,7 @@ def _parse_slice(raw: str, length: int) -> list[int]:
     start_s, stop_s, step_s = parts[0], parts[1], parts[2]
 
     def _parse_optional_int(s: str) -> int | None:
+        """Return parse optional int."""
         s = s.strip()
         if s == "":
             return None

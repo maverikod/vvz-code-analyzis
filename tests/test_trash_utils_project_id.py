@@ -12,12 +12,14 @@ from code_analysis.core.trash_utils import (
 
 
 def test_is_probable_project_uuid_accepts_canonical_uuid_string() -> None:
+    """Verify test is probable project uuid accepts canonical uuid string."""
     u = str(uuid.uuid4())
     assert is_probable_project_uuid(u) is True
     assert is_probable_project_uuid("not-a-uuid") is False
 
 
 def test_resolve_trash_prefers_projectid_file_over_folder_name(tmp_path: Path) -> None:
+    """Verify test resolve trash prefers projectid file over folder name."""
     trash = tmp_path / "trash"
     trash.mkdir()
     folder = "MyProj_2025-01-01T00-00-00Z"
@@ -33,6 +35,7 @@ def test_resolve_trash_prefers_projectid_file_over_folder_name(tmp_path: Path) -
 def test_resolve_trash_uuid_folder_without_projectid_uses_directory_name(
     tmp_path: Path,
 ) -> None:
+    """Verify test resolve trash uuid folder without projectid uses directory name."""
     trash = tmp_path / "trash"
     trash.mkdir()
     pid = str(uuid.uuid4())
@@ -41,6 +44,7 @@ def test_resolve_trash_uuid_folder_without_projectid_uses_directory_name(
 
 
 def test_collect_project_ids_dedupes(tmp_path: Path) -> None:
+    """Verify test collect project ids dedupes."""
     trash = tmp_path / "trash"
     trash.mkdir()
     pid = str(uuid.uuid4())
@@ -52,6 +56,7 @@ def test_collect_project_ids_dedupes(tmp_path: Path) -> None:
 
 
 def test_merge_appends_db_only_orphans_after_disk_ids(tmp_path: Path) -> None:
+    """Verify test merge appends db only orphans after disk ids."""
     trash = tmp_path / "trash"
     trash.mkdir()
     pid_disk = str(uuid.uuid4())
@@ -62,6 +67,7 @@ def test_merge_appends_db_only_orphans_after_disk_ids(tmp_path: Path) -> None:
 
 
 def test_merge_dedupes_soft_deleted_already_on_disk(tmp_path: Path) -> None:
+    """Verify test merge dedupes soft deleted already on disk."""
     trash = tmp_path / "trash"
     trash.mkdir()
     pid = str(uuid.uuid4())
@@ -71,6 +77,7 @@ def test_merge_dedupes_soft_deleted_already_on_disk(tmp_path: Path) -> None:
 
 
 def test_merge_db_only_orphans_when_trash_dir_missing(tmp_path: Path) -> None:
+    """Verify test merge db only orphans when trash dir missing."""
     trash = tmp_path / "missing_trash"
     pid = str(uuid.uuid4())
     assert merge_project_ids_for_clear_trash_db_phase(trash, [pid]) == [pid]

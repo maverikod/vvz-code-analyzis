@@ -9,6 +9,7 @@ from code_analysis.commands.analyze_tree import staleness as st
 
 
 def test_sha_match_when_checksums_equal():
+    """Verify test sha match when checksums equal."""
     assert (
         st.classify_file(
             in_db=True,
@@ -22,6 +23,7 @@ def test_sha_match_when_checksums_equal():
 
 def test_mismatch_no_session_is_rebuilt():
     # R2: diverging disk checksum from tree_checksum moves the file to `rebuilt`.
+    """Verify test mismatch no session is rebuilt."""
     assert (
         st.classify_file(
             in_db=True,
@@ -34,6 +36,7 @@ def test_mismatch_no_session_is_rebuilt():
 
 
 def test_mismatch_active_session_is_skipped():
+    """Verify test mismatch active session is skipped."""
     assert (
         st.classify_file(
             in_db=True,
@@ -46,6 +49,7 @@ def test_mismatch_active_session_is_skipped():
 
 
 def test_no_stored_checksum_is_rebuilt():
+    """Verify test no stored checksum is rebuilt."""
     assert (
         st.classify_file(
             in_db=True,
@@ -58,6 +62,7 @@ def test_no_stored_checksum_is_rebuilt():
 
 
 def test_not_in_db():
+    """Verify test not in db."""
     assert (
         st.classify_file(
             in_db=False,
@@ -71,6 +76,7 @@ def test_not_in_db():
 
 def test_unreadable_content_conservative():
     # Cannot confirm the index is current → not sha_match.
+    """Verify test unreadable content conservative."""
     assert (
         st.classify_file(
             in_db=True,
@@ -83,6 +89,7 @@ def test_unreadable_content_conservative():
 
 
 def test_empty_counts_has_all_buckets():
+    """Verify test empty counts has all buckets."""
     counts = st.empty_counts()
     assert set(counts) == set(st.STALENESS_BUCKETS)
     assert all(v == 0 for v in counts.values())

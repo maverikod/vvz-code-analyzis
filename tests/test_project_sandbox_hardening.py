@@ -18,6 +18,7 @@ from code_analysis.core.project_sandbox import run_in_project_sandbox
 
 
 def _install_minimal_venv(root: Path) -> None:
+    """Return install minimal venv."""
     bindir = root / ".venv" / "bin"
     bindir.mkdir(parents=True)
     shutil.copy(Path(sys.executable), bindir / "python")
@@ -26,6 +27,7 @@ def _install_minimal_venv(root: Path) -> None:
 def test_stdout_truncated_when_exceeding_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Verify test stdout truncated when exceeding cap."""
     root = tmp_path / "p"
     root.mkdir()
     _install_minimal_venv(root)
@@ -42,6 +44,7 @@ def test_stdout_truncated_when_exceeding_cap(
 def test_timeout_sets_timed_out_and_uses_killpg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Verify test timeout sets timed out and uses killpg."""
     root = tmp_path / "p"
     root.mkdir()
     _install_minimal_venv(root)
@@ -51,6 +54,7 @@ def test_timeout_sets_timed_out_and_uses_killpg(
     real_killpg = os.killpg
 
     def track_killpg(pgid: int, sig: int) -> None:
+        """Return track killpg."""
         killpg_calls.append((pgid, sig))
         return real_killpg(pgid, sig)
 
@@ -64,6 +68,7 @@ def test_timeout_sets_timed_out_and_uses_killpg(
 def test_post_run_delay_applied_after_subprocess(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Verify test post run delay applied after subprocess."""
     root = tmp_path / "p"
     root.mkdir()
     _install_minimal_venv(root)
@@ -72,6 +77,7 @@ def test_post_run_delay_applied_after_subprocess(
     sleeps: list[float] = []
 
     def track_sleep(seconds: float) -> None:
+        """Return track sleep."""
         sleeps.append(seconds)
 
     monkeypatch.setattr(ps.time, "sleep", track_sleep)
@@ -84,6 +90,7 @@ def test_post_run_delay_applied_after_subprocess(
 
 
 def test_post_run_delay_negative_raises(tmp_path: Path) -> None:
+    """Verify test post run delay negative raises."""
     root = tmp_path / "p"
     root.mkdir()
     _install_minimal_venv(root)
@@ -94,6 +101,7 @@ def test_post_run_delay_negative_raises(tmp_path: Path) -> None:
 
 
 def test_small_script_no_truncation_marker(tmp_path: Path) -> None:
+    """Verify test small script no truncation marker."""
     root = tmp_path / "p"
     root.mkdir()
     _install_minimal_venv(root)

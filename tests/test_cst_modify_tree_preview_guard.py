@@ -10,12 +10,14 @@ from code_analysis.core.cst_tree.tree_builder import create_tree_from_code, remo
 
 
 def test_original_changed_line_span_single_line():
+    """Verify test original changed line span single line."""
     a = "x = 1\ny = 2\n"
     b = "x = 9\ny = 2\n"
     assert original_changed_line_span(a, b) == (1, 1)
 
 
 def test_diff_span_exceeds_guard_detects_runaway(tmp_path):
+    """Verify test diff span exceeds guard detects runaway."""
     src = "def f():\n    a = 1\n    b = 2\n"
     path = str(tmp_path / "guard.py")
     tree = create_tree_from_code(path, src)

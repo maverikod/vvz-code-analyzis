@@ -86,6 +86,7 @@ def apply_timeout(
 
 
 def _phase_from_manifest(raw_phase: str) -> SearchPhase:
+    """Return phase from manifest."""
     if not raw_phase:
         return SearchPhase.indexed_search
     try:

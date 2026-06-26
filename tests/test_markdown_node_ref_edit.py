@@ -56,6 +56,7 @@ Sub two body.
 
 
 def _section_tree_budget() -> PreviewBudget:
+    """Return section tree budget."""
     return PreviewBudget(
         preview_lines=20,
         value_preview_len=120,
@@ -64,6 +65,7 @@ def _section_tree_budget() -> PreviewBudget:
 
 
 def _preview_md(tmp_path: Path, content: str, node_ref: str) -> dict:
+    """Return preview md."""
     md = tmp_path / "doc.md"
     md.write_text(content, encoding="utf-8")
     budget = _section_tree_budget()
@@ -83,6 +85,7 @@ def _preview_md(tmp_path: Path, content: str, node_ref: str) -> dict:
 
 
 def _mock_db_bundle(tmp: Path) -> MagicMock:
+    """Return mock db bundle."""
     db = MagicMock()
     row = {
         "id": _PROJECT_UUID,
@@ -98,6 +101,7 @@ def _mock_db_bundle(tmp: Path) -> MagicMock:
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -107,6 +111,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 async def _open_md(tmp: Path, rel: str, content: str) -> tuple[str, Path]:
+    """Return open md."""
     _ensure_project_root(tmp)
     target = tmp / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +128,7 @@ async def _open_md(tmp: Path, rel: str, content: str) -> tuple[str, Path]:
 
 
 def test_preview_md_section_includes_line_range_attributes(tmp_path: Path) -> None:
+    """Verify test preview md section includes line range attributes."""
     envelope = _preview_md(tmp_path, _LEAF_SECTION, "only-section")
     attrs = envelope["focus"]["attributes"]
     assert attrs["start_line"] == "1"
@@ -184,6 +190,7 @@ async def test_edit_md_replace_by_uuid_node_ref_from_annotated_preview(
 
 @pytest.mark.asyncio
 async def test_edit_md_replace_by_node_ref(tmp_path: Path) -> None:
+    """Verify test edit md replace by node ref."""
     rel = "notes/doc.md"
     sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)
 
@@ -227,6 +234,7 @@ async def test_edit_md_replace_by_node_ref(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_edit_md_insert_by_node_ref_before_section(tmp_path: Path) -> None:
+    """Verify test edit md insert by node ref before section."""
     rel = "notes/before.md"
     sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)
 
@@ -270,6 +278,7 @@ async def test_edit_md_insert_by_node_ref_before_section(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_edit_md_insert_position_after_colon_node_ref(tmp_path: Path) -> None:
+    """Verify test edit md insert position after colon node ref."""
     rel = "notes/colon.md"
     sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)
 
@@ -312,6 +321,7 @@ async def test_edit_md_insert_position_after_colon_node_ref(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_edit_md_insert_by_node_ref_after_section(tmp_path: Path) -> None:
+    """Verify test edit md insert by node ref after section."""
     rel = "notes/doc.md"
     sid, target = await _open_md(tmp_path, rel, _LEAF_SECTION)
 
@@ -354,6 +364,7 @@ async def test_edit_md_insert_by_node_ref_after_section(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_universal_file_read_line_slice(tmp_path: Path) -> None:
+    """Verify test universal file read line slice."""
     _ensure_project_root(tmp_path)
     md = tmp_path / "readme.md"
     md.write_text("a\nb\nc\nd\n", encoding="utf-8")

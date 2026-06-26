@@ -180,6 +180,7 @@ def get_node_descendants(
     result: List[Tuple[TreeNodeMetadata, int]] = []
 
     def _collect(nid: str, depth: int) -> None:
+        """Return collect."""
         if max_depth > 0 and depth > max_depth:
             return
         meta = get_node_metadata(tree_id, nid, include_code=include_code)

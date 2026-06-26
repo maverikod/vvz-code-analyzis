@@ -45,6 +45,7 @@ _UUID_PREFIX_WIDTH = 39  # "[" + 36-char UUID + "] "
 
 
 def _source_line_count(raw: str) -> int:
+    """Return source line count."""
     if not raw:
         return 0
     return raw.count("\n") + (1 if not raw.endswith("\n") else 0)
@@ -66,6 +67,7 @@ def _read_markdown_source(file_path: str) -> str:
 
 
 def _build_line_to_node_ref(tokens: list[Any], file_path: str) -> dict[int, str]:
+    """Return build line to node ref."""
     line_to_ref: dict[int, str] = {}
     level_at_line: dict[int, int] = {}
     for token in tokens:
@@ -78,6 +80,7 @@ def _build_line_to_node_ref(tokens: list[Any], file_path: str) -> dict[int, str]
 
 
 def _block_token_to_node(file_path: str, token: Any) -> Node:
+    """Return block token to node."""
     assert token.map is not None
     return Node(
         node_kind=NodeKind.TREE_NODE,
@@ -193,6 +196,7 @@ class _Section:
         slug: str,
         node_ref: str,
     ) -> None:
+        """Initialize the instance."""
         self.level = level
         self.title = title
         self.slug = slug
@@ -304,12 +308,14 @@ class MarkdownFileHandler(FileHandler):
     """FileHandler for .md: section tree or annotated full-text (C-017)."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self._last_file_path: str | None = None
         self._last_tree: _Section | None = None
         self._last_block_tokens: dict[str, Any] = {}
 
     @property
     def supported_extensions(self) -> frozenset[str]:
+        """Return supported extensions."""
         return frozenset({".md"})
 
     def open_root(

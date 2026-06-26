@@ -1,3 +1,5 @@
+"""Test universal file preview pagination behavior."""
+
 from __future__ import annotations
 
 from code_analysis.commands.universal_file_preview.preview_pagination import (
@@ -7,6 +9,7 @@ from code_analysis.commands.universal_file_preview.preview_pagination import (
 
 
 def test_preview_pagination_fits_without_chunk() -> None:
+    """Verify test preview pagination fits without chunk."""
     envelope = {
         "focus": {"node_ref": "root", "node_kind": "mapping"},
         "selector_applied": None,
@@ -21,6 +24,7 @@ def test_preview_pagination_fits_without_chunk() -> None:
 
 
 def test_preview_pagination_returns_chunk_when_large() -> None:
+    """Verify test preview pagination returns chunk when large."""
     envelope = {
         "focus": {"node_ref": "root"},
         "selector_applied": None,
@@ -36,6 +40,7 @@ def test_preview_pagination_returns_chunk_when_large() -> None:
 
 
 def test_preview_pagination_offset_page() -> None:
+    """Verify test preview pagination offset page."""
     envelope = {"focus": {"node_ref": "root"}, "blocks": [{"text": "y" * 200}]}
     serialized = serialize_preview_envelope(envelope)
     page = apply_preview_pagination(envelope, offset=50, max_chars=80)

@@ -12,6 +12,7 @@ import sys
 
 
 def test_casmgr_sessions_help_exits_zero() -> None:
+    """Verify test casmgr sessions help exits zero."""
     proc = subprocess.run(
         [
             sys.executable,
@@ -29,6 +30,7 @@ def test_casmgr_sessions_help_exits_zero() -> None:
 
 
 def test_casmgr_locks_help_exits_zero() -> None:
+    """Verify test casmgr locks help exits zero."""
     proc = subprocess.run(
         [
             sys.executable,

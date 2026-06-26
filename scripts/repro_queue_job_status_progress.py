@@ -29,6 +29,7 @@ BASE = f"http://localhost:{PORT}"
 
 
 def jsonrpc(method: str, params: dict, req_id: int = 1) -> dict:
+    """Return jsonrpc."""
     r = requests.post(
         f"{BASE}/api/jsonrpc",
         json={"jsonrpc": "2.0", "id": req_id, "method": method, "params": params},
@@ -42,6 +43,7 @@ def jsonrpc(method: str, params: dict, req_id: int = 1) -> dict:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     job_id = f"repro_{uuid.uuid4().hex[:8]}"
     print("Reproduce: queue_get_job_status progress/description not updated")
     print(f"Job ID: {job_id}")
@@ -77,7 +79,9 @@ def main() -> int:
     poll_interval = 2
     progress_values = []
     descriptions = []
-    print(f"3. Polling queue_get_job_status {num_polls} times (every {poll_interval}s)...")
+    print(
+        f"3. Polling queue_get_job_status {num_polls} times (every {poll_interval}s)..."
+    )
     for i in range(num_polls):
         time.sleep(poll_interval)
         try:
@@ -91,7 +95,9 @@ def main() -> int:
         desc = (data.get("description") or "").strip()
         progress_values.append(progress)
         descriptions.append(desc)
-        print(f"   [{i+1}/{num_polls}] status={status} progress={progress}%  description={desc!r}")
+        print(
+            f"   [{i+1}/{num_polls}] status={status} progress={progress}%  description={desc!r}"
+        )
         if status in ("completed", "failed", "error", "stopped"):
             print("   Job finished.")
             break
@@ -106,8 +112,12 @@ def main() -> int:
     )
 
     if not progress_changed and not desc_changed:
-        print("BUG REPRODUCED: progress and description never changed in queue_get_job_status")
-        print("  (Job runs and calls set_progress/set_description, but API returns initial values.)")
+        print(
+            "BUG REPRODUCED: progress and description never changed in queue_get_job_status"
+        )
+        print(
+            "  (Job runs and calls set_progress/set_description, but API returns initial values.)"
+        )
         return 1
     if not progress_changed:
         print("PARTIAL: progress never changed in queue_get_job_status")
@@ -115,7 +125,9 @@ def main() -> int:
     if not desc_changed:
         print("PARTIAL: description never changed in queue_get_job_status")
         return 1
-    print("OK: progress and/or description updated in queue_get_job_status (bug not present here)")
+    print(
+        "OK: progress and/or description updated in queue_get_job_status (bug not present here)"
+    )
     return 0
 
 

@@ -37,6 +37,7 @@ from code_analysis.core.storage_paths import StoragePaths
 
 
 def _storage_paths(tmp_path: Path, trash_dir: Path) -> StoragePaths:
+    """Return storage paths."""
     return StoragePaths(
         sessions_root=tmp_path / "search_sessions",
         log_dir=tmp_path / "logs",
@@ -61,14 +62,19 @@ async def test_clear_trash_mcp_db_clear_before_disk_command(tmp_path: Path) -> N
     call_order: list[object] = []
 
     async def track_db_clear(_db: object, project_id: str) -> None:
+        """Return track db clear."""
         call_order.append(("db_clear", project_id))
 
     class SpyClearTrashCommand:
+        """Represent SpyClearTrashCommand."""
+
         def __init__(self, trash_dir: str = "", dry_run: bool = False) -> None:
+            """Initialize the instance."""
             self._trash_dir = trash_dir
             self._dry_run = dry_run
 
         def execute(self) -> dict:
+            """Execute the command."""
             call_order.append("disk_clear")
             return {
                 "success": True,
@@ -78,26 +84,33 @@ async def test_clear_trash_mcp_db_clear_before_disk_command(tmp_path: Path) -> N
                 "trash_dir": self._trash_dir,
             }
 
-    with patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
-        return_value=storage,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_config_path",
-        return_value=tmp_path / "config.json",
-    ), patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=MagicMock(disconnect=MagicMock()),
-    ), patch(
-        "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
-        new=AsyncMock(side_effect=track_db_clear),
-    ), patch(
-        "code_analysis.commands.trash_commands.ClearTrashCommand",
-        SpyClearTrashCommand,
+    with (
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+            return_value=storage,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=MagicMock(disconnect=MagicMock()),
+        ),
+        patch(
+            "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
+            new=AsyncMock(side_effect=track_db_clear),
+        ),
+        patch(
+            "code_analysis.commands.trash_commands.ClearTrashCommand",
+            SpyClearTrashCommand,
+        ),
     ):
         cmd = ClearTrashMCPCommand()
         result = await cmd.execute(dry_run=False, trash_dir=str(trash_dir))
@@ -120,6 +133,7 @@ async def test_clear_trash_mcp_faiss_unlink_after_db_before_disk(
     call_order: list[object] = []
 
     async def track_db_clear(_db: object, project_id: str) -> None:
+        """Return track db clear."""
         call_order.append(("db_clear", project_id))
 
     mock_faiss_path = MagicMock()
@@ -127,11 +141,15 @@ async def test_clear_trash_mcp_faiss_unlink_after_db_before_disk(
     mock_faiss_path.unlink.side_effect = lambda: call_order.append("faiss_unlink")
 
     class SpyClearTrashCommand:
+        """Represent SpyClearTrashCommand."""
+
         def __init__(self, trash_dir: str = "", dry_run: bool = False) -> None:
+            """Initialize the instance."""
             self._trash_dir = trash_dir
             self._dry_run = dry_run
 
         def execute(self) -> dict:
+            """Execute the command."""
             call_order.append("disk_clear")
             return {
                 "success": True,
@@ -141,29 +159,37 @@ async def test_clear_trash_mcp_faiss_unlink_after_db_before_disk(
                 "trash_dir": self._trash_dir,
             }
 
-    with patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
-        return_value=storage,
-    ), patch(
-        "code_analysis.core.storage_paths.get_faiss_index_path",
-        return_value=mock_faiss_path,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_config_path",
-        return_value=tmp_path / "config.json",
-    ), patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=MagicMock(disconnect=MagicMock()),
-    ), patch(
-        "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
-        new=AsyncMock(side_effect=track_db_clear),
-    ), patch(
-        "code_analysis.commands.trash_commands.ClearTrashCommand",
-        SpyClearTrashCommand,
+    with (
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+            return_value=storage,
+        ),
+        patch(
+            "code_analysis.core.storage_paths.get_faiss_index_path",
+            return_value=mock_faiss_path,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=MagicMock(disconnect=MagicMock()),
+        ),
+        patch(
+            "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
+            new=AsyncMock(side_effect=track_db_clear),
+        ),
+        patch(
+            "code_analysis.commands.trash_commands.ClearTrashCommand",
+            SpyClearTrashCommand,
+        ),
     ):
         cmd = ClearTrashMCPCommand()
         result = await cmd.execute(dry_run=False, trash_dir=str(trash_dir))
@@ -186,14 +212,19 @@ async def test_clear_trash_mcp_db_only_soft_deleted_orphan_before_disk(
     call_order: list[object] = []
 
     async def track_db_clear(_db: object, project_id: str) -> None:
+        """Return track db clear."""
         call_order.append(("db_clear", project_id))
 
     class SpyClearTrashCommand:
+        """Represent SpyClearTrashCommand."""
+
         def __init__(self, trash_dir: str = "", dry_run: bool = False) -> None:
+            """Initialize the instance."""
             self._trash_dir = trash_dir
             self._dry_run = dry_run
 
         def execute(self) -> dict:
+            """Execute the command."""
             call_order.append("disk_clear")
             return {
                 "success": True,
@@ -203,30 +234,38 @@ async def test_clear_trash_mcp_db_only_soft_deleted_orphan_before_disk(
                 "trash_dir": self._trash_dir,
             }
 
-    with patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
-        return_value=storage,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_config_path",
-        return_value=tmp_path / "config.json",
-    ), patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=MagicMock(disconnect=MagicMock()),
-    ), patch.object(
-        clear_trash_module,
-        "_soft_deleted_project_ids",
-        return_value=[orphan_pid],
-    ), patch(
-        "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
-        new=AsyncMock(side_effect=track_db_clear),
-    ), patch(
-        "code_analysis.commands.trash_commands.ClearTrashCommand",
-        SpyClearTrashCommand,
+    with (
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+            return_value=storage,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=MagicMock(disconnect=MagicMock()),
+        ),
+        patch.object(
+            clear_trash_module,
+            "_soft_deleted_project_ids",
+            return_value=[orphan_pid],
+        ),
+        patch(
+            "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
+            new=AsyncMock(side_effect=track_db_clear),
+        ),
+        patch(
+            "code_analysis.commands.trash_commands.ClearTrashCommand",
+            SpyClearTrashCommand,
+        ),
     ):
         cmd = ClearTrashMCPCommand()
         result = await cmd.execute(dry_run=False, trash_dir=str(trash_dir))
@@ -249,13 +288,18 @@ async def test_permanently_delete_from_trash_mcp_db_clear_before_disk_command(
     call_order: list[object] = []
 
     async def track_db_clear(_db: object, project_id: str) -> None:
+        """Return track db clear."""
         call_order.append(("db_clear", project_id))
 
     class SpyPermanentlyDeleteFromTrashCommand:
+        """Represent SpyPermanentlyDeleteFromTrashCommand."""
+
         def __init__(self, trash_dir: str = "", trash_folder_name: str = "") -> None:
+            """Initialize the instance."""
             self.trash_folder_name = trash_folder_name
 
         def execute(self) -> dict:
+            """Execute the command."""
             call_order.append("disk_clear")
             return {
                 "success": True,
@@ -263,26 +307,33 @@ async def test_permanently_delete_from_trash_mcp_db_clear_before_disk_command(
                 "trash_folder_name": self.trash_folder_name,
             }
 
-    with patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
-        return_value=storage,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_config_path",
-        return_value=tmp_path / "config.json",
-    ), patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=MagicMock(disconnect=MagicMock()),
-    ), patch(
-        "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
-        new=AsyncMock(side_effect=track_db_clear),
-    ), patch(
-        "code_analysis.commands.trash_commands.PermanentlyDeleteFromTrashCommand",
-        SpyPermanentlyDeleteFromTrashCommand,
+    with (
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+            return_value=storage,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=MagicMock(disconnect=MagicMock()),
+        ),
+        patch(
+            "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
+            new=AsyncMock(side_effect=track_db_clear),
+        ),
+        patch(
+            "code_analysis.commands.trash_commands.PermanentlyDeleteFromTrashCommand",
+            SpyPermanentlyDeleteFromTrashCommand,
+        ),
     ):
         cmd = PermanentlyDeleteFromTrashMCPCommand()
         result = await cmd.execute(trash_folder_name=pid, trash_dir=str(trash_dir))
@@ -305,13 +356,18 @@ async def test_permanently_delete_from_trash_mcp_no_project_id_skips_db_only_dis
     call_order: list[object] = []
 
     async def track_db_clear(_db: object, project_id: str) -> None:
+        """Return track db clear."""
         call_order.append(("db_clear", project_id))
 
     class SpyPermanentlyDeleteFromTrashCommand:
+        """Represent SpyPermanentlyDeleteFromTrashCommand."""
+
         def __init__(self, trash_dir: str = "", trash_folder_name: str = "") -> None:
+            """Initialize the instance."""
             self.trash_folder_name = trash_folder_name
 
         def execute(self) -> dict:
+            """Execute the command."""
             call_order.append("disk_clear")
             return {
                 "success": True,
@@ -321,26 +377,33 @@ async def test_permanently_delete_from_trash_mcp_no_project_id_skips_db_only_dis
 
     mock_open_db = MagicMock(return_value=MagicMock(disconnect=MagicMock()))
 
-    with patch(
-        "code_analysis.core.storage_paths.load_raw_config",
-        return_value={},
-    ), patch(
-        "code_analysis.core.storage_paths.resolve_storage_paths",
-        return_value=storage,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_config_path",
-        return_value=tmp_path / "config.json",
-    ), patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        mock_open_db,
-    ), patch(
-        "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
-        new=AsyncMock(side_effect=track_db_clear),
-    ), patch(
-        "code_analysis.commands.trash_commands.PermanentlyDeleteFromTrashCommand",
-        SpyPermanentlyDeleteFromTrashCommand,
+    with (
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={},
+        ),
+        patch(
+            "code_analysis.core.storage_paths.resolve_storage_paths",
+            return_value=storage,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            mock_open_db,
+        ),
+        patch(
+            "code_analysis.commands.clear_project_data_impl._clear_project_data_impl",
+            new=AsyncMock(side_effect=track_db_clear),
+        ),
+        patch(
+            "code_analysis.commands.trash_commands.PermanentlyDeleteFromTrashCommand",
+            SpyPermanentlyDeleteFromTrashCommand,
+        ),
     ):
         cmd = PermanentlyDeleteFromTrashMCPCommand()
         result = await cmd.execute(

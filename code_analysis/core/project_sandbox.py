@@ -152,6 +152,7 @@ def _run_sandbox_subprocess(
     err_holder: List[Tuple[str, bool]] = [("", False)]
 
     def read_stdout() -> None:
+        """Return read stdout."""
         try:
             out_holder[0] = _read_pipe_limited_bytes(stdout_pipe, cap_out)
         finally:
@@ -161,6 +162,7 @@ def _run_sandbox_subprocess(
                 pass
 
     def read_stderr() -> None:
+        """Return read stderr."""
         try:
             err_holder[0] = _read_pipe_limited_bytes(stderr_pipe, cap_err)
         finally:

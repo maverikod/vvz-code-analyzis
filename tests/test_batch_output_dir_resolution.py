@@ -14,6 +14,7 @@ from code_analysis.core.storage_paths import (
 
 
 def test_resolve_batch_output_dir_relative_to_config_dir(tmp_path: Path) -> None:
+    """Verify test resolve batch output dir relative to config dir."""
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
     resolved = resolve_batch_output_dir(
@@ -23,6 +24,7 @@ def test_resolve_batch_output_dir_relative_to_config_dir(tmp_path: Path) -> None
 
 
 def test_server_config_accepts_relative_batch_output_dir() -> None:
+    """Verify test server config accepts relative batch output dir."""
     cfg = ServerConfig(chunker={"enabled": False, "url": "localhost", "port": 8009})
     assert cfg.batch_output_dir == "data/batch_output"
 
@@ -30,10 +32,12 @@ def test_server_config_accepts_relative_batch_output_dir() -> None:
 def test_apply_resolved_batch_output_dir_prod_fallback(
     monkeypatch, tmp_path: Path
 ) -> None:
+    """Verify test apply resolved batch output dir prod fallback."""
     config_path = Path("/etc/casmgr/config.json")
     db_path = tmp_path / "data" / "code_analysis.db"
 
     def _fake_load(_path: Path) -> dict:
+        """Return fake load."""
         return {
             "code_analysis": {
                 "storage": {"db_path": str(db_path)},
@@ -50,6 +54,7 @@ def test_apply_resolved_batch_output_dir_prod_fallback(
 
 
 def test_server_config_rejects_batch_output_under_usr() -> None:
+    """Verify test server config rejects batch output under usr."""
     with pytest.raises(ValueError, match="system path"):
         ServerConfig(
             batch_output_dir="/usr/lib/casmgr-server/data/batch_output",

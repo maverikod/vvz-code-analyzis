@@ -22,9 +22,11 @@ from tests.test_config_driver_helpers import (
 
 
 def _base_config(tmp_path: Path) -> dict:
+    """Return base config."""
     create_dummy_ssl_certs_in_dir(tmp_path)
 
     def rel(name: str) -> str:
+        """Return rel."""
         return str((tmp_path / name).resolve())
 
     return {
@@ -59,6 +61,7 @@ def _base_config(tmp_path: Path) -> dict:
 
 
 def test_iter_tls_material_blocks_finds_all_sections(tmp_path: Path) -> None:
+    """Verify test iter tls material blocks finds all sections."""
     config = _base_config(tmp_path)
     config["client"] = {
         "enabled": False,
@@ -78,6 +81,7 @@ def test_iter_tls_material_blocks_finds_all_sections(tmp_path: Path) -> None:
 
 
 def test_cert_without_key_reports_error(tmp_path: Path) -> None:
+    """Verify test cert without key reports error."""
     config = _base_config(tmp_path)
     config["server"]["ssl"].pop("key")
     block = next(iter_tls_material_blocks(config))
@@ -86,6 +90,7 @@ def test_cert_without_key_reports_error(tmp_path: Path) -> None:
 
 
 def test_key_without_cert_reports_error(tmp_path: Path) -> None:
+    """Verify test key without cert reports error."""
     config = _base_config(tmp_path)
     config["code_analysis"]["chunker"].pop("cert_file")
     block = next(
@@ -96,6 +101,7 @@ def test_key_without_cert_reports_error(tmp_path: Path) -> None:
 
 
 def test_mismatched_cert_key_reports_error(tmp_path: Path) -> None:
+    """Verify test mismatched cert key reports error."""
     create_dummy_ssl_certs_in_dir(tmp_path)
     cert_path, key_path = create_mismatched_key_pair(tmp_path)
     config = _base_config(tmp_path)
@@ -107,6 +113,7 @@ def test_mismatched_cert_key_reports_error(tmp_path: Path) -> None:
 
 
 def test_crl_signed_by_configured_ca_passes(tmp_path: Path) -> None:
+    """Verify test crl signed by configured ca passes."""
     create_dummy_ssl_certs_in_dir(tmp_path)
     crl_path = create_crl_for_ca(tmp_path)
     ca_path = tmp_path / "ca.crt"
@@ -115,6 +122,7 @@ def test_crl_signed_by_configured_ca_passes(tmp_path: Path) -> None:
 
 
 def test_crl_not_signed_by_wrong_ca_fails(tmp_path: Path) -> None:
+    """Verify test crl not signed by wrong ca fails."""
     create_dummy_ssl_certs_in_dir(tmp_path)
     crl_path = create_crl_for_ca(tmp_path)
     # Second CA not used to sign the CRL
@@ -146,6 +154,7 @@ def test_crl_not_signed_by_wrong_ca_fails(tmp_path: Path) -> None:
 
 
 def test_validator_checks_all_ssl_sections(tmp_path: Path) -> None:
+    """Verify test validator checks all ssl sections."""
     config = _base_config(tmp_path)
     crl_path = create_crl_for_ca(tmp_path)
     rel_crl = str(crl_path.resolve())
@@ -191,6 +200,7 @@ def test_validator_checks_all_ssl_sections(tmp_path: Path) -> None:
 
 
 def test_svo_service_config_cert_key_pairing(tmp_path: Path) -> None:
+    """Verify test svo service config cert key pairing."""
     create_dummy_ssl_certs_in_dir(tmp_path)
     SVOServiceConfig(
         enabled=True,
@@ -207,6 +217,7 @@ def test_svo_service_config_cert_key_pairing(tmp_path: Path) -> None:
 
 
 def test_svo_service_config_crl_against_ca(tmp_path: Path) -> None:
+    """Verify test svo service config crl against ca."""
     create_dummy_ssl_certs_in_dir(tmp_path)
     crl_path = create_crl_for_ca(tmp_path)
     SVOServiceConfig(

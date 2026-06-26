@@ -36,6 +36,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["PermanentlyDeleteFromTrashMCPCommand"]) -> Dict[str, Any]:
+        """Return the schema for selecting one direct trash entry to delete."""
         return {
             "type": "object",
             "description": "Permanently delete one folder from trash",
@@ -65,6 +66,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
         trash_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Remove a trashed project's database, FAISS, and filesystem data."""
         try:
             from ...core.storage_paths import (
                 load_raw_config,

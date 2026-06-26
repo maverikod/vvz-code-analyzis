@@ -76,16 +76,19 @@ def session_has_map_tree(session: EditSession) -> bool:
 
 
 def _read_tree_sections(session: EditSession) -> TreeSections:
+    """Return read tree sections."""
     return parse_tree_file(session.session_tree_path.read_text(encoding="utf-8"))
 
 
 def _parse_marked_tree_root(sections: TreeSections, handler_id: Optional[str]) -> Any:
+    """Return parse marked tree root."""
     if handler_id == "yaml":
         return yaml.safe_load(sections.tree)
     return json.loads(sections.tree)
 
 
 def _wrapper_short_id(node: Any, field_name: str = "short_id") -> int:
+    """Return wrapper short id."""
     if not isinstance(node, dict) or _WRAPPER_ID_KEY not in node:
         raise ValueError(f"marked node missing {_WRAPPER_ID_KEY!r}")
     raw = node[_WRAPPER_ID_KEY]
@@ -95,6 +98,7 @@ def _wrapper_short_id(node: Any, field_name: str = "short_id") -> int:
 
 
 def _marked_child_at(node: Any, seg: str) -> Any:
+    """Return marked child at."""
     if isinstance(node, list):
         try:
             return node[int(seg)]
@@ -122,6 +126,7 @@ def _marked_child_at(node: Any, seg: str) -> Any:
 
 
 def _node_at_json_pointer(root: Any, pointer: str) -> Any:
+    """Return node at json pointer."""
     segs = pointer_to_segments(pointer)
     cur = root
     if not segs:
@@ -139,6 +144,7 @@ def _resolve_pointer_to_short_id(
     sections: TreeSections,
     handler_id: Optional[str],
 ) -> int:
+    """Return resolve pointer to short id."""
     root = _parse_marked_tree_root(sections, handler_id)
     return _wrapper_short_id(_node_at_json_pointer(root, pointer), "json_pointer")
 
@@ -146,6 +152,7 @@ def _resolve_pointer_to_short_id(
 def _map_entries_in_line_range(
     sections: TreeSections, start_line: int, end_line: int
 ) -> List[Any]:
+    """Return map entries in line range."""
     matched = []
     for entry in sections.map.entries:
         attrs = entry.attributes or {}
@@ -162,6 +169,7 @@ def _resolve_markdown_ref_to_short_id(
     source_abs: Path,
     unmarked_source: str,
 ) -> int:
+    """Return resolve markdown ref to short id."""
     bounds = resolve_markdown_line_range(
         unmarked_source,
         node_ref,
@@ -184,6 +192,7 @@ def _resolve_markdown_insert_anchor(
     source_abs: Path,
     unmarked_source: str,
 ) -> Tuple[int, str]:
+    """Return resolve markdown insert anchor."""
     bounds = resolve_markdown_line_range(
         unmarked_source,
         node_ref,
@@ -258,12 +267,14 @@ def resolve_node_ref_to_short_id(
 
 
 def _root_short_id(sections: TreeSections) -> int:
+    """Return root short id."""
     if sections.map.entries:
         return min(entry.short_id for entry in sections.map.entries)
     return 1
 
 
 def _content_from_op(op: Dict[str, Any]) -> str:
+    """Return content from op."""
     raw_code = op.get("code")
     if isinstance(raw_code, str):
         return raw_code
@@ -278,6 +289,7 @@ def _content_from_op(op: Dict[str, Any]) -> str:
 
 
 def _coalesce_node_ref_keys(op: Dict[str, Any]) -> Dict[str, Any]:
+    """Return coalesce node ref keys."""
     m = dict(op)
     for ref_key, id_key in (
         ("node_ref", "node_id"),
@@ -290,6 +302,7 @@ def _coalesce_node_ref_keys(op: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _normalize_action(op: Dict[str, Any]) -> str:
+    """Return normalize action."""
     raw_action = op.get("action")
     raw_type = op.get("type")
     if isinstance(raw_action, str) and raw_action.strip():
@@ -300,6 +313,7 @@ def _normalize_action(op: Dict[str, Any]) -> str:
 
 
 def _map_insert_position(position: str, *, sibling: bool) -> str:
+    """Return map insert position."""
     pos = position.strip().lower()
     if sibling:
         if pos in _POSITION_SIBLING:
@@ -320,6 +334,7 @@ def _map_insert_position(position: str, *, sibling: bool) -> str:
 
 
 def _map_move_position(position: str) -> str:
+    """Return map move position."""
     pos = position.strip().lower()
     if pos == "first":
         return "first_child"
@@ -333,6 +348,7 @@ def _map_move_position(position: str) -> str:
 def _ref_resolution_kwargs(
     session: Optional[EditSession],
 ) -> Dict[str, Any]:
+    """Return ref resolution kwargs."""
     if session is None:
         return {}
     hid = session.source_abs.suffix.lower()
@@ -359,6 +375,7 @@ def _resolve_ref(
     sections: TreeSections,
     session: Optional[EditSession],
 ) -> int:
+    """Return resolve ref."""
     return resolve_node_ref_to_short_id(
         node_ref, sections, **_ref_resolution_kwargs(session)
     )
@@ -566,6 +583,7 @@ def _sync_map_after_tree_mutation(
     new_marked: str,
     new_next_free: int,
 ) -> TreeSections:
+    """Return sync map after tree mutation."""
     handler = HandlerRegistry.default_registry().resolve(session.source_abs)
     denuded = handler.unmark(new_marked)
     parsed_nodes = handler.parse_content(Path(session.file_path), denuded)

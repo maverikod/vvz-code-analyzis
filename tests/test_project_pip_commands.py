@@ -64,6 +64,7 @@ def _assert_rich_metadata(cmd_cls: Type[BaseMCPCommand]) -> None:
 
 
 def _assert_schema_examples(schema: Dict[str, Any]) -> None:
+    """Return assert schema examples."""
     assert "examples" in schema and schema["examples"]
     props = schema.get("properties") or {}
     for key, prop in props.items():
@@ -75,12 +76,14 @@ def _assert_schema_examples(schema: Dict[str, Any]) -> None:
 
 @pytest.mark.asyncio
 async def test_project_pip_install_uses_asyncio_to_thread(tmp_path: Path) -> None:
+    """Verify test project pip install uses asyncio to thread."""
     root = tmp_path / "proj"
     root.mkdir()
     fake = SandboxRunResult(stdout="ok", stderr="", returncode=0, timed_out=False)
     calls: list[tuple] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         calls.append((fn, args, kwargs))
         return fake
 
@@ -115,6 +118,7 @@ async def test_project_pip_install_uses_asyncio_to_thread(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_project_pip_install_rejects_empty_sources(tmp_path: Path) -> None:
+    """Verify test project pip install rejects empty sources."""
     root = tmp_path / "proj"
     root.mkdir()
     with patch(
@@ -133,12 +137,14 @@ async def test_project_pip_install_rejects_empty_sources(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_project_pip_list_freeze_uses_pip_freeze(tmp_path: Path) -> None:
+    """Verify test project pip list freeze uses pip freeze."""
     root = tmp_path / "proj"
     root.mkdir()
     fake = SandboxRunResult(stdout="x==1", stderr="", returncode=0, timed_out=False)
     calls: list[tuple] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         calls.append((fn, args[1]))
         return fake
 
@@ -169,12 +175,14 @@ async def test_project_pip_list_freeze_uses_pip_freeze(tmp_path: Path) -> None:
 async def test_project_pip_show_and_uninstall_delegate_to_run_pip(
     tmp_path: Path,
 ) -> None:
+    """Verify test project pip show and uninstall delegate to run pip."""
     root = tmp_path / "proj"
     root.mkdir()
     fake = SandboxRunResult(stdout="", stderr="", returncode=0, timed_out=False)
     captured: list[list[str]] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         captured.append(list(args[1]))
         return fake
 
@@ -230,6 +238,7 @@ def test_project_pip_install_uses_queue_other_pip_commands_do_not() -> None:
 def test_project_pip_schemas_require_project_id(
     cmd_cls: Type[BaseMCPCommand],
 ) -> None:
+    """Verify test project pip schemas require project id."""
     schema = cmd_cls.get_schema()
     required = schema.get("required") or []
     assert "project_id" in required, cmd_cls.name
@@ -238,6 +247,7 @@ def test_project_pip_schemas_require_project_id(
 
 
 def test_project_pip_command_names_stable() -> None:
+    """Verify test project pip command names stable."""
     assert ProjectPipInstallCommand.name == "project_pip_install"
     assert ProjectPipListCommand.name == "project_pip_list"
     assert ProjectPipShowCommand.name == "project_pip_show"
@@ -250,11 +260,13 @@ def test_project_pip_command_names_stable() -> None:
 def test_project_pip_metadata_matches_run_project_paradigm(
     cmd_cls: Type[BaseMCPCommand],
 ) -> None:
+    """Verify test project pip metadata matches run project paradigm."""
     _assert_rich_metadata(cmd_cls)
 
 
 @pytest.mark.parametrize("cmd_cls", _PROJECT_PIP_COMMANDS)
 def test_project_pip_get_schema_has_examples(cmd_cls: Type[BaseMCPCommand]) -> None:
+    """Verify test project pip get schema has examples."""
     _assert_schema_examples(cmd_cls.get_schema())
 
 
@@ -272,6 +284,7 @@ def test_run_pip_in_project_sandbox_delegates_to_run_module(
         args: list[str] | None,
         timeout_seconds: int | None,
     ) -> SandboxRunResult:
+        """Return fake run module."""
         captured["root"] = root_path
         captured["module"] = module
         captured["args"] = args
@@ -289,6 +302,7 @@ def test_run_pip_in_project_sandbox_delegates_to_run_module(
 async def test_project_pip_check_uses_pip_list_json_and_structured_results(
     tmp_path: Path,
 ) -> None:
+    """Verify test project pip check uses pip list json and structured results."""
     root = tmp_path / "proj"
     root.mkdir()
     pip_json = (
@@ -298,6 +312,7 @@ async def test_project_pip_check_uses_pip_list_json_and_structured_results(
     captured: list[list[str]] = []
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         captured.append(list(args[1]))
         return fake
 
@@ -334,12 +349,14 @@ async def test_project_pip_check_uses_pip_list_json_and_structured_results(
 
 @pytest.mark.asyncio
 async def test_project_pip_search_lists_and_filters_installed(tmp_path: Path) -> None:
+    """Verify test project pip search lists and filters installed."""
     root = tmp_path / "proj"
     root.mkdir()
     pip_json = '[{"name": "alpha", "version": "1.0"}, {"name": "beta-test", "version": "2.0"}]\n'
     fake = SandboxRunResult(stdout=pip_json, stderr="", returncode=0, timed_out=False)
 
     async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
         return fake
 
     with patch(
@@ -380,6 +397,7 @@ async def test_project_pip_search_lists_and_filters_installed(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_project_pip_search_rejects_bad_match_mode(tmp_path: Path) -> None:
+    """Verify test project pip search rejects bad match mode."""
     root = tmp_path / "proj"
     root.mkdir()
     with patch(

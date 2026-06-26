@@ -50,6 +50,7 @@ class AnchorMismatch(Exception):
     """Raised when an anchor check fails."""
 
     def __init__(self, message: str, details: dict[str, Any]):
+        """Initialize the instance."""
         super().__init__(message)
         self.details = details
 
@@ -105,6 +106,7 @@ def _best_sidecar_node_at_line(
     start_line: int,
     metadata_node_order: Optional[list[Any]] = None,
 ) -> Optional[dict[str, Any]]:
+    """Return best sidecar node at line."""
     ordered_values: list[Any] = []
     seen_keys: set[str] = set()
     if metadata_node_order:

@@ -1,3 +1,5 @@
+"""Test filesystem grep command behavior and streaming callbacks."""
+
 from __future__ import annotations
 
 import time
@@ -15,6 +17,7 @@ from code_analysis.commands.fs_grep_command import FsGrepCommand
 
 @pytest.mark.asyncio
 async def test_fs_grep_skips_large_files_before_reading(tmp_path) -> None:
+    """Verify test fs grep skips large files before reading."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "small.txt").write_text("needle here\n", encoding="utf-8")
@@ -42,6 +45,7 @@ async def test_fs_grep_skips_large_files_before_reading(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_fs_grep_on_match_batch_emits_per_file(tmp_path) -> None:
+    """Verify test fs grep on match batch emits per file."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "a.txt").write_text("needle one\n", encoding="utf-8")
@@ -51,6 +55,7 @@ async def test_fs_grep_on_match_batch_emits_per_file(tmp_path) -> None:
     batches: list[list[dict]] = []
 
     def on_batch(batch: list[dict]) -> None:
+        """Return on batch."""
         batches.append(list(batch))
 
     with patch.object(
@@ -74,6 +79,7 @@ async def test_fs_grep_on_match_batch_emits_per_file(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_fs_grep_streams_matching_lines(tmp_path) -> None:
+    """Verify test fs grep streams matching lines."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "a.txt").write_text("alpha\nbeta\nALPHA\n", encoding="utf-8")
@@ -101,6 +107,7 @@ async def test_fs_grep_streams_matching_lines(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_fs_grep_truncates_line_preview_len(tmp_path) -> None:
+    """Verify test fs grep truncates line preview len."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "a.txt").write_text("needle-" + ("x" * 50) + "\n", encoding="utf-8")
@@ -121,6 +128,7 @@ async def test_fs_grep_truncates_line_preview_len(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_fs_grep_python_match_includes_block_id(tmp_path) -> None:
+    """Verify test fs grep python match includes block id."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     py_path = project_root / "sample.py"
@@ -153,6 +161,7 @@ async def test_fs_grep_python_match_includes_block_id(tmp_path) -> None:
 
 
 def test_fs_grep_auto_queue_on_inline_timeout_default() -> None:
+    """Verify test fs grep auto queue on inline timeout default."""
     schema = FsGrepCommand.get_schema()
     props = schema["properties"]
     assert FsGrepCommand.use_queue is False
@@ -164,6 +173,7 @@ def test_fs_grep_auto_queue_on_inline_timeout_default() -> None:
 async def test_fs_grep_stops_at_max_matches_before_scanning_all_files(
     tmp_path,
 ) -> None:
+    """Verify test fs grep stops at max matches before scanning all files."""
     project_root = tmp_path / "project"
     pkg = project_root / "code_analysis"
     pkg.mkdir(parents=True)
@@ -230,6 +240,7 @@ async def test_fs_grep_xpath_production_params_return_success_not_timeout(
 
 @pytest.mark.asyncio
 async def test_fs_grep_budget_exceeded_warning_when_file_cap_hit(tmp_path) -> None:
+    """Verify test fs grep budget exceeded warning when file cap hit."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     for i in range(400):
@@ -255,11 +266,13 @@ async def test_fs_grep_budget_exceeded_warning_when_file_cap_hit(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_fs_grep_hard_timeout_returns_controlled_error(tmp_path) -> None:
+    """Verify test fs grep hard timeout returns controlled error."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "slow.txt").write_text("needle\n", encoding="utf-8")
 
     def _slow_sync(*_args: object, **_kwargs: object) -> SuccessResult:
+        """Return slow sync."""
         time.sleep(3)
         return SuccessResult(data={"matches": [], "match_count": 0, "files_scanned": 0})
 

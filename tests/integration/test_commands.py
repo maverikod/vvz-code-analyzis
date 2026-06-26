@@ -414,6 +414,7 @@ class TestCommandsIntegration:
 
                 # Execute commands concurrently
                 async def run_command():
+                    """Return run command."""
                     command = ListProjectsMCPCommand()
                     return await command.execute()
 

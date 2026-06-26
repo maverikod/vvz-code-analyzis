@@ -13,21 +13,29 @@ from code_analysis.commands.ast import list_entities_page as lep
 
 
 class _RecordingDB:
+    """Represent RecordingDB."""
+
     def __init__(self):
+        """Initialize the instance."""
         self.sqls = []
 
     def execute(self, sql, params=()):
+        """Execute the command."""
         self.sqls.append(sql)
         return {"data": [{"cnt": 7}]}
 
 
 def test_cst_where_is_tautology():
+    """Verify test cst where is tautology."""
     assert lep._CST_WHERE == "1=1"
 
 
 def test_count_query_does_not_filter_on_cst_node_id():
+    """Verify test count query does not filter on cst node id."""
     db = _RecordingDB()
-    total = lep.count_code_entities(db, project_id="p1", entity_type="function", file_id=None)
+    total = lep.count_code_entities(
+        db, project_id="p1", entity_type="function", file_id=None
+    )
     assert total == 7
     joined = "\n".join(db.sqls)
     assert "cst_node_id IS NOT NULL" not in joined
@@ -35,9 +43,14 @@ def test_count_query_does_not_filter_on_cst_node_id():
 
 
 def test_combined_count_covers_all_kinds_without_cst_filter():
+    """Verify test combined count covers all kinds without cst filter."""
     db = _RecordingDB()
     lep.count_code_entities(db, project_id="p1", entity_type=None, file_id=None)
     joined = "\n".join(db.sqls)
     assert "cst_node_id IS NOT NULL" not in joined
     # still unions the three entity kinds
-    assert "FROM classes" in joined and "FROM functions" in joined and "FROM methods" in joined
+    assert (
+        "FROM classes" in joined
+        and "FROM functions" in joined
+        and "FROM methods" in joined
+    )

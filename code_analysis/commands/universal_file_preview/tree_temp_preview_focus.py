@@ -66,10 +66,12 @@ def looks_like_sidecar_stable_id(node_ref: str | None) -> bool:
 def _index_forest_parent_maps(
     roots: Iterable[TreeNode],
 ) -> Tuple[Mapping[str, TreeNode], Mapping[str, Optional[TreeNode]]]:
+    """Return index forest parent maps."""
     by_id: MutableMapping[str, TreeNode] = {}
     parents: MutableMapping[str, Optional[TreeNode]] = {}
 
     def visit(node: TreeNode, parent: Optional[TreeNode]) -> None:
+        """Return visit."""
         by_id[node.stable_id] = node
         parents[node.stable_id] = parent
         if node.children:
@@ -85,6 +87,7 @@ def _index_forest_parent_maps(
 def _ancestor_depth_hint(
     container: TreeNode, parents: Mapping[str, Optional[TreeNode]]
 ) -> int:
+    """Return ancestor depth hint."""
     hops = 0
     cur: Optional[TreeNode] = container
     while cur is not None:
@@ -117,6 +120,7 @@ def _synthetic_roots_container(roots: List[TreeNode]) -> TreeNode:
 
 
 def _root_view_focus(roots: List[TreeNode]) -> TreeTempPreviewFocus:
+    """Return root view focus."""
     wrap = _synthetic_roots_container(roots)
     return TreeTempPreviewFocus(
         container=wrap,

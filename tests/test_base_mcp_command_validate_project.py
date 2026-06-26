@@ -34,11 +34,14 @@ class TestValidateProjectIdExistsTransientRpc:
             DBConnectionError("connection refused"),
             fake_project,
         ]
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch("code_analysis.commands.base_mcp_command.time.sleep"):
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        ):
             BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
         assert mock_db.get_project.call_count == 3
 
@@ -47,11 +50,14 @@ class TestValidateProjectIdExistsTransientRpc:
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
         mock_db.get_project.side_effect = DBConnectionError("timeout")
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch("code_analysis.commands.base_mcp_command.time.sleep"):
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        ):
             with pytest.raises(DBConnectionError):
                 BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
         assert mock_db.get_project.call_count == 1
@@ -75,6 +81,7 @@ class TestCstSaveTreeValidateParamsUsesRetry:
     """validate_params delegates to _validate_project_id_exists."""
 
     def test_validate_params_succeeds_after_transient_failures(self) -> None:
+        """Verify test validate params succeeds after transient failures."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
         fake_project = MagicMock()
@@ -82,11 +89,14 @@ class TestCstSaveTreeValidateParamsUsesRetry:
             DBConnectionError("connection refused"),
             fake_project,
         ]
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch("code_analysis.commands.base_mcp_command.time.sleep"):
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        ):
             params = CSTSaveTreeCommand().validate_params(
                 {
                     "tree_id": "tid",

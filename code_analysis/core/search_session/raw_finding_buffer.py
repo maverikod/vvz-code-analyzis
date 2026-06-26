@@ -21,6 +21,7 @@ class RawFindingBuffer:
     """
 
     def __init__(self, buffer_dir: Path) -> None:
+        """Initialize the instance."""
         self._buffer_dir = buffer_dir.resolve()
         self._buffer_dir.mkdir(parents=True, exist_ok=True)
         self._lock_path = self._buffer_dir / LOCK_FILENAME
@@ -105,6 +106,7 @@ class RawFindingBuffer:
             self._buffer_dir.rmdir()
 
     def _read_lock_pid(self) -> int | None:
+        """Return read lock pid."""
         try:
             raw = self._lock_path.read_text(encoding="utf-8").strip()
             return int(raw)
@@ -112,6 +114,7 @@ class RawFindingBuffer:
             return None
 
     def _write_lock_pid(self, pid: int) -> None:
+        """Return write lock pid."""
         self._buffer_dir.mkdir(parents=True, exist_ok=True)
         tmp_path = self._lock_path.with_suffix(self._lock_path.suffix + ".tmp")
         tmp_path.write_text(str(pid), encoding="utf-8")
@@ -119,6 +122,7 @@ class RawFindingBuffer:
 
     @staticmethod
     def _pid_is_alive(pid: int) -> bool:
+        """Return pid is alive."""
         if pid <= 0:
             return False
         try:

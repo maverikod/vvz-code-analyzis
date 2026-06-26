@@ -27,6 +27,7 @@ from code_analysis.core.database_driver_pkg.drivers.sqlite_migrations import (
 
 
 def test_schema_definition_includes_project_activity_locks() -> None:
+    """Verify test schema definition includes project activity locks."""
     sd = get_schema_definition()
     assert "project_activity_locks" in sd["tables"]
     cols = {c["name"] for c in sd["tables"]["project_activity_locks"]["columns"]}
@@ -68,6 +69,7 @@ def test_schema_definition_includes_project_activity_locks() -> None:
 
 
 def test_postgres_ddl_uses_create_if_not_exists() -> None:
+    """Verify test postgres ddl uses create if not exists."""
     sd = get_schema_definition()
     ddl = generate_create_table_sql_postgres(sd, "project_activity_locks")
     assert "CREATE TABLE IF NOT EXISTS project_activity_locks" in ddl
@@ -75,6 +77,7 @@ def test_postgres_ddl_uses_create_if_not_exists() -> None:
 
 
 def test_ensure_sqlite_project_activity_locks_idempotent() -> None:
+    """Verify test ensure sqlite project activity locks idempotent."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.db"
         conn = sqlite3.connect(str(p))
@@ -96,6 +99,7 @@ def test_ensure_sqlite_project_activity_locks_idempotent() -> None:
 
 
 def test_ensure_sqlite_runtime_file_lock_tables_idempotent() -> None:
+    """Verify test ensure sqlite runtime file lock tables idempotent."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.db"
         conn = sqlite3.connect(str(p))
@@ -115,6 +119,7 @@ def test_ensure_sqlite_runtime_file_lock_tables_idempotent() -> None:
 
 
 def test_ensure_sqlite_skips_without_projects_table() -> None:
+    """Verify test ensure sqlite skips without projects table."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.db"
         conn = sqlite3.connect(str(p))
@@ -129,6 +134,7 @@ def test_ensure_sqlite_skips_without_projects_table() -> None:
 
 
 def test_idempotent_ensure_postgres_runs_table_and_index() -> None:
+    """Verify test idempotent ensure postgres runs table and index."""
     cur = MagicMock()
     ctx = MagicMock()
     ctx.__enter__ = lambda *a, **k: cur
@@ -146,6 +152,7 @@ def test_idempotent_ensure_postgres_runs_table_and_index() -> None:
 
 
 def test_idempotent_ensure_postgres_client_session_tables() -> None:
+    """Verify test idempotent ensure postgres client session tables."""
     cur = MagicMock()
     ctx = MagicMock()
     ctx.__enter__ = lambda *a, **k: cur

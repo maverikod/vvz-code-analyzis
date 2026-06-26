@@ -33,16 +33,19 @@ DOCS_INDEXING_ENABLED = {
 
 @pytest.fixture
 def tmp_root() -> Iterator[Path]:
+    """Return tmp root."""
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
 
 
 @pytest.fixture
 def project_id() -> str:
+    """Return project id."""
     return str(uuid.uuid4())
 
 
 def test_omit_semantic_hit_docs_markdown_when_vectorize_off() -> None:
+    """Verify test omit semantic hit docs markdown when vectorize off."""
     assert _omit_semantic_hit_for_docs_markdown(
         "docs_markdown",
         docs_markdown_vectorize_enabled=False,
@@ -50,6 +53,7 @@ def test_omit_semantic_hit_docs_markdown_when_vectorize_off() -> None:
 
 
 def test_omit_semantic_hit_docs_markdown_when_vectorize_on() -> None:
+    """Verify test omit semantic hit docs markdown when vectorize on."""
     assert not _omit_semantic_hit_for_docs_markdown(
         "docs_markdown",
         docs_markdown_vectorize_enabled=True,
@@ -57,6 +61,7 @@ def test_omit_semantic_hit_docs_markdown_when_vectorize_on() -> None:
 
 
 def test_omit_semantic_hit_non_docs_source_never_omitted() -> None:
+    """Verify test omit semantic hit non docs source never omitted."""
     assert not _omit_semantic_hit_for_docs_markdown(
         "docstring",
         docs_markdown_vectorize_enabled=False,

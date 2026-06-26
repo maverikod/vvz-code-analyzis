@@ -72,6 +72,7 @@ class SessionNotFoundError(ValueError):
     """Raised when session_id is not found in client_sessions."""
 
     def __init__(self, session_id: str) -> None:
+        """Initialize the instance."""
         super().__init__(f"Session not found: {session_id}")
         self.session_id = session_id
 
@@ -80,6 +81,7 @@ class SessionHasLocksError(ValueError):
     """Raised when a session has open file locks and force=False."""
 
     def __init__(self, session_id: str, lock_count: int) -> None:
+        """Initialize the instance."""
         msg = f"Session {session_id} has {lock_count} open file lock(s). Use force=True to release."
         super().__init__(msg)
         self.session_id = session_id
@@ -90,6 +92,7 @@ class SessionHasSubordinatesError(ValueError):
     """Raised when a session has subordinate links and force=False."""
 
     def __init__(self, session_id: str, subordinate_count: int) -> None:
+        """Initialize the instance."""
         msg = (
             f"Session {session_id} has {subordinate_count} subordinate session link(s). "
             "Use force=True to delete them."
@@ -103,6 +106,7 @@ class SessionHasAdvisoryLocksError(ValueError):
     """Raised when a session has advisory disk/DB leases and force=False."""
 
     def __init__(self, session_id: str, advisory_lease_count: int) -> None:
+        """Initialize the instance."""
         msg = (
             f"Session {session_id} has {advisory_lease_count} advisory file lease(s). "
             "Unlock via project_file_advisory_lock_batch or use force=True on session_delete."
@@ -122,6 +126,7 @@ class FileLockedByOtherSessionError(ValueError):
         project_id: str,
         file_id: str,
     ) -> None:
+        """Initialize the instance."""
         msg = (
             f"File {file_id} in project {project_id} is locked by session "
             f"{holder_session_id!r}; cannot acquire for session {session_id!r}."

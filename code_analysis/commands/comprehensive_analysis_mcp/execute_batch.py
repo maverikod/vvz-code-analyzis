@@ -308,6 +308,7 @@ async def run_batch(
             )
 
             def set_step_desc(step: str) -> None:
+                """Update progress text for the current batch analysis step."""
                 if progress_tracker and files_total > 0:
                     suffix = _avg_eta_suffix(global_idx, files_total, t_start)
                     progress_tracker.set_description(

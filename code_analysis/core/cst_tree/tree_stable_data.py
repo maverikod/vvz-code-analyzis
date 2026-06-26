@@ -123,9 +123,12 @@ def _restore_decorators_from_metadata(
         return
 
     class _DecRestore(cst.CSTTransformer):
+        """Represent DecRestore."""
+
         def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
         ) -> cst.CSTNode:
+            """Return leave FunctionDef."""
             decs = targets.get(id(original_node))
             if decs:
                 return updated_node.with_changes(decorators=decs)
@@ -134,6 +137,7 @@ def _restore_decorators_from_metadata(
         def leave_ClassDef(
             self, original_node: cst.ClassDef, updated_node: cst.ClassDef
         ) -> cst.CSTNode:
+            """Return leave ClassDef."""
             decs = targets.get(id(original_node))
             if decs:
                 return updated_node.with_changes(decorators=decs)
@@ -206,9 +210,12 @@ def embed_stable_ids_into_tree(tree: "CSTTree") -> None:
     from .node_stable_id import set_stable_id
 
     class _EmbedTransformer(cst.CSTTransformer):
+        """Represent EmbedTransformer."""
+
         def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
         ) -> cst.CSTNode:
+            """Return leave FunctionDef."""
             stable = node_to_stable.get(id(original_node))
             if stable:
                 return set_stable_id(updated_node, stable)
@@ -217,6 +224,7 @@ def embed_stable_ids_into_tree(tree: "CSTTree") -> None:
         def leave_ClassDef(
             self, original_node: cst.ClassDef, updated_node: cst.ClassDef
         ) -> cst.CSTNode:
+            """Return leave ClassDef."""
             stable = node_to_stable.get(id(original_node))
             if stable:
                 return set_stable_id(updated_node, stable)

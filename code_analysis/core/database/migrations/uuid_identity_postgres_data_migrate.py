@@ -67,6 +67,7 @@ _NON_SHADOW_REF_TABLES = frozenset({"projects", "watch_dirs"})
 
 
 def shadow_table_name(base: str, shadow_prefix: str = DEFAULT_SHADOW_PREFIX) -> str:
+    """Return shadow table name."""
     if not shadow_prefix.replace("_", "").isalnum() or not shadow_prefix.endswith("_"):
         raise ValueError(f"unsupported shadow_prefix: {shadow_prefix!r}")
     return f"{shadow_prefix}{base}"
@@ -75,6 +76,7 @@ def shadow_table_name(base: str, shadow_prefix: str = DEFAULT_SHADOW_PREFIX) -> 
 def _rewrite_fk_ref_table(
     ref: str, migrated: frozenset[str], shadow_prefix: str
 ) -> str:
+    """Return rewrite fk ref table."""
     if ref in _NON_SHADOW_REF_TABLES:
         return ref
     if ref in migrated:
@@ -191,8 +193,7 @@ def build_copy_insert_sql(
 
     stmts: List[str] = []
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sfiles} (
     id, project_id, watch_dir_id, path, relative_path, lines, last_modified,
     has_docstring, deleted, original_path, version_dir, needs_chunking, created_at, updated_at
@@ -214,11 +215,9 @@ SELECT
     f.updated_at
 FROM files f
 JOIN uuid_migration_files mf ON mf.old_id = f.id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sclasses} (
     id, file_id, name, line, end_line, cst_node_id, docstring, bases, created_at
 )
@@ -235,11 +234,9 @@ SELECT
 FROM classes c
 JOIN uuid_migration_classes mc ON mc.old_id = c.id
 JOIN uuid_migration_files mf ON mf.old_id = c.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sfunctions} (
     id, file_id, name, line, end_line, cst_node_id, args, docstring, complexity, created_at
 )
@@ -257,11 +254,9 @@ SELECT
 FROM functions fn
 JOIN uuid_migration_functions mfn ON mfn.old_id = fn.id
 JOIN uuid_migration_files mf ON mf.old_id = fn.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {smethods} (
     id, class_id, name, line, end_line, cst_node_id, args, docstring,
     is_abstract, has_pass, has_not_implemented, complexity, created_at
@@ -283,11 +278,9 @@ SELECT
 FROM methods m
 JOIN uuid_migration_methods mm ON mm.old_id = m.id
 JOIN uuid_migration_classes mc ON mc.old_id = m.class_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {scent} (
     id, caller_class_id, caller_method_id, caller_function_id,
     callee_class_id, callee_method_id, callee_function_id,
@@ -314,11 +307,9 @@ LEFT JOIN uuid_migration_classes mccc ON mccc.old_id = e.callee_class_id
 LEFT JOIN uuid_migration_methods mccm ON mccm.old_id = e.callee_method_id
 LEFT JOIN uuid_migration_functions mccf ON mccf.old_id = e.callee_function_id
 LEFT JOIN uuid_migration_files mf ON mf.old_id = e.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {simports} (
     id, file_id, name, module, import_type, line, created_at
 )
@@ -333,11 +324,9 @@ SELECT
 FROM imports i
 JOIN uuid_migration_imports mi ON mi.old_id = i.id
 JOIN uuid_migration_files mf ON mf.old_id = i.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sissues} (
     id, file_id, project_id, class_id, function_id, method_id,
     issue_type, line, description, metadata, created_at
@@ -360,11 +349,9 @@ LEFT JOIN uuid_migration_files mf ON mf.old_id = iss.file_id
 LEFT JOIN uuid_migration_classes mcls ON mcls.old_id = iss.class_id
 LEFT JOIN uuid_migration_functions mfn ON mfn.old_id = iss.function_id
 LEFT JOIN uuid_migration_methods mm ON mm.old_id = iss.method_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {susages} (
     id, file_id, line, usage_type, target_type, target_class, target_name, context, created_at
 )
@@ -381,12 +368,10 @@ SELECT
 FROM usages u
 JOIN uuid_migration_usages mu ON mu.old_id = u.id
 JOIN uuid_migration_files mf ON mf.old_id = u.file_id
-""".strip()
-    )
+""".strip())
 
     cc_joins, cc_ent = _polymorphic_entity_joins_and_expr("cc")
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {scc} (
     id, file_id, entity_type, entity_id, entity_name, content, docstring, created_at
 )
@@ -403,11 +388,9 @@ FROM code_content cc
 JOIN uuid_migration_code_content mid ON mid.old_id = cc.id
 JOIN uuid_migration_files mf ON mf.old_id = cc.file_id
 {cc_joins}
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sast} (
     id, file_id, project_id, ast_json, ast_hash, file_mtime, created_at, updated_at
 )
@@ -423,11 +406,9 @@ SELECT
 FROM ast_trees a
 JOIN uuid_migration_ast_trees ma ON ma.old_id = a.id
 JOIN uuid_migration_files mf ON mf.old_id = a.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {scst} (
     id, file_id, project_id, cst_code, cst_hash, file_mtime, created_at, updated_at
 )
@@ -443,12 +424,10 @@ SELECT
 FROM cst_trees c
 JOIN uuid_migration_cst_trees mc ON mc.old_id = c.id
 JOIN uuid_migration_files mf ON mf.old_id = c.file_id
-""".strip()
-    )
+""".strip())
 
     vi_joins, vi_ent = _polymorphic_entity_joins_and_expr("v")
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {svi} (
     id, project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model, created_at
 )
@@ -464,11 +443,9 @@ SELECT
 FROM vector_index v
 JOIN uuid_migration_vector_index mv ON mv.old_id = v.id
 {vi_joins}
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {schk} (
     id, file_id, project_id, chunk_uuid, chunk_type, chunk_text, chunk_ordinal,
     vector_id, embedding_model, bm25_score, embedding_vector, token_count,
@@ -504,11 +481,9 @@ JOIN uuid_migration_files mf ON mf.old_id = ch.file_id
 LEFT JOIN uuid_migration_classes mcls ON mcls.old_id = ch.class_id
 LEFT JOIN uuid_migration_functions mfn ON mfn.old_id = ch.function_id
 LEFT JOIN uuid_migration_methods mm ON mm.old_id = ch.method_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sdup} (
     id, project_id, duplicate_hash, similarity, created_at
 )
@@ -520,11 +495,9 @@ SELECT
     d.created_at
 FROM code_duplicates d
 JOIN uuid_migration_code_duplicates md ON md.old_id = d.id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sdocc} (
     id, duplicate_id, file_id, start_line, end_line, code_snippet, ast_node_id, created_at
 )
@@ -541,11 +514,9 @@ FROM duplicate_occurrences o
 JOIN uuid_migration_duplicate_occurrences mo ON mo.old_id = o.id
 JOIN uuid_migration_code_duplicates md ON md.old_id = o.duplicate_id
 JOIN uuid_migration_files mf ON mf.old_id = o.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {scar} (
     id, file_id, project_id, file_mtime, results_json, summary_json, created_at, updated_at
 )
@@ -561,11 +532,9 @@ SELECT
 FROM comprehensive_analysis_results r
 JOIN uuid_migration_comprehensive_analysis_results mr ON mr.old_id = r.id
 JOIN uuid_migration_files mf ON mf.old_id = r.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sfts} (
     id, file_id, project_id, source_payload, file_mtime, created_at, updated_at
 )
@@ -580,20 +549,16 @@ SELECT
 FROM file_tree_snapshots s
 JOIN uuid_migration_file_tree_snapshots ms ON ms.old_id = s.id
 JOIN uuid_migration_files mf ON mf.old_id = s.file_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sftsr} (snapshot_id, root_node_id)
 SELECT ms.new_id, r.root_node_id
 FROM file_tree_snapshot_roots r
 JOIN uuid_migration_file_tree_snapshots ms ON ms.old_id = r.snapshot_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sftsn} (
     id, snapshot_id, node_id, parent_node_id, child_index
 )
@@ -606,11 +571,9 @@ SELECT
 FROM file_tree_snapshot_nodes n
 JOIN uuid_migration_file_tree_snapshot_nodes mn ON mn.old_id = n.id
 JOIN uuid_migration_file_tree_snapshots ms ON ms.old_id = n.snapshot_id
-""".strip()
-    )
+""".strip())
 
-    stmts.append(
-        f"""
+    stmts.append(f"""
 INSERT INTO {sie} (
     id, project_id, file_path, error_type, error_message, created_at
 )
@@ -623,8 +586,7 @@ SELECT
     e.created_at
 FROM indexing_errors e
 JOIN uuid_migration_indexing_errors me ON me.old_id = e.id
-""".strip()
-    )
+""".strip())
 
     return stmts
 
@@ -706,6 +668,8 @@ def build_phase5_validation_sql(
 
 @dataclass
 class Phase345Report:
+    """Represent Phase345Report."""
+
     backend: str
     shadow_prefix: str
     dry_run: bool
@@ -718,6 +682,7 @@ class Phase345Report:
 
 
 def _scalar_count(db: Any, sql: str) -> int:
+    """Return scalar count."""
     r = _migration_fetchone(db, sql)
     if not r:
         return 0

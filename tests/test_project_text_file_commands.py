@@ -35,7 +35,10 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 
 class TestHealthyParseBlocksLineOps:
+    """Represent TestHealthyParseBlocksLineOps."""
+
     def test_internal_allow_skips_cst_gate(self) -> None:
+        """Verify test internal allow skips cst gate."""
         assert not healthy_parse_blocks_line_ops(
             "x = 1\n",
             allow_healthy_line_ops=True,
@@ -43,6 +46,7 @@ class TestHealthyParseBlocksLineOps:
         )
 
     def test_unhealthy_parse_allows_line_ops(self) -> None:
+        """Verify test unhealthy parse allows line ops."""
         assert not healthy_parse_blocks_line_ops(
             "def oops(\n",
             allow_healthy_line_ops=False,
@@ -50,6 +54,7 @@ class TestHealthyParseBlocksLineOps:
         )
 
     def test_healthy_parse_blocks_without_allow(self) -> None:
+        """Verify test healthy parse blocks without allow."""
         assert healthy_parse_blocks_line_ops(
             "def f():\n    pass\n",
             allow_healthy_line_ops=False,
@@ -58,17 +63,24 @@ class TestHealthyParseBlocksLineOps:
 
 
 class TestIsPythonTextPath:
+    """Represent TestIsPythonTextPath."""
+
     def test_python_suffixes(self) -> None:
+        """Verify test python suffixes."""
         assert is_python_text_path("pkg/foo.py")
         assert is_python_text_path("X.PYI")
 
     def test_non_python(self) -> None:
+        """Verify test non python."""
         assert not is_python_text_path("README.md")
         assert not is_python_text_path("main.go")
 
 
 class TestRejectIfPythonTextPath:
+    """Represent TestRejectIfPythonTextPath."""
+
     def test_allows_md_and_unknown(self) -> None:
+        """Verify test allows md and unknown."""
         assert reject_if_python_text_path("README.md") is None
         assert reject_if_python_text_path("dir/config.toml") is None
 
@@ -76,6 +88,7 @@ class TestRejectIfPythonTextPath:
         "path", ["x.py", "pkg/X.PYI", "w.PyW", "a/b/c.py", "mod.pyx"]
     )
     def test_rejects_python_suffixes(self, path: str) -> None:
+        """Verify test rejects python suffixes."""
         r = reject_if_python_text_path(path)
         assert isinstance(r, ErrorResult)
         assert r.code == "PYTHON_FILE_FORBIDDEN"
@@ -83,34 +96,44 @@ class TestRejectIfPythonTextPath:
 
 
 class TestRejectIfNonPythonCodeTextPath:
+    """Represent TestRejectIfNonPythonCodeTextPath."""
+
     @pytest.mark.parametrize("path", ["main.go", "lib.rs", "x.java", "n.ipynb"])
     def test_rejects_code_suffixes(self, path: str) -> None:
+        """Verify test rejects code suffixes."""
         r = reject_if_non_python_code_text_path(path)
         assert isinstance(r, ErrorResult)
         assert r.code == "CODE_FILE_FORBIDDEN"
         assert Path(path).suffix.lower() in FORBIDDEN_NON_PYTHON_CODE_SUFFIXES
 
     def test_allows_python_paths_for_this_layer(self) -> None:
+        """Verify test allows python paths for this layer."""
         assert reject_if_non_python_code_text_path("a.py") is None
 
 
 class TestRejectIfSourceCodeTextPath:
+    """Represent TestRejectIfSourceCodeTextPath."""
+
     def test_python_takes_precedence_message(self) -> None:
+        """Verify test python takes precedence message."""
         r = reject_if_source_code_text_path("pkg/foo.py")
         assert isinstance(r, ErrorResult)
         assert r.code == "PYTHON_FILE_FORBIDDEN"
         assert "CST" in (r.message or "")
 
     def test_non_python_code(self) -> None:
+        """Verify test non python code."""
         r = reject_if_source_code_text_path("src/main.go")
         assert isinstance(r, ErrorResult)
         assert r.code == "CODE_FILE_FORBIDDEN"
 
     def test_allowed_plain_text(self) -> None:
+        """Verify test allowed plain text."""
         assert reject_if_source_code_text_path("README.md") is None
         assert reject_if_source_code_text_path("cfg/app.toml") is None
 
     def test_union_matches_documented_suffix_lists(self) -> None:
+        """Verify test union matches documented suffix lists."""
         assert FORBIDDEN_TEXT_SUFFIXES == (
             FORBIDDEN_PYTHON_SOURCE_SUFFIXES | FORBIDDEN_NON_PYTHON_CODE_SUFFIXES
         )
@@ -118,7 +141,10 @@ class TestRejectIfSourceCodeTextPath:
 
 @pytest.mark.asyncio
 class TestReadProjectTextFile:
+    """Represent TestReadProjectTextFile."""
+
     async def test_reads_range(self, tmp_path: Path) -> None:
+        """Verify test reads range."""
         f = tmp_path / "notes.txt"
         f.write_text("a\nb\nc\nd\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -149,6 +175,7 @@ class TestReadProjectTextFile:
         assert result.data.get("handler_id") == "text"
 
     async def test_text_invalid_range_after_resolve(self, tmp_path: Path) -> None:
+        """Verify test text invalid range after resolve."""
         f = tmp_path / "notes.txt"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -177,6 +204,7 @@ class TestReadProjectTextFile:
     async def test_routes_healthy_python_to_get_file_lines(
         self, tmp_path: Path
     ) -> None:
+        """Verify test routes healthy python to get file lines."""
         f = tmp_path / "foo.py"
         f.write_text("def foo():\n    return 42\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -210,6 +238,7 @@ class TestReadProjectTextFile:
     async def test_python_invalid_range_delegates_to_get_file_lines(
         self, tmp_path: Path
     ) -> None:
+        """Verify test python invalid range delegates to get file lines."""
         f = tmp_path / "bad.py"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -236,6 +265,7 @@ class TestReadProjectTextFile:
         assert result.code == "INVALID_RANGE"
 
     async def test_rejects_go_before_resolve(self) -> None:
+        """Verify test rejects go before resolve."""
         cmd = ReadProjectTextFileCommand()
         result = await cmd.execute(
             project_id=_PID,
@@ -249,6 +279,7 @@ class TestReadProjectTextFile:
     async def test_json_small_returns_structured_like_json_load(
         self, tmp_path: Path
     ) -> None:
+        """Verify test json small returns structured like json load."""
         f = tmp_path / "data.json"
         f.write_text('{"hello": "world"}\n', encoding="utf-8")
         mock_db = MagicMock()
@@ -284,6 +315,7 @@ class TestReadProjectTextFile:
     async def test_json_large_file_still_structured_via_handler(
         self, tmp_path: Path
     ) -> None:
+        """Verify test json large file still structured via handler."""
         f = tmp_path / "big.json"
         payload = '{"pad":"' + ("x" * 80) + '"}'
         f.write_text(payload, encoding="utf-8")
@@ -317,6 +349,7 @@ class TestReadProjectTextFile:
     async def test_json_invalid_returns_handler_validation_failed(
         self, tmp_path: Path
     ) -> None:
+        """Verify test json invalid returns handler validation failed."""
         f = tmp_path / "bad.json"
         f.write_text("{ not json", encoding="utf-8")
         mock_db = MagicMock()
@@ -345,7 +378,10 @@ class TestReadProjectTextFile:
 
 @pytest.mark.asyncio
 class TestWriteProjectTextLines:
+    """Represent TestWriteProjectTextLines."""
+
     async def test_replaces_range(self, tmp_path: Path) -> None:
+        """Verify test replaces range."""
         cfg = tmp_path / "notes.txt"
         cfg.write_text("a\nb\nc\n", encoding="utf-8")
         mock_db = MagicMock()
@@ -357,6 +393,7 @@ class TestWriteProjectTextLines:
         meta_calls: list[dict[str, object]] = []
 
         def _capture_meta(**kwargs: object) -> dict[str, object]:
+            """Return capture meta."""
             meta_calls.append(dict(kwargs))
             return {"success": True, "file_id": 99, "metadata_only": True}
 
@@ -403,6 +440,7 @@ class TestWriteProjectTextLines:
     async def test_metadata_failure_restores_file_when_backup(
         self, tmp_path: Path
     ) -> None:
+        """Verify test metadata failure restores file when backup."""
         cfg = tmp_path / "notes.txt"
         original = "line1\nline2\n"
         cfg.write_text(original, encoding="utf-8")
@@ -451,6 +489,7 @@ class TestWriteProjectTextLines:
         )
 
     async def test_rejects_python_paths_before_resolve(self) -> None:
+        """Verify test rejects python paths before resolve."""
         cmd = WriteProjectTextLinesCommand()
         for path in ("pkg/mod.py", "types.pyi"):
             result = await cmd.execute(
@@ -464,6 +503,7 @@ class TestWriteProjectTextLines:
             assert result.code == "PYTHON_FILE_FORBIDDEN"
 
     async def test_rejects_code_before_invalid_range(self) -> None:
+        """Verify test rejects code before invalid range."""
         cmd = WriteProjectTextLinesCommand()
         result = await cmd.execute(
             project_id=_PID,
@@ -476,6 +516,7 @@ class TestWriteProjectTextLines:
         assert result.code == "CODE_FILE_FORBIDDEN"
 
     async def test_rejects_go_suffix(self) -> None:
+        """Verify test rejects go suffix."""
         cmd = WriteProjectTextLinesCommand()
         result = await cmd.execute(
             project_id=_PID,
@@ -488,6 +529,7 @@ class TestWriteProjectTextLines:
         assert result.code == "CODE_FILE_FORBIDDEN"
 
     async def test_rejects_json_not_plain_text_allowlist(self) -> None:
+        """Verify test rejects json not plain text allowlist."""
         cmd = WriteProjectTextLinesCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -502,6 +544,7 @@ class TestWriteProjectTextLines:
         odb.assert_not_called()
 
     async def test_invalid_range_before_database_open(self) -> None:
+        """Verify test invalid range before database open."""
         cmd = WriteProjectTextLinesCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
@@ -516,6 +559,7 @@ class TestWriteProjectTextLines:
         odb.assert_not_called()
 
     async def test_rejects_write_under_project_venv(self, tmp_path: Path) -> None:
+        """Verify test rejects write under project venv."""
         vdir = tmp_path / ".venv"
         vdir.mkdir(parents=True, exist_ok=True)
         cfg = vdir / "notes.txt"

@@ -24,6 +24,7 @@ SHUTDOWN_LOG_TAG = "[DAEMON_SHUTDOWN]"
 
 
 def _signal_name(signum: int) -> str:
+    """Return signal name."""
     try:
         return signal.Signals(signum).name
     except (ValueError, AttributeError):
@@ -31,6 +32,7 @@ def _signal_name(signum: int) -> str:
 
 
 def _flush_log_handlers() -> None:
+    """Return flush log handlers."""
     try:
         for handler in logging.root.handlers[:]:
             try:
@@ -83,10 +85,12 @@ def register_cleanup_handlers(
     shutdown_logged = False
 
     def _stop_heartbeat() -> None:
+        """Return stop heartbeat."""
         if heartbeat_stop is not None:
             heartbeat_stop.set()
 
     def _log_shutdown_once(reason: str, *, signum: Optional[int] = None) -> None:
+        """Return log shutdown once."""
         nonlocal shutdown_logged
         with cleanup_lock:
             if shutdown_logged:
@@ -96,6 +100,7 @@ def register_cleanup_handlers(
         log_daemon_shutdown(main_logger, reason, signum=signum)
 
     def cleanup_workers() -> None:
+        """Return cleanup workers."""
         nonlocal cleanup_started
         with cleanup_lock:
             if cleanup_started:
@@ -145,13 +150,16 @@ def register_cleanup_handlers(
             _flush_log_handlers()
 
     def _shutdown(reason: str, *, signum: Optional[int] = None) -> None:
+        """Return shutdown."""
         _log_shutdown_once(reason, signum=signum)
         cleanup_workers()
 
     def _atexit_handler() -> None:
+        """Return atexit handler."""
         _shutdown("atexit")
 
     def signal_handler(signum: int, frame: object) -> None:
+        """Return signal handler."""
         del frame
         _shutdown("signal", signum=signum)
         main_logger.info("Signal handler: calling sys.exit(0) after cleanup")

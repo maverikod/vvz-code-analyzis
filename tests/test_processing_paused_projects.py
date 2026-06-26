@@ -26,7 +26,6 @@ from code_analysis.core.vectorization_worker_pkg.processing_cycle import (
 
 from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
-
 _VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
 
 
@@ -67,6 +66,7 @@ async def test_set_project_processing_paused_binds_python_bool() -> None:
 
 
 def test_project_model_processing_paused_roundtrip() -> None:
+    """Verify test project model processing paused roundtrip."""
     p = Project(
         id=_VALID_UUID,
         root_path="/tmp/r",
@@ -85,15 +85,18 @@ def test_project_model_processing_paused_roundtrip() -> None:
 
 
 def test_vectorization_projects_sql_filters_processing_paused() -> None:
+    """Verify test vectorization projects sql filters processing paused."""
     assert "processing_paused" in PROJECTS_PENDING_SQL
 
 
 def test_indexing_discovery_sql_filters_processing_paused() -> None:
+    """Verify test indexing discovery sql filters processing paused."""
     assert "processing_paused" in INDEXING_PROJECT_DISCOVERY_SQL
     assert "INNER JOIN projects" in INDEXING_PROJECT_DISCOVERY_SQL
 
 
 def test_projects_table_has_processing_paused_after_sync_schema(tmp_path: Path) -> None:
+    """Verify test projects table has processing paused after sync schema."""
     db_path = tmp_path / "pp.db"
     client = sqlite_inprocess_database_client(db_path, backup_dir=tmp_path / "bp")
     try:
@@ -106,6 +109,7 @@ def test_projects_table_has_processing_paused_after_sync_schema(tmp_path: Path) 
 
 @pytest.fixture
 def pp_disc_db_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    """Return pp disc db client."""
     db_path = tmp_path / "disc.db"
     backup_dir = tmp_path / "disc_backups"
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")

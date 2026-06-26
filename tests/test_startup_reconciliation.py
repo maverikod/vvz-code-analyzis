@@ -33,7 +33,6 @@ from code_analysis.core.file_watcher_pkg.startup_reconciliation import (
 )
 from code_analysis.core.file_watcher_pkg.multi_project_worker_specs import WatchDirSpec
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
@@ -51,6 +50,7 @@ def _make_project_dir(watch_dir: Path, name: str, project_id: str) -> Path:
 
 
 def _spec(watch_dir: Path) -> WatchDirSpec:
+    """Return spec."""
     return WatchDirSpec(watch_dir=watch_dir, watch_dir_id=str(uuid.uuid4()))
 
 
@@ -62,11 +62,15 @@ class FakeDB:
         projects: Optional[List[Dict[str, Any]]] = None,
         files_by_project: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> None:
+        """Initialize the instance."""
         self.projects = projects or []
         self.files_by_project = files_by_project or {}
         self.deleted_file_ids: List[Any] = []
 
-    def execute(self, sql: str, params: Any = None, priority: int = 0) -> Dict[str, Any]:
+    def execute(
+        self, sql: str, params: Any = None, priority: int = 0
+    ) -> Dict[str, Any]:
+        """Execute the command."""
         s = " ".join(sql.split())
         if s.startswith("SELECT id, root_path, name, watch_dir_id FROM projects"):
             return {"data": list(self.projects)}
@@ -85,6 +89,7 @@ class FakeDB:
 
 
 def test_build_discovery_table_lists_projects(tmp_path: Path) -> None:
+    """Verify test build discovery table lists projects."""
     wd = tmp_path / "watch"
     wd.mkdir()
     id_a, id_b = str(uuid.uuid4()), str(uuid.uuid4())
@@ -100,6 +105,7 @@ def test_build_discovery_table_lists_projects(tmp_path: Path) -> None:
 
 
 def test_find_duplicate_ids_flags_same_id_two_paths() -> None:
+    """Verify test find duplicate ids flags same id two paths."""
     dup = str(uuid.uuid4())
     rows = [
         DiscoveredProjectRow("/w1", "/w1/a", dup),
@@ -112,6 +118,7 @@ def test_find_duplicate_ids_flags_same_id_two_paths() -> None:
 
 
 def test_find_duplicate_ids_unique_is_empty() -> None:
+    """Verify test find duplicate ids unique is empty."""
     rows = [
         DiscoveredProjectRow("/w1", "/w1/a", str(uuid.uuid4())),
         DiscoveredProjectRow("/w1", "/w1/b", str(uuid.uuid4())),
@@ -120,6 +127,7 @@ def test_find_duplicate_ids_unique_is_empty() -> None:
 
 
 def test_request_server_stop_signals_given_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify test request server stop signals given pid."""
     captured: List[tuple] = []
     monkeypatch.setattr(sr.os, "kill", lambda pid, sig: captured.append((pid, sig)))
     _request_server_stop(424242)
@@ -130,6 +138,7 @@ def test_request_server_stop_signals_given_pid(monkeypatch: pytest.MonkeyPatch) 
 async def test_reconciliation_aborts_and_stops_server_on_cross_dir_duplicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test reconciliation aborts and stops server on cross dir duplicate."""
     wd1 = tmp_path / "w1"
     wd2 = tmp_path / "w2"
     wd1.mkdir()
@@ -143,9 +152,7 @@ async def test_reconciliation_aborts_and_stops_server_on_cross_dir_duplicate(
 
     db = FakeDB()  # must NOT be touched: abort happens before DB work
     with pytest.raises(StartupReconciliationFatal):
-        await run_startup_reconciliation(
-            db, [_spec(wd1), _spec(wd2)], server_pid=555
-        )
+        await run_startup_reconciliation(db, [_spec(wd1), _spec(wd2)], server_pid=555)
 
     assert killed == [(555, sr.signal.SIGTERM)]
     assert db.deleted_file_ids == []
@@ -160,6 +167,7 @@ async def test_reconciliation_aborts_and_stops_server_on_cross_dir_duplicate(
 async def test_purge_orphan_projects_deletes_only_unknown_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify test purge orphan projects deletes only unknown ids."""
     on_disk = str(uuid.uuid4())
     orphan = str(uuid.uuid4())
     db = FakeDB(
@@ -172,6 +180,7 @@ async def test_purge_orphan_projects_deletes_only_unknown_ids(
     cleared: List[str] = []
 
     async def _fake_clear(database: Any, project_id: str) -> None:
+        """Return fake clear."""
         cleared.append(project_id)
 
     monkeypatch.setattr(
@@ -193,13 +202,16 @@ async def test_purge_orphan_projects_deletes_only_unknown_ids(
 def test_mark_missing_files_marks_only_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test mark missing files marks only absent."""
     root = tmp_path / "proj"
     (root / "pkg").mkdir(parents=True)
     present = root / "pkg" / "present.py"
     present.write_text("x = 1\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        sr, "_resolve_project_row_absolute_path", lambda proj, db, require_exists=True: root
+        sr,
+        "_resolve_project_row_absolute_path",
+        lambda proj, db, require_exists=True: root,
     )
 
     db = FakeDB(

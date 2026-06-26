@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _queue_config(full_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return queue config."""
     raw = full_config.get("queue_manager")
     return raw if isinstance(raw, dict) else {}
 
@@ -53,6 +54,7 @@ def init_queue_manager_before_workers(full_config: Dict[str, Any]) -> None:
     )
 
     async def _init() -> None:
+        """Return init."""
         await init_global_queue_manager(
             registry_path=queue_config.get("registry_path"),
             shutdown_timeout=float(queue_config.get("shutdown_timeout", 30.0)),

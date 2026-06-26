@@ -1,3 +1,5 @@
+"""Tests for runtime file locks and advisory project lock commands."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -23,7 +25,10 @@ from code_analysis.core.runtime_lock_sessions import (
 
 
 class FakeDatabase:
+    """Represent FakeDatabase."""
+
     def __init__(self, root: Path) -> None:
+        """Initialize the instance."""
         self.root = root
         self.conn = sqlite3.connect(":memory:")
         self.conn.row_factory = sqlite3.Row
@@ -46,6 +51,7 @@ class FakeDatabase:
         )
 
     def execute(self, sql: str, params: tuple | None = None, **_: object) -> dict:
+        """Execute the command."""
         cur = self.conn.execute(sql, params or ())
         if sql.lstrip().upper().startswith(("SELECT", "PRAGMA")):
             return {"data": [dict(row) for row in cur.fetchall()]}
@@ -55,6 +61,7 @@ class FakeDatabase:
     def select(
         self, table_name: str, where: dict | None = None, **_: object
     ) -> list[dict[str, Any]]:
+        """Return select."""
         sql = f"SELECT * FROM {table_name}"
         params: list[object] = []
         if where:
@@ -63,6 +70,7 @@ class FakeDatabase:
         return cast(list[dict[str, Any]], self.execute(sql, tuple(params))["data"])
 
     def get_project(self, project_id: str) -> SimpleNamespace | None:
+        """Return get project."""
         rows = self.execute("SELECT * FROM projects WHERE id = ?", (project_id,))[
             "data"
         ]
@@ -73,6 +81,7 @@ class FakeDatabase:
     def get_file_by_path(
         self, path: str, project_id: str, include_deleted: bool = False
     ) -> dict | None:
+        """Return get file by path."""
         rel = str(Path(path).resolve().relative_to(self.root.resolve())).replace(
             "\\", "/"
         )
@@ -85,6 +94,7 @@ class FakeDatabase:
 
 
 def test_runtime_session_and_lease_refcount(tmp_path: Path) -> None:
+    """Verify test runtime session and lease refcount."""
     db = FakeDatabase(tmp_path)
     ensure_runtime_lock_tables(db)
     session = register_runtime_session(db, role="pytest")
@@ -127,6 +137,7 @@ def test_runtime_session_and_lease_refcount(tmp_path: Path) -> None:
 
 
 def test_get_file_advisory_lock_status_aggregates(tmp_path: Path) -> None:
+    """Verify test get file advisory lock status aggregates."""
     db = FakeDatabase(tmp_path)
     ensure_runtime_lock_tables(db)
 
@@ -171,6 +182,7 @@ def test_get_file_advisory_lock_status_aggregates(tmp_path: Path) -> None:
 
 
 def test_batch_lock_partial_errors_and_idempotent_unlock(tmp_path: Path) -> None:
+    """Verify test batch lock partial errors and idempotent unlock."""
     db = FakeDatabase(tmp_path)
     ensure_client_session_tables(db.conn)
     target = tmp_path / "ok.py"
@@ -241,6 +253,7 @@ def test_batch_lock_partial_errors_and_idempotent_unlock(tmp_path: Path) -> None
 
 
 def test_persistent_file_lock_records_lease(tmp_path: Path) -> None:
+    """Verify test persistent file lock records lease."""
     db = FakeDatabase(tmp_path)
     target = tmp_path / "held.py"
     target.write_text("x = 1\n", encoding="utf-8")

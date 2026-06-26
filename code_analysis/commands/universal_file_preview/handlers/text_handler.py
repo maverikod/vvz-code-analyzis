@@ -69,6 +69,7 @@ class TextFileHandler(FileHandler):
         self._last_file_path = file_path
 
         def _load_lines() -> list[Node]:
+            """Return load lines."""
             try:
                 text = Path(file_path).read_text(encoding="utf-8", errors="replace")
             except OSError:

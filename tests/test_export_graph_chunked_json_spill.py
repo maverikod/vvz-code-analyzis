@@ -26,16 +26,19 @@ from tests.sqlite_legacy_schema_bootstrap import bootstrap_sqlite_schema_paths
 
 @pytest.fixture
 def temp_dir(tmp_path: Path) -> Path:
+    """Return temp dir."""
     return tmp_path
 
 
 @pytest.fixture
 def project_id() -> str:
+    """Return project id."""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
 def test_db(temp_dir: Path) -> Any:
+    """Verify test db."""
     driver_config = create_driver_config_for_worker(
         temp_dir / "test.db",
         driver_type="sqlite",
@@ -61,6 +64,7 @@ def test_db(temp_dir: Path) -> Any:
 
 @pytest.fixture
 def test_project(test_db: DatabaseClient, temp_dir: Path, project_id: str) -> str:
+    """Verify test project."""
     test_db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir.resolve()), temp_dir.name),
@@ -69,10 +73,12 @@ def test_project(test_db: DatabaseClient, temp_dir: Path, project_id: str) -> st
 
 
 def _uuid4() -> str:
+    """Return uuid4."""
     return str(uuid.uuid4())
 
 
 def _insert_file(test_db: DatabaseClient, test_project: str, path: Path) -> str:
+    """Return insert file."""
     fid = str(uuid.uuid4())
     test_db.execute(
         """INSERT INTO files (id, project_id, path, relative_path, lines, last_modified, has_docstring)
@@ -85,6 +91,7 @@ def _insert_file(test_db: DatabaseClient, test_project: str, path: Path) -> str:
 def _insert_class(
     test_db: DatabaseClient, file_id: str, name: str, cst_node_id: str
 ) -> None:
+    """Return insert class."""
     cid = str(uuid.uuid4())
     test_db.execute(
         "INSERT INTO classes (id, file_id, name, line, docstring, bases, cst_node_id) "
@@ -96,6 +103,7 @@ def _insert_class(
 def _insert_usage(
     test_db: DatabaseClient, file_id: str, line: int, target_name: str
 ) -> None:
+    """Return insert usage."""
     uid = str(uuid.uuid4())
     test_db.execute(
         "INSERT INTO usages (id, file_id, line, usage_type, target_type, target_name, target_class) "
@@ -107,6 +115,7 @@ def _insert_usage(
 def _seed_minimal_call_graph(
     test_db: DatabaseClient, test_project: str, temp_dir: Path, n_usages: int
 ) -> None:
+    """Return seed minimal call graph."""
     path = temp_dir / "caller.py"
     path.write_text("# x", encoding="utf-8")
     fid = _insert_file(test_db, test_project, path)
@@ -129,6 +138,7 @@ async def test_call_graph_single_usages_query(
     orig_execute = test_db.execute
 
     def counting_execute(sql: str, params: Any = None, **kwargs: Any) -> dict[str, Any]:
+        """Return counting execute."""
         if "FROM USAGES" in sql.upper():
             calls.append(1)
         return orig_execute(sql, params, **kwargs)

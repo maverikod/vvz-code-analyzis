@@ -25,6 +25,7 @@ _ERR = "Invalid tree for YAML serialization:"
 
 
 def _validate_subtree(node: TreeNode, member_of_object: bool) -> None:
+    """Return validate subtree."""
     validate_node_constraints(node)
     if member_of_object:
         if node.key is None or node.key == "":
@@ -64,6 +65,7 @@ def _finalize_dump_text(s: str) -> str:
 
 
 def _scalar_pyval(node: TreeNode) -> Any:
+    """Return scalar pyval."""
     t: TreeNodeType = node.type
     if t == "string":
         return cast(str, node.value)
@@ -80,6 +82,7 @@ def _scalar_pyval(node: TreeNode) -> Any:
 
 
 def _tree_to_commented(node: TreeNode) -> Any:
+    """Return tree to commented."""
     if node.type == "object":
         cm: CommentedMap = CommentedMap()
         for ch in node.children or []:
@@ -96,6 +99,7 @@ def _tree_to_commented(node: TreeNode) -> Any:
 
 
 def _eol_comment_arg(text: str) -> str:
+    """Return eol comment arg."""
     s = text.strip()
     if not s:
         return text
@@ -103,6 +107,7 @@ def _eol_comment_arg(text: str) -> str:
 
 
 def _emit_container_end_inline(c: Union[CommentedMap, CommentedSeq], text: str) -> None:
+    """Return emit container end inline."""
     arg = _eol_comment_arg(text)
     if not arg.endswith("\n"):
         arg = arg + "\n"
@@ -115,6 +120,7 @@ def _apply_comments(
     *,
     seq_item: Optional[Tuple[CommentedSeq, int]] = None,
 ) -> None:
+    """Return apply comments."""
     if node.type in ("object", "array"):
         if seq_item is not None:
             seq, idx = seq_item
@@ -168,6 +174,7 @@ def _apply_comments(
 
 
 def _emit_scalar_root(yaml: YAML, node: TreeNode) -> str:
+    """Return emit scalar root."""
     buf = StringIO()
     yaml.dump(_scalar_pyval(node), buf)
     body = _finalize_dump_text(buf.getvalue()).rstrip("\n")

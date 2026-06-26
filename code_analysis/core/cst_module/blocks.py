@@ -15,6 +15,7 @@ from .models import BlockInfo
 
 def _block_id(kind: str, qualname: str, start_line: int, end_line: int) -> str:
     # Stable enough for edit workflows; if code moves, user refreshes via list_cst_blocks.
+    """Return block id."""
     return f"{kind}:{qualname}:{start_line}-{end_line}"
 
 

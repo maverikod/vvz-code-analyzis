@@ -1,14 +1,16 @@
+"""Strip inline node-id comments from project Python files."""
+
 import pathlib
 
-ROOT = pathlib.Path('/home/vasilyvz/projects/tools/code_analysis/code_analysis')
+ROOT = pathlib.Path("/home/vasilyvz/projects/tools/code_analysis/code_analysis")
 total = 0
-for f in ROOT.rglob('*.py'):
-    src = f.read_text(encoding='utf-8')
+for f in ROOT.rglob("*.py"):
+    src = f.read_text(encoding="utf-8")
     lines = src.splitlines(keepends=True)
-    cleaned = [l for l in lines if not l.strip().startswith('# @node-id:')]
+    cleaned = [l for l in lines if not l.strip().startswith("# @node-id:")]
     if len(cleaned) != len(lines):
-        f.write_text(''.join(cleaned), encoding='utf-8')
+        f.write_text("".join(cleaned), encoding="utf-8")
         n = len(lines) - len(cleaned)
-        print(f'Stripped {n} lines from {f.relative_to(ROOT)}')
+        print(f"Stripped {n} lines from {f.relative_to(ROOT)}")
         total += n
-print(f'Done. Total stripped: {total}')
+print(f"Done. Total stripped: {total}")

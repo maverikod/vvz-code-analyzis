@@ -49,6 +49,7 @@ def temp_db(tmp_path):
 
 
 def _fetchone(db: DatabaseClient, sql: str, params: tuple[Any, ...]) -> dict | None:
+    """Return fetchone."""
     r = db.execute(sql, params)
     rows = r.get("data") if isinstance(r, dict) else None
     if not rows:
@@ -58,6 +59,7 @@ def _fetchone(db: DatabaseClient, sql: str, params: tuple[Any, ...]) -> dict | N
 
 
 def _insert_project(db: DatabaseClient, tmp_path: Path) -> str:
+    """Return insert project."""
     pid = str(uuid.uuid4())
     db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
@@ -69,6 +71,7 @@ def _insert_project(db: DatabaseClient, tmp_path: Path) -> str:
 def _insert_file_in_project(
     db: DatabaseClient, tmp_path: Path, project_id: str, rel_name: str
 ) -> tuple[str, Path]:
+    """Return insert file in project."""
     fp = tmp_path / rel_name
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text("# x\n", encoding="utf-8")
@@ -84,6 +87,7 @@ def _insert_file_in_project(
 
 
 def test_collect_file_ids_respects_fnmatch_ignore(temp_db, tmp_path):
+    """Verify test collect file ids respects fnmatch ignore."""
     patterns = ["**/purge_me_*.py"]
     pid = _insert_project(temp_db, tmp_path)
     _insert_file_in_project(temp_db, tmp_path, pid, "purge_me_x.py")
@@ -96,6 +100,7 @@ def test_collect_file_ids_respects_fnmatch_ignore(temp_db, tmp_path):
 
 
 def test_collect_file_ids_respects_ignore_exceptions(temp_db, tmp_path):
+    """Verify test collect file ids respects ignore exceptions."""
     patterns = ["**/exc_*.py"]
     pid = _insert_project(temp_db, tmp_path)
     _, fp_exc = _insert_file_in_project(temp_db, tmp_path, pid, "exc_keep.py")
@@ -111,6 +116,7 @@ def test_collect_file_ids_respects_ignore_exceptions(temp_db, tmp_path):
 
 
 def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path):
+    """Verify test purge removes duplicate occurrences and comprehensive."""
     patterns = ["**/zdup_*.py"]
     pid = _insert_project(temp_db, tmp_path)
     fid, _ = _insert_file_in_project(temp_db, tmp_path, pid, "zdup_one.py")
@@ -162,6 +168,7 @@ def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path
 
 
 def test_build_batch_starts_with_temp_table():
+    """Verify test build batch starts with temp table."""
     ids = [
         "aaaaaaaa-bbbb-4ccc-dddd-000000000001",
         "aaaaaaaa-bbbb-4ccc-dddd-000000000002",
@@ -186,6 +193,7 @@ def test_build_batch_postgres_uses_uuid_temp_column():
 
 
 def test_build_ignore_purge_batch_skips_fts_when_disabled():
+    """Verify test build ignore purge batch skips fts when disabled."""
     ops = build_ignore_purge_sql_batch(
         "proj-1",
         ["aaaaaaaa-bbbb-4ccc-dddd-000000000001"],
@@ -196,6 +204,7 @@ def test_build_ignore_purge_batch_skips_fts_when_disabled():
 
 
 def test_list_non_ignored_prunes_explicit_subtree(tmp_path):
+    """Verify test list non ignored prunes explicit subtree."""
     root = tmp_path / "proj"
     root.mkdir()
     vis = root / "visible.py"
@@ -211,6 +220,7 @@ def test_list_non_ignored_prunes_explicit_subtree(tmp_path):
 
 
 def test_list_non_ignored_keeps_exception_pattern_inside_ignored_dir(tmp_path):
+    """Verify test list non ignored keeps exception pattern inside ignored dir."""
     root = tmp_path / "proj"
     root.mkdir()
     keep = root / "src" / "generated" / "keep.py"
@@ -232,6 +242,7 @@ def test_list_non_ignored_keeps_exception_pattern_inside_ignored_dir(tmp_path):
 def test_pre_scan_ignore_purge_respects_exception_and_keeps_file_on_disk(
     temp_db, tmp_path
 ):
+    """Verify test pre scan ignore purge respects exception and keeps file on disk."""
     pid = _insert_project(temp_db, tmp_path)
     patterns = ["**/src/generated/**"]
 
@@ -263,6 +274,7 @@ def test_pre_scan_ignore_purge_respects_exception_and_keeps_file_on_disk(
 
 
 def test_collect_file_ids_uses_relative_posix_pattern_policy(temp_db, tmp_path):
+    """Verify test collect file ids uses relative posix pattern policy."""
     pid = _insert_project(temp_db, tmp_path)
     fid_a, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/a.py")
     fid_b, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/generated/b.py")
@@ -281,6 +293,7 @@ def test_collect_file_ids_uses_relative_posix_pattern_policy(temp_db, tmp_path):
 
 
 def test_pre_scan_ignore_purge_rollback_on_mid_batch_error(temp_db, tmp_path):
+    """Verify test pre scan ignore purge rollback on mid batch error."""
     pid = _insert_project(temp_db, tmp_path)
     fid_b, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/generated/b.py")
     temp_db.execute(

@@ -11,7 +11,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 # Stable namespace for uuid5-based node ids (RFC 4122 DNS namespace is arbitrary fixed id).
 _JSON_NODE_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
@@ -34,6 +33,7 @@ class JsonNodeMetadata:
     children_ids: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return to dict."""
         return {
             "node_id": self.node_id,
             "json_pointer": self.json_pointer,
@@ -63,5 +63,6 @@ class JSONTree:
 
     @classmethod
     def create(cls, file_path: str, root_data: Any) -> JSONTree:
+        """Return create."""
         tid = str(uuid.uuid4())
         return cls(tree_id=tid, file_path=file_path, root_data=root_data)

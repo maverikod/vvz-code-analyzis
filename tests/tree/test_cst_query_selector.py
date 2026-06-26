@@ -33,11 +33,13 @@ class TestCstQuerySelectorParse:
 
     @pytest.mark.parametrize("selector", _ACCEPT_SELECTORS)
     def test_parse_accepts_engine_valid_selectors(self, selector: str) -> None:
+        """Verify test parse accepts engine valid selectors."""
         parsed = CstQuerySelector.parse(selector)
         assert parsed.selector == selector
 
     @pytest.mark.parametrize("selector", _REJECT_SELECTORS)
     def test_parse_rejects_uuid_in_selector(self, selector: str) -> None:
+        """Verify test parse rejects uuid in selector."""
         with pytest.raises(CstQuerySelectorError, match="UUID node references"):
             CstQuerySelector.parse(selector)
 
@@ -46,6 +48,7 @@ class TestCstQuerySelectorJ003ChainedDslash:
     """HRS {j003}: chained // descendant steps."""
 
     def test_parse_selector_accepts_hrs_j003_selector(self) -> None:
+        """Verify test parse selector accepts hrs j003 selector."""
         query = parse_selector(_HRS_J003_SELECTOR)
         assert query.first.node_type == "ClassDef"
         assert len(query.rest) == 1
@@ -59,6 +62,7 @@ class TestCstQuerySelectorJ003ChainedDslash:
         assert step.predicates[1].op.value == ">="
 
     def test_query_source_hrs_j003_selector(self) -> None:
+        """Verify test query source hrs j003 selector."""
         lines = ["# filler"] * 98
         lines.extend(
             [

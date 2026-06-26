@@ -63,6 +63,7 @@ def _is_connection_lost_error(exc: BaseException) -> bool:
 
 
 def _connect_kwargs_from_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return connect kwargs from config."""
     from code_analysis.core.env_loader import load_dotenv_best_effort
 
     load_dotenv_best_effort()
@@ -102,6 +103,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     """PostgreSQL implementation of the database driver RPC contract."""
 
     def __init__(self) -> None:
+        """Initialize the instance."""
         self.conn: Any = None
         self._pool: Optional[PostgreSQLConnectionPool] = None
         self._connect_kwargs: Dict[str, Any] = {}
@@ -125,6 +127,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         return {"success": True, "remaining": self._qa_transient_injections_remaining}
 
     def _qa_maybe_inject_transient(self) -> None:
+        """Return qa maybe inject transient."""
         if self._qa_transient_injections_remaining <= 0:
             return
         self._qa_transient_injections_remaining -= 1
@@ -139,6 +142,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         )
 
     def connect(self, config: Dict[str, Any]) -> None:
+        """Return connect."""
         try:
             import psycopg
         except ImportError as e:
@@ -256,9 +260,11 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         )
 
     def _sleep_before_retry(self, attempt_1based: int) -> None:
+        """Return sleep before retry."""
         time.sleep(self._retry_policy.delay_for_attempt(attempt_1based))
 
     def _run_once_with_reconnect_on_lost(self, func: Callable[[], _T]) -> _T:
+        """Return run once with reconnect on lost."""
         try:
             return func()
         except Exception as e:
@@ -278,6 +284,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     def _run_self_managed_with_retry(
         self, operation_name: str, func: Callable[[], _T]
     ) -> _T:
+        """Return run self managed with retry."""
         max_a = self._retry_policy.attempts
         for attempt in range(1, max_a + 1):
             try:
@@ -336,6 +343,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         return status
 
     def disconnect(self) -> None:
+        """Return disconnect."""
         try:
             if self._query_journal:
                 try:
@@ -355,16 +363,19 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             raise DriverConnectionError(f"Failed to disconnect: {e}") from e
 
     def create_table(self, schema: Dict[str, Any]) -> bool:
+        """Return create table."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
         return run_create_table_postgres(self.conn, schema)
 
     def drop_table(self, table_name: str) -> bool:
+        """Return drop table."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
         return run_drop_table_postgres(self.conn, table_name)
 
     def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
+        """Return insert."""
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")
         try:
@@ -378,6 +389,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     def update(
         self, table_name: str, where: Dict[str, Any], data: Dict[str, Any]
     ) -> int:
+        """Return update."""
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")
         try:
@@ -389,6 +401,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             raise
 
     def delete(self, table_name: str, where: Dict[str, Any]) -> int:
+        """Return delete."""
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")
         try:
@@ -408,6 +421,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        """Return select."""
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")
         try:
@@ -460,6 +474,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         pool = self._pool
 
         def do_run() -> List[Dict[str, Any]]:
+            """Return do run."""
             self._qa_maybe_inject_transient()
             with pool.acquire(write=need_write) as pc:
                 return run_execute_batch(
@@ -506,6 +521,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         pool = self._pool
 
         def do_run() -> Dict[str, Any]:
+            """Return do run."""
             self._qa_maybe_inject_transient()
             with pool.acquire(write=need_write) as pc:
                 return run_execute(
@@ -520,21 +536,25 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         return self._run_self_managed_with_retry("execute", do_run)
 
     def begin_transaction(self) -> str:
+        """Return begin transaction."""
         if not self._transaction_manager:
             raise DriverOperationError("Transaction manager not initialized")
         return self._transaction_manager.begin_transaction()
 
     def commit_transaction(self, transaction_id: str) -> bool:
+        """Return commit transaction."""
         if not self._transaction_manager:
             raise DriverOperationError("Transaction manager not initialized")
         return self._transaction_manager.commit_transaction(transaction_id)
 
     def rollback_transaction(self, transaction_id: str) -> bool:
+        """Return rollback transaction."""
         if not self._transaction_manager:
             raise DriverOperationError("Transaction manager not initialized")
         return self._transaction_manager.rollback_transaction(transaction_id)
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        """Return get table info."""
         if not self._schema_manager:
             raise DriverOperationError("Schema manager not initialized")
         return self._schema_manager.get_table_info(table_name)
@@ -542,6 +562,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     def sync_schema(
         self, schema_definition: Dict[str, Any], backup_dir: Optional[str] = None
     ) -> Dict[str, Any]:
+        """Return sync schema."""
         if not self._schema_manager:
             raise DriverOperationError("Schema manager not initialized")
         return self._schema_manager.sync_schema(

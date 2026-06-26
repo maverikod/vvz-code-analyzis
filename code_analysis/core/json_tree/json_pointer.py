@@ -32,6 +32,7 @@ def pointer_to_segments(pointer: str) -> List[str]:
 
 
 def segments_to_pointer(segments: List[str]) -> str:
+    """Return segments to pointer."""
     if not segments:
         return ""
     enc = []
@@ -60,6 +61,7 @@ def key_path_to_segments(path: List[KeyPathSegment]) -> List[str]:
 
 
 def key_path_to_pointer(path: List[KeyPathSegment]) -> str:
+    """Return key path to pointer."""
     return segments_to_pointer(key_path_to_segments(path))
 
 
@@ -131,6 +133,7 @@ def delete_at(root: Any, pointer: str) -> None:
 
 
 def insert_into_object(root: Any, parent_pointer: str, key: str, value: Any) -> None:
+    """Return insert into object."""
     parent = get_value_at(root, parent_pointer)
     if not isinstance(parent, dict):
         raise TypeError("insert_into_object: parent is not an object")
@@ -176,6 +179,7 @@ def insert_into_object_relative(
 def insert_into_array(
     root: Any, parent_pointer: str, value: Any, index: Optional[int] = None
 ) -> None:
+    """Return insert into array."""
     parent = get_value_at(root, parent_pointer)
     if not isinstance(parent, list):
         raise TypeError("insert_into_array: parent is not an array")
@@ -187,6 +191,7 @@ def insert_into_array(
 
 # Simple key path lookup (dot-free): list of str keys and int indices
 def resolve_key_path(root: Any, path: List[KeyPathSegment]) -> Any:
+    """Return resolve key path."""
     cur: Any = root
     for p in path:
         if isinstance(cur, list):

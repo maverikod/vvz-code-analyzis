@@ -55,6 +55,7 @@ def block_items_from_payload(payload: dict[str, Any] | list) -> list[dict[str, A
 
 
 def _block_payload(block: SearchResultBlock) -> dict[str, Any]:
+    """Return block payload."""
     return {
         "position": block.position,
         BLOCK_ITEMS_KEY: list(block.items),
@@ -67,6 +68,7 @@ def serialize_block(block: SearchResultBlock) -> bytes:
 
 
 def _assembled_size_bytes(items: list[dict[str, Any]]) -> int:
+    """Return assembled size bytes."""
     payload = {"position": 0, BLOCK_ITEMS_KEY: items}
     return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 

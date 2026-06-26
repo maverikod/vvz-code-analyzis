@@ -24,17 +24,20 @@ from code_analysis.commands.ast.graph_entity_nodes import (
 
 @pytest.fixture
 def temp_dir():
+    """Return temp dir."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
 @pytest.fixture
 def project_id():
+    """Return project id."""
     return str(uuid.uuid4())
 
 
 @pytest.fixture
 def test_db(temp_dir):
+    """Verify test db."""
     facade, raw_client = make_sqlite_in_process_legacy_facade(temp_dir)
     try:
         yield facade
@@ -44,6 +47,7 @@ def test_db(temp_dir):
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
+    """Verify test project."""
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), temp_dir.name),
@@ -53,6 +57,7 @@ def test_project(test_db, temp_dir, project_id):
 
 
 def _uuid4() -> str:
+    """Return uuid4."""
     return str(uuid.uuid4())
 
 
@@ -62,6 +67,7 @@ class TestResolveUsageTargetUniquePerFile:
     def test_class_name_collision_prefers_same_file(
         self, test_db, test_project, temp_dir
     ):
+        """Verify test class name collision prefers same file."""
         path_a = temp_dir / "a.py"
         path_b = temp_dir / "b.py"
         path_a.write_text("# a", encoding="utf-8")
@@ -126,6 +132,7 @@ class TestCallGraphEntityNodesNoDuplicateNodeId:
     """Simulate call_graph aggregation: node_id keys must be unique (cst_node_id)."""
 
     def test_entity_nodes_dict_unique_node_ids(self, test_db, test_project, temp_dir):
+        """Verify test entity nodes dict unique node ids."""
         path_a = temp_dir / "a.py"
         path_b = temp_dir / "b.py"
         path_a.write_text("# a", encoding="utf-8")
@@ -187,7 +194,10 @@ class TestCallGraphEntityNodesNoDuplicateNodeId:
 
 
 class TestIsValidUuid4Helper:
+    """Represent TestIsValidUuid4Helper."""
+
     def test_rejects_non_uuid4_cst_placeholder(self):
+        """Verify test rejects non uuid4 cst placeholder."""
         assert _is_valid_uuid4("fixture:TestClass:ClassDef:10:0-14:0") is False
         assert _is_valid_uuid4(str(uuid.uuid4())) is True
 
@@ -196,4 +206,5 @@ class TestExportGraphQueued:
     """export_graph queued flag mirrors command class default."""
 
     def test_use_queue_false(self):
+        """Verify test use queue false."""
         assert ExportGraphMCPCommand.use_queue is False

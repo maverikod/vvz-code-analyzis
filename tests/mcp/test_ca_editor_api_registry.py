@@ -32,11 +32,13 @@ _EDITOR_FACING_COMMANDS = (
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _register_commands() -> None:
+    """Return register commands."""
     hooks.execute_custom_commands_hooks(registry)
 
 
 @pytest.mark.parametrize("command_name", _EDITOR_FACING_COMMANDS)
 def test_editor_facing_commands_registered(command_name: str) -> None:
+    """Verify test editor facing commands registered."""
     cls = registry.get_command(command_name)
     assert cls is not None
     assert cls.name == command_name

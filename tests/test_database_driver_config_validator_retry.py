@@ -9,6 +9,7 @@ from code_analysis.core.config_validator import CodeAnalysisConfigValidator
 
 
 def _shell():
+    """Return shell."""
     return {
         "server": {
             "host": "localhost",
@@ -21,6 +22,7 @@ def _shell():
 
 
 def _pg_base():
+    """Return pg base."""
     return {
         "host": "localhost",
         "port": 5432,
@@ -31,7 +33,10 @@ def _pg_base():
 
 
 class TestDatabaseDriverConfigValidatorRetry:
+    """Represent TestDatabaseDriverConfigValidatorRetry."""
+
     def test_existing_config_without_retry_timeout_fields_passes(self):
+        """Verify test existing config without retry timeout fields passes."""
         config = {
             **_shell(),
             "code_analysis": {
@@ -55,6 +60,7 @@ class TestDatabaseDriverConfigValidatorRetry:
         assert validator.get_validation_summary()["is_valid"] is True
 
     def test_postgres_config_with_valid_canonical_fields_passes(self):
+        """Verify test postgres config with valid canonical fields passes."""
         config = {
             **_shell(),
             "code_analysis": {
@@ -79,6 +85,7 @@ class TestDatabaseDriverConfigValidatorRetry:
         assert validator.get_validation_summary()["is_valid"] is True
 
     def test_sqlite_config_with_valid_canonical_retry_fields_passes(self):
+        """Verify test sqlite config with valid canonical retry fields passes."""
         config = {
             **_shell(),
             "code_analysis": {
@@ -103,6 +110,7 @@ class TestDatabaseDriverConfigValidatorRetry:
         assert validator.get_validation_summary()["is_valid"] is True
 
     def test_sqlite_proxy_config_with_valid_canonical_retry_fields_passes(self):
+        """Verify test sqlite proxy config with valid canonical retry fields passes."""
         config = {
             **_shell(),
             "code_analysis": {
@@ -127,6 +135,7 @@ class TestDatabaseDriverConfigValidatorRetry:
         assert validator.get_validation_summary()["is_valid"] is True
 
     def test_invalid_retry_attempts_ranges_fail(self):
+        """Verify test invalid retry attempts ranges fail."""
         for bad_attempts in (0, 21, 3.0, "3"):
             config = {
                 **_shell(),
@@ -152,6 +161,7 @@ class TestDatabaseDriverConfigValidatorRetry:
             ), f"expected write_retry_attempts error for {bad_attempts!r}"
 
     def test_invalid_delay_backoff_jitter_ranges_fail(self):
+        """Verify test invalid delay backoff jitter ranges fail."""
         cases = [
             (
                 "write_retry_delay_seconds",
@@ -208,6 +218,7 @@ class TestDatabaseDriverConfigValidatorRetry:
             ), f"expected range error for {field_name}={bad_value!r}"
 
     def test_invalid_timeout_ranges_fail(self):
+        """Verify test invalid timeout ranges fail."""
         cases = [
             ("lock_timeout_seconds", 0),
             ("lock_timeout_seconds", 301),
@@ -236,6 +247,7 @@ class TestDatabaseDriverConfigValidatorRetry:
             ), f"expected timeout error for {field_name}={bad_value!r}"
 
     def test_invalid_types_fail_with_clear_messages(self):
+        """Verify test invalid types fail with clear messages."""
         cases = [
             ("write_retry_attempts", "2", "write_retry_attempts"),
             ("write_retry_delay_seconds", True, "write_retry_delay_seconds"),
@@ -266,6 +278,7 @@ class TestDatabaseDriverConfigValidatorRetry:
             ), f"expected clear message for {field_name}={bad_value!r}"
 
     def test_deprecated_aliases_fail_with_suggestion(self):
+        """Verify test deprecated aliases fail with suggestion."""
         for alias, canonical in (
             ("retry_attempts", "write_retry_attempts"),
             ("retry_delay_seconds", "write_retry_delay_seconds"),
@@ -289,6 +302,7 @@ class TestDatabaseDriverConfigValidatorRetry:
             ), f"expected deprecation hint for {alias}"
 
     def test_no_unknown_retry_aliases_are_silently_accepted(self):
+        """Verify test no unknown retry aliases are silently accepted."""
         config = {
             **_shell(),
             "code_analysis": {

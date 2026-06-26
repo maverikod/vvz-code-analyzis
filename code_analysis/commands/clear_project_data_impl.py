@@ -199,6 +199,7 @@ DELETE FROM issues WHERE
 
 
 def _pair_entity_cross_ref_delete(project_id: str) -> SqlParamPair:
+    """Return pair entity cross ref delete."""
     sql = """
 DELETE FROM entity_cross_ref WHERE
   file_id IN (SELECT id FROM files WHERE project_id = ?)

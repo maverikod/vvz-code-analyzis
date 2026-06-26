@@ -40,6 +40,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ListProjectsMCPCommand"]) -> Dict[str, Any]:
+        """Return the schema for watch-directory and project filters."""
         return {
             "type": "object",
             "description": (
@@ -93,11 +94,13 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["ListProjectsMCPCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for filesystem project discovery."""
         from .list_projects_metadata import get_list_projects_metadata
 
         return get_list_projects_metadata(cls)
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and normalize an optional configured watch-directory ID."""
         params = super().validate_params(params)
         watched_dir_id = params.get("watched_dir_id")
         if watched_dir_id:
@@ -127,6 +130,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         include_deleted: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Discover projects on disk and apply the requested filters."""
         try:
             params = self.validate_params(
                 {

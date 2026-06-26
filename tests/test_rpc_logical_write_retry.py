@@ -1,4 +1,4 @@
-# Unit tests: RPC full-transaction logical write retry (no live database).
+"""Unit tests for RPC full-transaction logical write retry."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ SqlBatch = list[tuple[str, Optional[tuple[Any, ...]]]]
 
 
 def _batches_two() -> list[SqlBatch]:
+    """Return batches two."""
     return [
         [("INSERT INTO a VALUES (?)", (1,))],
         [("INSERT INTO b VALUES (?)", (2,))],
@@ -28,6 +29,7 @@ def _batches_two() -> list[SqlBatch]:
 
 
 def _batches_one() -> list[SqlBatch]:
+    """Return batches one."""
     return [
         [("INSERT INTO t VALUES (?)", (1,))],
     ]
@@ -37,6 +39,7 @@ class FakeLogicalWriteDriver:
     """Records calls and simulates transients; optional ``_write_retry_policy`` for RPC layer."""
 
     def __init__(self, policy: RetryPolicy | None = None) -> None:
+        """Initialize the instance."""
         self._write_retry_policy = policy
         self.calls: list[tuple[str, ...]] = []
         self._session = 0
@@ -50,6 +53,7 @@ class FakeLogicalWriteDriver:
         self._rows = [{"affected_rows": 1, "lastrowid": None, "data": None}]
 
     def begin_transaction(self) -> str:
+        """Return begin transaction."""
         self._session += 1
         self._batch_in_session = 0
         tid = f"tid{self._session}"
@@ -59,6 +63,7 @@ class FakeLogicalWriteDriver:
     def execute(
         self, sql: str, params: Any, transaction_id: Optional[str]
     ) -> dict[str, Any]:
+        """Execute the command."""
         self.calls.append(("execute", sql, transaction_id))
         return {"affected_rows": 0, "lastrowid": None, "data": None}
 
@@ -67,6 +72,7 @@ class FakeLogicalWriteDriver:
         operations: list[tuple[str, Optional[tuple]]],
         transaction_id: Optional[str],
     ) -> list[dict[str, Any]]:
+        """Return execute batch."""
         self._batch_in_session += 1
         n = len(operations)
         self.calls.append(("execute_batch", transaction_id, self._batch_in_session, n))
@@ -93,6 +99,7 @@ class FakeLogicalWriteDriver:
         return list(self._rows) * n if n else []
 
     def commit_transaction(self, transaction_id: str) -> bool:
+        """Return commit transaction."""
         self.calls.append(("commit_transaction", transaction_id))
         if self.commit_outcome_unknown_once and self._session == 1:
             raise TransientDatabaseError(
@@ -105,6 +112,7 @@ class FakeLogicalWriteDriver:
         return True
 
     def rollback_transaction(self, transaction_id: str) -> bool:
+        """Return rollback transaction."""
         self.calls.append(("rollback_transaction", transaction_id))
         if self.rollback_raises_after_transient and self._transient_raised:
             self._transient_raised = False
@@ -112,6 +120,7 @@ class FakeLogicalWriteDriver:
         return True
 
     def acquire_project_lock(self, *args: Any, **kwargs: Any) -> None:
+        """Return acquire project lock."""
         self.calls.append(("acquire_project_lock",))
         raise AssertionError("project activity lock must not be used in this step")
 
@@ -121,6 +130,7 @@ def _run_handler(
     batches: list[SqlBatch],
     **extra: Any,
 ) -> SuccessResult | ErrorResult:
+    """Return run handler."""
     params: dict[str, Any] = {
         "batches": [
             [
@@ -139,6 +149,7 @@ def _run_handler(
 def test_retry_replays_whole_transaction_from_beginning(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test retry replays whole transaction from beginning."""
     caplog.set_level(logging.INFO)
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
@@ -171,6 +182,7 @@ def test_retry_replays_whole_transaction_from_beginning(
 def test_retry_does_not_replay_only_failed_batch(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test retry does not replay only failed batch."""
     _ = caplog
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
@@ -189,6 +201,7 @@ def test_retry_does_not_replay_only_failed_batch(
 
 
 def test_commit_outcome_unknown_is_not_retried() -> None:
+    """Verify test commit outcome unknown is not retried."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
     )
@@ -212,6 +225,7 @@ def test_commit_outcome_unknown_is_not_retried() -> None:
 
 @patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
 def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
+    """Verify test exhausted attempts returns structured details."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=2, delay_seconds=0.0, jitter_seconds=0.0)
     )
@@ -236,6 +250,7 @@ def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
 def test_operation_name_is_forwarded_to_error_details_and_logs(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test operation name is forwarded to error details and logs."""
     caplog.set_level(logging.INFO)
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=2, delay_seconds=0.0, jitter_seconds=0.0)
@@ -259,6 +274,7 @@ def test_operation_name_is_forwarded_to_error_details_and_logs(
 
 
 def test_project_id_and_lock_scope_are_metadata_only_in_this_step() -> None:
+    """Verify test project id and lock scope are metadata only in this step."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0)
     )
@@ -284,6 +300,7 @@ def test_project_id_and_lock_scope_are_metadata_only_in_this_step() -> None:
 
 @patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
 def test_rollback_failure_stops_retry(_sleep: Any) -> None:
+    """Verify test rollback failure stops retry."""
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
     )

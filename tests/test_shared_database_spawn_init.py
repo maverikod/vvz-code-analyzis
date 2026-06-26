@@ -21,6 +21,7 @@ class _DummyClient:
     """Small fake DB client for shared database tests."""
 
     def __init__(self, marker: str) -> None:
+        """Initialize the instance."""
         self.marker = marker
         self.disconnected = False
 
@@ -71,6 +72,8 @@ def test_spawn_init_reopens_shared_database_for_child_process(
     fake_sock.write_bytes(b"")
 
     class _FakeStorage:
+        """Represent FakeStorage."""
+
         db_path = tmp_path / "dummy.sqlite"
 
     monkeypatch.setattr(
@@ -122,6 +125,7 @@ def test_command_execution_job_patch_ensures_process_local_shared_db(
 
         @classmethod
         async def run(cls, **kwargs):
+            """Return run."""
             captured_context.update(kwargs.get("context") or {})
             return {"ok": True}
 

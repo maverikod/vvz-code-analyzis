@@ -13,6 +13,7 @@ from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDr
 
 
 def _minimal_status_batch_results() -> List[Dict[str, Any]]:
+    """Return minimal status batch results."""
     row0: Dict[str, Any] = {"data": [{"count": 0}]}
     empty_samples: Dict[str, Any] = {"data": []}
     # 0=count, 1=project rows, 2..13=counts, 14..16=file/chunk samples (must be [])
@@ -20,9 +21,11 @@ def _minimal_status_batch_results() -> List[Dict[str, Any]]:
 
 
 def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
+    """Verify test postgres in process adds pool in use when enabled."""
     driver = PostgreSQLDriver()
 
     def _pool_status() -> dict:
+        """Return pool status."""
         return {
             "enabled": True,
             "write": {"capacity": 3, "in_use": 2, "idle": 1, "waiters": 0},
@@ -34,11 +37,14 @@ def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
     rpc = SimpleNamespace(handlers=SimpleNamespace(driver=driver))
 
     class _FakeDB:
+        """Represent FakeDB."""
+
         rpc_client = rpc
         _driver_type = "postgres"
         driver_config = {"type": "postgres", "config": {}}
 
         def execute_batch(self, ops):  # noqa: ANN001, ANN201
+            """Return execute batch."""
             return _minimal_status_batch_results()
 
     result = build_database_status_result(
@@ -54,10 +60,15 @@ def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
 
 
 def test_sqlite_driver_does_not_add_pg_pool_fields(tmp_path: Path) -> None:
+    """Verify test sqlite driver does not add pg pool fields."""
+
     class _FakeDB:
+        """Represent FakeDB."""
+
         rpc_client = SimpleNamespace(handlers=None)
 
         def execute_batch(self, ops):  # noqa: ANN001, ANN201
+            """Return execute batch."""
             return _minimal_status_batch_results()
 
     result = build_database_status_result(
@@ -68,14 +79,18 @@ def test_sqlite_driver_does_not_add_pg_pool_fields(tmp_path: Path) -> None:
 
 
 def test_postgres_pool_disabled_omits_in_use_fields() -> None:
+    """Verify test postgres pool disabled omits in use fields."""
     driver = PostgreSQLDriver()
     driver.pool_status = lambda: {"enabled": False}  # type: ignore[method-assign]
     rpc = SimpleNamespace(handlers=SimpleNamespace(driver=driver))
 
     class _FakeDB:
+        """Represent FakeDB."""
+
         rpc_client = rpc
 
         def execute_batch(self, ops):  # noqa: ANN001, ANN201
+            """Return execute batch."""
             return _minimal_status_batch_results()
 
     result = build_database_status_result(_FakeDB(), Path("/x"), driver_type="postgres")

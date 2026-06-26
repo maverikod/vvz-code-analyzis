@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 def _session_and_layout(tmp_path: Path):
+    """Return session and layout."""
     from code_analysis.core.search_session.directory import (
         provision_search_session_directory,
     )
@@ -36,9 +37,11 @@ def _session_and_layout(tmp_path: Path):
 
 
 def _fake_assembler_factory(layout, raw_config):
+    """Return fake assembler factory."""
     assembler = MagicMock()
 
     def run(search_completed=False):
+        """Return run."""
         (layout.blocks_dir / "block_1.json").write_text(
             json.dumps({"position": 1, "items": []})
         )
@@ -48,6 +51,7 @@ def _fake_assembler_factory(layout, raw_config):
 
 
 def test_normalize_ggrep_match() -> None:
+    """Verify test normalize ggrep match."""
     raw = {
         "file_path": "d.py",
         "line_number": 5,
@@ -62,6 +66,7 @@ def test_normalize_ggrep_match() -> None:
 
 
 def test_build_ggrep_backend_params_structural_default() -> None:
+    """Verify test build ggrep backend params structural default."""
     params = {"project_id": "pid", "query": "foo", "require_structural_grep": True}
     result = build_ggrep_backend_params(params)
     assert result["project_id"] == "pid"
@@ -72,6 +77,7 @@ def test_build_ggrep_backend_params_structural_default() -> None:
 
 @pytest.mark.asyncio
 async def test_run_paginated_ggrep_returns_1_on_matches(tmp_path: Path) -> None:
+    """Verify test run paginated ggrep returns 1 on matches."""
     session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command.execute = AsyncMock(

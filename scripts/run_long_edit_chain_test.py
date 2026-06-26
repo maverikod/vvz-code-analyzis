@@ -26,6 +26,7 @@ EDIT_COUNT = 10
 
 
 def _pad(base: str, min_size: int = MIN_BYTES) -> str:
+    """Return pad."""
     out = base
     n = 0
     while len(out.encode("utf-8")) < min_size:
@@ -35,8 +36,8 @@ def _pad(base: str, min_size: int = MIN_BYTES) -> str:
 
 
 def _py_initial() -> str:
-    return _pad(
-        '''"""Long edit chain test module (>=2 KiB)."""
+    """Return py initial."""
+    return _pad('''"""Long edit chain test module (>=2 KiB)."""
 from __future__ import annotations
 
 REVISION = 0
@@ -45,50 +46,48 @@ REVISION = 0
 def baseline() -> int:
     """Baseline counter."""
     return REVISION
-'''
-    )
+''')
 
 
 def _md_initial() -> str:
-    return _pad(
-        """# Long edit chain test
+    """Return md initial."""
+    return _pad("""# Long edit chain test
 
 ## Baseline
 
 Initial markdown document for universal_file_edit stress test.
 
-"""
-    )
+""")
 
 
 def _txt_initial() -> str:
+    """Return txt initial."""
     return _pad("Long edit chain plain text baseline.\n")
 
 
 def _rst_initial() -> str:
-    return _pad(
-        """Long edit chain RST
+    """Return rst initial."""
+    return _pad("""Long edit chain RST
 =====================
 
 Baseline section for edit-chain test.
 
-"""
-    )
+""")
 
 
 def _adoc_initial() -> str:
-    return _pad(
-        """= Long edit chain AsciiDoc
+    """Return adoc initial."""
+    return _pad("""= Long edit chain AsciiDoc
 
 == Baseline
 
 Initial asciidoc for edit-chain test.
 
-"""
-    )
+""")
 
 
 def _json_initial() -> str:
+    """Return json initial."""
     obj: Dict[str, Any] = {"revision": 0, "title": "long-edit-chain", "items": []}
     n = 0
     while len(json.dumps(obj, indent=2).encode("utf-8")) < MIN_BYTES:
@@ -98,6 +97,7 @@ def _json_initial() -> str:
 
 
 def _yaml_initial() -> str:
+    """Return yaml initial."""
     lines = ["revision: 0", "title: long-edit-chain", "items:"]
     n = 0
     while len("\n".join(lines).encode("utf-8")) < MIN_BYTES:
@@ -108,6 +108,7 @@ def _yaml_initial() -> str:
 
 
 def _jsonl_initial() -> str:
+    """Return jsonl initial."""
     lines: List[str] = []
     n = 0
     while len("\n".join(lines).encode("utf-8")) < MIN_BYTES:
@@ -118,12 +119,15 @@ def _jsonl_initial() -> str:
 
 @dataclass
 class FormatSpec:
+    """Represent FormatSpec."""
+
     rel_path: str
     initial_content: Callable[[], str]
     edit_ops: Callable[[int], List[Dict[str, Any]]]
 
 
 def _text_insert_ops(i: int) -> List[Dict[str, Any]]:
+    """Return text insert ops."""
     return [
         {
             "type": "insert",
@@ -134,14 +138,17 @@ def _text_insert_ops(i: int) -> List[Dict[str, Any]]:
 
 
 def _json_ops(i: int) -> List[Dict[str, Any]]:
+    """Return json ops."""
     return [{"type": "replace", "json_pointer": "/revision", "value": i}]
 
 
 def _yaml_ops(i: int) -> List[Dict[str, Any]]:
+    """Return yaml ops."""
     return [{"type": "replace", "json_pointer": "/revision", "value": i}]
 
 
 def _py_ops(i: int) -> List[Dict[str, Any]]:
+    """Return py ops."""
     return [
         {
             "type": "insert",
@@ -171,6 +178,7 @@ FORMATS: List[FormatSpec] = [
 
 
 def _unwrap(resp: Any) -> Dict[str, Any]:
+    """Return unwrap."""
     if not isinstance(resp, dict):
         raise RuntimeError(f"Unexpected response type: {type(resp)}")
     if resp.get("success") is False:
@@ -183,12 +191,16 @@ def _unwrap(resp: Any) -> Dict[str, Any]:
     return resp
 
 
-def _call(client: MCPClientWrapper, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _call(
+    client: MCPClientWrapper, command: str, params: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Return call."""
     raw = client.call_command(command, params)
     return _unwrap(raw)
 
 
 def _run_format(client: MCPClientWrapper, spec: FormatSpec) -> Dict[str, Any]:
+    """Return run format."""
     initial = spec.initial_content()
     size = len(initial.encode("utf-8"))
     if size < MIN_BYTES:
@@ -280,6 +292,7 @@ def _run_format(client: MCPClientWrapper, spec: FormatSpec) -> Dict[str, Any]:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     if not is_available():
         print("MCP JsonRpcClient unavailable", file=sys.stderr)
         return 1

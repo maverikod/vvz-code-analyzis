@@ -19,6 +19,7 @@ def install_config_command_gate() -> None:
     original_execute = Command.execute
 
     async def gated_execute(self, **kwargs):  # type: ignore[no-untyped-def]
+        """Return gated execute."""
         from code_analysis.core.config_state import (
             config_blocks_command,
             config_invalid_command_message,

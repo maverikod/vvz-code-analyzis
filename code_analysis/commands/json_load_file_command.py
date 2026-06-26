@@ -35,6 +35,7 @@ class JsonLoadFileCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -52,6 +53,7 @@ class JsonLoadFileCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters and reject unknown project ids before loading."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -59,6 +61,7 @@ class JsonLoadFileCommand(BaseMCPCommand):
     async def execute(
         self, project_id: str, file_path: str, **kwargs: Any
     ) -> SuccessResult:
+        """Load a project JSON file into a locked in-memory tree session."""
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
@@ -115,6 +118,7 @@ class JsonLoadFileCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonLoadFileCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON file loading command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

@@ -10,6 +10,7 @@ from pathlib import Path
 def test_install_redirects_adapter_logs_from_config_file(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """Verify test install redirects adapter logs from config file."""
     import json
 
     log_dir = tmp_path / "prod-logs"
@@ -43,6 +44,7 @@ def test_install_redirects_adapter_logs_from_config_file(
 
 
 def test_install_redirects_adapter_logs(tmp_path: Path, monkeypatch) -> None:
+    """Verify test install redirects adapter logs."""
     log_dir = tmp_path / "casmgr-logs"
     monkeypatch.setenv("CASMGR_LOG", str(log_dir))
     monkeypatch.delenv("CASMGR_CONFIG", raising=False)

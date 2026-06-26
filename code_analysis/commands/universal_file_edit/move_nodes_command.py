@@ -65,6 +65,7 @@ def _sorted_node_ids_by_tree_order(tree: CSTTree, node_ids: List[str]) -> List[s
     """Return node_ids sorted by start_line in the tree (source order)."""
 
     def _line(nid: str) -> int:
+        """Return line."""
         span_id = _resolve_cst_node_span_id(tree, nid) or nid
         meta = tree.metadata_map.get(span_id)
         return meta.start_line if meta else 0
@@ -113,6 +114,7 @@ def _run_valid_session_move_batch(
     source_snapshot = session.core.session_source_path.read_text(encoding="utf-8")
 
     def _rollback() -> None:
+        """Return rollback."""
         session.core.session_tree_path.write_text(tree_snapshot, encoding="utf-8")
         session.core.session_source_path.write_text(source_snapshot, encoding="utf-8")
 
@@ -283,6 +285,7 @@ def _run_sidecar_move_batch(
     orig_sidecar = sibling_tree_path(orig_path.resolve())
 
     def _cleanup_tmp() -> None:
+        """Return cleanup tmp."""
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:

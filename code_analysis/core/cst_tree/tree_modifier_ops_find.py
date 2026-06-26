@@ -108,7 +108,10 @@ def _node_is_in_module_tree(module: cst.Module, node: cst.CSTNode) -> bool:
     found = [False]
 
     class _IdentityVisitor(cst.CSTVisitor):
+        """Represent IdentityVisitor."""
+
         def on_visit(self, n: cst.CSTNode) -> bool:
+            """Return on visit."""
             if n is node:
                 found[0] = True
                 return False
@@ -160,7 +163,10 @@ def resolve_replace_target_to_current_module(
     candidates: List[cst.CSTNode] = []
 
     class _Collect(cst.CSTVisitor):
+        """Represent Collect."""
+
         def on_visit(self, n: cst.CSTNode) -> bool:
+            """Return on visit."""
             if not isinstance(n, _COMPOUND_STMT_TYPES):
                 return True
             if type(n).__name__ != m.type:
@@ -257,11 +263,15 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
 
     # Use LibCST transformer to remove the node
     class NodeRemover(cst.CSTTransformer):
+        """Represent NodeRemover."""
+
         def __init__(self, target_node: cst.CSTNode):
+            """Initialize the instance."""
             self.target_node = target_node
             self.removed = False
 
         def on_visit(self, node: cst.CSTNode) -> bool:
+            """Return on visit."""
             if node is self.target_node:
                 self.removed = True
                 return False
@@ -270,6 +280,7 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
         def on_leave(  # type: ignore[override]
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode | cst.RemovalSentinel | cst.FlattenSentinel[cst.CSTNode]:
+            """Return on leave."""
             if original_node is self.target_node:
                 return cst.RemoveFromParent()
             return updated_node
@@ -415,6 +426,7 @@ def _find_statement_in_module_tree(
     by_line: dict[int, List[cst.CSTNode]] = {}
 
     def _collect(stmt: cst.BaseStatement) -> None:
+        """Return collect."""
         is_exact, is_start, line = _statement_span_matches(
             positions,
             stmt,
@@ -482,7 +494,10 @@ def find_node_in_module_by_position(
     result: List[Optional[cst.CSTNode]] = [None]
 
     class Finder(cst.CSTVisitor):
+        """Represent Finder."""
+
         def on_visit(self, node: cst.CSTNode) -> bool:
+            """Return on visit."""
             pos = positions.get(node)
             if pos is not None and hasattr(pos, "start") and hasattr(pos, "end"):
                 if (
@@ -517,7 +532,10 @@ def find_node_in_module_by_position(
         # Fallback: search whole tree for node with matching start (e.g. method
         # inside class body, after prior replace shifted end position).
         class FindByStart(cst.CSTVisitor):
+            """Represent FindByStart."""
+
             def on_visit(self, node: cst.CSTNode) -> bool:
+                """Return on visit."""
                 if isinstance(node, (cst.FunctionDef, cst.ClassDef)):
                     p = positions.get(node)
                     if (
@@ -616,10 +634,14 @@ def find_leaf_node_in_module_by_position(
     matches: List[Tuple[cst.CSTNode, int]] = []
 
     class ExactCollector(cst.CSTVisitor):
+        """Represent ExactCollector."""
+
         def __init__(self) -> None:
+            """Initialize the instance."""
             self._depth = 0
 
         def on_visit(self, node: cst.CSTNode) -> bool:
+            """Return on visit."""
             self._depth += 1
             kind = type(node).__name__
             include = isinstance(node, cst.BaseExpression) or kind in (
@@ -639,6 +661,7 @@ def find_leaf_node_in_module_by_position(
             return True
 
         def on_leave(self, original_node: cst.CSTNode) -> None:
+            """Return on leave."""
             self._depth -= 1
 
     module.visit(ExactCollector())
@@ -709,7 +732,10 @@ def find_parent_in_module_by_position(
     candidates: List[Tuple[cst.CSTNode, int]] = []
 
     class ParentFinder(cst.CSTVisitor):
+        """Represent ParentFinder."""
+
         def on_visit(self, node: cst.CSTNode) -> bool:
+            """Return on visit."""
             is_container = isinstance(node, (cst.Module, cst.IndentedBlock)) or (
                 hasattr(node, "body")
                 and isinstance(getattr(node, "body", None), cst.IndentedBlock)

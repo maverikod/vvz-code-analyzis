@@ -10,6 +10,7 @@ from code_analysis.core.file_handlers.base import FileHandlerResult
 
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
+    """Return success from handler."""
     data: Dict[str, Any] = {
         "success": True,
         "handler_id": fr.handler_id,
@@ -26,6 +27,7 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
     # FileHandlerResult.code is a string semantic code; ErrorResult is typed as int for
     # JSON-RPC but this codebase uses str codes end-to-end for universal save.
+    """Return error from handler."""
     return ErrorResult(
         message=fr.message or fr.code,
         code=fr.code or "VALIDATION_FAILED",  # type: ignore[arg-type]

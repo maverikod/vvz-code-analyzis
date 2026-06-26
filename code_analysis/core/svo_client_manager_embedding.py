@@ -28,6 +28,7 @@ _AGENT_SESSION = "718d03"
 def _agent_debug_log(
     hypothesis_id: str, location: str, message: str, data: Dict[str, Any]
 ) -> None:
+    """Return agent debug log."""
     try:
         payload = {
             "sessionId": _AGENT_SESSION,

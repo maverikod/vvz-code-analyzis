@@ -23,6 +23,7 @@ def validate_file_existence_impl(
     config_dir = Path(config_path).parent
 
     def _check_ssl_files(section: str, ssl: Any, label: str) -> None:
+        """Return check ssl files."""
         if not ssl or not isinstance(ssl, dict):
             return
         for field in ["cert", "key", "ca", "crl"]:

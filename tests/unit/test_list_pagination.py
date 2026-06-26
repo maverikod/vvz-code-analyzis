@@ -9,6 +9,7 @@ from code_analysis.core.list_pagination import (
 
 
 def test_resolve_list_pagination_defaults() -> None:
+    """Verify test resolve list pagination defaults."""
     page_size, offset, block_position = resolve_list_pagination({})
     assert page_size == 20
     assert offset == 0
@@ -16,6 +17,7 @@ def test_resolve_list_pagination_defaults() -> None:
 
 
 def test_resolve_list_pagination_block_position() -> None:
+    """Verify test resolve list pagination block position."""
     page_size, offset, block_position = resolve_list_pagination(
         {"page_size": 10, "block_position": 3}
     )
@@ -25,6 +27,7 @@ def test_resolve_list_pagination_block_position() -> None:
 
 
 def test_build_list_page_payload_has_more() -> None:
+    """Verify test build list page payload has more."""
     payload = build_list_page_payload(
         items=[{"id": 1}],
         total=3,

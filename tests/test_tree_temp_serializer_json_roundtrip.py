@@ -12,10 +12,12 @@ from code_analysis.core.tree_temp.tree_node import TreeNode
 
 
 def _norm_comment(s: str | None) -> str:
+    """Return norm comment."""
     return (s or "").strip()
 
 
 def _struct_tuple(node: TreeNode, depth: int) -> tuple[object, ...]:
+    """Return struct tuple."""
     key = node.key
     vref: object
     if node.type in ("object", "array"):
@@ -33,10 +35,12 @@ def _struct_tuple(node: TreeNode, depth: int) -> tuple[object, ...]:
 
 
 def _flatten(doc: str) -> list[tuple[object, ...]]:
+    """Return flatten."""
     roots = parse_json_source_to_roots(doc)
     out: list[tuple[object, ...]] = []
 
     def visit(n: TreeNode, d: int) -> None:
+        """Return visit."""
         out.append(_struct_tuple(n, d))
         if n.children:
             for ch in n.children:
@@ -48,6 +52,7 @@ def _flatten(doc: str) -> list[tuple[object, ...]]:
 
 
 def assert_roundtrip_stable_comments(document: str) -> None:
+    """Return assert roundtrip stable comments."""
     r1 = parse_json_source_to_roots(document)
     mid = emit_json_source_from_roots(r1)
     r2 = parse_json_source_to_roots(mid)
@@ -66,18 +71,22 @@ def assert_roundtrip_stable_comments(document: str) -> None:
 
 
 def test_json_roundtrip_minimal_inline_and_above_comments() -> None:
+    """Verify test json roundtrip minimal inline and above comments."""
     assert_roundtrip_stable_comments('//head\n{"a":1}//trail\n')
 
 
 def test_json_roundtrip_nested_object_order() -> None:
+    """Verify test json roundtrip nested object order."""
     assert_roundtrip_stable_comments('{"outer":{"z":9,"y":8}}')
 
 
 def test_json_roundtrip_array_root_numbers() -> None:
+    """Verify test json roundtrip array root numbers."""
     assert_roundtrip_stable_comments("[10,11,12]")
 
 
 def test_json_emit_parse_idempotent_twice_loop() -> None:
+    """Verify test json emit parse idempotent twice loop."""
     doc = '{"x":1}'
     assert_roundtrip_stable_comments(doc)
     once = emit_json_source_from_roots(parse_json_source_to_roots(doc))
@@ -86,4 +95,5 @@ def test_json_emit_parse_idempotent_twice_loop() -> None:
 
 
 def test_json_comment_only_line_between_members() -> None:
+    """Verify test json comment only line between members."""
     assert_roundtrip_stable_comments('{"first":true,\n//mid\n"second":false}\n')

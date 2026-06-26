@@ -19,6 +19,7 @@ _PACKAGING_EXAMPLE_SETTINGS = (
 
 
 def test_merge_watch_ignore_patterns_deduplicates_and_preserves_order() -> None:
+    """Verify test merge watch ignore patterns deduplicates and preserves order."""
     merged = merge_watch_ignore_patterns(
         ["**/.venv/**", "**/custom/**"],
         ["**/.venv/**", "**/__pycache__/**"],
@@ -27,11 +28,13 @@ def test_merge_watch_ignore_patterns_deduplicates_and_preserves_order() -> None:
 
 
 def test_merge_watch_ignore_patterns_skips_blank_entries() -> None:
+    """Verify test merge watch ignore patterns skips blank entries."""
     merged = merge_watch_ignore_patterns(["", "  "], ["**/.cache/**"])
     assert merged == ("**/.cache/**",)
 
 
 def test_packaging_watch_catalog_example_settings_match_defaults() -> None:
+    """Verify test packaging watch catalog example settings match defaults."""
     assert _PACKAGING_EXAMPLE_SETTINGS.is_file()
     watch_dir = _PACKAGING_EXAMPLE_SETTINGS.parent
     settings = load_watch_dir_settings(watch_dir)

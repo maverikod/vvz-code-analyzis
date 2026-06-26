@@ -15,16 +15,21 @@ from code_analysis.core.code_quality import drift_checks, security
 
 
 def _proc(returncode=0, stdout="", stderr=""):
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+    """Return proc."""
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 def test_black_clean(monkeypatch):
+    """Verify test black clean."""
     monkeypatch.setattr(drift_checks, "run_quality_tool", lambda *a, **k: _proc(0))
     ok, msg, errs = drift_checks.check_with_black(Path("x.py"))
     assert ok is True and errs == []
 
 
 def test_black_would_reformat(monkeypatch):
+    """Verify test black would reformat."""
     monkeypatch.setattr(
         drift_checks,
         "run_quality_tool",
@@ -36,6 +41,7 @@ def test_black_would_reformat(monkeypatch):
 
 
 def test_black_not_installed(monkeypatch):
+    """Verify test black not installed."""
     monkeypatch.setattr(
         drift_checks,
         "run_quality_tool",
@@ -46,23 +52,30 @@ def test_black_not_installed(monkeypatch):
 
 
 def test_isort_drift(monkeypatch):
+    """Verify test isort drift."""
     monkeypatch.setattr(
         drift_checks,
         "run_quality_tool",
-        lambda *a, **k: _proc(1, stdout="diff", stderr="ERROR: x.py Imports are incorrectly sorted."),
+        lambda *a, **k: _proc(
+            1, stdout="diff", stderr="ERROR: x.py Imports are incorrectly sorted."
+        ),
     )
     ok, msg, errs = drift_checks.check_with_isort(Path("x.py"))
     assert ok is False and errs
 
 
 def test_bandit_no_findings(monkeypatch):
+    """Verify test bandit no findings."""
     payload = json.dumps({"results": []})
-    monkeypatch.setattr(security, "run_quality_tool", lambda *a, **k: _proc(0, stdout=payload))
+    monkeypatch.setattr(
+        security, "run_quality_tool", lambda *a, **k: _proc(0, stdout=payload)
+    )
     ok, msg, errs = security.check_with_bandit(Path("x.py"))
     assert ok is True and errs == []
 
 
 def test_bandit_findings(monkeypatch):
+    """Verify test bandit findings."""
     payload = json.dumps(
         {
             "results": [
@@ -76,21 +89,27 @@ def test_bandit_findings(monkeypatch):
             ]
         }
     )
-    monkeypatch.setattr(security, "run_quality_tool", lambda *a, **k: _proc(1, stdout=payload))
+    monkeypatch.setattr(
+        security, "run_quality_tool", lambda *a, **k: _proc(1, stdout=payload)
+    )
     ok, msg, errs = security.check_with_bandit(Path("x.py"))
     assert ok is False
     assert "B602" in errs[0] and "HIGH" in errs[0]
 
 
 def test_bandit_not_installed(monkeypatch):
+    """Verify test bandit not installed."""
     monkeypatch.setattr(
-        security, "run_quality_tool", lambda *a, **k: _proc(1, "", "No module named bandit")
+        security,
+        "run_quality_tool",
+        lambda *a, **k: _proc(1, "", "No module named bandit"),
     )
     ok, msg, errs = security.check_with_bandit(Path("x.py"))
     assert ok is False and msg == "Bandit not installed"
 
 
 def test_bandit_bad_json(monkeypatch):
+    """Verify test bandit bad json."""
     monkeypatch.setattr(
         security, "run_quality_tool", lambda *a, **k: _proc(2, "not json", "boom")
     )

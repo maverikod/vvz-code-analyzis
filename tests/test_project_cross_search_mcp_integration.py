@@ -37,6 +37,7 @@ _QUERY = "XPath selector path expression tree node query"
 
 
 def _live_enabled() -> bool:
+    """Return live enabled."""
     return os.environ.get("RUN_PROJECT_CROSS_SEARCH_LIVE", "").lower() in (
         "1",
         "true",
@@ -45,17 +46,20 @@ def _live_enabled() -> bool:
 
 
 async def _run(command_name: str, **params: Any) -> Dict[str, Any]:
+    """Return run."""
     cmd_cls = registry.get_command(command_name)
     result_obj = await cmd_cls.run(**params)
     return result_obj.to_dict()
 
 
 def _payload(res: Dict[str, Any]) -> Dict[str, Any]:
+    """Return payload."""
     data = res.get("data")
     return data if isinstance(data, dict) else {}
 
 
 def _extract_job_id(res: Dict[str, Any]) -> Optional[str]:
+    """Return extract job id."""
     for key in ("job_id", "queue_job_id"):
         val = res.get(key)
         if isinstance(val, str) and val:
@@ -70,6 +74,7 @@ def _extract_job_id(res: Dict[str, Any]) -> Optional[str]:
 
 
 async def _poll_job(job_id: str, timeout: float = 120.0) -> Dict[str, Any]:
+    """Return poll job."""
     deadline = time.time() + timeout
     last: Dict[str, Any] = {}
     while time.time() < deadline:
@@ -84,6 +89,7 @@ async def _poll_job(job_id: str, timeout: float = 120.0) -> Dict[str, Any]:
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def _queue_manager_lifecycle():
+    """Return queue manager lifecycle."""
     if not _live_enabled():
         pytest.skip("Set RUN_PROJECT_CROSS_SEARCH_LIVE=1 to run live server tests")
     hooks.execute_custom_commands_hooks(registry)

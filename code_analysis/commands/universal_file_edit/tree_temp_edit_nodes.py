@@ -23,6 +23,7 @@ from code_analysis.core.tree_temp.tree_node import TreeNode
 
 
 def _is_uuid_v4_string(value: str) -> bool:
+    """Return is uuid v4 string."""
     try:
         return uuid.UUID(value).version == 4
     except ValueError:
@@ -30,9 +31,11 @@ def _is_uuid_v4_string(value: str) -> bool:
 
 
 def _stable_index(roots: List[TreeNode]) -> Dict[str, Tuple[List[TreeNode], int]]:
+    """Return stable index."""
     out: Dict[str, Tuple[List[TreeNode], int]] = {}
 
     def walk(node: TreeNode, holder: List[TreeNode], idx: int) -> None:
+        """Return walk."""
         out[node.stable_id] = (holder, idx)
         if node.children:
             for i, ch in enumerate(node.children):
@@ -44,6 +47,7 @@ def _stable_index(roots: List[TreeNode]) -> Dict[str, Tuple[List[TreeNode], int]
 
 
 def serialize_tree_temp_roots(handler_id: str, roots: List[TreeNode]) -> str:
+    """Return serialize tree temp roots."""
     if handler_id == "json":
         from code_analysis.core.tree_temp.json_source_serializer import (
             serialize_json_source,
@@ -204,6 +208,7 @@ def _value_to_single_node(handler_id: str, value: Any) -> TreeNode:
 
 
 def _regenerate_stable_ids(node: TreeNode) -> TreeNode:
+    """Return regenerate stable ids."""
     new_children = None
     if node.children is not None:
         new_children = [_regenerate_stable_ids(ch) for ch in node.children]
@@ -219,6 +224,7 @@ def _regenerate_stable_ids(node: TreeNode) -> TreeNode:
 
 
 def _node_after_segments(cur: TreeNode, segs: List[str]) -> TreeNode:
+    """Return node after segments."""
     for seg in segs:
         if cur.type == "array":
             idx = int(seg)
@@ -243,6 +249,7 @@ def _node_after_segments(cur: TreeNode, segs: List[str]) -> TreeNode:
 
 
 def _resolve_pointer_node(roots: List[TreeNode], pointer: str) -> TreeNode:
+    """Return resolve pointer node."""
     segs = pointer_to_segments(pointer)
     if len(roots) > 1:
         if not segs:
@@ -262,6 +269,7 @@ def _resolve_pointer_node(roots: List[TreeNode], pointer: str) -> TreeNode:
 def _parent_holder_and_last_seg(
     roots: List[TreeNode], pointer: str
 ) -> Tuple[List[TreeNode], int, str]:
+    """Return parent holder and last seg."""
     segs = pointer_to_segments(pointer)
     if not segs:
         raise ValueError("cannot delete or relocate root via empty JSON Pointer")
@@ -293,6 +301,7 @@ def _parent_holder_and_last_seg(
 
 
 def _extract_stable_target(mop: Dict[str, Any]) -> Optional[str]:
+    """Return extract stable target."""
     ts = mop.get("target_stable_id")
     if isinstance(ts, str) and ts.strip():
         return ts.strip()
@@ -308,6 +317,7 @@ def _resolve_target_node(
     mop: Dict[str, Any],
     idx_map: Dict[str, Tuple[List[TreeNode], int]],
 ) -> TreeNode:
+    """Return resolve target node."""
     sid = _extract_stable_target(mop)
     if sid is not None:
         loc = idx_map.get(sid)
@@ -324,6 +334,7 @@ def _resolve_target_node(
 
 
 def _merge_payload_keep_identity(dst: TreeNode, src: TreeNode) -> None:
+    """Return merge payload keep identity."""
     dst.type = src.type
     dst.value = src.value
     dst.children = src.children
@@ -364,6 +375,7 @@ def _resolve_insert_parent(
 
 
 def _find_child_index_by_stable(children: List[TreeNode], stable: str) -> Optional[int]:
+    """Return find child index by stable."""
     for i, ch in enumerate(children):
         if ch.stable_id == stable:
             return i

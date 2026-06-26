@@ -17,11 +17,13 @@ DIG2 = "cd" * 32
 
 
 def sha_of(text: str) -> str:
+    """Return sha of."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 @pytest.mark.parametrize("session_flag", [True, False])
 def test_no_sidecar_branch_constant(session_flag: bool) -> None:
+    """Verify test no sidecar branch constant."""
     assert (
         resolve_sha_sync(
             sidecar_present=False,
@@ -35,6 +37,7 @@ def test_no_sidecar_branch_constant(session_flag: bool) -> None:
 
 @pytest.mark.parametrize("session_flag", [True, False])
 def test_sha_match_returns_load_even_if_session_true(session_flag: bool) -> None:
+    """Verify test sha match returns load even if session true."""
     d = DIG
     assert (
         resolve_sha_sync(
@@ -48,6 +51,7 @@ def test_sha_match_returns_load_even_if_session_true(session_flag: bool) -> None
 
 
 def test_sha_mismatch_no_session_returns_rebuild() -> None:
+    """Verify test sha mismatch no session returns rebuild."""
     assert (
         resolve_sha_sync(
             sidecar_present=True,
@@ -60,6 +64,7 @@ def test_sha_mismatch_no_session_returns_rebuild() -> None:
 
 
 def test_sha_mismatch_active_session_prefers_hold() -> None:
+    """Verify test sha mismatch active session prefers hold."""
     assert (
         resolve_sha_sync(
             sidecar_present=True,
@@ -72,6 +77,7 @@ def test_sha_mismatch_active_session_prefers_hold() -> None:
 
 
 def test_invalid_digest_length_raises_value_error_with_digest_token() -> None:
+    """Verify test invalid digest length raises value error with digest token."""
     bad = "00" * 31
     assert len(bad) == 62
     with pytest.raises(ValueError, match="digest"):

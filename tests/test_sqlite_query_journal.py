@@ -175,6 +175,7 @@ class TestReplayJournal:
         executed: list = []
 
         def capture(sql: str, params) -> None:
+            """Return capture."""
             executed.append((sql, params))
 
         result = replay_journal(journal_path, capture, only_success=True)
@@ -249,6 +250,7 @@ class TestReplayJournal:
             )
 
         def raise_on_insert(sql: str, params) -> None:
+            """Return raise on insert."""
             if "INSERT" in sql:
                 raise RuntimeError("table locked")
 
@@ -301,6 +303,7 @@ class TestRecovery:
         conn_restored.commit()
 
         def execute_into_restored(sql: str, params) -> None:
+            """Return execute into restored."""
             if params is None:
                 conn_restored.execute(sql)
             else:
@@ -366,6 +369,7 @@ class TestRecovery:
         conn.commit()
 
         def run(sql: str, params) -> None:
+            """Return run."""
             if params is None:
                 conn.execute(sql)
             else:
@@ -429,6 +433,7 @@ class TestRecovery:
         replayed_count = 0
 
         def run(sql: str, params) -> None:
+            """Return run."""
             nonlocal replayed_count
             # Replay only data-modifying statements (driver may log CREATE and other internal SQL)
             if "INSERT INTO items" in sql or "UPDATE items" in sql:

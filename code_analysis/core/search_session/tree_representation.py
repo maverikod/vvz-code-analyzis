@@ -89,6 +89,7 @@ def sidecar_path_for(file_path: str, project_root: Path) -> Path:
 
 
 def _compute_file_sha256_hex(source_abs: Path) -> str:
+    """Return compute file sha256 hex."""
     digest = hashlib.sha256()
     with source_abs.open("rb") as handle:
         for chunk in iter(lambda: handle.read(65536), b""):
@@ -97,6 +98,7 @@ def _compute_file_sha256_hex(source_abs: Path) -> str:
 
 
 def _read_tree_temp_root_stable_id(sidecar_path: Path) -> Optional[str]:
+    """Return read tree temp root stable id."""
     try:
         text = sidecar_path.read_text(encoding="utf-8")
     except OSError:
@@ -111,6 +113,7 @@ def _read_tree_temp_root_stable_id(sidecar_path: Path) -> Optional[str]:
 
 
 def _read_tree_temp_digest(sidecar_path: Path) -> Optional[str]:
+    """Return read tree temp digest."""
     try:
         text = sidecar_path.read_text(encoding="utf-8")
     except OSError:
@@ -147,6 +150,7 @@ def _read_three_section_digest_and_root(
 def _read_cst_digest_and_root(
     source_abs: Path, sidecar_path: Path
 ) -> tuple[Optional[str], Optional[str]]:
+    """Return read cst digest and root."""
     payload = read_sidecar_payload(source_abs)
     if payload is not None:
         digest = payload.get("source_sha256")
@@ -161,6 +165,7 @@ def _read_cst_digest_and_root(
 
 
 def _read_adjacent_sidecar_digest(sidecar_path: Path) -> Optional[str]:
+    """Return read adjacent sidecar digest."""
     try:
         text = sidecar_path.read_text(encoding="utf-8")
     except OSError:
@@ -178,6 +183,7 @@ def _read_adjacent_sidecar_digest(sidecar_path: Path) -> Optional[str]:
 
 
 def _read_adjacent_root_stable_id(sidecar_path: Path) -> Optional[str]:
+    """Return read adjacent root stable id."""
     try:
         text = sidecar_path.read_text(encoding="utf-8")
     except OSError:
@@ -207,6 +213,7 @@ def _read_sidecar_state(
     source_abs: Path,
     sidecar_path: Path,
 ) -> tuple[Optional[str], Optional[str]]:
+    """Return read sidecar state."""
     if not sidecar_path.is_file():
         return None, None
     if kind == TreeFormatKind.python_cst:

@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def _setup_logging() -> None:
+    """Return setup logging."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",

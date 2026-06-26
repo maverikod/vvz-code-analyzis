@@ -18,6 +18,7 @@ from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_t
 
 
 def _stable_id_at_line(py_file: Path, line: int) -> str:
+    """Return stable id at line."""
     tree = load_file_to_tree(str(py_file))
     try:
         node = min(
@@ -34,9 +35,12 @@ def _stable_id_at_line(py_file: Path, line: int) -> str:
 
 
 class TestCSTAnchor:
+    """Represent TestCSTAnchor."""
+
     def test_check_cst_anchor_sidecar_present_correct_stable_id_passes(
         self, tmp_path: Path
     ) -> None:
+        """Verify test check cst anchor sidecar present correct stable id passes."""
         py_file = tmp_path / "mod.py"
         py_file.write_text(
             "def alpha():\n    return 1\n\n",
@@ -49,6 +53,7 @@ class TestCSTAnchor:
     def test_check_cst_anchor_sidecar_present_wrong_stable_id_raises(
         self, tmp_path: Path
     ) -> None:
+        """Verify test check cst anchor sidecar present wrong stable id raises."""
         py_file = tmp_path / "mod.py"
         py_file.write_text(
             "def alpha():\n    return 1\n\n",
@@ -65,6 +70,7 @@ class TestCSTAnchor:
     def test_check_cst_anchor_sidecar_absent_warns_and_passes(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """Verify test check cst anchor sidecar absent warns and passes."""
         py_file = tmp_path / "mod.py"
         py_file.write_text("x = 1\n", encoding="utf-8")
 

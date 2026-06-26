@@ -152,6 +152,7 @@ class TestRPCPerformance:
             num_workers = 5
 
             def make_request(value):
+                """Return make request."""
                 return client.insert(
                     "perf_test", {"value": value, "data": f"test_{value}"}
                 )
@@ -192,6 +193,7 @@ class TestRPCPerformance:
                 num_workers = max(2, pool_size)
 
                 def make_request(value):
+                    """Return make request."""
                     return client.insert(
                         "perf_test", {"value": value, "data": f"test_{value}"}
                     )

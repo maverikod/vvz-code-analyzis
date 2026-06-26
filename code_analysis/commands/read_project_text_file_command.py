@@ -54,6 +54,7 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for registry-routed project file reads by line range."""
         return {
             "type": "object",
             "title": "read_project_text_file",
@@ -250,6 +251,7 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
         end_line: int,
         **kwargs: Any,
     ) -> Union[SuccessResult, ErrorResult]:
+        """Read through the universal registry with a Python line-reader fallback."""
         try:
             params: Dict[str, Any] = {
                 "project_id": project_id,

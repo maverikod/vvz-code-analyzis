@@ -42,6 +42,7 @@ DEFAULT_PARAMETERIZE_SEEDS = ("config", "settings", "env")
 
 
 def _is_internal(edge: Edge, core: CoreData) -> bool:
+    """Return is internal."""
     return edge.kind == "project" and edge.target_rel in core.internal_set
 
 
@@ -180,7 +181,10 @@ def mode_structure(core: CoreData) -> dict:
     comprehensive_analysis / analyze_complexity / list_long_files).
     """
     files = [
-        {"file": rel, **core.structure_by_file.get(rel, {"classes": [], "functions": []})}
+        {
+            "file": rel,
+            **core.structure_by_file.get(rel, {"classes": [], "functions": []}),
+        }
         for rel in core.internal_files
     ]
     class_total = sum(len(f.get("classes", [])) for f in files)

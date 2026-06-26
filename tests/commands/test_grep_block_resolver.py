@@ -1,3 +1,5 @@
+"""Test grep result block resolution behavior."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,6 +9,7 @@ from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_t
 
 
 def test_python_sidecar_lookup_smallest_span(tmp_path: Path) -> None:
+    """Verify test python sidecar lookup smallest span."""
     py_path = tmp_path / "sample.py"
     py_path.write_text(
         "class Outer:\n    def hello(self):\n        return 'needle'\n",
@@ -26,6 +29,7 @@ def test_python_sidecar_lookup_smallest_span(tmp_path: Path) -> None:
 
 
 def test_python_without_sidecar_returns_null(tmp_path: Path) -> None:
+    """Verify test python without sidecar returns null."""
     py_path = tmp_path / "bare.py"
     py_path.write_text("x = 1\n", encoding="utf-8")
     resolver = GrepBlockResolver()
@@ -35,6 +39,7 @@ def test_python_without_sidecar_returns_null(tmp_path: Path) -> None:
 
 
 def test_json_line_map_nearest_node(tmp_path: Path) -> None:
+    """Verify test json line map nearest node."""
     json_path = tmp_path / "data.json"
     json_path.write_text(
         '{\n  "outer": {\n    "inner": "needle"\n  }\n}\n',
@@ -47,6 +52,7 @@ def test_json_line_map_nearest_node(tmp_path: Path) -> None:
 
 
 def test_markdown_token_lookup(tmp_path: Path) -> None:
+    """Verify test markdown token lookup."""
     md_path = tmp_path / "doc.md"
     md_path.write_text("# Title\n\nneedle paragraph\n", encoding="utf-8")
     resolver = GrepBlockResolver()

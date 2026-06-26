@@ -128,6 +128,7 @@ def _narrowest_stmt_line_span_containing_range(
     best: Optional[tuple[int, int, int]] = None  # (span_len, start_line, end_line)
 
     def _consider(stmt: cst.BaseStatement) -> None:
+        """Return consider."""
         nonlocal best
         pos = positions.get(stmt)
         if pos is None or not hasattr(pos, "start") or not hasattr(pos, "end"):
@@ -140,12 +141,16 @@ def _narrowest_stmt_line_span_containing_range(
             best = (span_len, sl, el)
 
     class _Collect(cst.CSTVisitor):
+        """Represent Collect."""
+
         def visit_Module(self, node: cst.Module) -> bool:
+            """Return visit Module."""
             for s in node.body:
                 _consider(s)
             return True
 
         def visit_IndentedBlock(self, node: cst.IndentedBlock) -> bool:
+            """Return visit IndentedBlock."""
             for s in node.body:
                 _consider(s)
             return True
@@ -183,6 +188,8 @@ def _copy_outer_trivia_to_replacements(
 
 
 class _StatementListRewriter(cst.CSTTransformer):
+    """Represent StatementListRewriter."""
+
     METADATA_DEPENDENCIES = (PositionProvider,)
 
     def __init__(
@@ -191,6 +198,7 @@ class _StatementListRewriter(cst.CSTTransformer):
         stmt_by_lines: dict[tuple[int, int], list[cst.BaseStatement]],
         small_by_span: dict[tuple[int, int, int, int], list[cst.BaseSmallStatement]],
     ):
+        """Initialize the instance."""
         self._stmt_by_span = stmt_by_span
         self._stmt_by_lines = stmt_by_lines
         self._small_by_span = small_by_span
@@ -200,6 +208,7 @@ class _StatementListRewriter(cst.CSTTransformer):
         original_body: list[cst.BaseStatement],
         updated_body: list[cst.BaseStatement],
     ) -> list[cst.BaseStatement]:
+        """Return rewrite body."""
         new_body: list[cst.BaseStatement] = []
         for original_stmt, updated_stmt in zip(original_body, updated_body):
             pos = self.get_metadata(PositionProvider, original_stmt, None)
@@ -227,6 +236,7 @@ class _StatementListRewriter(cst.CSTTransformer):
     def leave_Module(
         self, original_node: cst.Module, updated_node: cst.Module
     ) -> cst.Module:
+        """Return leave Module."""
         return updated_node.with_changes(
             body=self._rewrite_body(list(original_node.body), list(updated_node.body))
         )
@@ -234,6 +244,7 @@ class _StatementListRewriter(cst.CSTTransformer):
     def leave_IndentedBlock(
         self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock
     ) -> cst.IndentedBlock:
+        """Return leave IndentedBlock."""
         return updated_node.with_changes(
             body=self._rewrite_body(list(original_node.body), list(updated_node.body))
         )
@@ -243,6 +254,7 @@ class _StatementListRewriter(cst.CSTTransformer):
         original_node: cst.SimpleStatementLine,
         updated_node: cst.SimpleStatementLine,
     ) -> cst.SimpleStatementLine:
+        """Return leave SimpleStatementLine."""
         new_small: list[cst.BaseSmallStatement] = []
         for original_s, updated_s in zip(original_node.body, updated_node.body):
             pos = self.get_metadata(PositionProvider, original_s, None)
@@ -289,6 +301,7 @@ def _parse_node_id(node_id: str) -> tuple[str, tuple[int, int, int, int]]:
 
 
 def _parse_small_stmt_snippet(snippet: str) -> list[cst.BaseSmallStatement]:
+    """Return parse small stmt snippet."""
     if not snippet.strip():
         return []
     mod = cst.parse_module(snippet)

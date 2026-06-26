@@ -367,6 +367,7 @@ class CodeDatabase:
 
     @staticmethod
     def _valid_sql_ident(name: str) -> str:
+        """Return valid sql ident."""
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             raise ValueError(f"invalid SQL identifier: {name!r}")
         return name

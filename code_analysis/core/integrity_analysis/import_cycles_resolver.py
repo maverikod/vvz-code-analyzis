@@ -28,6 +28,7 @@ DEFAULT_MAX_CHAIN_DEPTH = 10
 
 
 def _rv(row: Any, key: str) -> Any:
+    """Return rv."""
     if hasattr(row, "get"):
         return row.get(key)
     try:
@@ -36,7 +37,10 @@ def _rv(row: Any, key: str) -> Any:
         return None
 
 
-def _rel_of(path_abs: Optional[str], relative_path: Optional[str], root: Path) -> Optional[str]:
+def _rel_of(
+    path_abs: Optional[str], relative_path: Optional[str], root: Path
+) -> Optional[str]:
+    """Return rel of."""
     if relative_path:
         return str(relative_path).replace("\\", "/").lstrip("/")
     if path_abs:
@@ -64,7 +68,9 @@ def fetch_import_cycles_resolver(
         f"WHERE project_id = ? AND {WHERE_FILES_ACTIVE}",
         (project_id,),
     )
-    file_rows = file_res.get("data", []) if isinstance(file_res, dict) else (file_res or [])
+    file_rows = (
+        file_res.get("data", []) if isinstance(file_res, dict) else (file_res or [])
+    )
 
     rel_by_id: dict[str, str] = {}
     id_by_rel: dict[str, str] = {}

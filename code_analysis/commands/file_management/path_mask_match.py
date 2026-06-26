@@ -93,6 +93,7 @@ def path_matches_mask(rel_posix: str, mask: str) -> bool:
 
 
 def _match_parts(rel_parts: List[str], mask_parts: List[str]) -> bool:
+    """Match path segments against mask segments with ``**`` recursion."""
     from functools import lru_cache
 
     n_rel = len(rel_parts)
@@ -100,6 +101,7 @@ def _match_parts(rel_parts: List[str], mask_parts: List[str]) -> bool:
 
     @lru_cache(maxsize=None)
     def dfs(ri: int, mi: int) -> bool:
+        """Return whether suffixes from the given path and mask indexes match."""
         if mi == n_mask:
             return ri == n_rel
         mp = mask_parts[mi]

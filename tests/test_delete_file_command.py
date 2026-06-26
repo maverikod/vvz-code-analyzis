@@ -21,7 +21,10 @@ _PID = "550e8400-e29b-41d4-a716-446655440001"
 
 @pytest.mark.asyncio
 class TestDeleteFileRouting:
+    """Represent TestDeleteFileRouting."""
+
     async def test_unsupported_extension_before_db(self) -> None:
+        """Verify test unsupported extension before db."""
         cmd = DeleteFileMCPCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(project_id=_PID, file_path="cfg/app.toml")
@@ -30,6 +33,7 @@ class TestDeleteFileRouting:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_blocks_project_venv_path_before_trash(self, tmp_path: Path) -> None:
+        """Verify test blocks project venv path before trash."""
         proj_root = tmp_path / "proj"
         proj_root.mkdir()
         under = proj_root / ".venv" / "notes.txt"
@@ -58,6 +62,7 @@ class TestDeleteFileRouting:
     async def test_blocks_site_packages_segment_before_trash(
         self, tmp_path: Path
     ) -> None:
+        """Verify test blocks site packages segment before trash."""
         proj_root = tmp_path / "proj"
         sp = proj_root / "vendor" / "site-packages" / "pkg.txt"
         sp.parent.mkdir(parents=True)
@@ -84,9 +89,12 @@ class TestDeleteFileRouting:
 
 @pytest.mark.asyncio
 class TestDeleteFileRegistryDiagnostics:
+    """Represent TestDeleteFileRegistryDiagnostics."""
+
     async def test_python_path_success_includes_handler_and_note(
         self, tmp_path: Path
     ) -> None:
+        """Verify test python path success includes handler and note."""
         proj_root = tmp_path / "proj"
         proj_root.mkdir()
 

@@ -3,6 +3,7 @@
 S4 verification: BlockAssembler re-segmentation and relevance ordering.
 Run: cd /home/vasilyvz/projects/tools/code_analysis && .venv/bin/python scripts/verify_s4_assembler.py
 """
+
 from __future__ import annotations
 
 import json
@@ -23,6 +24,7 @@ failed = 0
 
 
 def check(label: str, cond: bool) -> None:
+    """Return check."""
     global passed, failed
     if cond:
         print(f"  PASS  {label}")
@@ -35,12 +37,15 @@ def check(label: str, cond: bool) -> None:
 def make_assembler(
     layout: SearchSessionDirectoryLayout, tmp_dir: Path
 ) -> BlockAssembler:
+    """Return make assembler."""
     entries: list[dict] = []
 
     def append_index_entry(position: int, completeness: str) -> None:
+        """Return append index entry."""
         block_path = layout.blocks_dir / f"block_{position}.json"
         size = block_path.stat().st_size if block_path.is_file() else 0
         from code_analysis.core.search_session.result_index import append_block_entry
+
         append_block_entry(
             layout.index_path,
             position=position,
@@ -49,6 +54,7 @@ def make_assembler(
         )
 
     def update_manifest_metrics(metrics: dict) -> None:
+        """Return update manifest metrics."""
         pass  # not needed for this test
 
     return BlockAssembler(
@@ -69,18 +75,61 @@ try:
     session_dir.mkdir()
 
     # Manually construct layout pointing at session_dir
-    layout = SearchSessionDirectoryLayout(root=session_dir, manifest_path=session_dir / 'manifest.json', index_path=session_dir / 'index.json', service_metadata_path=session_dir / 'service_metadata.json', blocks_dir=session_dir / 'blocks', buffer_dir=session_dir / 'buffer', relevance_blocks_dir=session_dir / 'blocks_relevance')  # noqa: E501
+    layout = SearchSessionDirectoryLayout(
+        root=session_dir,
+        manifest_path=session_dir / "manifest.json",
+        index_path=session_dir / "index.json",
+        service_metadata_path=session_dir / "service_metadata.json",
+        blocks_dir=session_dir / "blocks",
+        buffer_dir=session_dir / "buffer",
+        relevance_blocks_dir=session_dir / "blocks_relevance",
+    )  # noqa: E501
     layout.blocks_dir.mkdir(parents=True, exist_ok=True)
     layout.buffer_dir.mkdir(parents=True, exist_ok=True)
     layout.relevance_blocks_dir.mkdir(parents=True, exist_ok=True)
 
     # Write 5 findings with different scores
     findings = [
-        {"result_id": "a", "source": "cross", "file_path": "a.py", "stable_id": "s1", "score": 0.9, "mtime": 100.0},
-        {"result_id": "b", "source": "grep",  "file_path": "b.py", "stable_id": "s2", "score": 0.3, "mtime": 200.0},
-        {"result_id": "c", "source": "cross", "file_path": "c.py", "stable_id": "s3", "score": 0.7, "mtime": 150.0},
-        {"result_id": "d", "source": "grep",  "file_path": "d.py", "stable_id": "s4", "score": 0.5, "mtime": 120.0},
-        {"result_id": "e", "source": "cross", "file_path": "e.py", "stable_id": "s5", "score": 0.1, "mtime": 300.0},
+        {
+            "result_id": "a",
+            "source": "cross",
+            "file_path": "a.py",
+            "stable_id": "s1",
+            "score": 0.9,
+            "mtime": 100.0,
+        },
+        {
+            "result_id": "b",
+            "source": "grep",
+            "file_path": "b.py",
+            "stable_id": "s2",
+            "score": 0.3,
+            "mtime": 200.0,
+        },
+        {
+            "result_id": "c",
+            "source": "cross",
+            "file_path": "c.py",
+            "stable_id": "s3",
+            "score": 0.7,
+            "mtime": 150.0,
+        },
+        {
+            "result_id": "d",
+            "source": "grep",
+            "file_path": "d.py",
+            "stable_id": "s4",
+            "score": 0.5,
+            "mtime": 120.0,
+        },
+        {
+            "result_id": "e",
+            "source": "cross",
+            "file_path": "e.py",
+            "stable_id": "s5",
+            "score": 0.1,
+            "mtime": 300.0,
+        },
     ]
     buffer = RawFindingBuffer(layout.buffer_dir)
     for i, f in enumerate(findings):
@@ -136,4 +185,5 @@ finally:
 
 print(f"\n=== {passed} passed, {failed} failed ===")
 import sys
+
 sys.exit(0 if failed == 0 else 1)

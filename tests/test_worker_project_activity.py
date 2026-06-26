@@ -45,6 +45,7 @@ PB = "B"
 
 
 def _init_sqlite_file(path: Any) -> None:
+    """Return init sqlite file."""
     conn = sqlite3.connect(str(path))
     try:
         conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
@@ -57,6 +58,7 @@ def _init_sqlite_file(path: Any) -> None:
 
 
 def _count_table(driver: BaseDatabaseDriver, table: str) -> int:
+    """Return count table."""
     r = driver.execute(f"SELECT COUNT(*) AS c FROM {table}", None, transaction_id=None)
     if not isinstance(r, dict):
         return 0
@@ -71,12 +73,14 @@ def _count_table(driver: BaseDatabaseDriver, table: str) -> int:
 
 
 def _sqlite_driver(tmp_path: Any) -> BaseDatabaseDriver:
+    """Return sqlite driver."""
     p = tmp_path / "coordinator.db"
     _init_sqlite_file(p)
     return create_driver("sqlite", {"path": str(p)})
 
 
 def _pg_driver() -> BaseDatabaseDriver:
+    """Return pg driver."""
     dsn = os.environ.get(_PG_ENV, "").strip()
     if not dsn:
         raise RuntimeError("dsn")
@@ -85,6 +89,7 @@ def _pg_driver() -> BaseDatabaseDriver:
 
 @pytest.fixture
 def wdb(request: Any, tmp_path: Any) -> Iterator[BaseDatabaseDriver]:
+    """Return wdb."""
     name = request.param
     d: BaseDatabaseDriver
     if name == "sqlite":
@@ -98,6 +103,7 @@ def wdb(request: Any, tmp_path: Any) -> Iterator[BaseDatabaseDriver]:
 
 
 def _lock_counts(driver: BaseDatabaseDriver) -> Tuple[int, int]:
+    """Return lock counts."""
     return (
         _count_table(driver, "project_activity_locks"),
         _count_table(driver, "files"),
@@ -109,6 +115,7 @@ def _lock_counts(driver: BaseDatabaseDriver) -> Tuple[int, int]:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_acquire_empty_project_lock_succeeds(wdb: BaseDatabaseDriver) -> None:
+    """Verify test acquire empty project lock succeeds."""
     before = _lock_counts(wdb)
     ok = try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 60.0)
     after = _lock_counts(wdb)
@@ -127,6 +134,7 @@ def test_acquire_empty_project_lock_succeeds(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_same_owner_can_refresh_lease(wdb: BaseDatabaseDriver) -> None:
+    """Verify test same owner can refresh lease."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 10.0)
     r1 = get_project_activity(wdb, PA)
     assert r1 is not None
@@ -148,6 +156,7 @@ def test_same_owner_can_refresh_lease(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_foreign_owner_same_project_is_blocked(wdb: BaseDatabaseDriver) -> None:
+    """Verify test foreign owner same project is blocked."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 120.0)
     b0 = _lock_counts(wdb)
     ok = try_acquire_project_activity(
@@ -163,6 +172,7 @@ def test_foreign_owner_same_project_is_blocked(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_expired_lease_can_be_taken_over(wdb: BaseDatabaseDriver) -> None:
+    """Verify test expired lease can be taken over."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 0.1)
     time.sleep(0.2)
     ok = try_acquire_project_activity(
@@ -176,6 +186,7 @@ def test_expired_lease_can_be_taken_over(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_release_requires_same_owner(wdb: BaseDatabaseDriver) -> None:
+    """Verify test release requires same owner."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 120.0)
     before = get_project_activity(wdb, PA)
     ok = release_project_activity(wdb, PA, "indexer", "i1")
@@ -188,6 +199,7 @@ def test_release_requires_same_owner(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_owner_release_clears_or_removes_row(wdb: BaseDatabaseDriver) -> None:
+    """Verify test owner release clears or removes row."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 120.0)
     ok = release_project_activity(wdb, PA, "watcher", "w1")
     assert ok is True
@@ -196,6 +208,7 @@ def test_owner_release_clears_or_removes_row(wdb: BaseDatabaseDriver) -> None:
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_different_projects_are_not_globally_blocked(wdb: BaseDatabaseDriver) -> None:
+    """Verify test different projects are not globally blocked."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 120.0)
     ok = try_acquire_project_activity(
         wdb, PB, "indexer", "i1", "indexer_processing", 60.0
@@ -211,6 +224,7 @@ def test_different_projects_are_not_globally_blocked(wdb: BaseDatabaseDriver) ->
 def test_allowed_owner_type_and_activity_validation(
     wdb: BaseDatabaseDriver,
 ) -> None:
+    """Verify test allowed owner type and activity validation."""
     n_before = _count_table(wdb, "project_activity_locks")
     with pytest.raises(ValueError):
         try_acquire_project_activity(
@@ -223,6 +237,7 @@ def test_allowed_owner_type_and_activity_validation(
 
 @pytest.mark.parametrize("wdb", ["sqlite", _PG_PARITY], indirect=True)
 def test_heartbeat_requires_current_owner(wdb: BaseDatabaseDriver) -> None:
+    """Verify test heartbeat requires current owner."""
     try_acquire_project_activity(wdb, PA, "watcher", "w1", "watcher_staging", 120.0)
     r0 = get_project_activity(wdb, PA)
     assert r0 is not None
@@ -248,6 +263,7 @@ def test_workflow_logs_contain_required_fields_with_caplog(
     tmp_path: Any,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Verify test workflow logs contain required fields with caplog."""
     p = tmp_path / "wlog.db"
     _init_sqlite_file(p)
     d = create_driver("sqlite", {"path": str(p)})
@@ -286,6 +302,7 @@ def test_workflow_logs_contain_required_fields_with_caplog(
 
 
 def test_atomic_acquire_race_same_project(tmp_path: Any) -> None:
+    """Verify test atomic acquire race same project."""
     p = tmp_path / "race.db"
     _init_sqlite_file(p)
     d1 = create_driver("sqlite", {"path": str(p)})
@@ -294,12 +311,14 @@ def test_atomic_acquire_race_same_project(tmp_path: Any) -> None:
     b = threading.Barrier(2)
 
     def t1() -> None:
+        """Return t1."""
         b.wait()
         results[0] = try_acquire_project_activity(
             d1, PA, "watcher", "a", "watcher_staging", 300.0
         )
 
     def t2() -> None:
+        """Return t2."""
         b.wait()
         results[1] = try_acquire_project_activity(
             d2, PA, "watcher", "b", "watcher_staging", 300.0

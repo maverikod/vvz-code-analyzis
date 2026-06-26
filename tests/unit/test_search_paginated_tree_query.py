@@ -17,6 +17,7 @@ from code_analysis.core.search_session.session import SearchSession, SearchSessi
 
 
 def _session_and_layout(tmp_path: Path):
+    """Return session and layout."""
     from code_analysis.core.search_session.directory import (
         provision_search_session_directory,
     )
@@ -34,9 +35,11 @@ def _session_and_layout(tmp_path: Path):
 
 
 def _fake_assembler_factory(layout, raw_config):
+    """Return fake assembler factory."""
     assembler = MagicMock()
 
     def run(search_completed=False):
+        """Return run."""
         (layout.blocks_dir / "block_1.json").write_text(
             json.dumps({"position": 1, "items": []})
         )
@@ -46,6 +49,7 @@ def _fake_assembler_factory(layout, raw_config):
 
 
 def test_normalize_tree_query_finding() -> None:
+    """Verify test normalize tree query finding."""
     raw = {
         "file_path": "e.py",
         "start_line": 10,
@@ -63,9 +67,11 @@ def test_normalize_tree_query_finding() -> None:
 
 @pytest.mark.asyncio
 async def test_run_paginated_tree_query_returns_1_on_matches(tmp_path: Path) -> None:
+    """Verify test run paginated tree query returns 1 on matches."""
     session, layout = _session_and_layout(tmp_path)
 
     def scanner(xpath, file_pattern, project_id):
+        """Return scanner."""
         return [
             {"file_path": "e.py", "start_line": 1, "end_line": 5, "stable_id": "n1"}
         ]
@@ -83,6 +89,7 @@ async def test_run_paginated_tree_query_returns_1_on_matches(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_run_paginated_tree_query_returns_none_on_empty(tmp_path: Path) -> None:
+    """Verify test run paginated tree query returns none on empty."""
     session, layout = _session_and_layout(tmp_path)
 
     pos = await run_paginated_tree_query(

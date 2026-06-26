@@ -11,6 +11,7 @@ from code_analysis.core.database.schema_definition_indexes import get_schema_ind
 
 
 def test_files_watcher_indexes_in_registry() -> None:
+    """Verify test files watcher indexes in registry."""
     by_name = {idx["name"]: idx for idx in get_schema_indexes()}
     assert "idx_files_unique_project_path" in by_name
     assert by_name["idx_files_unique_project_path"]["unique"] is True

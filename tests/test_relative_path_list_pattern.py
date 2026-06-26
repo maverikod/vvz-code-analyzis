@@ -12,15 +12,18 @@ from code_analysis.commands.file_management.relative_path_list_pattern import (
 
 
 def test_effective_listing_pattern_prefers_file_pattern() -> None:
+    """Verify test effective listing pattern prefers file pattern."""
     assert effective_listing_pattern("*.py", "*.md") == "*.py"
 
 
 def test_effective_listing_pattern_falls_back_to_glob() -> None:
+    """Verify test effective listing pattern falls back to glob."""
     assert effective_listing_pattern(None, "*.md") == "*.md"
     assert effective_listing_pattern("", "x") == "x"
 
 
 def test_canonical_relative_path_under_root(tmp_path) -> None:
+    """Verify test canonical relative path under root."""
     root = tmp_path / "proj"
     root.mkdir()
     f = root / "a" / "b.txt"
@@ -30,6 +33,7 @@ def test_canonical_relative_path_under_root(tmp_path) -> None:
 
 
 def test_relative_path_matches_listing_fnmatch() -> None:
+    """Verify test relative path matches listing fnmatch."""
     assert relative_path_matches_listing_pattern("src/x.py", "*.py")
 
 
@@ -47,5 +51,6 @@ def test_literal_prefix_directory_with_trailing_slash() -> None:
 
 
 def test_log_style_absolute_path_still_matches_fnmatch() -> None:
+    """Verify test log style absolute path still matches fnmatch."""
     p = "/var/log/app/file_watcher.log"
     assert relative_path_matches_listing_pattern(p, "*file_watcher*")

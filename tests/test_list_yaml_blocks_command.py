@@ -16,7 +16,9 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 pytest.importorskip("yaml")
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand  # noqa: E402
-from code_analysis.commands.list_yaml_blocks_command import ListYamlBlocksCommand  # noqa: E402
+from code_analysis.commands.list_yaml_blocks_command import (
+    ListYamlBlocksCommand,
+)  # noqa: E402
 from code_analysis.core.json_tree.models import stable_node_id_for_pointer  # noqa: E402
 
 _PROJECT_ID = "test-project-id"
@@ -51,6 +53,7 @@ def patched_db_resolve(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_execute_happy_path_mapping(tmp_path: Path, patched_db_resolve):
+    """Verify test execute happy path mapping."""
     path = tmp_path / "config.yaml"
     path.write_text(
         "key: 7\n" "items:\n" "  - 1\n" "  - 2\n",
@@ -80,6 +83,7 @@ async def test_execute_happy_path_mapping(tmp_path: Path, patched_db_resolve):
 async def test_execute_empty_document_becomes_mapping_root(
     tmp_path: Path, patched_db_resolve, content: str
 ):
+    """Verify test execute empty document becomes mapping root."""
     path = tmp_path / "empty.yaml"
     path.write_text(content, encoding="utf-8")
     result = await ListYamlBlocksCommand().execute(
@@ -94,6 +98,7 @@ async def test_execute_empty_document_becomes_mapping_root(
 
 @pytest.mark.asyncio
 async def test_execute_invalid_extension(tmp_path: Path, patched_db_resolve):
+    """Verify test execute invalid extension."""
     path = tmp_path / "data.json"
     path.write_text("{}", encoding="utf-8")
     result = await ListYamlBlocksCommand().execute(
@@ -106,6 +111,7 @@ async def test_execute_invalid_extension(tmp_path: Path, patched_db_resolve):
 
 @pytest.mark.asyncio
 async def test_execute_file_not_found(tmp_path: Path, patched_db_resolve):
+    """Verify test execute file not found."""
     result = await ListYamlBlocksCommand().execute(
         project_id=_PROJECT_ID,
         file_path="missing.yaml",
@@ -116,6 +122,7 @@ async def test_execute_file_not_found(tmp_path: Path, patched_db_resolve):
 
 @pytest.mark.asyncio
 async def test_execute_invalid_yaml(tmp_path: Path, patched_db_resolve):
+    """Verify test execute invalid yaml."""
     path = tmp_path / "broken.yaml"
     path.write_text("key: [\n", encoding="utf-8")
     result = await ListYamlBlocksCommand().execute(
@@ -130,6 +137,7 @@ async def test_execute_invalid_yaml(tmp_path: Path, patched_db_resolve):
 async def test_node_id_matches_stable_node_id_for_pointer(
     tmp_path: Path, patched_db_resolve
 ):
+    """Verify test node id matches stable node id for pointer."""
     path = tmp_path / "doc.yaml"
     path.write_text("a: 1\n", encoding="utf-8")
     result = await ListYamlBlocksCommand().execute(

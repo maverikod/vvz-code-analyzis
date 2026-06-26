@@ -64,6 +64,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return get_cst_modify_tree_schema()
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,6 +86,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         commit_message: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
+        """Apply atomic CST operations and optionally preview, validate, and save."""
         t_start = time.perf_counter()
         try:
             t0 = time.perf_counter()

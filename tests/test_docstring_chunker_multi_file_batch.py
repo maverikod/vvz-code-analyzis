@@ -25,7 +25,10 @@ FID_MANY = "10000000-0000-4000-8000-000000000003"
 
 
 class _FakeChunk:
+    """Represent FakeChunk."""
+
     def __init__(self, body: str) -> None:
+        """Initialize the instance."""
         self.body = body
         self.embedding = [0.1, 0.2]
         self.embedding_model = "test-model"
@@ -34,15 +37,18 @@ class _FakeChunk:
 
 @pytest.fixture
 def mock_db_execute_batch():
+    """Return mock db execute batch."""
     mock = Mock()
     mock.execute_batch_calls = []
     mock.logical_write_calls = []
 
     def execute_batch(operations):
+        """Return execute batch."""
         mock.execute_batch_calls.append(operations)
         return [{"affected_rows": 1} for _ in operations]
 
     def execute_logical_write_operation(program):
+        """Return execute logical write operation."""
         mock.logical_write_calls.append(program)
         return {"success": True, "data": {"batch_results": []}}
 
@@ -55,6 +61,7 @@ def mock_db_execute_batch():
 
 
 def _minimal_tree(src: str) -> ast.Module:
+    """Return minimal tree."""
     t = ast.parse(src)
     assert isinstance(t, ast.Module)
     return t
@@ -136,9 +143,11 @@ async def test_process_prepared_files_fallback_per_file_on_batch_failure(
     mgr = chunker.svo_client_manager
 
     async def fail_batch(*_a, **_k):
+        """Return fail batch."""
         raise RuntimeError("ws batch failed")
 
     async def ok_one(**kwargs):
+        """Return ok one."""
         t = kwargs.get("text", "")
         return [_FakeChunk(t[:20])] if t else []
 
@@ -184,6 +193,7 @@ async def test_process_prepared_files_segments_when_over_max_texts(
     assert len(items) == 5
 
     async def batch(texts, **_k):
+        """Return batch."""
         return [[_FakeChunk(t[:10])] for t in texts]
 
     mgr = chunker.svo_client_manager
@@ -207,5 +217,6 @@ async def test_process_prepared_files_segments_when_over_max_texts(
 
 
 def test_docstring_chunk_batch_max_constant() -> None:
+    """Verify test docstring chunk batch max constant."""
     assert isinstance(DOCSTRING_CHUNK_BATCH_MAX_TEXTS, int)
     assert DOCSTRING_CHUNK_BATCH_MAX_TEXTS >= 64

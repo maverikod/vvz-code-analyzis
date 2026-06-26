@@ -32,6 +32,8 @@ DEFAULT_THRESHOLDS: Dict[str, int] = {k: 200 for k in FORMAT_EXTENSION_MAP}
 
 
 class PreviewRenderMode(str, Enum):
+    """Represent PreviewRenderMode."""
+
     INLINE = "inline"
     DRILLDOWN = "drilldown"
 
@@ -42,6 +44,8 @@ class PreviewSelectorError(ValueError):
 
 @dataclass(frozen=True)
 class PreviewSelectorConfig:
+    """Represent PreviewSelectorConfig."""
+
     full_text_max_lines: Mapping[str, int] = field(
         default_factory=lambda: dict(DEFAULT_THRESHOLDS)
     )
@@ -50,6 +54,8 @@ class PreviewSelectorConfig:
 
 @dataclass(frozen=True)
 class PreviewSelector:
+    """Represent PreviewSelector."""
+
     _kind: str  # "slice" | "ids" | "all"
     _slice_start: Optional[int] = None
     _slice_end: Optional[int] = None
@@ -57,6 +63,7 @@ class PreviewSelector:
 
     @classmethod
     def parse(cls, raw: Union[str, Sequence[int], None]) -> PreviewSelector:
+        """Return parse."""
         if raw is None or raw == "" or raw == []:
             return cls(_kind="all")
 
@@ -78,6 +85,7 @@ class PreviewSelector:
 
     @classmethod
     def _parse_slice(cls, raw: str) -> PreviewSelector:
+        """Return parse slice."""
         if raw.count(":") != 1:
             raise PreviewSelectorError("malformed slice")
         start_part, end_part = raw.split(":", 1)
@@ -91,6 +99,7 @@ class PreviewSelector:
         return cls(_kind="slice", _slice_start=start, _slice_end=end)
 
     def apply(self, blocks: Sequence[Any]) -> List[Any]:
+        """Return apply."""
         block_list = list(blocks)
         if self._kind == "all":
             return block_list
@@ -117,6 +126,7 @@ class PreviewSelector:
         line_span: int,
         config: PreviewSelectorConfig,
     ) -> PreviewRenderMode:
+        """Return decide render mode."""
         threshold = config.full_text_max_lines.get(
             format_key, DEFAULT_FULL_TEXT_MAX_LINES
         )
@@ -128,6 +138,7 @@ class PreviewSelector:
 
 
 def format_key_from_extension(ext: str) -> str:
+    """Return format key from extension."""
     normalized = ext.lower()
     if not normalized.startswith("."):
         normalized = f".{normalized}"
@@ -139,6 +150,7 @@ def format_key_from_extension(ext: str) -> str:
 
 
 def paginate_envelope(serialized: str, max_chars: Optional[int]) -> str:
+    """Return paginate envelope."""
     if max_chars is None or max_chars <= 0:
         return serialized
     if len(serialized) <= max_chars:

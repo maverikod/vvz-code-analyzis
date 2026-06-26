@@ -35,6 +35,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for class-member distribution and dry-run preview."""
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
@@ -371,6 +372,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        """Preview or apply a class split with backup and progress updates."""
         from ..core.progress_tracker import get_progress_tracker_from_context
 
         progress_tracker = get_progress_tracker_from_context(

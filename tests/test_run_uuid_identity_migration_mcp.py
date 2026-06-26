@@ -24,6 +24,8 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 @dataclass
 class _FakePreflight:
+    """Represent FakePreflight."""
+
     backend: str = "sqlite"
     projects_uuid_ok: bool = True
     watch_dirs_uuid_ok: bool = True
@@ -31,6 +33,7 @@ class _FakePreflight:
     warnings: List[str] = None
 
     def __post_init__(self) -> None:
+        """Return post init."""
         if self.notes is None:
             self.notes = []
         if self.warnings is None:
@@ -39,16 +42,20 @@ class _FakePreflight:
 
 @dataclass
 class _FakePhase2:
+    """Represent FakePhase2."""
+
     backend: str = "sqlite"
     migration_tables: Tuple[str, ...] = ("uuid_migration_files",)
     counts: Dict[str, Tuple[int, int]] = None
 
     def __post_init__(self) -> None:
+        """Return post init."""
         if self.counts is None:
             self.counts = {"uuid_migration_files": (0, 0)}
 
 
 def test_command_name_and_schema() -> None:
+    """Verify test command name and schema."""
     assert RunUuidIdentityMigrationMCPCommand.name == "run_uuid_identity_migration"
     schema = RunUuidIdentityMigrationMCPCommand.get_schema()
     assert "action" in schema["properties"]
@@ -74,6 +81,7 @@ def test_registration_import_from_hooks_part2() -> None:
 
 @pytest.mark.asyncio
 async def test_phase6_swap_refuses_without_confirmation() -> None:
+    """Verify test phase6 swap refuses without confirmation."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     with patch.object(
@@ -93,6 +101,7 @@ async def test_phase6_swap_refuses_without_confirmation() -> None:
 
 @pytest.mark.asyncio
 async def test_preflight_success_mocked() -> None:
+    """Verify test preflight success mocked."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     fake = _FakePreflight()
@@ -125,6 +134,7 @@ async def test_preflight_success_mocked() -> None:
 
 @pytest.mark.asyncio
 async def test_pipeline_dry_does_not_call_phase6() -> None:
+    """Verify test pipeline dry does not call phase6."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
     fake_pre = _FakePreflight()
@@ -188,6 +198,7 @@ async def test_pipeline_dry_does_not_call_phase6() -> None:
 
 
 def test_schema_creation_reexports() -> None:
+    """Verify test schema creation reexports."""
     from code_analysis.core.database import schema_creation as sc
 
     assert callable(sc.run_uuid_migration_preflight_phase1)
@@ -196,11 +207,13 @@ def test_schema_creation_reexports() -> None:
 
 
 def test_run_uuid_identity_migration_is_queued_by_default() -> None:
+    """Verify test run uuid identity migration is queued by default."""
     assert RunUuidIdentityMigrationMCPCommand.use_queue is True
 
 
 @pytest.mark.asyncio
 async def test_preflight_rejects_without_queue_context() -> None:
+    """Verify test preflight rejects without queue context."""
     cmd = RunUuidIdentityMigrationMCPCommand()
     result = await cmd.execute(action="preflight")
     assert isinstance(result, ErrorResult)

@@ -26,6 +26,7 @@ from code_analysis.core.svo_client_manager_embedding import (
 
 
 def test_chunker_protocol_for_client() -> None:
+    """Verify test chunker protocol for client."""
     assert _chunker_protocol_for_client("http") == "http"
     assert _chunker_protocol_for_client("HTTPS") == "https"
     assert _chunker_protocol_for_client("mtls") == "mtls"
@@ -84,6 +85,7 @@ def test_normalize_embed_cmd_response_job_envelope_without_success_wrapper() -> 
 
 
 def test_chunk_rpc_kwargs_maps_type_to_chunk_type() -> None:
+    """Verify test chunk rpc kwargs maps type to chunk type."""
     assert _chunk_rpc_kwargs({"type": "DocBlock", "language": "Python"}) == {
         "chunk_type": "DocBlock",
         "language": "Python",
@@ -128,6 +130,7 @@ async def test_get_chunks_uses_chunk_single_text_and_wait_for() -> None:
 
 @pytest.mark.asyncio
 async def test_get_chunks_batch_uses_chunk_batch() -> None:
+    """Verify test get chunks batch uses chunk batch."""
     batch_out = [[SimpleNamespace(embedding=[0.2])]]
     mock_client = MagicMock()
     mock_client.chunk_batch = AsyncMock(return_value=batch_out)
@@ -315,6 +318,7 @@ async def test_get_embeddings_accepts_queued_job_completed_despite_false_success
 
 @pytest.mark.asyncio
 async def test_get_embeddings_rejects_explicit_failure() -> None:
+    """Verify test get embeddings rejects explicit failure."""
     raw_response = {
         "result": {
             "success": False,

@@ -20,16 +20,20 @@ class TestQueryCSTCommandMissingSelectorOrRange:
 
     @pytest.mark.asyncio
     async def test_query_without_selector_returns_error(self, project_root, mock_db):
+        """Verify test query without selector returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "x = 1\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -43,16 +47,20 @@ class TestQueryCSTCommandMissingSelectorOrRange:
     async def test_replace_without_selector_or_range_returns_error(
         self, project_root, mock_db
     ):
+        """Verify test replace without selector or range returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "x = 1\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -67,16 +75,20 @@ class TestQueryCSTCommandMissingSelectorOrRange:
     async def test_range_only_with_replacements_list_returns_error(
         self, project_root, mock_db
     ):
+        """Verify test range only with replacements list returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "a = 1\nb = 2\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

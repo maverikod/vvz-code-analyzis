@@ -34,11 +34,10 @@ class Container:
 
 
 def _blank_lines_before_def(source: str, def_name: str) -> int:
+    """Return blank lines before def."""
     lines = source.splitlines()
     def_idx = next(
-        i
-        for i, ln in enumerate(lines)
-        if ln.lstrip().startswith(f"def {def_name}")
+        i for i, ln in enumerate(lines) if ln.lstrip().startswith(f"def {def_name}")
     )
     n = 0
     for i in range(def_idx - 1, -1, -1):
@@ -50,6 +49,7 @@ def _blank_lines_before_def(source: str, def_name: str) -> int:
 
 
 def _find_class_node_id(tree_id: str, class_name: str) -> str:
+    """Return find class node id."""
     t = get_tree(tree_id)
     assert t is not None
     for nid, meta in t.metadata_map.items():
@@ -60,6 +60,7 @@ def _find_class_node_id(tree_id: str, class_name: str) -> str:
 
 @pytest.fixture
 def container_tree_id(tmp_path):
+    """Return container tree id."""
     path = str(tmp_path / "container.py")
     tree = create_tree_from_code(path, CONTAINER_SOURCE.strip())
     yield tree.tree_id
@@ -72,6 +73,7 @@ class TestInsertLeadingBlankLines:
     def test_two_blank_lines_before_top_level_function_last(
         self, container_tree_id: str
     ) -> None:
+        """Verify test two blank lines before top level function last."""
         modified = modify_tree(
             container_tree_id,
             [
@@ -96,6 +98,7 @@ class TestInsertLeadingBlankLines:
     def test_one_blank_line_before_top_level_function_last(
         self, container_tree_id: str
     ) -> None:
+        """Verify test one blank line before top level function last."""
         modified = modify_tree(
             container_tree_id,
             [
@@ -117,6 +120,7 @@ class TestInsertLeadingBlankLines:
     def test_no_blank_lines_when_code_lines_have_none(
         self, container_tree_id: str
     ) -> None:
+        """Verify test no blank lines when code lines have none."""
         modified = modify_tree(
             container_tree_id,
             [
@@ -137,6 +141,7 @@ class TestInsertLeadingBlankLines:
     def test_two_blank_lines_before_top_level_function_first(
         self, container_tree_id: str
     ) -> None:
+        """Verify test two blank lines before top level function first."""
         modified = modify_tree(
             container_tree_id,
             [
@@ -160,6 +165,7 @@ class TestInsertLeadingBlankLines:
     def test_one_blank_line_before_method_in_class_body(
         self, container_tree_id: str
     ) -> None:
+        """Verify test one blank line before method in class body."""
         container_id = _find_class_node_id(container_tree_id, "Container")
         modified = modify_tree(
             container_tree_id,

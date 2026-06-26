@@ -16,6 +16,7 @@ from code_analysis.openapi_mcp_proxy_compat import invalidate_openapi_cache
 
 @pytest.fixture
 def app():
+    """Return app."""
     config_path = Path(__file__).resolve().parents[1] / "config.json"
     app_config = load_raw_config(config_path)
     application = create_app_with_events(app_config, config_path, worker_manager=None)
@@ -24,13 +25,17 @@ def app():
 
 
 def test_concurrent_openapi_and_jsonrpc(app) -> None:
+    """Verify test concurrent openapi and jsonrpc."""
+
     async def _run() -> None:
+        """Return run."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://test"
         ) as client:
 
             async def rpc() -> int:
+                """Return rpc."""
                 response = await client.post(
                     "/api/jsonrpc",
                     json={"jsonrpc": "2.0", "method": "help", "params": {}, "id": 1},
@@ -39,6 +44,7 @@ def test_concurrent_openapi_and_jsonrpc(app) -> None:
                 return response.status_code
 
             async def openapi() -> int:
+                """Return openapi."""
                 response = await client.get("/openapi.json", timeout=180)
                 return response.status_code
 
@@ -58,6 +64,7 @@ def test_concurrent_openapi_and_jsonrpc(app) -> None:
 
 
 def test_openapi_schema_cached_per_app(app) -> None:
+    """Verify test openapi schema cached per app."""
     first = app.openapi()
     second = app.openapi()
     assert first == second

@@ -20,14 +20,19 @@ from code_analysis.commands.file_management.unmark_deleted_file import (
 
 
 class _FakeDB:
+    """Represent FakeDB."""
+
     def __init__(self, project_root: Path) -> None:
+        """Initialize the instance."""
         self.project_root = project_root
         self.calls: list[tuple[str, tuple]] = []
 
     def get_project(self, project_id: str):  # type: ignore[override]
+        """Return get project."""
         return {"id": project_id, "root_path": str(self.project_root)}
 
     def execute(self, sql: str, params: tuple):  # type: ignore[override]
+        """Execute the command."""
         self.calls.append((sql, params))
         # Resolve by absolute path only (simulates rows stored as absolute paths)
         rel = "notes/a.py"
@@ -58,11 +63,13 @@ class _FakeDB:
         return {"data": []}
 
     def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:  # type: ignore[override]
+        """Return unmark file deleted."""
         return file_path == "notes/a.py" and project_id == "p1"
 
 
 @pytest.mark.asyncio
 async def test_restore_deleted_files_resolves_relative_path(tmp_path: Path) -> None:
+    """Verify test restore deleted files resolves relative path."""
     db = _FakeDB(tmp_path)
     cmd = RestoreDeletedFilesCommand(
         database=db,
@@ -79,6 +86,7 @@ async def test_restore_deleted_files_resolves_relative_path(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_unmark_deleted_file_resolves_relative_path(tmp_path: Path) -> None:
+    """Verify test unmark deleted file resolves relative path."""
     db = _FakeDB(tmp_path)
     cmd = UnmarkDeletedFileCommand(
         database=db,

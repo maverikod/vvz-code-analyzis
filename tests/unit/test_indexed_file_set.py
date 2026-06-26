@@ -10,6 +10,7 @@ from code_analysis.core.search_session.file_sets.indexed import build_indexed_fi
 
 
 def test_build_indexed_file_set_includes_only_fresh_intersection() -> None:
+    """Verify test build indexed file set includes only fresh intersection."""
     database_files = {
         "src/fresh.py": IndexedFileRecord(
             file_path="src/fresh.py",
@@ -40,6 +41,7 @@ def test_build_indexed_file_set_includes_only_fresh_intersection() -> None:
 
 
 def test_build_indexed_file_set_excludes_stale_disk_file() -> None:
+    """Verify test build indexed file set excludes stale disk file."""
     database_files = {
         "README.md": IndexedFileRecord(
             file_path="README.md",

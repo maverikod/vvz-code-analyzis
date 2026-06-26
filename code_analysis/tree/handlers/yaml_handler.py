@@ -33,18 +33,22 @@ class YamlEditGateError(ValueError):
 
 @dataclass
 class _Location:
+    """Represent Location."""
+
     parent: Any
     key: Any
     node: dict[str, Any]
 
 
 def _wrap_scalar(item: Any, allocator: ShortIdAllocator, path: str) -> Any:
+    """Return wrap scalar."""
     if isinstance(item, (dict, list)):
         return _inject_ids(item, allocator, path)
     return {_ID_KEY: allocator.allocate(), _VAL_KEY: item}
 
 
 def _inject_ids(obj: Any, allocator: ShortIdAllocator, path: str = "") -> Any:
+    """Return inject ids."""
     if isinstance(obj, dict):
         injected: dict[str, Any] = {_ID_KEY: allocator.allocate()}
         for k, v in obj.items():
@@ -59,11 +63,13 @@ def _inject_ids(obj: Any, allocator: ShortIdAllocator, path: str = "") -> Any:
 
 
 def _extract_wrapper_meta(node: dict[str, Any]) -> Dict[str, Any]:
+    """Return extract wrapper meta."""
     raw = node.get(_META_KEY)
     return dict(raw) if isinstance(raw, dict) else {}
 
 
 def _merge_wrapper_meta(node: dict[str, Any], attributes: Dict[str, Any]) -> None:
+    """Return merge wrapper meta."""
     if not attributes:
         return
     merged = _extract_wrapper_meta(node)
@@ -72,6 +78,7 @@ def _merge_wrapper_meta(node: dict[str, Any], attributes: Dict[str, Any]) -> Non
 
 
 def _strip_ids(obj: Any) -> Any:
+    """Return strip ids."""
     if isinstance(obj, dict):
         if _ID_KEY in obj and _VAL_KEY in obj:
             val = obj[_VAL_KEY]
@@ -89,14 +96,17 @@ def _strip_ids(obj: Any) -> Any:
 
 
 def _yaml_dump(value: Any) -> str:
+    """Return yaml dump."""
     return cast(str, yaml.dump(value, **_DUMP_KWARGS))
 
 
 def _load_marked(marked_text: str) -> Any:
+    """Return load marked."""
     return yaml.safe_load(marked_text)
 
 
 def _parse_new_content(new_content: str) -> Any:
+    """Return parse new content."""
     try:
         obj = yaml.safe_load(new_content)
     except yaml.YAMLError as exc:
@@ -107,6 +117,7 @@ def _parse_new_content(new_content: str) -> Any:
 
 
 def _max_id_in_tree(obj: Any) -> int:
+    """Return max id in tree."""
     best = 0
     if isinstance(obj, dict):
         if _ID_KEY in obj:
@@ -123,6 +134,7 @@ def _max_id_in_tree(obj: Any) -> int:
 def _locate(
     root: Any, sid: int, parent: Any = None, key: Any = None
 ) -> Optional[_Location]:
+    """Return locate."""
     if isinstance(root, dict) and _ID_KEY in root and int(root[_ID_KEY]) == sid:
         return _Location(parent, key, root)
     if isinstance(root, dict):
@@ -141,6 +153,7 @@ def _locate(
 
 
 def _require_location(root: Any, sid: NodeId) -> _Location:
+    """Return require location."""
     loc = _locate(root, int(sid))
     if loc is None:
         raise UnknownNodeIdError(sid)
@@ -148,6 +161,7 @@ def _require_location(root: Any, sid: NodeId) -> _Location:
 
 
 def _is_scalar_leaf(node: dict[str, Any]) -> bool:
+    """Return is scalar leaf."""
     if _ID_KEY not in node or _VAL_KEY not in node:
         return False
     extra = set(node.keys()) - {_ID_KEY, _VAL_KEY, _META_KEY}
@@ -157,14 +171,17 @@ def _is_scalar_leaf(node: dict[str, Any]) -> bool:
 
 
 def _is_mapping_node(node: dict[str, Any]) -> bool:
+    """Return is mapping node."""
     return isinstance(node, dict) and _ID_KEY in node and not _is_scalar_leaf(node)
 
 
 def _mapping_entries(node: dict[str, Any]) -> List[Tuple[str, Any]]:
+    """Return mapping entries."""
     return [(k, node[k]) for k in node if k != _ID_KEY]
 
 
 def _set_mapping_entries(node: dict[str, Any], entries: List[Tuple[str, Any]]) -> None:
+    """Return set mapping entries."""
     sid = int(node[_ID_KEY])
     preserved_meta = _extract_wrapper_meta(node)
     node.clear()
@@ -178,6 +195,7 @@ def _set_mapping_entries(node: dict[str, Any], entries: List[Tuple[str, Any]]) -
 def _prepare_mapping_insert_entries(
     new_obj: Any, next_free: int
 ) -> List[Tuple[str, Any]]:
+    """Return prepare mapping insert entries."""
     if next_free < 1:
         raise ValueError("next_free must be >= 1")
     if not isinstance(new_obj, dict):
@@ -193,6 +211,7 @@ def _prepare_mapping_insert_entries(
 
 
 def _prepare_list_insert_item(new_obj: Any, next_free: int) -> Any:
+    """Return prepare list insert item."""
     if next_free < 1:
         raise ValueError("next_free must be >= 1")
     if isinstance(new_obj, (dict, list)):
@@ -203,6 +222,7 @@ def _prepare_list_insert_item(new_obj: Any, next_free: int) -> Any:
 def _insert_into_mapping(
     mapping: dict[str, Any], new_entries: List[Tuple[str, Any]], position: str
 ) -> None:
+    """Return insert into mapping."""
     existing = _mapping_entries(mapping)
     if position == "first_child":
         combined = new_entries + existing
@@ -219,6 +239,7 @@ def _insert_mapping_sibling(
     new_entries: List[Tuple[str, Any]],
     position: str,
 ) -> None:
+    """Return insert mapping sibling."""
     existing = _mapping_entries(parent)
     idx = next(i for i, (k, _) in enumerate(existing) if k == anchor_key)
     insert_at = idx if position == "before" else idx + 1
@@ -229,11 +250,13 @@ def _insert_mapping_sibling(
 def _insert_list_sibling(
     parent: list[Any], anchor_idx: int, item: Any, position: str
 ) -> None:
+    """Return insert list sibling."""
     insert_at = anchor_idx if position == "before" else anchor_idx + 1
     parent.insert(insert_at, item)
 
 
 def _delete_at(loc: _Location) -> None:
+    """Return delete at."""
     if loc.parent is None:
         raise ValueError("cannot delete root document node")
     if isinstance(loc.parent, dict):
@@ -247,6 +270,7 @@ def _delete_at(loc: _Location) -> None:
 def _entries_for_moved_node(
     moved_node: dict[str, Any], src_loc: _Location
 ) -> List[Tuple[str, Any]]:
+    """Return entries for moved node."""
     if _is_mapping_node(moved_node):
         return _mapping_entries(moved_node)
     if isinstance(src_loc.parent, dict) and isinstance(src_loc.key, str):
@@ -264,6 +288,7 @@ def _insert_relative(
     moved_node: Optional[dict[str, Any]] = None,
     src_loc: Optional[_Location] = None,
 ) -> None:
+    """Return insert relative."""
     if position not in _VALID_POSITIONS:
         raise ValueError(f"invalid position: {position!r}")
 
@@ -308,6 +333,7 @@ def _insert_relative(
 
 
 def _replace_mapping_node(node: dict[str, Any], new_obj: Any, root: Any) -> None:
+    """Return replace mapping node."""
     preserved = int(node[_ID_KEY])
     preserved_meta = _extract_wrapper_meta(node)
     start = _max_id_in_tree(root) + 1
@@ -322,6 +348,7 @@ def _replace_mapping_node(node: dict[str, Any], new_obj: Any, root: Any) -> None
 
 
 def _replace_scalar_leaf(node: dict[str, Any], new_obj: Any) -> None:
+    """Return replace scalar leaf."""
     preserved = int(node[_ID_KEY])
     preserved_meta = _extract_wrapper_meta(node)
     if isinstance(new_obj, (dict, list)):
@@ -341,6 +368,7 @@ def _collect_nodes(
     *,
     parent_short_id: Optional[NodeId] = None,
 ) -> None:
+    """Return collect nodes."""
     if isinstance(obj, dict):
         sid = allocator.allocate()
         mapping_sid = NodeId(sid)
@@ -406,20 +434,26 @@ def _collect_nodes(
 
 
 class YamlHandler(FormatHandler):
+    """Represent YamlHandler."""
+
     def __init__(self, id_map: Any = None) -> None:
+        """Initialize the instance."""
         super().__init__(id_map)
         self._tree_is_valid = True
 
     def set_tree_validity(self, is_valid: bool) -> None:
+        """Return set tree validity."""
         self._tree_is_valid = is_valid
 
     def _enforce_short_id_edit_gate(self) -> None:
+        """Return enforce short id edit gate."""
         if not self._tree_is_valid:
             raise YamlEditGateError(
                 "tree is invalid (text mode); short_id edit operations forbidden until re-validation"
             )
 
     def parse_content(self, file_path: Path, content: str) -> List[TreeNode]:
+        """Return parse content."""
         obj = yaml.safe_load(content)
         nodes: List[TreeNode] = []
         if obj is None:
@@ -428,16 +462,19 @@ class YamlHandler(FormatHandler):
         return nodes
 
     def mark(self, content: str) -> str:
+        """Return mark."""
         obj = yaml.safe_load(content)
         marked = _inject_ids(obj, ShortIdAllocator(1))
         return cast(str, yaml.dump(marked, **_DUMP_KWARGS))
 
     def unmark(self, marked_text: str) -> str:
+        """Return unmark."""
         obj = yaml.safe_load(marked_text)
         clean = _strip_ids(obj)
         return cast(str, yaml.dump(clean, **_DUMP_KWARGS))
 
     def sidecar_path(self, source_abs: Path) -> Path:
+        """Return sidecar path."""
         return source_abs.parent / (source_abs.name + ".tree")
 
     def op_insert(
@@ -448,6 +485,7 @@ class YamlHandler(FormatHandler):
         new_content: str,
         next_free: int,
     ) -> str:
+        """Return op insert."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         anchor_loc = _require_location(root, anchor_short_id)
@@ -456,6 +494,7 @@ class YamlHandler(FormatHandler):
         return _yaml_dump(root)
 
     def op_delete(self, marked_text: str, short_id: NodeId) -> str:
+        """Return op delete."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         loc = _require_location(root, short_id)
@@ -463,6 +502,7 @@ class YamlHandler(FormatHandler):
         return _yaml_dump(root)
 
     def op_replace(self, marked_text: str, short_id: NodeId, new_content: str) -> str:
+        """Return op replace."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         loc = _require_location(root, short_id)
@@ -477,6 +517,7 @@ class YamlHandler(FormatHandler):
         return _yaml_dump(root)
 
     def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        """Return extract move payload."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         loc = _require_location(root, short_id)
@@ -495,6 +536,7 @@ class YamlHandler(FormatHandler):
         anchor_short_id: NodeId,
         position: str,
     ) -> str:
+        """Return op move."""
         self._enforce_short_id_edit_gate()
         next_free = self.peak_short_id_in_marked(marked_text) + 1
         return self.op_move_via_delete_insert(
@@ -508,6 +550,7 @@ class YamlHandler(FormatHandler):
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]
     ) -> str:
+        """Return op edit attributes."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         loc = _require_location(root, short_id)
@@ -517,6 +560,7 @@ class YamlHandler(FormatHandler):
     def op_edit_content(
         self, marked_text: str, short_id: NodeId, new_content: str
     ) -> str:
+        """Return op edit content."""
         self._enforce_short_id_edit_gate()
         root = _load_marked(marked_text)
         loc = _require_location(root, short_id)

@@ -98,6 +98,7 @@ async def test_execute_rejects_unknown_param(
     command_cls: type,
     execute_kwargs: dict[str, object],
 ) -> None:
+    """Verify test execute rejects unknown param."""
     cmd = command_cls()
     result = await cmd.execute(**execute_kwargs, __unknown_param__="x")
     assert isinstance(result, ErrorResult)

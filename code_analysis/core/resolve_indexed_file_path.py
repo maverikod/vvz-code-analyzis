@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_relative_key(rel: str) -> str:
+    """Return normalize relative key."""
     s = (rel or "").strip().replace("\\", "/")
     while s.startswith("/"):
         s = s[1:]
@@ -40,6 +41,7 @@ def _normalize_relative_key(rel: str) -> str:
 
 
 def _first_existing_file(*candidates: Path) -> Optional[Path]:
+    """Return first existing file."""
     seen: set[str] = set()
     for raw in candidates:
         if raw is None:

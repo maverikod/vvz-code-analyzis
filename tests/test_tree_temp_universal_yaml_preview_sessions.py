@@ -48,6 +48,7 @@ _PREVIEW_ACQUIRE_PATCH = (
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -57,6 +58,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _db(tmp: Path) -> MagicMock:
+    """Return db."""
     m = MagicMock()
     p = MagicMock()
     p.root_path = str(tmp.resolve())
@@ -66,22 +68,26 @@ def _db(tmp: Path) -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
+    """Return reset."""
     ytb._trees.clear()
     yield
     ytb._trees.clear()
 
 
 def _sidecar_path(tmp: Path, rel: str) -> Path:
+    """Return sidecar path."""
     return sibling_tree_path((tmp / rel).resolve())
 
 
 def _normalize_pointer(pointer: str) -> str:
+    """Return normalize pointer."""
     if pointer in ("", "/"):
         return "/"
     return pointer if pointer.startswith("/") else f"/{pointer}"
 
 
 def _pointer_to_key_path(pointer: str) -> str:
+    """Return pointer to key path."""
     norm = _normalize_pointer(pointer)
     if norm == "/":
         return ""
@@ -89,6 +95,7 @@ def _pointer_to_key_path(pointer: str) -> str:
 
 
 def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) -> str:
+    """Return uuid for pointer."""
     sections = parse_tree_file(sidecar_path.read_text(encoding="utf-8"))
     handler = HandlerRegistry.default_registry().resolve(source_path)
     source_text = source_path.read_text(encoding="utf-8")
@@ -109,6 +116,7 @@ def _uuid_for_pointer(*, source_path: Path, sidecar_path: Path, pointer: str) ->
 
 
 def _stable_id_in_forest(roots: list[TreeNode], pointer: str) -> str:
+    """Return stable id in forest."""
     norm = _normalize_pointer(pointer)
     if norm == "/":
         assert len(roots) == 1
@@ -131,6 +139,7 @@ def _stable_id_in_forest(roots: list[TreeNode], pointer: str) -> str:
 
 
 def _preview_acquisition(tmp: Path, rel: str) -> TreeTempOpenAcquisition:
+    """Return preview acquisition."""
     source = (tmp / rel).resolve()
     return acquire_tree_temp_for_open(
         project_root=tmp.resolve(),
@@ -141,10 +150,12 @@ def _preview_acquisition(tmp: Path, rel: str) -> TreeTempOpenAcquisition:
 
 
 def _ids(blocks: list[dict[str, Any]]) -> set[str]:
+    """Return ids."""
     return {str(b[BLOCK_ID_KEY]) for b in blocks}
 
 
 async def _open_write_commit_close(tmp: Path, rel: str) -> None:
+    """Return open write commit close."""
     op = UniversalFileOpenCommand()
     wr = UniversalFileWriteCommand()
     cl = UniversalFileCloseCommand()
@@ -171,6 +182,7 @@ async def _open_write_commit_close(tmp: Path, rel: str) -> None:
 
 
 async def _hydrate(tmp: Path) -> None:
+    """Return hydrate."""
     _ensure_project_root(tmp)
     p = tmp / _REL
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +191,7 @@ async def _hydrate(tmp: Path) -> None:
 
 
 async def _preview(tmp: Path, node_ref: str | None) -> SuccessResult:
+    """Return preview."""
     cmd = UniversalFilePreviewCommand()
     raw: dict[str, Any] = {"project_id": _PID_YAML, "file_path": _REL}
     if node_ref is not None:
@@ -192,6 +205,7 @@ async def _preview(tmp: Path, node_ref: str | None) -> SuccessResult:
 async def test_yaml_scalar_node_ref_matches_container_preview_set(
     tmp_path: Path,
 ) -> None:
+    """Verify test yaml scalar node ref matches container preview set."""
     await _hydrate(tmp_path)
     acq = _preview_acquisition(tmp_path, _REL)
     su = _stable_id_in_forest(acq.roots, "/svc")
@@ -211,6 +225,7 @@ async def test_yaml_scalar_node_ref_matches_container_preview_set(
 
 @pytest.mark.asyncio
 async def test_yaml_root_scalar_matches_absent_node_ref(tmp_path: Path) -> None:
+    """Verify test yaml root scalar matches absent node ref."""
     _ensure_project_root(tmp_path)
     rel = "solo.yaml"
     p = tmp_path / rel
@@ -269,6 +284,7 @@ async def test_yaml_root_scalar_matches_absent_node_ref(tmp_path: Path) -> None:
 async def test_yaml_sidecar_regenerates_stable_id_after_external_edit_with_sidecar_removed(
     tmp_path: Path,
 ) -> None:
+    """Verify test yaml sidecar regenerates stable id after external edit with sidecar removed."""
     await _hydrate(tmp_path)
     sc = _sidecar_path(tmp_path, _REL)
     source = tmp_path / _REL
@@ -289,11 +305,13 @@ async def test_yaml_sidecar_regenerates_stable_id_after_external_edit_with_sidec
 async def test_yaml_stable_id_stable_across_reopen_without_disk_change(
     tmp_path: Path,
 ) -> None:
+    """Verify test yaml stable id stable across reopen without disk change."""
     await _hydrate(tmp_path)
     sc = _sidecar_path(tmp_path, _REL)
     source = tmp_path / _REL
 
     async def grab() -> str:
+        """Return grab."""
         op = UniversalFileOpenCommand()
         cl = UniversalFileCloseCommand()
         with patch.object(
@@ -318,6 +336,7 @@ async def test_yaml_stable_id_stable_across_reopen_without_disk_change(
 
 @pytest.mark.asyncio
 async def test_yaml_unknown_node_ref_raises(tmp_path: Path) -> None:
+    """Verify test yaml unknown node ref raises."""
     await _hydrate(tmp_path)
     cmd = UniversalFilePreviewCommand()
     with patch.object(

@@ -289,6 +289,7 @@ _FORBIDDEN_BATCH_OUTPUT_PREFIXES = (
 
 
 def _is_forbidden_batch_output_path(path: Path) -> bool:
+    """Return is forbidden batch output path."""
     path_str = str(path.resolve())
     if path_str == "/":
         return True

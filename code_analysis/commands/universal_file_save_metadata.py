@@ -15,6 +15,7 @@ _EXAMPLE_PROJECT = "550e8400-e29b-41d4-a716-446655440000"
 
 
 def get_universal_file_save_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return get universal file save metadata."""
     return build_command_metadata(
         cls,
         detailed_description=(

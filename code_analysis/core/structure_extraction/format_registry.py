@@ -73,10 +73,12 @@ BINARY_OR_SKIP_GLOBS: tuple[str, ...] = (
 
 
 def suffix_for_path(path: str | Path) -> str:
+    """Return suffix for path."""
     return Path(path).suffix.lower()
 
 
 def format_group_for_suffix(suffix: str) -> str:
+    """Return format group for suffix."""
     if suffix in PY_SUFFIXES:
         return "sidecar"
     if suffix == JSON_SUFFIX:
@@ -91,15 +93,18 @@ def format_group_for_suffix(suffix: str) -> str:
 
 
 def is_supported_extension(path: str | Path) -> bool:
+    """Return is supported extension."""
     return suffix_for_path(path) in SUPPORTED_EXTENSIONS
 
 
 def is_log_like_path(rel_path: str) -> bool:
+    """Return is log like path."""
     name = Path(rel_path).name
     return any(fnmatch.fnmatch(name, pat) for pat in LOG_FILE_GLOBS)
 
 
 def matches_skip_glob(rel_path: str) -> bool:
+    """Return matches skip glob."""
     name = Path(rel_path).name
     return any(fnmatch.fnmatch(name, pat) for pat in BINARY_OR_SKIP_GLOBS)
 

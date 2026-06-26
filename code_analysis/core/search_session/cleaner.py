@@ -133,6 +133,7 @@ async def _search_session_cleanup_loop(
     config_path: Path,
     interval_seconds: float,
 ) -> None:
+    """Return search session cleanup loop."""
     while True:
         try:
             deleted = cleanup_expired_sessions(
@@ -164,6 +165,7 @@ def register_search_session_cleanup(
 
     @app.on_event("startup")
     async def _start_search_session_cleanup() -> None:
+        """Return start search session cleanup."""
         asyncio.create_task(
             _search_session_cleanup_loop(
                 sessions_root=sessions_root,

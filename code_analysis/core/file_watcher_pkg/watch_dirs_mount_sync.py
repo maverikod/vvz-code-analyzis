@@ -36,6 +36,7 @@ LogicalWriteProgramV1 = Dict[str, Any]
 
 
 def _current_server_instance_id() -> str:
+    """Return current server instance id."""
     from code_analysis.core.server_instance import get_server_instance_id
 
     return get_server_instance_id()
@@ -111,6 +112,7 @@ def resolve_effective_watch_mount_root(config_data: Mapping[str, Any]) -> Path |
 
 
 def _is_uuid4_name(name: str) -> bool:
+    """Return is uuid4 name."""
     try:
         parsed = uuid.UUID(name)
     except ValueError:
@@ -187,6 +189,7 @@ def build_mark_watch_dir_absent_program(
 def _fetch_db_watch_dirs(
     database: Any, server_instance_id: str
 ) -> dict[str, dict[str, Any]]:
+    """Return fetch db watch dirs."""
     result = database.execute(
         """
         SELECT wd.id, wd.name, wd.deleted, wdp.absolute_path
@@ -217,6 +220,7 @@ def _register_new_watch_dir_row(
     watch_dir_id: str,
     absolute_path: str,
 ) -> None:
+    """Return register new watch dir row."""
     database.execute(
         watch_dirs_insert_new_row_sql(),
         (server_instance_id, watch_dir_id, watch_dir_id, False),
@@ -241,6 +245,7 @@ def _activate_watch_dir_row(
     watch_dir_id: str,
     absolute_path: str,
 ) -> None:
+    """Return activate watch dir row."""
     database.execute(
         """
         UPDATE watch_dirs
@@ -282,6 +287,7 @@ def _restore_watch_dir_presence(
     watch_dir_id: str,
     watch_dir_path: Path,
 ) -> WatchDirSettings:
+    """Return restore watch dir presence."""
     normalized = normalize_path_simple(str(watch_dir_path))
     _activate_watch_dir_row(
         database,
@@ -304,6 +310,7 @@ def _mark_watch_dir_absent(
     server_instance_id: str,
     watch_dir_id: str,
 ) -> None:
+    """Return mark watch dir absent."""
     if hasattr(database, "execute_logical_write_operation"):
         database.execute_logical_write_operation(
             build_mark_watch_dir_absent_program(

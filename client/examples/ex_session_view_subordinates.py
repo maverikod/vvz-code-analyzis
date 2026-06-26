@@ -82,6 +82,8 @@ CaseFn = Callable[[], Awaitable[None]]
 
 @dataclass
 class Fixture:
+    """Represent Fixture."""
+
     project_id: str
     file_id: str
     file_path: str
@@ -89,15 +91,19 @@ class Fixture:
 
 @dataclass
 class Runner:
+    """Represent Runner."""
+
     passed: int = 0
     failed: int = 0
     errors: List[str] = field(default_factory=list)
 
     def ok(self, name: str) -> None:
+        """Return ok."""
         self.passed += 1
         print(f"  OK  {name}")
 
     def fail(self, name: str, exc: BaseException) -> None:
+        """Return fail."""
         self.failed += 1
         msg = f"{type(exc).__name__}: {exc}"
         self.errors.append(f"{name}: {msg}")
@@ -105,6 +111,7 @@ class Runner:
 
 
 def _error_code(resp: Dict[str, Any]) -> str:
+    """Return error code."""
     if resp.get("success") is True:
         return ""
     top = resp.get("code")
@@ -119,6 +126,7 @@ def _error_code(resp: Dict[str, Any]) -> str:
 
 
 def expect_error(resp: Dict[str, Any], code: str, label: str) -> None:
+    """Return expect error."""
     if resp.get("success") is True:
         raise AssertionError(f"{label}: expected error {code}, got success {resp!r}")
     got = _error_code(resp)
@@ -131,6 +139,7 @@ def expect_error(resp: Dict[str, Any], code: str, label: str) -> None:
 
 
 async def discover_fixture(client: CodeAnalysisAsyncClient) -> Fixture:
+    """Return discover fixture."""
     resp = await client.call("list_projects", {"include_deleted": False})
     if resp.get("success") is not True:
         raise RuntimeError(f"list_projects failed: {resp!r}")
@@ -166,6 +175,7 @@ async def discover_fixture(client: CodeAnalysisAsyncClient) -> Fixture:
 
 
 async def run_all() -> int:
+    """Return run all."""
     chdir_repo_root()
     cfg = default_config_path()
     runner = Runner()
@@ -174,6 +184,7 @@ async def run_all() -> int:
         fs = client.file_sessions
 
         async def case(name: str, fn: CaseFn) -> None:
+            """Return case."""
             try:
                 await fn()
                 runner.ok(name)
@@ -192,6 +203,7 @@ async def run_all() -> int:
             return 1
 
         async def pos_subordinate_crud_and_view() -> None:
+            """Return pos subordinate crud and view."""
             parent = await fs.create_session("ex_session_view parent")
             try:
                 created = await fs.create_subordinate_session(
@@ -255,6 +267,7 @@ async def run_all() -> int:
                 await fs.delete_session(parent, force=True)
 
         async def neg_delete_parent_with_subordinate_no_force() -> None:
+            """Return neg delete parent with subordinate no force."""
             parent = await fs.create_session("ex_session_view delete guard parent")
             try:
                 link = await fs.create_subordinate_session(parent, "guard link")
@@ -269,6 +282,7 @@ async def run_all() -> int:
                 await fs.delete_session(parent, force=True)
 
         async def pos_force_delete_releases_subordinates() -> None:
+            """Return pos force delete releases subordinates."""
             parent = await fs.create_session("ex_session_view force parent")
             await fs.create_subordinate_session(parent, "force link")
             deleted = await fs.delete_session(parent, force=True)
@@ -285,6 +299,7 @@ async def run_all() -> int:
             expect_error(resp, "SESSION_NOT_FOUND", "parent gone")
 
         async def neg_view_unknown_session() -> None:
+            """Return neg view unknown session."""
             fake = str(uuid.uuid4())
             resp = await client.call("session_view", {"session_id": fake})
             expect_error(resp, "SESSION_NOT_FOUND", "session_view unknown")
@@ -335,6 +350,7 @@ async def run_all() -> int:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="session_view and subordinate_session live examples"
     )

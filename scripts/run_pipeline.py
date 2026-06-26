@@ -142,6 +142,7 @@ def run_pipeline() -> int:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     return run_pipeline()
 
 

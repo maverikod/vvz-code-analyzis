@@ -167,6 +167,7 @@ def _run_coroutine_sync_for_worker(
         return
 
     def _thread_runner() -> None:
+        """Return thread runner."""
         asyncio.run(factory())
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -182,6 +183,7 @@ def _persist_markdown_doc_chunks_sync(
     file_content: str,
     server_config_path: Optional[str],
 ) -> None:
+    """Return persist markdown doc chunks sync."""
     _run_coroutine_sync_for_worker(
         lambda: _persist_markdown_doc_chunks_async(
             database=database,
@@ -240,6 +242,7 @@ def analyze_file(
     """
 
     def _heartbeat(phase: str) -> None:
+        """Return heartbeat."""
         if progress_callback:
             progress_callback(phase)
 
@@ -321,6 +324,7 @@ def analyze_file(
         lines = len(file_content.splitlines())
 
         def _compute_has_docstring_python() -> bool:
+            """Return compute has docstring python."""
             try:
                 return bool(_extract_docstring(ast.parse(file_content)))
             except SyntaxError:
@@ -497,6 +501,7 @@ def analyze_file(
             from ..core.usage_tracker import UsageTracker
 
             def add_usage_callback(usage_record: Dict[str, Any]) -> None:
+                """Return add usage callback."""
                 nonlocal usages_added
                 try:
                     database.add_usage(

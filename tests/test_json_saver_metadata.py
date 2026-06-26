@@ -48,6 +48,7 @@ def test_save_json_tree_accepts_uuid_file_id(tmp_path: Path) -> None:
 
 
 def test_save_json_tree_metadata_failure_removes_new_file(tmp_path: Path) -> None:
+    """Verify test save json tree metadata failure removes new file."""
     root_dir = tmp_path / "proj"
     root_dir.mkdir()
     target = root_dir / "wf_test" / "ct_repro.json"
@@ -81,6 +82,7 @@ def test_save_json_tree_metadata_failure_removes_new_file(tmp_path: Path) -> Non
 
 
 def test_save_json_tree_uses_metadata_only_sync(tmp_path: Path) -> None:
+    """Verify test save json tree uses metadata only sync."""
     root_dir = tmp_path / "proj"
     root_dir.mkdir()
     target = root_dir / "data.json"

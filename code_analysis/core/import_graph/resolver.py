@@ -30,10 +30,32 @@ def _stdlib_top_levels() -> frozenset[str]:
         return frozenset(names)
     return frozenset(
         {
-            "os", "sys", "re", "json", "io", "abc", "enum", "typing", "pathlib",
-            "logging", "functools", "itertools", "collections", "dataclasses",
-            "datetime", "time", "math", "hashlib", "subprocess", "threading",
-            "asyncio", "contextlib", "uuid", "tempfile", "shutil", "sqlite3",
+            "os",
+            "sys",
+            "re",
+            "json",
+            "io",
+            "abc",
+            "enum",
+            "typing",
+            "pathlib",
+            "logging",
+            "functools",
+            "itertools",
+            "collections",
+            "dataclasses",
+            "datetime",
+            "time",
+            "math",
+            "hashlib",
+            "subprocess",
+            "threading",
+            "asyncio",
+            "contextlib",
+            "uuid",
+            "tempfile",
+            "shutil",
+            "sqlite3",
         }
     )
 
@@ -67,6 +89,7 @@ class ModulePathResolver:
     """Resolve dotted module names to project-relative file paths."""
 
     def __init__(self, rel_paths: Iterable[str]) -> None:
+        """Initialize the instance."""
         self._rel_paths: list[str] = sorted(
             {p.replace("\\", "/").lstrip("./") for p in rel_paths if p}
         )
@@ -90,11 +113,16 @@ class ModulePathResolver:
         if len(candidates) == 1:
             return candidates[0]
         importer_top = (
-            importer_rel.split("/", 1)[0] if importer_rel and "/" in importer_rel else None
+            importer_rel.split("/", 1)[0]
+            if importer_rel and "/" in importer_rel
+            else None
         )
 
         def sort_key(path: str) -> tuple[int, int, str]:
-            same_top = 0 if (importer_top and path.startswith(importer_top + "/")) else 1
+            """Return sort key."""
+            same_top = (
+                0 if (importer_top and path.startswith(importer_top + "/")) else 1
+            )
             return (same_top, path.count("/"), path)
 
         return sorted(candidates, key=sort_key)[0]

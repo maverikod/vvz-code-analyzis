@@ -58,6 +58,7 @@ class TestSQLiteSchemaManager:
         """Test syncing schema - creating tables."""
 
         def create_table_func(schema):
+            """Return create table func."""
             conn = schema_manager.conn
             conn.execute(f"CREATE TABLE {schema['name']} (id INTEGER PRIMARY KEY)")
             conn.commit()
@@ -79,6 +80,7 @@ class TestSQLiteSchemaManager:
         conn.commit()
 
         def create_table_func(schema):
+            """Return create table func."""
             pass  # Table already exists
 
         schema_definition = {
@@ -94,6 +96,7 @@ class TestSQLiteSchemaManager:
         """Test syncing schema when table creation raises; driver raises DriverOperationError."""
 
         def create_table_func(schema):
+            """Return create table func."""
             raise Exception("Table creation failed")
 
         schema_definition = {
@@ -111,6 +114,7 @@ class TestSQLiteSchemaManager:
         """Test syncing schema with empty table name."""
 
         def create_table_func(schema):
+            """Return create table func."""
             pass
 
         schema_definition = {

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _rel_under(root: Path, p: Path) -> str:
+    """Return a project-relative POSIX path when possible."""
     try:
         return p.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
@@ -35,6 +36,8 @@ def _rel_under(root: Path, p: Path) -> str:
 
 
 class FsCopyCommand(BaseMCPCommand):
+    """Copy a project file with overwrite protection and optional backup."""
+
     name = "fs_copy"
     version = "1.0.0"
     descr = (
@@ -49,6 +52,7 @@ class FsCopyCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -85,6 +89,7 @@ class FsCopyCommand(BaseMCPCommand):
         backup: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Copy a file under the project root without updating indexes."""
         try:
             root = self._resolve_project_root(project_id).resolve()
             try:
@@ -161,6 +166,7 @@ class FsCopyCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsCopyCommand"]) -> Dict[str, Any]:
+        """Return metadata for the project file copy command."""
         from .command_metadata_helpers import (
             build_command_metadata,
             parameters_from_schema,
@@ -185,7 +191,10 @@ class FsCopyCommand(BaseMCPCommand):
             ],
             error_cases=project_file_error_cases(),
             return_value=simple_success_return(
-                data_fields={"source_path": "Relative path", "dest_path": "Relative path"},
+                data_fields={
+                    "source_path": "Relative path",
+                    "dest_path": "Relative path",
+                },
             ),
             best_practices=[
                 "Paths must stay inside the project root.",
@@ -195,6 +204,8 @@ class FsCopyCommand(BaseMCPCommand):
 
 
 class FsMoveCommand(BaseMCPCommand):
+    """Move or rename a project file with history backups."""
+
     name = "fs_move"
     version = "1.0.0"
     descr = (
@@ -210,6 +221,7 @@ class FsMoveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -250,6 +262,7 @@ class FsMoveCommand(BaseMCPCommand):
         backup: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Move a file under the project root without updating DB file rows."""
         try:
             root = self._resolve_project_root(project_id).resolve()
             try:
@@ -355,6 +368,7 @@ class FsMoveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsMoveCommand"]) -> Dict[str, Any]:
+        """Return metadata for the project file move command."""
         from .command_metadata_helpers import (
             build_command_metadata,
             parameters_from_schema,
@@ -379,13 +393,20 @@ class FsMoveCommand(BaseMCPCommand):
             ],
             error_cases=project_file_error_cases(),
             return_value=simple_success_return(
-                data_fields={"source_path": "Relative path", "dest_path": "Relative path"},
+                data_fields={
+                    "source_path": "Relative path",
+                    "dest_path": "Relative path",
+                },
             ),
-            best_practices=["Does not update DB file rows; run update_indexes if needed."],
+            best_practices=[
+                "Does not update DB file rows; run update_indexes if needed."
+            ],
         )
 
 
 class FsRemoveCommand(BaseMCPCommand):
+    """Remove a project file from disk with an optional old_code backup."""
+
     name = "fs_remove"
     version = "1.0.0"
     descr = (
@@ -401,6 +422,7 @@ class FsRemoveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -426,6 +448,7 @@ class FsRemoveCommand(BaseMCPCommand):
         backup: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Unlink a file under the project root without touching DB rows."""
         try:
             root = self._resolve_project_root(project_id).resolve()
             try:
@@ -481,6 +504,7 @@ class FsRemoveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["FsRemoveCommand"]) -> Dict[str, Any]:
+        """Return metadata for the project file remove command."""
         from .command_metadata_helpers import (
             build_command_metadata,
             parameters_from_schema,
@@ -504,5 +528,7 @@ class FsRemoveCommand(BaseMCPCommand):
             ],
             error_cases=project_file_error_cases(),
             return_value=simple_success_return(),
-            best_practices=["Prefer soft-delete commands when audit trail is required."],
+            best_practices=[
+                "Prefer soft-delete commands when audit trail is required."
+            ],
         )

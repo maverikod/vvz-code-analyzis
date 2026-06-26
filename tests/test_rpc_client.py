@@ -34,6 +34,7 @@ class _StoppableUnixServer:
     """Unix socket listener for tests; accept loop is bounded and stoppable."""
 
     def __init__(self, socket_path: str) -> None:
+        """Initialize the instance."""
         self.socket_path = socket_path
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -43,6 +44,7 @@ class _StoppableUnixServer:
         """Run on_connection(conn) in a per-connection daemon thread."""
 
         def serve() -> None:
+            """Return serve."""
             listen = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self._listen_sock = listen
             try:
@@ -77,6 +79,7 @@ class _StoppableUnixServer:
 
     @staticmethod
     def _run_handler(handler, conn: socket.socket) -> None:
+        """Return run handler."""
         try:
             handler(conn)
         finally:
@@ -86,6 +89,7 @@ class _StoppableUnixServer:
                 pass
 
     def stop(self, join_timeout: float = 2.0) -> None:
+        """Return stop."""
         self._stop.set()
         if self._listen_sock is not None:
             try:
@@ -205,6 +209,7 @@ class TestRPCClient:
         socket_path = str(tmp_path / "test.sock")
 
         def on_connection(conn: socket.socket) -> None:
+            """Return on connection."""
             conn.settimeout(0.25)
             # Do not read request; block long enough for client timeout to fire.
             time.sleep(2.0)
@@ -236,6 +241,7 @@ class TestRPCClient:
         attempt_count = [0]
 
         def on_connection(conn: socket.socket) -> None:
+            """Return on connection."""
             attempt_count[0] += 1
             if attempt_count[0] < 2:
                 return
@@ -312,6 +318,7 @@ class TestRPCClient:
             import concurrent.futures
 
             def make_call():
+                """Return make call."""
                 return client.call(
                     "select",
                     {

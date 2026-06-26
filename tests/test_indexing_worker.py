@@ -27,6 +27,7 @@ def _make_mock_database(
     call_count = [0]  # mutable to share across invocations
 
     def execute(sql: str, params=None, transaction_id=None, **kwargs):
+        """Execute the command."""
         call_count[0] += 1
         sql_lower = sql.strip().lower()
         if "project_activity_locks" in sql_lower:
@@ -49,10 +50,11 @@ def _make_mock_database(
             if "updated_at desc" in sql_lower:
 
                 def _sort_file_row(row: dict) -> tuple:
+                    """Return sort file row."""
                     raw = row.get("updated_at", 0)
                     try:
                         ufv = float(raw)
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         ufv = 0.0
                     rid = row.get("id")
                     sid = str(rid) if rid is not None else ""
@@ -111,6 +113,7 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
     ):
 
         async def run_then_stop():
+            """Return run then stop."""
             await asyncio.sleep(0.3)
             worker._stop_event.set()
 
@@ -174,6 +177,7 @@ async def test_process_cycle_respects_batch_size(tmp_path):
     ):
 
         async def run_then_stop():
+            """Return run then stop."""
             await asyncio.sleep(0.3)
             worker._stop_event.set()
 
@@ -233,6 +237,7 @@ async def test_process_cycle_respects_project_order(tmp_path):
     ):
 
         async def run_then_stop():
+            """Return run then stop."""
             await asyncio.sleep(0.5)
             worker._stop_event.set()
 
@@ -323,6 +328,7 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
         worker._stop_event = multiprocessing.Event()
 
         async def stop_after_one_cycle():
+            """Return stop after one cycle."""
             await asyncio.sleep(5.0)
             worker._stop_event.set()
 

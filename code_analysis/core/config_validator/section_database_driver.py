@@ -19,12 +19,14 @@ _TIMEOUT_CANONICAL = ("lock_timeout_seconds", "statement_timeout_seconds")
 
 
 def _is_number_non_bool(value: Any) -> bool:
+    """Return is number non bool."""
     if isinstance(value, bool):
         return False
     return isinstance(value, (int, float))
 
 
 def _is_int_non_bool(value: Any) -> bool:
+    """Return is int non bool."""
     return isinstance(value, int) and not isinstance(value, bool)
 
 

@@ -26,6 +26,7 @@ class YamlNodeMetadata:
     end_line: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return to dict."""
         return {
             "node_id": self.node_id,
             "yaml_pointer": self.yaml_pointer,
@@ -57,6 +58,7 @@ class YamlTree:
 
     @classmethod
     def create(cls, file_path: str, root_data: Any) -> YamlTree:
+        """Return create."""
         import uuid
 
         tid = str(uuid.uuid4())

@@ -23,6 +23,7 @@ from mcp_proxy_adapter.api.schemas import JsonRpcErrorResponse, JsonRpcSuccessRe
 
 
 def _remove_post_routes(app: FastAPI, paths: set[str]) -> None:
+    """Return remove post routes."""
     kept: list[Any] = []
     for route in app.router.routes:
         if isinstance(route, APIRoute):
@@ -41,6 +42,7 @@ def patch_jsonrpc_routes_request_body(app: FastAPI) -> None:
         response_model=Union[JsonRpcSuccessResponse, JsonRpcErrorResponse],
     )
     async def jsonrpc(http_request: Request) -> Any:
+        """Return jsonrpc."""
         request_id = getattr(http_request.state, "request_id", None)
         try:
             body_raw = await http_request.json()
@@ -70,6 +72,7 @@ def patch_jsonrpc_routes_request_body(app: FastAPI) -> None:
         response_model=List[Union[JsonRpcSuccessResponse, JsonRpcErrorResponse]],
     )
     async def jsonrpc_batch(http_request: Request) -> Any:
+        """Return jsonrpc batch."""
         try:
             payload = await http_request.json()
         except Exception:

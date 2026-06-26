@@ -30,6 +30,7 @@ _LOCK_SCOPE_VALUES = frozenset({"none", "project_write", "project_read"})
 
 
 def _rpc_write_retry_policy(driver: Any) -> RetryPolicy:
+    """Return rpc write retry policy."""
     policy = getattr(driver, "_write_retry_policy", None)
     if policy is not None:
         return policy
@@ -40,6 +41,7 @@ def _rpc_write_retry_policy(driver: Any) -> RetryPolicy:
 
 
 def _rpc_backend_name(driver: Any) -> str:
+    """Return rpc backend name."""
     name = type(driver).__name__
     if "PostgreSQL" in name or "postgres" in name.lower():
         return "postgres"

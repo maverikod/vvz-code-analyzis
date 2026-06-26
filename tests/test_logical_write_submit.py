@@ -16,6 +16,7 @@ from code_analysis.core.database.logical_write_submit import (
 
 
 def test_submit_logical_write_uses_execute_logical_when_present() -> None:
+    """Verify test submit logical write uses execute logical when present."""
     db = Mock()
     db.execute_logical_write_operation = Mock(
         return_value={"success": True, "data": {"batch_results": []}}
@@ -30,6 +31,7 @@ def test_submit_logical_write_uses_execute_logical_when_present() -> None:
 
 
 def test_submit_logical_write_fallback_sequential_execute_batch() -> None:
+    """Verify test submit logical write fallback sequential execute batch."""
     db = Mock(spec=["execute_batch"])
     db.execute_batch = Mock(
         side_effect=[
@@ -47,6 +49,7 @@ def test_submit_logical_write_fallback_sequential_execute_batch() -> None:
 
 @pytest.mark.asyncio
 async def test_submit_logical_write_async_uses_logical_when_present() -> None:
+    """Verify test submit logical write async uses logical when present."""
     db = Mock()
     db.execute_logical_write_operation = Mock(
         return_value={"success": True, "data": {"batch_results": []}}
@@ -59,6 +62,7 @@ async def test_submit_logical_write_async_uses_logical_when_present() -> None:
 
 @pytest.mark.asyncio
 async def test_submit_logical_write_async_fallback_execute_batch() -> None:
+    """Verify test submit logical write async fallback execute batch."""
     db = Mock(spec=["execute_batch"])
     db.execute_batch = Mock(return_value=[{"affected_rows": 1}])
     b1 = [("SQL1", (1,))]
@@ -67,14 +71,19 @@ async def test_submit_logical_write_async_fallback_execute_batch() -> None:
 
 
 def test_submit_logical_write_program_or_fallback_uses_full_program() -> None:
+    """Verify test submit logical write program or fallback uses full program."""
     calls: list[Any] = []
 
     class _Db:
+        """Represent Db."""
+
         def execute_logical_write_operation(self, program: dict) -> dict:
+            """Return execute logical write operation."""
             calls.append(("lw", program))
             return {"success": True}
 
         def execute_batch(self, batch: list) -> None:
+            """Return execute batch."""
             calls.append(("batch", batch))
 
     db = _Db()
@@ -91,10 +100,14 @@ def test_submit_logical_write_program_or_fallback_uses_full_program() -> None:
 
 
 def test_submit_logical_write_program_or_fallback_batches_when_no_lw() -> None:
+    """Verify test submit logical write program or fallback batches when no lw."""
     calls: list[Any] = []
 
     class _Db:
+        """Represent Db."""
+
         def execute_batch(self, batch: list) -> None:
+            """Return execute batch."""
             calls.append(batch)
 
     program = {
@@ -106,6 +119,7 @@ def test_submit_logical_write_program_or_fallback_batches_when_no_lw() -> None:
 
 
 def test_submit_skips_empty_inner_batches() -> None:
+    """Verify test submit skips empty inner batches."""
     db = Mock()
     db.execute_logical_write_operation = Mock(
         return_value={"success": True, "data": {"batch_results": []}}

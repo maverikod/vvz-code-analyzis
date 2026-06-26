@@ -38,6 +38,7 @@ SERVER_UUID = "880e8400-e29b-41d4-a716-446655440003"
 def _insert_project_and_file(
     facade, conn_path: Path, *, root_path: str = "/tmp/p"
 ) -> tuple[str, str]:
+    """Return insert project and file."""
     import sqlite3
 
     project_id = str(uuid.uuid4())
@@ -57,6 +58,7 @@ def _insert_project_and_file(
 
 
 def test_delete_without_force_fails_on_subordinates() -> None:
+    """Verify test delete without force fails on subordinates."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         facade, client = make_sqlite_in_process_legacy_facade(root)
@@ -76,6 +78,7 @@ def test_delete_without_force_fails_on_subordinates() -> None:
 
 
 def test_delete_without_force_fails_on_locks() -> None:
+    """Verify test delete without force fails on locks."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         facade, client = make_sqlite_in_process_legacy_facade(root)
@@ -92,6 +95,7 @@ def test_delete_without_force_fails_on_locks() -> None:
 
 
 def test_delete_with_force_removes_links_and_parent() -> None:
+    """Verify test delete with force removes links and parent."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         facade, client = make_sqlite_in_process_legacy_facade(root)
@@ -116,6 +120,7 @@ def test_delete_with_force_removes_links_and_parent() -> None:
 
 
 def test_delete_without_force_fails_on_advisory_locks() -> None:
+    """Verify test delete without force fails on advisory locks."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         project_root = root / "proj"
@@ -144,6 +149,7 @@ def test_delete_without_force_fails_on_advisory_locks() -> None:
 
 
 def test_delete_with_force_releases_advisory_locks() -> None:
+    """Verify test delete with force releases advisory locks."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         project_root = root / "proj"
@@ -173,6 +179,7 @@ def test_delete_with_force_releases_advisory_locks() -> None:
 
 
 def test_delete_without_force_succeeds_when_clean() -> None:
+    """Verify test delete without force succeeds when clean."""
     with tempfile.TemporaryDirectory() as td:
         facade, client = make_sqlite_in_process_legacy_facade(Path(td))
         try:

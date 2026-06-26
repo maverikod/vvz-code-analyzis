@@ -10,9 +10,9 @@ from code_analysis.core.usage_tracker import UsageTracker
 
 
 def _memory_db_with_usages() -> sqlite3.Connection:
+    """Return memory db with usages."""
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE usages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id INTEGER NOT NULL,
@@ -23,8 +23,7 @@ def _memory_db_with_usages() -> sqlite3.Connection:
             target_class TEXT,
             context TEXT
         )
-        """
-    )
+        """)
     conn.commit()
     return conn
 
@@ -33,12 +32,15 @@ class _LogicalWriteDbShim:
     """Minimal DB surface for entities.replace_usages_for_file (logical write path)."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._conn = conn
 
     def _in_transaction(self) -> bool:
+        """Return in transaction."""
         return False
 
     def execute_logical_write_operation(self, program: dict) -> dict:
+        """Return execute logical write operation."""
         batches = program.get("batches") or []
         for batch_ops in batches:
             for sql, params in batch_ops:
@@ -51,23 +53,28 @@ class _InTxBatchDbShim:
     """execute_batch only; no nested logical write (simulates outer transaction)."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._conn = conn
         self.batch_calls: list = []
 
     def _in_transaction(self) -> bool:
+        """Return in transaction."""
         return True
 
     def execute_batch(self, operations: list) -> list:
+        """Return execute batch."""
         self.batch_calls.append(operations)
         for sql, params in operations:
             self._conn.execute(sql, tuple(params) if params else ())
         return [{"affected_rows": 1} for _ in operations]
 
     def execute_logical_write_operation(self, program: dict) -> dict:
+        """Return execute logical write operation."""
         raise AssertionError("nested logical write must not run inside transaction")
 
 
 def test_replace_usages_for_file_uses_logical_write_when_available() -> None:
+    """Verify test replace usages for file uses logical write when available."""
     db = Mock()
     db.execute_logical_write_operation = Mock(
         return_value={"success": True, "data": {"batch_results": []}}
@@ -119,6 +126,7 @@ def test_replace_usages_for_file_idempotent_on_reindex() -> None:
 def test_replace_usages_for_file_in_transaction_uses_execute_batch_not_nested_logical() -> (
     None
 ):
+    """Verify test replace usages for file in transaction uses execute batch not nested logical."""
     conn = _memory_db_with_usages()
     db = _InTxBatchDbShim(conn)
     entities_mod.replace_usages_for_file(
@@ -143,6 +151,7 @@ def test_replace_usages_for_file_in_transaction_uses_execute_batch_not_nested_lo
 
 
 def test_usage_tracker_no_callback_collects_only() -> None:
+    """Verify test usage tracker no callback collects only."""
     import ast
 
     tree = ast.parse("def f():\n    len([])\n", filename="c.py")
@@ -157,10 +166,14 @@ def test_replace_usages_fallback_execute_batch_when_no_logical_write() -> None:
     conn = _memory_db_with_usages()
 
     class FallbackDb:
+        """Represent FallbackDb."""
+
         def _in_transaction(self) -> bool:
+            """Return in transaction."""
             return False
 
         def execute_batch(self, operations: list) -> list:
+            """Return execute batch."""
             for sql, params in operations:
                 conn.execute(sql, tuple(params) if params else ())
             conn.commit()

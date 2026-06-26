@@ -12,10 +12,12 @@ from code_analysis.core.tree_temp.yaml_frontend import parse_yaml_source_to_root
 
 
 def _norm_comment(s: str | None) -> str:
+    """Return norm comment."""
     return (s or "").strip()
 
 
 def _struct_tuple(node: TreeNode, depth: int) -> tuple[object, ...]:
+    """Return struct tuple."""
     key = node.key
     vref: object
     if node.type in ("object", "array"):
@@ -33,9 +35,11 @@ def _struct_tuple(node: TreeNode, depth: int) -> tuple[object, ...]:
 
 
 def _flatten_roots(roots: list[TreeNode]) -> list[tuple[object, ...]]:
+    """Return flatten roots."""
     out: list[tuple[object, ...]] = []
 
     def visit(n: TreeNode, d: int) -> None:
+        """Return visit."""
         out.append(_struct_tuple(n, d))
         if n.children:
             for ch in n.children:
@@ -47,6 +51,7 @@ def _flatten_roots(roots: list[TreeNode]) -> list[tuple[object, ...]]:
 
 
 def test_yaml_roundtrip_inline_hash_comment() -> None:
+    """Verify test yaml roundtrip inline hash comment."""
     source = "name: alex  #nick\n"
     r1 = parse_yaml_source_to_roots(source)
     mid = emit_yaml_source_from_roots(r1)
@@ -57,6 +62,7 @@ def test_yaml_roundtrip_inline_hash_comment() -> None:
 
 
 def test_yaml_roundtrip_block_mapping_sequence_mix() -> None:
+    """Verify test yaml roundtrip block mapping sequence mix."""
     source = "items:\n  - 1\n  - two  #lbl\n"
     r1 = parse_yaml_source_to_roots(source)
     mid = emit_yaml_source_from_roots(r1)
@@ -70,6 +76,7 @@ def test_yaml_roundtrip_block_mapping_sequence_mix() -> None:
 
 
 def test_yaml_roundtrip_multiline_above_root() -> None:
+    """Verify test yaml roundtrip multiline above root."""
     source = "#banner\nflat: yes\n"
     r1 = parse_yaml_source_to_roots(source)
     mid = emit_yaml_source_from_roots(r1)
@@ -80,6 +87,7 @@ def test_yaml_roundtrip_multiline_above_root() -> None:
 
 
 def test_yaml_double_roundtrip_equals_single() -> None:
+    """Verify test yaml double roundtrip equals single."""
     source = "a: 1\nb: 2\n"
     once = parse_yaml_source_to_roots(source)
     mid = emit_yaml_source_from_roots(once)

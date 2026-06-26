@@ -31,7 +31,6 @@ from code_analysis.core.cst_tree.tree_metadata import (
 )
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-
 # Sample module: Module with imports, one function, one class with one method.
 SAMPLE_SOURCE = '''
 """Docstring."""
@@ -77,6 +76,7 @@ class TestRootNodeIdSet:
     """tree_builder sets root_node_id and root is always indexed."""
 
     def test_create_tree_from_code_sets_root_node_id(self, sample_tree):
+        """Verify test create tree from code sets root node id."""
         t = get_tree(sample_tree)
         assert t is not None
         assert t.root_node_id is not None
@@ -85,6 +85,7 @@ class TestRootNodeIdSet:
         assert meta is not None and meta.type == "Module"
 
     def test_load_file_to_tree_sets_root_node_id(self, tmp_path):
+        """Verify test load file to tree sets root node id."""
         path = tmp_path / "f.py"
         path.write_text("x = 1\n", encoding="utf-8")
         tree = load_file_to_tree(str(path))
@@ -94,6 +95,7 @@ class TestRootNodeIdSet:
             remove_tree(tree.tree_id)
 
     def test_root_indexed_even_with_node_types_filter(self, sample_tree_with_filter):
+        """Verify test root indexed even with node types filter."""
         t = get_tree(sample_tree_with_filter)
         assert t is not None
         assert t.root_node_id is not None
@@ -106,6 +108,7 @@ class TestNodeTypesFilterRecursionConsistency:
     def test_node_map_matches_metadata_for_every_indexed_node(
         self, sample_tree_with_filter
     ):
+        """Verify test node map matches metadata for every indexed node."""
         t = get_tree(sample_tree_with_filter)
         assert t is not None
         for node_id, meta in t.metadata_map.items():
@@ -114,6 +117,7 @@ class TestNodeTypesFilterRecursionConsistency:
             assert node.__class__.__name__ == meta.type
 
     def test_filtered_load_finds_expected_defs(self, tmp_path):
+        """Verify test filtered load finds expected defs."""
         path = str(tmp_path / "filtered_defs.py")
         tree = create_tree_from_code(
             path,
@@ -139,12 +143,14 @@ class TestResolveRootSentinel:
     """get_node_metadata, get_node_children, get_node_descendants, get_node_parent accept __root__."""
 
     def test_get_node_metadata_with_root_sentinel_returns_module(self, sample_tree):
+        """Verify test get node metadata with root sentinel returns module."""
         meta = get_node_metadata(sample_tree, ROOT_NODE_ID_SENTINEL)
         assert meta is not None
         assert meta.type == "Module"
         assert meta.node_id != ROOT_NODE_ID_SENTINEL
 
     def test_get_node_metadata_with_literal_root_string(self, sample_tree):
+        """Verify test get node metadata with literal root string."""
         meta = get_node_metadata(sample_tree, "__root__")
         assert meta is not None
         assert meta.type == "Module"
@@ -152,6 +158,7 @@ class TestResolveRootSentinel:
     def test_get_node_children_with_root_sentinel_returns_top_level_nodes(
         self, sample_tree
     ):
+        """Verify test get node children with root sentinel returns top level nodes."""
         children = get_node_children(sample_tree, ROOT_NODE_ID_SENTINEL)
         assert len(children) >= 1
         types = {c.type for c in children}
@@ -162,29 +169,34 @@ class TestResolveRootSentinel:
         )
 
     def test_get_node_descendants_with_root_sentinel_depth1(self, sample_tree):
+        """Verify test get node descendants with root sentinel depth1."""
         descendants = get_node_descendants(sample_tree, "__root__", max_depth=1)
         assert all(d == 1 for _, d in descendants)
         assert len(descendants) >= 1
 
     def test_get_node_descendants_with_root_sentinel_depth2(self, sample_tree):
+        """Verify test get node descendants with root sentinel depth2."""
         descendants = get_node_descendants(sample_tree, "__root__", max_depth=2)
         depths = [d for _, d in descendants]
         assert 1 in depths
         assert max(depths) <= 2
 
     def test_get_node_descendants_with_root_sentinel_full_subtree(self, sample_tree):
+        """Verify test get node descendants with root sentinel full subtree."""
         descendants = get_node_descendants(sample_tree, "__root__", max_depth=0)
         assert len(descendants) >= 2
         depths = [d for _, d in descendants]
         assert max(depths) >= 2
 
     def test_get_node_parent_of_root_returns_none(self, sample_tree):
+        """Verify test get node parent of root returns none."""
         parent = get_node_parent(sample_tree, "__root__")
         assert parent is None
 
     def test_root_resolution_works_with_node_types_filtered_tree(
         self, sample_tree_with_filter
     ):
+        """Verify test root resolution works with node types filtered tree."""
         meta = get_node_metadata(sample_tree_with_filter, "__root__")
         assert meta is not None
         assert meta.type == "Module"
@@ -200,6 +212,7 @@ class TestCstGetNodeInfoRootAndDepth:
 
     @pytest.mark.asyncio
     async def test_get_node_info_with_root_sentinel_returns_module(self, sample_tree):
+        """Verify test get node info with root sentinel returns module."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -211,6 +224,7 @@ class TestCstGetNodeInfoRootAndDepth:
 
     @pytest.mark.asyncio
     async def test_get_node_info_root_with_children_depth1(self, sample_tree):
+        """Verify test get node info root with children depth1."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -225,6 +239,7 @@ class TestCstGetNodeInfoRootAndDepth:
 
     @pytest.mark.asyncio
     async def test_get_node_info_root_with_children_depth2(self, sample_tree):
+        """Verify test get node info root with children depth2."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -244,6 +259,7 @@ class TestCstGetNodeInfoRootAndDepth:
     async def test_get_node_info_root_with_children_depth0_full_subtree(
         self, sample_tree
     ):
+        """Verify test get node info root with children depth0 full subtree."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -259,6 +275,7 @@ class TestCstGetNodeInfoRootAndDepth:
 
     @pytest.mark.asyncio
     async def test_get_node_info_nonexistent_node_returns_error(self, sample_tree):
+        """Verify test get node info nonexistent node returns error."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -276,6 +293,7 @@ class TestCstFindNodeRequireOne:
 
     @pytest.mark.asyncio
     async def test_require_one_zero_matches_returns_no_match(self, sample_tree):
+        """Verify test require one zero matches returns no match."""
         cmd = CSTFindNodeCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -289,6 +307,7 @@ class TestCstFindNodeRequireOne:
 
     @pytest.mark.asyncio
     async def test_require_one_single_match_returns_node_and_node_id(self, sample_tree):
+        """Verify test require one single match returns node and node id."""
         cmd = CSTFindNodeCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -307,6 +326,7 @@ class TestCstFindNodeRequireOne:
     async def test_require_one_multiple_matches_returns_non_unique_match(
         self, sample_tree
     ):
+        """Verify test require one multiple matches returns non unique match."""
         cmd = CSTFindNodeCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -321,6 +341,7 @@ class TestCstFindNodeRequireOne:
 
     @pytest.mark.asyncio
     async def test_require_one_false_returns_list_as_usual(self, sample_tree):
+        """Verify test require one false returns list as usual."""
         cmd = CSTFindNodeCommand()
         result = await cmd.execute(
             tree_id=sample_tree,
@@ -341,11 +362,13 @@ class TestGetNodeDescendantsNonRoot:
 
     def test_descendants_depth1_returns_direct_children_only(self, sample_tree):
         # Use root: it always has direct children in the index.
+        """Verify test descendants depth1 returns direct children only."""
         desc = get_node_descendants(sample_tree, "__root__", max_depth=1)
         assert all(d == 1 for _, d in desc)
         assert len(desc) >= 1
 
     def test_descendants_depth0_returns_full_subtree(self, sample_tree):
+        """Verify test descendants depth0 returns full subtree."""
         desc = get_node_descendants(sample_tree, "__root__", max_depth=0)
         assert len(desc) >= 2
         depths = [d for _, d in desc]
@@ -360,6 +383,7 @@ class TestTwoCommandFlow:
 
     @pytest.mark.asyncio
     async def test_find_main_then_get_info_with_descendants(self, sample_tree):
+        """Verify test find main then get info with descendants."""
         find_cmd = CSTFindNodeCommand()
         find_result = await find_cmd.execute(
             tree_id=sample_tree,
@@ -384,6 +408,7 @@ class TestTwoCommandFlow:
 
     @pytest.mark.asyncio
     async def test_root_then_get_children_depth1_no_extra_round_trip(self, sample_tree):
+        """Verify test root then get children depth1 no extra round trip."""
         info_cmd = CSTGetNodeInfoCommand()
         result = await info_cmd.execute(
             tree_id=sample_tree,
@@ -403,23 +428,28 @@ class TestEdgeCases:
     """Invalid tree_id, empty tree, etc."""
 
     def test_get_node_metadata_invalid_tree_id_returns_none(self):
+        """Verify test get node metadata invalid tree id returns none."""
         meta = get_node_metadata("nonexistent-tree-id", "__root__")
         assert meta is None
 
     def test_get_node_children_invalid_tree_id_returns_empty(self):
+        """Verify test get node children invalid tree id returns empty."""
         children = get_node_children("nonexistent-tree-id", "__root__")
         assert children == []
 
     def test_get_node_descendants_invalid_tree_id_returns_empty(self):
+        """Verify test get node descendants invalid tree id returns empty."""
         desc = get_node_descendants("nonexistent-tree-id", "__root__", max_depth=1)
         assert desc == []
 
     def test_get_node_parent_invalid_tree_id_returns_none(self):
+        """Verify test get node parent invalid tree id returns none."""
         parent = get_node_parent("nonexistent-tree-id", "__root__")
         assert parent is None
 
     @pytest.mark.asyncio
     async def test_get_node_info_invalid_tree_id_returns_error(self):
+        """Verify test get node info invalid tree id returns error."""
         cmd = CSTGetNodeInfoCommand()
         result = await cmd.execute(
             tree_id="nonexistent-tree-id",
@@ -433,6 +463,7 @@ class TestGetTreeDiskResync:
     """get_tree reloads from disk when file bytes drift from the load snapshot."""
 
     def test_get_tree_reloads_when_py_file_changed_on_disk(self, tmp_path) -> None:
+        """Verify test get tree reloads when py file changed on disk."""
         py = tmp_path / "drift.py"
         py.write_text("x = 1\n", encoding="utf-8")
         tree = load_file_to_tree(str(py))
@@ -451,6 +482,7 @@ class TestReloadTreeFromFileChecksumSkip:
     """reload_tree_from_file avoids full rebuild when disk matches snapshot / module."""
 
     def test_reload_skips_rebuild_when_disk_unchanged(self, tmp_path) -> None:
+        """Verify test reload skips rebuild when disk unchanged."""
         py = tmp_path / "stable_reload.py"
         py.write_text("b = 0\n", encoding="utf-8")
         tree = load_file_to_tree(str(py))
@@ -467,6 +499,7 @@ class TestReloadTreeFromFileChecksumSkip:
             remove_tree(tid)
 
     def test_reload_with_node_types_filter_forces_rebuild(self, tmp_path) -> None:
+        """Verify test reload with node types filter forces rebuild."""
         py = tmp_path / "filtered_reload.py"
         py.write_text("def f():\n    pass\n", encoding="utf-8")
         tree = load_file_to_tree(str(py))

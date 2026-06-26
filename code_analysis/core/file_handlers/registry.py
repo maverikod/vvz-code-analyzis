@@ -47,12 +47,14 @@ class RegistryError(Exception):
     """Raised when routing fails; carries MCP-oriented code and details."""
 
     def __init__(self, code: str, details: Dict[str, Any]) -> None:
+        """Initialize the instance."""
         super().__init__(details.get("message", code))
         self.code = code
         self.details = details
 
 
 def _suffix(file_path: str) -> str:
+    """Return suffix."""
     return Path(file_path).suffix.lower()
 
 

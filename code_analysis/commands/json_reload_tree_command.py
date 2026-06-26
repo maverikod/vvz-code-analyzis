@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 class JsonReloadTreeCommand(BaseMCPCommand):
+    """Reload a JSON tree session from its source file on disk."""
+
     name = "json_reload_tree"
     version = "1.0.0"
     descr = "Reload .json from disk into existing session (same tree_id)"
@@ -32,6 +34,7 @@ class JsonReloadTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -42,6 +45,7 @@ class JsonReloadTreeCommand(BaseMCPCommand):
         }
 
     async def execute(self, tree_id: str, **kwargs: Any) -> SuccessResult:
+        """Refresh an existing JSON tree session while preserving its tree id."""
         t_start = time.perf_counter()
         try:
             updated = reload_tree_from_file(tree_id)
@@ -87,6 +91,7 @@ class JsonReloadTreeCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonReloadTreeCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON tree reload command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

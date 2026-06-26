@@ -376,6 +376,7 @@ class DocstringChunker:
             await asyncio.to_thread(execute_batch, ops)
 
     def _chunker_params_for_items(self, items: List[_DocItem]) -> Dict[str, Any]:
+        """Return chunker params for items."""
         is_markdown = any(
             it.source_type == DOCS_MARKDOWN_SOURCE_TYPE
             or it.ast_node_type == "MarkdownDoc"
@@ -862,6 +863,7 @@ class DocstringChunker:
         else:
 
             def _run() -> None:
+                """Return run."""
                 ex(sql, params)
 
             await asyncio.to_thread(_run)
@@ -1026,5 +1028,6 @@ class _DummyChunk:
     """Chunk-like object for embedding API compatibility."""
 
     def __init__(self, text: str) -> None:
+        """Initialize the instance."""
         self.body = text
         self.text = text

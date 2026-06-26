@@ -26,7 +26,6 @@ from .base_mcp_command import BaseMCPCommand
 
 from ..core.cst_tree.tree_finder import find_nodes
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -54,6 +53,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -121,6 +121,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
         }
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        """Find CST nodes by simple filters or CSTQuery/XPath-like selector."""
         t_start = time.perf_counter()
         tree_id: str = kwargs["tree_id"]
         search_type: str = kwargs.get("search_type", "xpath")

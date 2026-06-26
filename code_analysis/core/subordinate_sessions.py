@@ -52,6 +52,7 @@ class SubordinateSessionNotFoundError(ValueError):
     """Raised when a subordinate session link row is missing."""
 
     def __init__(self, parent_session_id: str, server_uuid: str) -> None:
+        """Initialize the instance."""
         super().__init__(
             "Subordinate session link not found: "
             f"parent={parent_session_id!r}, server={server_uuid!r}"
@@ -64,6 +65,7 @@ class SubordinateSessionAlreadyExistsError(ValueError):
     """Raised when creating a duplicate subordinate session link."""
 
     def __init__(self, parent_session_id: str, server_uuid: str) -> None:
+        """Initialize the instance."""
         super().__init__(
             "Subordinate session link already exists: "
             f"parent={parent_session_id!r}, server={server_uuid!r}"
@@ -73,6 +75,7 @@ class SubordinateSessionAlreadyExistsError(ValueError):
 
 
 def _table_has_legacy_subordinate_column(conn: Any) -> bool:
+    """Return table has legacy subordinate column."""
     try:
         cur = conn.execute("PRAGMA table_info(subordinate_sessions)")
         rows = cur.fetchall()
@@ -119,6 +122,7 @@ def ensure_subordinate_session_tables(conn: Any) -> None:
 
 
 def _normalize_key(parent_session_id: str, server_uuid: str) -> tuple[str, str]:
+    """Return normalize key."""
     parent = str(parent_session_id or "").strip()
     server = str(server_uuid or "").strip()
     if not is_valid_uuid4(parent):
@@ -129,6 +133,7 @@ def _normalize_key(parent_session_id: str, server_uuid: str) -> tuple[str, str]:
 
 
 def _row_from_data(data: list[Any]) -> Optional[dict[str, object]]:
+    """Return row from data."""
     if not data:
         return None
     return dict(data[0])

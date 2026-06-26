@@ -28,11 +28,15 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 
 class TestTextAnchor:
+    """Represent TestTextAnchor."""
+
     def test_check_text_anchor_correct_anchor_passes(self) -> None:
+        """Verify test check text anchor correct anchor passes."""
         lines = ["alpha beta", "gamma delta"]
         check_text_anchor(lines, 1, 2, "alpha", "delta")
 
     def test_check_text_anchor_wrong_head_raises(self) -> None:
+        """Verify test check text anchor wrong head raises."""
         with pytest.raises(AnchorMismatch) as exc_info:
             check_text_anchor(["alpha beta"], 1, 1, "omega", "abeta")
 
@@ -40,6 +44,7 @@ class TestTextAnchor:
         assert exc_info.value.details["actual"] == "alpha"
 
     def test_check_text_anchor_wrong_tail_raises(self) -> None:
+        """Verify test check text anchor wrong tail raises."""
         with pytest.raises(AnchorMismatch) as exc_info:
             check_text_anchor(["alpha beta"], 1, 1, "alpha", "omega")
 
@@ -47,14 +52,17 @@ class TestTextAnchor:
         assert exc_info.value.details["actual"] == "abeta"
 
     def test_check_text_anchor_none_noops(self) -> None:
+        """Verify test check text anchor none noops."""
         check_text_anchor(["alpha beta"], 1, 1, None, None)
 
     def test_check_text_anchor_blank_range_matches_empty(self) -> None:
+        """Verify test check text anchor blank range matches empty."""
         check_text_anchor(["   \t  "], 1, 1, "", "")
 
     def test_compute_text_anchor_single_line_uses_same_line_for_both_sides(
         self,
     ) -> None:
+        """Verify test compute text anchor single line uses same line for both sides."""
         assert compute_text_anchor(["  abc def  "], 1, 1) == {
             "anchor_head": "abcde",
             "anchor_tail": "bcdef",
@@ -63,7 +71,10 @@ class TestTextAnchor:
 
 @pytest.mark.asyncio
 class TestReplaceFileLinesAnchor:
+    """Represent TestReplaceFileLinesAnchor."""
+
     async def test_correct_anchor_writes(self, tmp_path: Path) -> None:
+        """Verify test correct anchor writes."""
         f = tmp_path / "notes.txt"
         f.write_text("alpha beta\ngamma delta\n", encoding="utf-8")
 
@@ -91,6 +102,7 @@ class TestReplaceFileLinesAnchor:
         assert f.read_text(encoding="utf-8") == "alpha beta\nnew value"
 
     async def test_wrong_anchor_no_write_no_backup(self, tmp_path: Path) -> None:
+        """Verify test wrong anchor no write no backup."""
         f = tmp_path / "notes.txt"
         original = "alpha beta\ngamma delta\n"
         f.write_text(original, encoding="utf-8")
@@ -122,6 +134,7 @@ class TestReplaceFileLinesAnchor:
     async def test_anchor_node_id_with_text_anchor_validation_error(
         self, tmp_path: Path
     ) -> None:
+        """Verify test anchor node id with text anchor validation error."""
         f = tmp_path / "broken.py"
         f.write_text("def broken(\n", encoding="utf-8")
 
@@ -147,6 +160,7 @@ class TestReplaceFileLinesAnchor:
     async def test_anchor_node_id_on_non_python_validation_error(
         self, tmp_path: Path
     ) -> None:
+        """Verify test anchor node id on non python validation error."""
         f = tmp_path / "notes.txt"
         f.write_text("alpha beta\n", encoding="utf-8")
 
@@ -170,7 +184,10 @@ class TestReplaceFileLinesAnchor:
 
 @pytest.mark.asyncio
 class TestUniversalFileReplaceAnchor:
+    """Represent TestUniversalFileReplaceAnchor."""
+
     async def test_single_range_wrong_anchor(self, tmp_path: Path) -> None:
+        """Verify test single range wrong anchor."""
         f = tmp_path / "notes.txt"
         original = "alpha beta\ngamma delta\n"
         f.write_text(original, encoding="utf-8")
@@ -212,6 +229,7 @@ class TestUniversalFileReplaceAnchor:
     async def test_multi_range_wrong_second_anchor_aborts_all(
         self, tmp_path: Path
     ) -> None:
+        """Verify test multi range wrong second anchor aborts all."""
         f = tmp_path / "notes.txt"
         original = "alpha beta\ngamma delta\nomega value\n"
         f.write_text(original, encoding="utf-8")

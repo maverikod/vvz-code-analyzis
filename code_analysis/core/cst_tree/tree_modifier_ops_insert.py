@@ -26,7 +26,6 @@ from .tree_modifier_ops_parse import (
     parse_code_snippet_or_comment,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -161,11 +160,14 @@ def insert_node_at_position(
     new_body = body[:insert_index] + list(new_statements) + body[insert_index:]
 
     class PositionInserter(cst.CSTTransformer):
+        """Represent PositionInserter."""
+
         def __init__(
             self,
             target_parent: cst.CSTNode,
             replacement_body: list[cst.BaseStatement],
         ):
+            """Initialize the instance."""
             self.target_parent = target_parent
             self.replacement_body = replacement_body
             self.done = False
@@ -173,6 +175,7 @@ def insert_node_at_position(
         def leave_Module(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
+            """Return leave Module."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(body=self.replacement_body)
@@ -183,6 +186,7 @@ def insert_node_at_position(
             original_node: cst.FunctionDef,
             updated_node: cst.FunctionDef,
         ) -> cst.FunctionDef:
+            """Return leave FunctionDef."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(
@@ -193,6 +197,7 @@ def insert_node_at_position(
         def leave_ClassDef(
             self, original_node: cst.ClassDef, updated_node: cst.ClassDef
         ) -> cst.ClassDef:
+            """Return leave ClassDef."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(
@@ -205,6 +210,7 @@ def insert_node_at_position(
             original_node: cst.IndentedBlock,
             updated_node: cst.IndentedBlock,
         ) -> cst.IndentedBlock:
+            """Return leave IndentedBlock."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(body=self.replacement_body)
@@ -213,6 +219,7 @@ def insert_node_at_position(
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode:
+            """Return on leave."""
             updated_node = super().on_leave(original_node, updated_node)
             if original_node is self.target_parent and not self.done:
                 body_attr = getattr(updated_node, "body", None)
@@ -246,12 +253,15 @@ def insert_node(
 
     # Use LibCST transformer to insert the nodes
     class NodeInserter(cst.CSTTransformer):
+        """Represent NodeInserter."""
+
         def __init__(
             self,
             target_parent: cst.CSTNode,
             new_statements: list[cst.BaseStatement],
             position: str,
         ):
+            """Initialize the instance."""
             self.target_parent = target_parent
             self.new_statements = new_statements
             self.position = position
@@ -260,6 +270,7 @@ def insert_node(
         def on_leave(  # type: ignore[override]
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode:
+            """Return on leave."""
             if original_node is self.target_parent:
                 # Insert nodes into parent's body
                 if isinstance(updated_node, (cst.ClassDef, cst.FunctionDef)):
@@ -290,6 +301,7 @@ def insert_node(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
             # Handle module-level insertions
+            """Return leave Module."""
             if original_node is self.target_parent:
                 body_list: list[cst.BaseStatement] = list(updated_node.body)
                 if self.position == "before":
@@ -310,6 +322,7 @@ def insert_node(
             # This handles cases where we insert into nested blocks
             # The actual insertion is handled in on_leave for FunctionDef/ClassDef
             # But we also need to handle direct IndentedBlock insertions
+            """Return leave IndentedBlock."""
             return updated_node
 
     inserter = NodeInserter(parent_node, cast(list, new_statements), position)
@@ -350,6 +363,7 @@ def insert_node_relative(
 
     # ── 3. Helper: get body list from any container node ────────────────────
     def _get_body(node: cst.CSTNode) -> Optional[list]:
+        """Return get body."""
         if isinstance(node, cst.Module):
             return list(node.body)
         if isinstance(node, cst.IndentedBlock):
@@ -384,6 +398,7 @@ def insert_node_relative(
     # Prefer stable_id on body FunctionDef/ClassDef (metadata positions can be stale
     # after embed_stable_ids_into_tree replaces tree.module without re-indexing).
     def _find_in_body_by_stable(stable_id: Optional[str]) -> int:
+        """Return find in body by stable."""
         if not stable_id:
             return -1
         for i, stmt in enumerate(body):
@@ -451,7 +466,10 @@ def insert_node_relative(
     new_body = body[:insert_at] + list(new_statements) + body[insert_at:]
 
     class PositionInserter(cst.CSTTransformer):
+        """Represent PositionInserter."""
+
         def __init__(self, target_parent: cst.CSTNode, replacement_body: list) -> None:
+            """Initialize the instance."""
             self.target_parent = target_parent
             self.replacement_body = replacement_body
             self.done = False
@@ -459,6 +477,7 @@ def insert_node_relative(
         def leave_Module(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
+            """Return leave Module."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(body=self.replacement_body)
@@ -467,6 +486,7 @@ def insert_node_relative(
         def leave_ClassDef(
             self, original_node: cst.ClassDef, updated_node: cst.ClassDef
         ) -> cst.ClassDef:
+            """Return leave ClassDef."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(
@@ -477,6 +497,7 @@ def insert_node_relative(
         def leave_FunctionDef(
             self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
         ) -> cst.FunctionDef:
+            """Return leave FunctionDef."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(
@@ -487,6 +508,7 @@ def insert_node_relative(
         def leave_IndentedBlock(
             self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock
         ) -> cst.IndentedBlock:
+            """Return leave IndentedBlock."""
             if original_node is self.target_parent:
                 self.done = True
                 return updated_node.with_changes(body=self.replacement_body)

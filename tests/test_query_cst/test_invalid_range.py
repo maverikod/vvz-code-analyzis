@@ -20,16 +20,20 @@ class TestQueryCSTCommandInvalidRange:
 
     @pytest.mark.asyncio
     async def test_start_line_gt_end_line_returns_error(self, project_root, mock_db):
+        """Verify test start line gt end line returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "x = 1\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -44,16 +48,20 @@ class TestQueryCSTCommandInvalidRange:
 
     @pytest.mark.asyncio
     async def test_range_out_of_file_returns_error(self, project_root, mock_db):
+        """Verify test range out of file returns error."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "a = 1\nb = 2\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

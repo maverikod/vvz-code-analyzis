@@ -12,6 +12,7 @@ from code_analysis.core.search_session.search_profile_log import (
 
 
 def test_resolve_search_profile_log_path_uses_log_dir(tmp_path) -> None:
+    """Verify test resolve search profile log path uses log dir."""
     config_path = tmp_path / "config.json"
     config_path.write_text("{}", encoding="utf-8")
     cfg = {"server": {"log_dir": str(tmp_path / "logs")}}
@@ -25,6 +26,7 @@ def test_resolve_search_profile_log_path_uses_log_dir(tmp_path) -> None:
 
 
 def test_recorder_writes_jsonl_checkpoint(tmp_path) -> None:
+    """Verify test recorder writes jsonl checkpoint."""
     log_path = tmp_path / "search_profile.jsonl"
     rec = SearchProfileRecorder(job_id="job-a", log_path=log_path)
     rec.checkpoint("test_start", rows=3)
@@ -42,5 +44,6 @@ def test_recorder_writes_jsonl_checkpoint(tmp_path) -> None:
 
 
 def test_profile_disabled_via_config() -> None:
+    """Verify test profile disabled via config."""
     cfg = {"search_session": {"profile_log_enabled": False}}
     assert is_search_profile_enabled(cfg) is False

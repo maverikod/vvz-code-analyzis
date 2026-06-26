@@ -53,6 +53,7 @@ _CONNECTION_TIME_TABLES = frozenset(
 
 
 def _user_table_names(conn: sqlite3.Connection) -> set[str]:
+    """Return user table names."""
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     )
@@ -60,6 +61,7 @@ def _user_table_names(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_sqlite_table_exists_false_on_empty_db() -> None:
+    """Verify test sqlite table exists false on empty db."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "e.db"
         conn = sqlite3.connect(str(p))
@@ -107,6 +109,7 @@ def test_run_migrate_schema_probes_without_creating_core_schema() -> None:
 
 
 def test_sqlite_master_has_table_uses_execute_data_shape() -> None:
+    """Verify test sqlite master has table uses execute data shape."""
     db = MagicMock()
     db.execute.return_value = {"data": [{"ok": 1}]}
     assert _sqlite_master_has_table(db, "projects") is True

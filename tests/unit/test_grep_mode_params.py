@@ -16,22 +16,26 @@ from code_analysis.core.search_session.grep_mode_params import (
 
 
 def test_grep_mode_to_fs_ggrep_params_structural() -> None:
+    """Verify test grep mode to fs ggrep params structural."""
     params = grep_mode_to_fs_ggrep_params(GrepSearchMode.structural)
 
     assert params == FsGgrepModeParams(fast_text_only=False, enrich_blocks=True)
 
 
 def test_grep_mode_to_fs_ggrep_params_classic_line() -> None:
+    """Verify test grep mode to fs ggrep params classic line."""
     params = grep_mode_to_fs_ggrep_params(GrepSearchMode.classic_line)
 
     assert params == FsGgrepModeParams(fast_text_only=True, enrich_blocks=False)
 
 
 def test_default_grep_mode_reexported() -> None:
+    """Verify test default grep mode reexported."""
     assert DEFAULT_GREP_MODE == GrepSearchMode.structural
 
 
 def test_apply_grep_mode_to_match_payload_classic_line_unchanged() -> None:
+    """Verify test apply grep mode to match payload classic line unchanged."""
     matches = [{"line_number": 1, "line": "text"}]
 
     result = apply_grep_mode_to_match_payload(

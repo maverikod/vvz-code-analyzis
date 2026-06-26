@@ -9,6 +9,7 @@ from code_analysis.main_config import resolve_server_bind
 
 
 def test_resolve_server_bind_uses_config_port_not_settings_default() -> None:
+    """Verify test resolve server bind uses config port not settings default."""
     settings = SettingsManager()
     settings._cli_overrides = {}
 
@@ -24,6 +25,7 @@ def test_resolve_server_bind_uses_config_port_not_settings_default() -> None:
 
 
 def test_resolve_server_bind_cli_overrides_config() -> None:
+    """Verify test resolve server bind cli overrides config."""
     settings = SettingsManager()
     settings._cli_overrides = {}
 
@@ -39,6 +41,7 @@ def test_resolve_server_bind_cli_overrides_config() -> None:
 
 
 def test_resolve_server_bind_env_overrides_config() -> None:
+    """Verify test resolve server bind env overrides config."""
     settings = SettingsManager()
     settings._cli_overrides = {"server_port": 17000, "server_host": "10.0.0.5"}
 

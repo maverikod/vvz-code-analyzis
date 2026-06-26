@@ -15,10 +15,12 @@ from code_analysis.core.cst_tree.tree_sidecar import write_sidecar_atomic
 
 
 def test_default_grep_mode_is_structural() -> None:
+    """Verify test default grep mode is structural."""
     assert DEFAULT_GREP_MODE == GrepSearchMode.structural
 
 
 def test_apply_grep_mode_classic_line_returns_unchanged() -> None:
+    """Verify test apply grep mode classic line returns unchanged."""
     project_root = Path("/tmp/unused")
     matches = [
         {
@@ -43,6 +45,7 @@ def test_apply_grep_mode_classic_line_returns_unchanged() -> None:
 def test_apply_grep_mode_structural_adds_preview_ref_when_tree_valid(
     tmp_path: Path,
 ) -> None:
+    """Verify test apply grep mode structural adds preview ref when tree valid."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     rel = "mod.py"
@@ -86,6 +89,7 @@ def test_apply_grep_mode_structural_adds_preview_ref_when_tree_valid(
 def test_enrich_line_matches_structural_skips_preview_when_tree_missing(
     tmp_path: Path,
 ) -> None:
+    """Verify test enrich line matches structural skips preview when tree missing."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     rel = "missing_sidecar.py"

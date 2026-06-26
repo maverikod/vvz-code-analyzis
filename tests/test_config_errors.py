@@ -15,6 +15,7 @@ from code_analysis.core.config_json import ConfigJSONDecodeError, load_config_js
 
 
 def test_suggest_json_syntax_fix_missing_array_close() -> None:
+    """Verify test suggest json syntax fix missing array close."""
     msg = "Expected one of: \n        * TRAILING_COMMA\n        * RSQB"
     hint = suggest_json_syntax_fix(msg)
     assert hint is not None
@@ -22,6 +23,7 @@ def test_suggest_json_syntax_fix_missing_array_close() -> None:
 
 
 def test_format_config_json_error_report_includes_context() -> None:
+    """Verify test format config json error report includes context."""
     text = """{
   "worker": {
     "watch_dirs": [[
@@ -44,6 +46,7 @@ def test_format_config_json_error_report_includes_context() -> None:
 
 
 def test_load_config_json_text_bad_watch_dirs(tmp_path: Path) -> None:
+    """Verify test load config json text bad watch dirs."""
     path = tmp_path / "config.json"
     path.write_text(
         '{"code_analysis":{"worker":{"watch_dirs":[[{"id":"a","path":"/x"}]}}}}',
@@ -57,7 +60,11 @@ def test_load_config_json_text_bad_watch_dirs(tmp_path: Path) -> None:
 
 
 def test_format_validation_error_report() -> None:
+    """Verify test format validation error report."""
+
     class _R:
+        """Represent R."""
+
         level = "error"
         section = "code_analysis.worker"
         key = "watch_dirs"

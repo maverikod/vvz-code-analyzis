@@ -14,6 +14,7 @@ from typing import Any
 
 
 def _staging_path(target: Path) -> Path:
+    """Return staging path."""
     return target.with_suffix(target.suffix + ".tmp")
 
 
@@ -38,6 +39,8 @@ def atomic_publish_rename(staging_path: Path, final_path: Path) -> None:
     """Atomically publish staged content at ``final_path``."""
     final_path.parent.mkdir(parents=True, exist_ok=True)
     os.replace(staging_path, final_path)
+
+
 __all__ = [
     "atomic_publish_rename",
     "atomic_write_bytes",

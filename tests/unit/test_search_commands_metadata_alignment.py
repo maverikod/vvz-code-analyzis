@@ -45,6 +45,7 @@ _PAGINATED_CROSS_PARAMS = frozenset(
 
 @pytest.mark.parametrize("cmd_cls", SEARCH_COMMANDS)
 def test_metadata_parameters_match_schema(cmd_cls: Type[Any]) -> None:
+    """Verify test metadata parameters match schema."""
     schema = cmd_cls.get_schema()
     props = set((schema.get("properties") or {}).keys())
     meta = finalize_command_metadata(cmd_cls, cmd_cls.metadata())
@@ -59,6 +60,7 @@ def test_metadata_parameters_match_schema(cmd_cls: Type[Any]) -> None:
 
 @pytest.mark.parametrize("cmd_cls", SEARCH_COMMANDS)
 def test_usage_examples_only_use_schema_keys(cmd_cls: Type[Any]) -> None:
+    """Verify test usage examples only use schema keys."""
     schema = cmd_cls.get_schema()
     props = set((schema.get("properties") or {}).keys())
     meta = finalize_command_metadata(cmd_cls, cmd_cls.metadata())
@@ -69,6 +71,7 @@ def test_usage_examples_only_use_schema_keys(cmd_cls: Type[Any]) -> None:
 
 
 def test_search_schema_has_no_search_start_references() -> None:
+    """Verify test search schema has no search start references."""
     for cmd_cls in SEARCH_COMMANDS:
         schema = cmd_cls.get_schema()
         for prop in (schema.get("properties") or {}).values():
@@ -77,6 +80,7 @@ def test_search_schema_has_no_search_start_references() -> None:
 
 
 def test_search_backend_params_are_in_schema() -> None:
+    """Verify test search backend params are in schema."""
     schema = SearchMCPCommand.get_schema()
     props = set((schema.get("properties") or {}).keys())
     missing = _PAGINATED_CROSS_PARAMS - props

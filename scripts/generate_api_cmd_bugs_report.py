@@ -58,6 +58,7 @@ NOT_REGISTERED = {
 
 
 def discover_commands() -> Dict[str, type]:
+    """Return discover commands."""
     import code_analysis.commands as commands_pkg
 
     found: Dict[str, type] = {}
@@ -71,16 +72,23 @@ def discover_commands() -> Dict[str, type]:
             if obj.__module__ != modinfo.name:
                 continue
             cmd_name = getattr(obj, "name", None)
-            if isinstance(cmd_name, str) and cmd_name and hasattr(obj, "get_schema") and hasattr(obj, "execute"):
+            if (
+                isinstance(cmd_name, str)
+                and cmd_name
+                and hasattr(obj, "get_schema")
+                and hasattr(obj, "execute")
+            ):
                 found[cmd_name] = obj
     return found
 
 
 def read_full(path: Path) -> str:
+    """Return read full."""
     return path.read_text(encoding="utf-8")
 
 
 def rel(path: Path) -> str:
+    """Return rel."""
     try:
         return str(path.relative_to(PROJECT_ROOT))
     except ValueError:
@@ -88,14 +96,19 @@ def rel(path: Path) -> str:
 
 
 def inherits_base_mcp(cls: type) -> bool:
+    """Return inherits base mcp."""
     return any(b.__name__ == "BaseMCPCommand" for b in cls.__mro__)
 
 
 def inherits_command_only(cls: type) -> bool:
-    return any(b.__name__ == "Command" for b in cls.__mro__) and not inherits_base_mcp(cls)
+    """Return inherits command only."""
+    return any(b.__name__ == "Command" for b in cls.__mro__) and not inherits_base_mcp(
+        cls
+    )
 
 
 def schema_helpers_from_source(source: str, module_file: Path) -> List[str]:
+    """Return schema helpers from source."""
     helpers: List[str] = []
     for m in re.finditer(r"from\s+\.(\w+)\s+import\s+.*get_\w+_schema", source):
         p = module_file.parent / f"{m.group(1)}.py"
@@ -130,10 +143,12 @@ def walk_schema(
 
 
 def issue(id_: str, severity: str, detail: str, lines: str) -> Dict[str, Any]:
+    """Return issue."""
     return {"id": id_, "severity": severity, "detail": detail, "lines": lines}
 
 
 def dedupe_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return dedupe issues."""
     seen: Set[Tuple[str, str]] = set()
     out: List[Dict[str, Any]] = []
     for i in issues:
@@ -146,6 +161,7 @@ def dedupe_issues(issues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def schema_structural_issues(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return schema structural issues."""
     issues: List[Dict[str, Any]] = []
     if schema.get("additionalProperties") is True:
         issues.append(
@@ -274,7 +290,10 @@ def schema_structural_issues(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
     return issues
 
 
-def metadata_schema_issues(cls: type, schema: Dict[str, Any], source_file: str) -> List[Dict[str, Any]]:
+def metadata_schema_issues(
+    cls: type, schema: Dict[str, Any], source_file: str
+) -> List[Dict[str, Any]]:
+    """Return metadata schema issues."""
     issues: List[Dict[str, Any]] = []
     from mcp_proxy_adapter.commands.base import Command
 
@@ -284,7 +303,9 @@ def metadata_schema_issues(cls: type, schema: Dict[str, Any], source_file: str) 
     try:
         meta = meta_fn() or {}
     except Exception as exc:
-        issues.append(issue("metadata_get_error", "warning", str(exc), f"{source_file}:metadata"))
+        issues.append(
+            issue("metadata_get_error", "warning", str(exc), f"{source_file}:metadata")
+        )
         return issues
 
     mparams = meta.get("parameters") or {}
@@ -359,12 +380,15 @@ def metadata_schema_issues(cls: type, schema: Dict[str, Any], source_file: str) 
     return issues
 
 
-def execute_signature_issues(cls: type, schema: Dict[str, Any], source: str, source_file: str) -> List[Dict[str, Any]]:
+def execute_signature_issues(
+    cls: type, schema: Dict[str, Any], source: str, source_file: str
+) -> List[Dict[str, Any]]:
+    """Return execute signature issues."""
     issues: List[Dict[str, Any]] = []
     schema_props = set((schema.get("properties") or {}).keys())
     try:
         sig = inspect.signature(cls.execute)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return issues
 
     skip = {"self", "context", "kwargs"}
@@ -404,6 +428,7 @@ def validate_params_and_execute_semantics(
     cls: type,
     schema: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
+    """Return validate params and execute semantics."""
     issues: List[Dict[str, Any]] = []
 
     if inherits_base_mcp(cls):
@@ -421,7 +446,11 @@ def validate_params_and_execute_semantics(
             or "not in props" in vp_src.lower()
             or "allowed_properties" in vp_src.lower()
         )
-        if "def validate_params" not in source or "super().validate_params" in vp_src or not vp_src:
+        if (
+            "def validate_params" not in source
+            or "super().validate_params" in vp_src
+            or not vp_src
+        ):
             if not rejects_unknown_custom:
                 issues.append(
                     issue(
@@ -496,7 +525,12 @@ def validate_params_and_execute_semantics(
             )
 
     # Clamping instead of rejecting
-    clamp_markers = ("_bounded_int_param", "min(max(", "clamp_hard_timeout", "clamped to")
+    clamp_markers = (
+        "_bounded_int_param",
+        "min(max(",
+        "clamp_hard_timeout",
+        "clamped to",
+    )
     if any(m in source for m in clamp_markers):
         for prop_name, spec in (schema.get("properties") or {}).items():
             if "minimum" in spec or "maximum" in spec:
@@ -533,16 +567,18 @@ def validate_params_and_execute_semantics(
 
     # Enum validated only in execute
     enum_in_execute = re.findall(
-        r'if\s+(\w+)\s+not\s+in\s+\([^)]+\)|must be one of|invalid.*enum',
+        r"if\s+(\w+)\s+not\s+in\s+\([^)]+\)|must be one of|invalid.*enum",
         source,
         re.I,
     )
     for prop_name, spec in (schema.get("properties") or {}).items():
         if "enum" in spec and prop_name in source:
             if f"{prop_name}" in source and "validate_params" in source:
-                vp_block = source.split("def validate_params", 1)[-1].split("def execute", 1)[0]
+                vp_block = source.split("def validate_params", 1)[-1].split(
+                    "def execute", 1
+                )[0]
                 if prop_name not in vp_block and "enum" not in vp_block:
-                    if re.search(rf'{prop_name}.*not in|invalid.*{prop_name}', source):
+                    if re.search(rf"{prop_name}.*not in|invalid.*{prop_name}", source):
                         issues.append(
                             issue(
                                 "enum_validated_in_execute_only",
@@ -566,8 +602,14 @@ def validate_params_and_execute_semantics(
     # Semantic checks deferred to execute
     deferred_patterns = [
         (r"path_mask.*empty|empty.*path_mask", "path_mask empty check in execute only"),
-        (r"install_sources|at least one of.*packages", "pip install sources checked in execute only"),
-        (r"trash_folder_name.*\.\.|path separators", "trash_folder_name path safety in execute only"),
+        (
+            r"install_sources|at least one of.*packages",
+            "pip install sources checked in execute only",
+        ),
+        (
+            r"trash_folder_name.*\.\.|path separators",
+            "trash_folder_name path safety in execute only",
+        ),
     ]
     for pattern, detail in deferred_patterns:
         if re.search(pattern, source, re.I) and "validate_params" in source:
@@ -596,6 +638,7 @@ def validate_params_and_execute_semantics(
 
 
 def minimal_params(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Return minimal params."""
     valid: Dict[str, Any] = {}
     props = schema.get("properties") or {}
     for r in schema.get("required") or []:
@@ -604,6 +647,7 @@ def minimal_params(schema: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _dummy_value(name: str, spec: Any) -> Any:
+    """Return dummy value."""
     if name == "project_id":
         return "550e8400-e29b-41d4-a716-446655440000"
     if name == "watch_dir_id":
@@ -696,6 +740,7 @@ def _dummy_value(name: str, spec: Any) -> Any:
 def behavioral_probe(
     cls: type, schema: Dict[str, Any], registered: bool
 ) -> Tuple[Dict[str, str], List[Dict[str, Any]]]:
+    """Return behavioral probe."""
     from code_analysis.core.exceptions import ValidationError
 
     if not registered:
@@ -774,6 +819,7 @@ def behavioral_probe(
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     logging.disable(logging.CRITICAL)
     from mcp_proxy_adapter.commands.command_registry import CommandRegistry
     from code_analysis.hooks import register_code_analysis_commands
@@ -812,7 +858,9 @@ def main() -> int:
             issues.extend(metadata_schema_issues(cls, schema, source_rel))
             issues.extend(execute_signature_issues(cls, schema, source, source_rel))
             issues.extend(
-                validate_params_and_execute_semantics(cmd_name, source, source_rel, cls, schema)
+                validate_params_and_execute_semantics(
+                    cmd_name, source, source_rel, cls, schema
+                )
             )
 
         if not registered:
@@ -936,14 +984,22 @@ def main() -> int:
             "commands_audited": len(command_rows),
             "registered_in_api": sum(1 for r in command_rows if r["registered"]),
             "not_registered": sum(1 for r in command_rows if not r["registered"]),
-            "commands_with_errors": sum(1 for r in command_rows if r["error_count"] > 0),
-            "commands_with_warnings": sum(1 for r in command_rows if r["warning_count"] > 0),
+            "commands_with_errors": sum(
+                1 for r in command_rows if r["error_count"] > 0
+            ),
+            "commands_with_warnings": sum(
+                1 for r in command_rows if r["warning_count"] > 0
+            ),
             "total_issue_entries": sum(len(r["issues"]) for r in command_rows),
             "behavior_unknown_accepted": sum(
-                1 for r in command_rows if r.get("behavior_probe", {}).get("unknown_param") == "accepted"
+                1
+                for r in command_rows
+                if r.get("behavior_probe", {}).get("unknown_param") == "accepted"
             ),
             "behavior_unknown_rejected": sum(
-                1 for r in command_rows if r.get("behavior_probe", {}).get("unknown_param") == "rejected"
+                1
+                for r in command_rows
+                if r.get("behavior_probe", {}).get("unknown_param") == "rejected"
             ),
             "issue_kind_counts": kind_counts,
             "command_list": [r["command"] for r in command_rows],
@@ -956,7 +1012,13 @@ def main() -> int:
     import yaml
 
     out.write_text(
-        yaml.safe_dump(report, allow_unicode=True, sort_keys=False, default_flow_style=False, width=120),
+        yaml.safe_dump(
+            report,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+            width=120,
+        ),
         encoding="utf-8",
     )
     print(f"Wrote {out}")

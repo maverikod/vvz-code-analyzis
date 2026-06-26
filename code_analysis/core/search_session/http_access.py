@@ -64,10 +64,12 @@ def resolve_session_layout(
 
 
 def _session_exists(layout: SearchSessionDirectoryLayout) -> bool:
+    """Return session exists."""
     return bool(layout.root.is_dir())
 
 
 def _refresh_access(layout: SearchSessionDirectoryLayout) -> None:
+    """Return refresh access."""
     now = time.time()
     if layout.service_metadata_path.is_file():
         refresh_last_access(layout, now=now)
@@ -76,10 +78,12 @@ def _refresh_access(layout: SearchSessionDirectoryLayout) -> None:
 
 
 def _not_found(code: str, message: str) -> tuple[int, dict[str, Any]]:
+    """Return not found."""
     return 404, {"error": {"code": code, "message": message}}
 
 
 def _conflict(code: str, message: str) -> tuple[int, dict[str, Any]]:
+    """Return conflict."""
     return 409, {"error": {"code": code, "message": message}}
 
 

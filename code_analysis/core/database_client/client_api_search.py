@@ -40,6 +40,7 @@ def plain_query_to_fts5_match(query: str) -> Optional[str]:
     s = s.replace("/", " ")
 
     def _colon_repl(m: re.Match[str]) -> str:
+        """Return colon repl."""
         prefix, col, rest = m.group(1), m.group(2), m.group(3)
         if col.lower() in _ALLOWED_FTS5_MATCH_COLUMNS:
             return m.group(0)

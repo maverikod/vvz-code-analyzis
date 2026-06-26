@@ -64,6 +64,7 @@ def _watcher_path_input_to_absolute(file_path_str: str, project_root: Path) -> s
 
 
 def _watch_dir_id_for_project(database: Any, project_id: str) -> Optional[str]:
+    """Return watch dir id for project."""
     gp = getattr(database, "get_project", None)
     if not callable(gp):
         return None
@@ -85,6 +86,7 @@ def _watcher_heartbeat_n(
     ttl: float,
     n_ops: int,
 ) -> None:
+    """Return watcher heartbeat n."""
     if n_ops > 0 and n_ops % _WATCHER_PHASE_HB == 0:
         heartbeat_project_activity(
             database, project_id, "watcher", owner_id, activity, ttl
@@ -99,6 +101,7 @@ class ProcessorQueueOps:
         database: Any,
         watch_dirs_resolved: List[Path],
     ) -> None:
+        """Initialize the instance."""
         self.database = database
         self.watch_dirs_resolved = watch_dirs_resolved
 
@@ -220,6 +223,7 @@ class ProcessorQueueOps:
     def _log_watcher_skip_activity(
         database: Any, project_id: str, reason_activity: str
     ) -> None:
+        """Return log watcher skip activity."""
         row = get_project_activity(database, project_id) or {}
         owner_t = row.get("owner_type", "unknown")
         logger.info(
@@ -288,6 +292,7 @@ class ProcessorQueueOps:
         use_lease: bool = bool(acquired_lease)
 
         def _phase(activity: str) -> bool:
+            """Return phase."""
             if not wdb or not owner_id or not use_lease:
                 return True
             return try_acquire_project_activity(
@@ -309,6 +314,7 @@ class ProcessorQueueOps:
                 _size: int,
                 out: List[Row],
             ) -> bool:
+                """Return collect one."""
                 try:
                     abs_for_norm = _watcher_path_input_to_absolute(
                         file_path_str, project_root

@@ -150,6 +150,7 @@ def _release_client_file_lock(
     project_id: str,
     file_id: Optional[str],
 ) -> None:
+    """Remove a file from a client session's tracked locks when identifiers exist."""
     sid = str(client_session_id or "").strip()
     fid = str(file_id or "").strip()
     if not sid or not fid:
@@ -527,9 +528,11 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for starting an indexed-file download."""
         return cast(Dict[str, Any], get_project_file_transfer_download_begin_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the file selector, compression, lock, and chunk options."""
         params = super().validate_params(params)
         _validate_download_params(params)
         if str(params.get("compression", "")) not in ("identity", "gzip"):
@@ -568,6 +571,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
     def metadata(
         cls: Type["ProjectFileTransferDownloadBeginCommand"],
     ) -> Dict[str, Any]:
+        """Return registration metadata for indexed-file downloads."""
         return cast(
             Dict[str, Any], get_project_file_transfer_download_begin_metadata(cls)
         )
@@ -586,6 +590,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         session_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Create a resumable download session for an indexed project file."""
         database = self._open_database_from_config(auto_analyze=False)
         session_err = _validate_client_session_id(
             database, session_id, lock_mode=lock_mode
@@ -751,9 +756,11 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for saving a completed upload to a project file."""
         return cast(Dict[str, Any], get_project_file_transfer_upload_save_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate the upload transfer, file selector, diff, and lock options."""
         params = super().validate_params(params)
         _validate_upload_selector_params(params)
         tid = str(params.get("transfer_id") or "").strip()
@@ -791,6 +798,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["ProjectFileTransferUploadSaveCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for saving uploaded project files."""
         return cast(Dict[str, Any], get_project_file_transfer_upload_save_metadata(cls))
 
     async def execute(
@@ -811,6 +819,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         session_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Save a completed upload through the universal file-save pipeline."""
         database = self._open_database_from_config(auto_analyze=False)
         session_err = _validate_client_session_id(
             database, session_id, lock_mode=lock_mode

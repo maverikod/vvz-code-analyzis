@@ -50,6 +50,7 @@ def _strip_sql_comments(sql: str) -> str:
 
 
 def _statement_needs_write_lane(statement: str) -> bool:
+    """Return statement needs write lane."""
     s = _strip_sql_comments(statement).strip()
     if not s:
         return False

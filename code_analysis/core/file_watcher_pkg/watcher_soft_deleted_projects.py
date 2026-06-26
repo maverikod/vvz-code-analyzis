@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def _execute_data_rows(result: Any) -> List[dict[str, Any]]:
+    """Return execute data rows."""
     if isinstance(result, dict):
         return list(result.get("data") or [])
     if isinstance(result, list):
@@ -32,6 +33,7 @@ def _execute_data_rows(result: Any) -> List[dict[str, Any]]:
 
 
 def _truthy_deleted(value: Any) -> bool:
+    """Return truthy deleted."""
     if value is None:
         return False
     if isinstance(value, bool):

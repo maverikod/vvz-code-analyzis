@@ -37,6 +37,7 @@ _INIT = '{"items":[{"id":1,"active":false}],"meta":{"tag":"old"}}\n'
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(
@@ -46,6 +47,7 @@ def _ensure_project_root(tmp: Path) -> None:
 
 
 def _db_for(tmp: Path) -> MagicMock:
+    """Return db for."""
     m = MagicMock()
     p = MagicMock()
     p.root_path = str(tmp.resolve())
@@ -54,21 +56,25 @@ def _db_for(tmp: Path) -> MagicMock:
 
 
 def _clear() -> None:
+    """Return clear."""
     jtb._trees.clear()
 
 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
+    """Return reset."""
     _clear()
     yield
     _clear()
 
 
 def _sha(b: bytes) -> str:
+    """Return sha."""
     return hashlib.sha256(b).hexdigest()
 
 
 async def _prep(tmp: Path) -> str:
+    """Return prep."""
     _ensure_project_root(tmp)
     p = tmp / _REL
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +91,7 @@ async def _prep(tmp: Path) -> str:
 
 
 async def _two_phase_write(tmp: Path, sid: str) -> None:
+    """Return two phase write."""
     wr = UniversalFileWriteCommand()
     with patch.object(
         BaseMCPCommand, "_open_database_from_config", return_value=_db_for(tmp)
@@ -108,6 +115,7 @@ async def _two_phase_write(tmp: Path, sid: str) -> None:
 
 
 def _sidecar(tmp: Path, rel: str = _REL) -> Path:
+    """Return sidecar."""
     return sibling_tree_path((tmp / rel).resolve())
 
 
@@ -115,6 +123,7 @@ def _sidecar(tmp: Path, rel: str = _REL) -> Path:
 async def test_replace_via_json_pointer_updates_draft_then_commits(
     tmp_path: Path,
 ) -> None:
+    """Verify test replace via json pointer updates draft then commits."""
     sid = await _prep(tmp_path)
     ed = UniversalFileEditCommand()
     with patch.object(
@@ -156,6 +165,7 @@ async def test_replace_via_json_pointer_updates_draft_then_commits(
 
 @pytest.mark.asyncio
 async def test_delete_scalar_property_meta_tag(tmp_path: Path) -> None:
+    """Verify test delete scalar property meta tag."""
     sid = await _prep(tmp_path)
     ed = UniversalFileEditCommand()
     with patch.object(
@@ -186,6 +196,7 @@ async def test_delete_scalar_property_meta_tag(tmp_path: Path) -> None:
 async def test_insert_array_element_appends_via_append_semantics(
     tmp_path: Path,
 ) -> None:
+    """Verify test insert array element appends via append semantics."""
     sid = await _prep(tmp_path)
     ed = UniversalFileEditCommand()
     with patch.object(
@@ -221,6 +232,7 @@ async def test_insert_array_element_appends_via_append_semantics(
 
 @pytest.mark.asyncio
 async def test_object_key_insert_relative_after_key_orders(tmp_path: Path) -> None:
+    """Verify test object key insert relative after key orders."""
     rel = "records/ordered.json"
     p = tmp_path / rel
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +282,7 @@ async def test_object_key_insert_relative_after_key_orders(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_batch_abort_on_second_invalid_operation(tmp_path: Path) -> None:
+    """Verify test batch abort on second invalid operation."""
     sid = await _prep(tmp_path)
     h0 = _sha((tmp_path / _REL).read_bytes())
     ed = UniversalFileEditCommand()

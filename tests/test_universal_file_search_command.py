@@ -18,6 +18,7 @@ from code_analysis.core.cst_tree.tree_builder import load_file_to_tree, remove_t
 
 @pytest.mark.asyncio
 async def test_universal_file_search_xpath_on_session_tree(tmp_path) -> None:
+    """Verify test universal file search xpath on session tree."""
     src = "def foo() -> None:\n    pass\n\ndef bar() -> int:\n    return 1\n"
     path = tmp_path / "search_target.py"
     path.write_text(src, encoding="utf-8")
@@ -53,6 +54,7 @@ async def test_universal_file_search_xpath_on_session_tree(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_universal_file_search_rejects_missing_session() -> None:
+    """Verify test universal file search rejects missing session."""
     cmd = UniversalFileSearchCommand()
     result = await cmd.execute(
         project_id="test-project",

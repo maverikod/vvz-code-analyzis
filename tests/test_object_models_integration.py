@@ -40,6 +40,7 @@ BHLFF_DIR = TEST_DATA_DIR / "bhlff"
 
 
 def _fetchall(client: DatabaseClient, sql: str, params: tuple = ()) -> list:
+    """Return fetchall."""
     r = client.execute(sql, params)
     return r.get("data") or []
 

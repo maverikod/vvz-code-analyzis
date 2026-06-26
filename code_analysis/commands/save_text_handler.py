@@ -44,6 +44,7 @@ def run_text_save(
     """
 
     def _restore(rel: str, uuid_: str) -> None:
+        """Return restore."""
         bm = BackupManager(root_dir)
         bm.restore_file(rel, uuid_)
 

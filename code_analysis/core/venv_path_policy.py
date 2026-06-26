@@ -267,6 +267,7 @@ def iter_site_packages_dirs(project_root: Path) -> List[Path]:
 
 
 def _read_dist_info_name(dist_info_dir: Path) -> Optional[str]:
+    """Return read dist info name."""
     meta = dist_info_dir / "METADATA"
     if not meta.is_file():
         return None
@@ -380,6 +381,7 @@ def _iter_project_walk_prune_dirs(
     from .project_ignore_policy import LISTING_CACHE_DIRECTORY_SEGMENTS
 
     def _prune_dir(name: str) -> bool:
+        """Return prune dir."""
         if name in (".venv", "venv"):
             return True
         if show_hidden:
@@ -521,6 +523,7 @@ def collect_python_files_for_indexing(
 
 
 def format_project_venv_write_forbidden_message() -> str:
+    """Return format project venv write forbidden message."""
     return (
         "Writes under the project virtual environment (.venv or venv) are not allowed; "
         "that tree is read-only for server commands. Use project pip commands to "

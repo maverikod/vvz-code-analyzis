@@ -47,6 +47,7 @@ from code_analysis.core.env_loader import load_dotenv_near_config
 
 
 def _unwrap_command_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Return unwrap command payload."""
     if not result.get("success"):
         err = result.get("error") or result.get("message") or result
         raise RuntimeError(f"Command failed: {err!r}")
@@ -57,6 +58,7 @@ def _unwrap_command_payload(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _load_config(config_path: Path) -> Dict[str, Any]:
+    """Return load config."""
     with open(config_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     if not isinstance(raw, dict):
@@ -65,6 +67,7 @@ def _load_config(config_path: Path) -> Dict[str, Any]:
 
 
 def _resolve_ssl_path(repo_root: Path, value: Optional[str]) -> Optional[str]:
+    """Return resolve ssl path."""
     if not value or not str(value).strip():
         return None
     p = Path(value)
@@ -81,6 +84,7 @@ def _build_jsonrpc_client(
     connect_port: Optional[int],
     timeout: float,
 ) -> JsonRpcClient:
+    """Return build jsonrpc client."""
     srv = config.get("server")
     if not isinstance(srv, dict):
         srv = {}
@@ -123,10 +127,12 @@ class _DbTarget:
 
     @property
     def is_postgres(self) -> bool:
+        """Return is postgres."""
         return self.postgres_config is not None
 
 
 def _resolve_db_target(config: Dict[str, Any], repo_root: Path) -> _DbTarget:
+    """Return resolve db target."""
     ca = config.get("code_analysis")
     if not isinstance(ca, dict):
         raise ValueError("config.code_analysis missing")
@@ -152,6 +158,7 @@ def _resolve_db_target(config: Dict[str, Any], repo_root: Path) -> _DbTarget:
 
 
 def _pg_connect(pg_config: Dict[str, Any]) -> Any:
+    """Return pg connect."""
     import psycopg
 
     from code_analysis.core.database_driver_pkg.drivers.postgres import (
@@ -167,6 +174,7 @@ _PLAIN_TEXT_SUFFIXES = (".txt", ".md", ".rst", ".adoc")
 def _pick_two_files_from_rows(
     rows: List[Dict[str, Any]],
 ) -> Tuple[str, str, str, str, str, bool]:
+    """Return pick two files from rows."""
     by_project: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in rows:
         pid = str(r.get("project_id") or "").strip()
@@ -199,11 +207,11 @@ def _pick_two_files_from_rows(
 def _fetch_file_pairs_postgres(
     pg_config: Dict[str, Any],
 ) -> Tuple[str, str, str, str, str, bool]:
+    """Return fetch file pairs postgres."""
     conn = _pg_connect(pg_config)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT id::text AS id, project_id::text AS project_id,
                        COALESCE(
                          NULLIF(BTRIM(relative_path), ''),
@@ -216,8 +224,7 @@ def _fetch_file_pairs_postgres(
                         NULLIF(BTRIM(path), '')
                       ) IS NOT NULL
                 ORDER BY project_id, rel
-                """
-            )
+                """)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
@@ -226,19 +233,18 @@ def _fetch_file_pairs_postgres(
 
 
 def _fetch_file_pairs_sqlite(db_path: Path) -> Tuple[str, str, str, str, str, bool]:
+    """Return fetch file pairs sqlite."""
     conn = sqlite3.connect(str(db_path))
     try:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            """
+        cur = conn.execute("""
             SELECT id, project_id,
                    COALESCE(NULLIF(TRIM(relative_path), ''), NULLIF(TRIM(path), '')) AS rel
             FROM files
             WHERE COALESCE(deleted, 0) = 0
               AND COALESCE(NULLIF(TRIM(relative_path), ''), NULLIF(TRIM(path), '')) IS NOT NULL
             ORDER BY project_id, rel
-            """
-        )
+            """)
         rows = [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -246,15 +252,14 @@ def _fetch_file_pairs_sqlite(db_path: Path) -> Tuple[str, str, str, str, str, bo
 
 
 def _sqlite_any_session_id(db_path: Path) -> str:
+    """Return sqlite any session id."""
     conn = sqlite3.connect(str(db_path))
     try:
-        row = conn.execute(
-            """
+        row = conn.execute("""
             SELECT session_id FROM runtime_lock_sessions
             ORDER BY CASE WHEN role = 'daemon' THEN 0 ELSE 1 END, started_at DESC
             LIMIT 1
-            """
-        ).fetchone()
+            """).fetchone()
     finally:
         conn.close()
     if not row or not row[0]:
@@ -265,6 +270,7 @@ def _sqlite_any_session_id(db_path: Path) -> str:
 
 
 def _sqlite_db_snapshot(db_path: Path) -> Dict[str, Any]:
+    """Return sqlite db snapshot."""
     conn = sqlite3.connect(str(db_path))
     try:
         n_sess = conn.execute("SELECT COUNT(*) FROM runtime_lock_sessions").fetchone()[
@@ -290,6 +296,7 @@ def _sqlite_db_snapshot(db_path: Path) -> Dict[str, Any]:
 def _sqlite_lease_count(
     db_path: Path, *, project_id: str, file_path: str, session_id: Optional[str] = None
 ) -> int:
+    """Return sqlite lease count."""
     conn = sqlite3.connect(str(db_path))
     try:
         if session_id:
@@ -314,16 +321,15 @@ def _sqlite_lease_count(
 
 
 def _pg_any_session_id(pg_config: Dict[str, Any]) -> str:
+    """Return pg any session id."""
     conn = _pg_connect(pg_config)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT session_id FROM runtime_lock_sessions
                 ORDER BY CASE WHEN role = 'daemon' THEN 0 ELSE 1 END, started_at DESC NULLS LAST
                 LIMIT 1
-                """
-            )
+                """)
             row = cur.fetchone()
     finally:
         conn.close()
@@ -335,6 +341,7 @@ def _pg_any_session_id(pg_config: Dict[str, Any]) -> str:
 
 
 def _pg_db_snapshot(pg_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return pg db snapshot."""
     conn = _pg_connect(pg_config)
     try:
         with conn.cursor() as cur:
@@ -369,6 +376,7 @@ def _pg_lease_count(
     file_path: str,
     session_id: Optional[str] = None,
 ) -> int:
+    """Return pg lease count."""
     conn = _pg_connect(pg_config)
     try:
         with conn.cursor() as cur:
@@ -395,6 +403,7 @@ def _pg_lease_count(
 
 
 def _fetch_file_pairs(db: _DbTarget) -> Tuple[str, str, str, str, str, bool]:
+    """Return fetch file pairs."""
     if db.is_postgres:
         assert db.postgres_config is not None
         return _fetch_file_pairs_postgres(db.postgres_config)
@@ -403,6 +412,7 @@ def _fetch_file_pairs(db: _DbTarget) -> Tuple[str, str, str, str, str, bool]:
 
 
 def _any_session_id(db: _DbTarget) -> str:
+    """Return any session id."""
     if db.is_postgres:
         assert db.postgres_config is not None
         return _pg_any_session_id(db.postgres_config)
@@ -411,6 +421,7 @@ def _any_session_id(db: _DbTarget) -> str:
 
 
 def _db_snapshot(db: _DbTarget) -> Dict[str, Any]:
+    """Return db snapshot."""
     if db.is_postgres:
         assert db.postgres_config is not None
         return _pg_db_snapshot(db.postgres_config)
@@ -425,6 +436,7 @@ def _lease_count(
     file_path: str,
     session_id: Optional[str] = None,
 ) -> int:
+    """Return lease count."""
     if db.is_postgres:
         assert db.postgres_config is not None
         return _pg_lease_count(
@@ -452,6 +464,7 @@ async def _run_pipeline(
     upload_compression: str,
     allow_foreign_session: bool,
 ) -> None:
+    """Return run pipeline."""
     load_dotenv_near_config(config_path, override=False)
     config = _load_config(config_path)
     repo_root = config_path.resolve().parent
@@ -699,6 +712,7 @@ async def _run_pipeline(
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",

@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 def _needs_symlink_staging(config_path: Path, result) -> bool:
+    """Return needs symlink staging."""
     if result.entries:
         return True
     config_data = load_raw_config(config_path)
@@ -156,6 +157,7 @@ def prepare_symlinks(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="Prepare watch-directory symlinks or Docker compose mount fragment.",
     )

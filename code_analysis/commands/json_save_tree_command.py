@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class JsonSaveTreeCommand(BaseMCPCommand):
+    """Save an in-memory JSON tree session back to a project file."""
+
     name = "json_save_tree"
     version = "1.0.0"
     descr = "Save JSON tree to .json file with backup and DB file_data update"
@@ -37,6 +39,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -66,12 +69,14 @@ class JsonSaveTreeCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate parameters and reject unknown project ids before saving."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
 
     @staticmethod
     def _validate_relative_json_path(file_path: str) -> tuple[Path, str] | ErrorResult:
+        """Validate that a JSON save target is a non-traversing relative path."""
         raw_path = (file_path or "").strip()
         if not raw_path:
             return ErrorResult(
@@ -104,6 +109,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Validate and persist a JSON tree session with backup and DB sync."""
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
@@ -241,6 +247,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonSaveTreeCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON tree save command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

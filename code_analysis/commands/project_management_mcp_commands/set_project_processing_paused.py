@@ -68,6 +68,7 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
     def validate_params(
         self: "SetProjectProcessingPausedMCPCommand", params: Dict[str, Any]
     ) -> Dict[str, Any]:
+        """Validate the pause flag and require an existing project ID."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params

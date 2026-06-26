@@ -502,7 +502,10 @@ class RevectorizeCommand(BaseMCPCommand):
                 try:
                     # Get new embedding from SVO service
                     class _TmpChunk:
+                        """Represent TmpChunk."""
+
                         def __init__(self, text: str):
+                            """Initialize the instance."""
                             self.body = text
                             self.text = text
 

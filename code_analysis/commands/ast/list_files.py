@@ -119,6 +119,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         pagination = list_pagination_schema_properties()
         return {
             "type": "object",

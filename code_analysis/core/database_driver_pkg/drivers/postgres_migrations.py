@@ -30,6 +30,7 @@ _SCHEMA_ENSURE_LOCK_KEY2 = 91_735
 
 
 def _rollback_conn(conn: Any) -> None:
+    """Return rollback conn."""
     try:
         conn.rollback()
     except Exception:
@@ -37,6 +38,7 @@ def _rollback_conn(conn: Any) -> None:
 
 
 def _postgres_table_exists(conn: Any, table_name: str) -> bool:
+    """Return postgres table exists."""
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -79,6 +81,7 @@ def _postgres_primary_key_column_names(conn: Any, table_name: str) -> List[str]:
 
 
 def _watch_dirs_has_composite_pk(conn: Any) -> bool:
+    """Return watch dirs has composite pk."""
     return _postgres_primary_key_column_names(conn, "watch_dirs") == [
         "server_instance_id",
         "id",
@@ -210,15 +213,13 @@ _CLIENT_SESSION_TABLES = (
 def _migrate_legacy_subordinate_sessions_table(conn: Any) -> None:
     """Drop pre-1.0.7 subordinate_sessions shape that included subordinate_session_id."""
     with conn.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = current_schema()
               AND table_name = 'subordinate_sessions'
               AND column_name = 'subordinate_session_id'
             LIMIT 1
-            """
-        )
+            """)
         if cur.fetchone() is None:
             return
         logger.info(
@@ -266,15 +267,18 @@ class _PostgresConnMigrateAdapter:
     _driver_type = "postgres"
 
     def __init__(self, conn: Any, schema_manager: Any) -> None:
+        """Initialize the instance."""
         self._conn = conn
         self._schema_manager = schema_manager
 
     def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        """Return get table info."""
         return cast(
             List[Dict[str, Any]], self._schema_manager.get_table_info(table_name)
         )
 
     def _execute(self, sql: str, params: Any = None) -> None:
+        """Return execute."""
         pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
         try:
             with self._conn.cursor() as cur:
@@ -285,6 +289,7 @@ class _PostgresConnMigrateAdapter:
             raise
 
     def _fetchone(self, sql: str, params: Any = None) -> Optional[Dict[str, Any]]:
+        """Return fetchone."""
         pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
         try:
             with self._conn.cursor() as cur:
@@ -299,6 +304,7 @@ class _PostgresConnMigrateAdapter:
             raise
 
     def _fetchall(self, sql: str, params: Any = None) -> List[Dict[str, Any]]:
+        """Return fetchall."""
         pg_sql, pg_params = _sqlite_qmarks_to_psycopg(sql, params)
         try:
             with self._conn.cursor() as cur:
@@ -313,6 +319,7 @@ class _PostgresConnMigrateAdapter:
             raise
 
     def _commit(self) -> None:
+        """Return commit."""
         self._conn.commit()
 
 

@@ -20,6 +20,7 @@ _CST_WHERE = "1=1"
 
 
 def _file_filter_sql(column: str, file_id: Optional[Any]) -> tuple[str, List[Any]]:
+    """Return file filter sql."""
     if file_id is None:
         return "", []
     return f" AND {column} = ?", [file_id]
@@ -212,6 +213,7 @@ def _count_table(
     file_filter: tuple[str, List[Any]],
     base_params: List[Any],
 ) -> int:
+    """Return count table."""
     extra_sql, extra_params = file_filter
     full_sql = sql.strip() + extra_sql
     params = [*base_params, *extra_params]
@@ -233,6 +235,7 @@ def _fetch_typed(
     limit: int,
     offset: int,
 ) -> List[dict[str, Any]]:
+    """Return fetch typed."""
     extra, extra_params = _file_filter_sql(file_column, file_id)
     full_sql = sql.strip() + extra + " ORDER BY f.path, line LIMIT ? OFFSET ?"
     params = [project_id, *extra_params, limit, offset]
@@ -245,6 +248,7 @@ def _rows_to_entities(
     sql: str,
     params: List[Any],
 ) -> List[dict[str, Any]]:
+    """Return rows to entities."""
     result = db.execute(sql, tuple(params))
     rows = result.get("data") or []
     entities: List[dict[str, Any]] = []

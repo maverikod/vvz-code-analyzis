@@ -130,6 +130,7 @@ class TestDatabaseClientPerformance:
             import concurrent.futures
 
             def make_request(i):
+                """Return make request."""
                 return client.insert(
                     "perf_table", {"data": f"concurrent_{i}", "value": i}
                 )

@@ -36,19 +36,25 @@ class _FakeRegistry:
         command_responses: Optional[Dict[str, Any]] = None,
         command_not_found: Optional[str] = None,
     ) -> None:
+        """Initialize the instance."""
         self._responses = command_responses or {}
         self._not_found = command_not_found
 
     def get_command(self, name: str) -> type:
+        """Return get command."""
         if self._not_found is not None and name == self._not_found:
             raise KeyError(f"Command '{name}' not found")
         data = dict(self._responses.get(name, {"ok": True}))
 
         class _Cmd:
+            """Represent Cmd."""
+
             def validate_params(self, params: Any) -> Dict[str, Any]:
+                """Return validate params."""
                 return dict(params) if params else {}
 
             async def execute(self, **kwargs: Any) -> SuccessResult:
+                """Execute the command."""
                 return SuccessResult(data=data)
 
         return _Cmd

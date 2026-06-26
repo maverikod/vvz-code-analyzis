@@ -23,12 +23,14 @@ from code_analysis.core.svo_client_manager_ssl import (
 
 
 def test_is_tls_protocol() -> None:
+    """Verify test is tls protocol."""
     assert is_tls_protocol("https") is True
     assert is_tls_protocol("mtls") is True
     assert is_tls_protocol("http") is False
 
 
 def test_embedding_client_ssl_kwargs_https_includes_client_certs(tmp_path) -> None:
+    """Verify test embedding client ssl kwargs https includes client certs."""
     cert = tmp_path / "client.crt"
     key = tmp_path / "client.key"
     ca = tmp_path / "ca.crt"
@@ -55,6 +57,7 @@ def test_embedding_client_ssl_kwargs_https_includes_client_certs(tmp_path) -> No
 
 
 def test_chunker_tls_paths_https_and_mtls_identical(tmp_path) -> None:
+    """Verify test chunker tls paths https and mtls identical."""
     cert = tmp_path / "client.crt"
     key = tmp_path / "client.key"
     ca = tmp_path / "ca.crt"
@@ -79,6 +82,7 @@ def test_chunker_tls_paths_https_and_mtls_identical(tmp_path) -> None:
 
 
 def test_service_use_tls_when_only_ca_configured(tmp_path) -> None:
+    """Verify test service use tls when only ca configured."""
     ca = tmp_path / "ca.crt"
     ca.write_text("ca", encoding="utf-8")
     assert service_use_tls(
@@ -91,6 +95,7 @@ def test_service_use_tls_when_only_ca_configured(tmp_path) -> None:
 
 
 def test_resolve_service_file_path_relative_to_root(tmp_path) -> None:
+    """Verify test resolve service file path relative to root."""
     rel = tmp_path / "tls" / "ca.crt"
     rel.parent.mkdir()
     rel.write_text("ca", encoding="utf-8")
@@ -100,6 +105,7 @@ def test_resolve_service_file_path_relative_to_root(tmp_path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["https", "mtls"])
 async def test_init_embedding_forwards_ssl_kwargs(tmp_path, protocol: str) -> None:
+    """Verify test init embedding forwards ssl kwargs."""
     cert = tmp_path / "client.crt"
     key = tmp_path / "client.key"
     ca = tmp_path / "ca.crt"

@@ -72,6 +72,7 @@ def _sort_text_replacements_bottom_up(
 
 
 def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessResult:
+    """Return success from handler."""
     data: Dict[str, Any] = {
         "success": True,
         "handler_id": fr.handler_id,
@@ -86,6 +87,7 @@ def _success_from_handler(fr: FileHandlerResult, *, operation: str) -> SuccessRe
 
 
 def _error_from_handler(fr: FileHandlerResult) -> ErrorResult:
+    """Return error from handler."""
     return ErrorResult(
         message=fr.message or fr.code,
         code=fr.code or "VALIDATION_FAILED",
@@ -243,6 +245,7 @@ def _validate_replace_payload_for_handler(
     value_provided: bool,
     ops: Optional[List[Any]],
 ) -> Optional[ErrorResult]:
+    """Return validate replace payload for handler."""
     has_anchor = (
         anchor_head is not None or anchor_tail is not None or anchor_node_id is not None
     )
@@ -409,6 +412,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "title": "universal_file_replace",
@@ -553,6 +557,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["UniversalFileReplaceCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,
@@ -592,6 +597,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
         ops: Optional[List[Any]] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         value_provided = value is not _MISSING_VALUE
         if not value_provided:
             value = None
@@ -789,6 +795,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
         """Text replace with BackupManager; files-table metadata after write."""
 
         def _restore(rel: str, uuid_: str) -> None:
+            """Return restore."""
             bm = BackupManager(root_dir)
             bm.restore_file(rel, uuid_)
 

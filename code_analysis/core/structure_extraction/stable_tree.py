@@ -22,12 +22,15 @@ from code_analysis.tree.sibling_convention import sibling_tree_path
 
 @dataclass
 class TreeResolutionStats:
+    """Represent TreeResolutionStats."""
+
     files_requiring_tree_check: int = 0
     valid_trees_reused: int = 0
     stale_trees_rebuilt: int = 0
     missing_trees_created: int = 0
 
     def as_dict(self) -> dict[str, int]:
+        """Return as dict."""
         return {
             "files_requiring_tree_check": self.files_requiring_tree_check,
             "valid_trees_reused": self.valid_trees_reused,
@@ -39,6 +42,7 @@ class TreeResolutionStats:
 def _metadata_from_sidecar_payload(
     payload: dict,
 ) -> Optional[Dict[str, TreeNodeMetadata]]:
+    """Return metadata from sidecar payload."""
     meta_blob = payload.get("metadata_map")
     order_raw = payload.get("metadata_node_order")
     order = [str(x) for x in order_raw] if isinstance(order_raw, list) else None
@@ -47,6 +51,7 @@ def _metadata_from_sidecar_payload(
 
 
 def _project_root_and_file_path(abs_path: Path) -> tuple[Path, str]:
+    """Return project root and file path."""
     resolved = abs_path.resolve()
     return resolved.parent, resolved.name
 
@@ -56,6 +61,7 @@ def _read_sidecar_metadata_map(
     *,
     allow_cst_index_fallback: bool,
 ) -> Optional[Dict[str, TreeNodeMetadata]]:
+    """Return read sidecar metadata map."""
     payload = read_sidecar_payload(abs_path)
     if payload is not None:
         meta = _metadata_from_sidecar_payload(payload)
@@ -115,6 +121,7 @@ def _metadata_from_edit_session(
     session_id: str,
     abs_path: Path,
 ) -> Optional[Dict[str, TreeNodeMetadata]]:
+    """Return metadata from edit session."""
     from code_analysis.commands.universal_file_edit.format_group import FORMAT_SIDECAR
     from code_analysis.commands.universal_file_edit.session import get_session
     from code_analysis.core.cst_tree.tree_builder import get_cst_tree

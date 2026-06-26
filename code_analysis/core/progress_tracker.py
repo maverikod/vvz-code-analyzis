@@ -23,16 +23,20 @@ class _DelegatingProgressTracker:
     __slots__ = ("_inner", "_job")
 
     def __init__(self, inner: Any, job: Any) -> None:
+        """Initialize the instance."""
         self._inner = inner
         self._job = job
 
     def set_progress(self, progress: int) -> None:
+        """Return set progress."""
         self._inner.set_progress(progress)
 
     def set_description(self, description: str) -> None:
+        """Return set description."""
         self._inner.set_description(description)
 
     def set_status(self, status: str) -> None:
+        """Return set status."""
         if self._job is not None:
             set_status_fn = getattr(self._job, "set_status", None)
             if callable(set_status_fn):
@@ -42,6 +46,7 @@ class _DelegatingProgressTracker:
                     logger.warning(f"Failed to set status: {e}")
 
     def log(self, message: str) -> None:
+        """Return log."""
         log_fn = getattr(self._inner, "log", None)
         if callable(log_fn):
             log_fn(message)
@@ -49,6 +54,7 @@ class _DelegatingProgressTracker:
             logger.info(message)
 
     def is_enabled(self) -> bool:
+        """Return is enabled."""
         fn = getattr(self._inner, "is_enabled", None)
         if callable(fn):
             return bool(fn())

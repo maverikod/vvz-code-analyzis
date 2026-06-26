@@ -37,6 +37,7 @@ from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 @pytest.fixture
 def dedup_db(tmp_path: Path) -> Iterator[SqliteLegacyRpcFacade]:
+    """Return dedup db."""
     client = sqlite_inprocess_database_client(
         tmp_path / "dedup.db", backup_dir=tmp_path / "backups"
     )
@@ -48,6 +49,7 @@ def dedup_db(tmp_path: Path) -> Iterator[SqliteLegacyRpcFacade]:
 
 
 def _insert_project(db: SqliteLegacyRpcFacade, root: Path, project_id: str) -> None:
+    """Return insert project."""
     db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) "
         "VALUES (?, ?, ?, julianday('now'))",
@@ -134,6 +136,7 @@ def test_dedup_pair_keeps_abs_if_earlier(
 
 
 def test_dedup_lone_abs_fixed(dedup_db: SqliteLegacyRpcFacade, tmp_path: Path) -> None:
+    """Verify test dedup lone abs fixed."""
     watch = tmp_path / "watch"
     root = watch / "solo"
     root.mkdir(parents=True)
@@ -161,6 +164,7 @@ def test_dedup_lone_abs_fixed(dedup_db: SqliteLegacyRpcFacade, tmp_path: Path) -
 def test_dedup_outside_root_skipped(
     dedup_db: SqliteLegacyRpcFacade, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Verify test dedup outside root skipped."""
     watch = tmp_path / "watch"
     root = watch / "proj"
     root.mkdir(parents=True)
@@ -192,6 +196,7 @@ def _make_indexer_mock_for_abspath(
     """Like tests.test_indexing_worker._make_mock_database plus root_path + execute_batch."""
 
     def execute(sql: str, params=None, transaction_id=None, **kwargs):
+        """Execute the command."""
         sql_lower = sql.strip().lower()
         if "project_activity_locks" in sql_lower:
             return {"affected_rows": 1}
@@ -211,10 +216,11 @@ def _make_indexer_mock_for_abspath(
             if "updated_at desc" in sql_lower:
 
                 def _sort_file_row(row: dict) -> tuple:
+                    """Return sort file row."""
                     raw = row.get("updated_at", 0)
                     try:
                         ufv = float(raw)
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         ufv = 0.0
                     rid = row.get("id")
                     sid = str(rid) if rid is not None else ""
@@ -266,6 +272,7 @@ async def test_indexer_processes_abspath(tmp_path: Path) -> None:
     ):
 
         async def run_then_stop():
+            """Return run then stop."""
             await asyncio.sleep(0.35)
             worker._stop_event.set()
 

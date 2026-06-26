@@ -37,6 +37,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
     def get_schema(
         cls: type["ListWatchDirsMCPCommand"],
     ) -> Dict[str, Any]:
+        """Return the empty input schema for listing watch directories."""
         return {
             "type": "object",
             "description": (
@@ -50,6 +51,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["ListWatchDirsMCPCommand"]) -> Dict[str, Any]:
+        """Return registration metadata for the zero-argument command."""
         from ..zero_arg_commands_metadata import list_watch_dirs_metadata
 
         return list_watch_dirs_metadata(cls)
@@ -58,6 +60,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
         self: "ListWatchDirsMCPCommand",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """List database watch directories, falling back to runtime mounts."""
         try:
             config_path = self._resolve_config_path()
             database = self._open_database_from_config(auto_analyze=False)

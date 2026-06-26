@@ -22,7 +22,10 @@ from code_analysis.tree.tree_node import TreeNode
 
 
 class ShortIdAllocator:
+    """Represent ShortIdAllocator."""
+
     def __init__(self, start: int = 1) -> None:
+        """Initialize the instance."""
         if start < 1:
             raise ValueError("ShortIdAllocator start must be >= 1")
         self._next = start
@@ -41,12 +44,16 @@ class ShortIdAllocator:
 
 @runtime_checkable
 class NodeIdMapResolveResult(Protocol):
+    """Represent NodeIdMapResolveResult."""
+
     short_id: int
     uuid: str
 
 
 @runtime_checkable
 class NodeIdMapResolver(Protocol):
+    """Represent NodeIdMapResolver."""
+
     def resolve(
         self,
         *,
@@ -57,7 +64,10 @@ class NodeIdMapResolver(Protocol):
 
 
 class FormatHandler(ABC):
+    """Represent FormatHandler."""
+
     def __init__(self, id_map: Optional[NodeIdMapResolver] = None) -> None:
+        """Initialize the instance."""
         self._id_map = id_map
 
     @abstractmethod
@@ -87,6 +97,7 @@ class FormatHandler(ABC):
         return NodeId(sid)
 
     def resolve_uuid_for_short_id(self, short_id: NodeId) -> UUID:
+        """Return resolve uuid for short id."""
         if self._id_map is None:
             raise RuntimeError("NodeIdMap required for UUID resolution")
         from code_analysis.core.tree_lifecycle.node_id_map import UnknownShortIdError
@@ -98,6 +109,7 @@ class FormatHandler(ABC):
         return UUID(result.uuid)
 
     def resolve_short_id_for_uuid(self, node_uuid: UUID) -> NodeId:
+        """Return resolve short id for uuid."""
         if self._id_map is None:
             raise RuntimeError("NodeIdMap required for UUID resolution")
         result = self._id_map.resolve(uuid=str(node_uuid))
@@ -108,6 +120,7 @@ class FormatHandler(ABC):
         return self.unmark(self.mark(source)) == source
 
     def verify_checksum_round_trip(self, source: str) -> bool:
+        """Return verify checksum round trip."""
         from code_analysis.core.tree_lifecycle.checksum import compute_content_checksum
 
         marked = self.mark(source)

@@ -33,7 +33,6 @@ from code_analysis.core.database.schema_creation_migrate import (
     run_uuid_migration_phases_3_to_5_sqlite as facade_sqlite_p345,
 )
 
-
 # Legacy INTEGER PK business tables; TEXT UUID for projects / watch_dirs (Group 1).
 # Columns align with Phase 4 INSERT…SELECT from uuid_identity_postgres_data_migrate.
 _LEGACY_P345_SCHEMA = """
@@ -292,25 +291,33 @@ CREATE TABLE indexing_errors (
 
 
 class _SqliteDb:
+    """Represent SqliteDb."""
+
     _driver_type = "sqlite"
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._conn = conn
 
     def _execute(self, sql: str, params: Any = None) -> None:
+        """Return execute."""
         self._conn.execute(sql, params or ())
 
     def _fetchone(self, sql: str, params: Any = None):
+        """Return fetchone."""
         return self._conn.execute(sql, params or ()).fetchone()
 
     def _fetchall(self, sql: str, params: Any = None):
+        """Return fetchall."""
         return self._conn.execute(sql, params or ()).fetchall()
 
     def _commit(self) -> None:
+        """Return commit."""
         self._conn.commit()
 
 
 def _scalar(db: _SqliteDb, sql: str) -> int:
+    """Return scalar."""
     r = db._fetchone(sql)
     if not r:
         return 0
@@ -318,6 +325,7 @@ def _scalar(db: _SqliteDb, sql: str) -> int:
 
 
 def _seed_graph(db: _SqliteDb) -> None:
+    """Return seed graph."""
     w, p = str(uuid.uuid4()), str(uuid.uuid4())
     db._execute("INSERT INTO watch_dirs (id, name) VALUES (?, ?)", (w, "wd"))
     db._execute(
@@ -357,11 +365,13 @@ def _seed_graph(db: _SqliteDb) -> None:
 
 
 def test_sqlite_copy_sql_has_no_postgres_casts() -> None:
+    """Verify test sqlite copy sql has no postgres casts."""
     for stmt in build_copy_insert_sql_sqlite():
         assert "::" not in stmt
 
 
 def test_sqlite_shadow_ddl_uses_text_pks_not_postgres_uuid_type() -> None:
+    """Verify test sqlite shadow ddl uses text pks not postgres uuid type."""
     ddl = "\n".join(build_shadow_table_ddl_sqlite())
     assert "uuid_mig_new_files" in ddl
     upper = ddl.upper()
@@ -370,17 +380,25 @@ def test_sqlite_shadow_ddl_uses_text_pks_not_postgres_uuid_type() -> None:
 
 
 def test_phases_345_dry_run_sql_log_no_execute() -> None:
+    """Verify test phases 345 dry run sql log no execute."""
+
     class _NoExec(_SqliteDb):
+        """Represent NoExec."""
+
         def __init__(self) -> None:
+            """Initialize the instance."""
             pass
 
         def _execute(self, *a: Any, **k: Any) -> None:
+            """Return execute."""
             raise AssertionError("dry-run must not execute")
 
         def _fetchone(self, *a: Any, **k: Any) -> Any:
+            """Return fetchone."""
             raise AssertionError("dry-run must not fetch")
 
         def _commit(self) -> None:
+            """Return commit."""
             raise AssertionError("dry-run must not commit")
 
     stub = _NoExec()
@@ -397,17 +415,25 @@ def test_phases_345_dry_run_sql_log_no_execute() -> None:
 
 
 def test_facade_delegates_to_sqlite_module() -> None:
+    """Verify test facade delegates to sqlite module."""
+
     class _NoExec(_SqliteDb):
+        """Represent NoExec."""
+
         def __init__(self) -> None:
+            """Initialize the instance."""
             pass
 
         def _execute(self, *a: Any, **k: Any) -> None:
+            """Return execute."""
             raise AssertionError("dry-run must not execute")
 
         def _fetchone(self, *a: Any, **k: Any) -> Any:
+            """Return fetchone."""
             raise AssertionError("dry-run must not fetch")
 
         def _commit(self) -> None:
+            """Return commit."""
             raise AssertionError("dry-run must not commit")
 
     stub = _NoExec()
@@ -417,6 +443,7 @@ def test_facade_delegates_to_sqlite_module() -> None:
 
 
 def test_phases_345_integration_row_counts_and_idempotency(tmp_path: Path) -> None:
+    """Verify test phases 345 integration row counts and idempotency."""
     path = Path(tmp_path) / "mig.sqlite"
     conn = sqlite3.connect(str(path))
     try:
@@ -447,6 +474,7 @@ def test_phases_345_integration_row_counts_and_idempotency(tmp_path: Path) -> No
 
 
 def test_phase6_swap_requires_confirmation(tmp_path: Path) -> None:
+    """Verify test phase6 swap requires confirmation."""
     path = Path(tmp_path) / "x.sqlite"
     conn = sqlite3.connect(str(path))
     try:
@@ -459,12 +487,12 @@ def test_phase6_swap_requires_confirmation(tmp_path: Path) -> None:
 
 
 def test_phase6_drop_recreate_fts_after_swap(tmp_path: Path) -> None:
+    """Verify test phase6 drop recreate fts after swap."""
     path = Path(tmp_path) / "fts.sqlite"
     conn = sqlite3.connect(str(path))
     try:
         conn.executescript(_LEGACY_P345_SCHEMA)
-        conn.execute(
-            """
+        conn.execute("""
             CREATE VIRTUAL TABLE code_content_fts USING fts5(
                 entity_type,
                 entity_name,
@@ -473,8 +501,7 @@ def test_phase6_drop_recreate_fts_after_swap(tmp_path: Path) -> None:
                 content_rowid='rowid',
                 content='code_content'
             )
-            """
-        )
+            """)
         db = _SqliteDb(conn)
         _seed_graph(db)
         run_uuid_migration_phase2_build_mappings(db, skip_preflight=True)
@@ -506,16 +533,23 @@ def test_phase6_drop_recreate_fts_after_swap(tmp_path: Path) -> None:
 
 
 def test_non_sqlite_backend_rejected() -> None:
+    """Verify test non sqlite backend rejected."""
+
     class _Pg:
+        """Represent Pg."""
+
         _driver_type = "postgresql"
 
         def _execute(self, *a: Any, **k: Any) -> None:
+            """Return execute."""
             return None
 
         def _fetchone(self, *a: Any, **k: Any) -> Any:
+            """Return fetchone."""
             return None
 
         def _commit(self) -> None:
+            """Return commit."""
             return None
 
     with pytest.raises(UuidMigrationError, match="SQLite-only"):

@@ -238,6 +238,7 @@ def open_database_once_for_shared(
         from ..core.database.base import get_schema_definition
 
         def _ensure_schema() -> None:
+            """Return ensure schema."""
             schema_def = get_schema_definition()
             schema_def = _schema_def_to_driver_format(schema_def)
             backup_dir = getattr(storage, "backup_dir", None)

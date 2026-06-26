@@ -125,6 +125,7 @@ def classify_sqlite_error(
 def _raise_classified_sqlite(
     e: BaseException, *, for_commit: bool, message_prefix: str
 ) -> NoReturn:
+    """Return raise classified sqlite."""
     if isinstance(e, TransientDatabaseError):
         raise e
     if isinstance(e, DriverOperationError):
@@ -146,6 +147,7 @@ _PARAMS_PREVIEW_STR = 36
 
 
 def _sql_preview_for_log(sql: str, max_len: int = _SQL_PREVIEW_MAX) -> str:
+    """Return sql preview for log."""
     s = " ".join(sql.strip().split())
     if len(s) > max_len:
         return s[: max_len - 3] + "..."
@@ -161,6 +163,7 @@ def _params_preview_compact(params: Optional[tuple]) -> str:
         return "()"
 
     def _one(x: Any) -> str:
+        """Return one."""
         if isinstance(x, (int, bool)) or x is None:
             return repr(x)
         if isinstance(x, str):
@@ -203,6 +206,7 @@ def _log_batch_integrity_error(
     many_rows: Optional[int],
     err: Exception,
 ) -> None:
+    """Return log batch integrity error."""
     tid = transaction_id if transaction_id else "none"
     rig = row_in_group if row_in_group is not None else "-"
     many_part = f" many_rows={many_rows}" if many_rows is not None else ""

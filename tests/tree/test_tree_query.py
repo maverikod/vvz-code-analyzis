@@ -21,7 +21,10 @@ from code_analysis.tree.tree_query import (
 
 
 def _make_tree_query() -> TreeQuery:
+    """Return make tree query."""
+
     def short_id_mapper(meta: object) -> NodeId:
+        """Return short id mapper."""
         return NodeId(getattr(meta, "short_id"))
 
     loader = MagicMock(return_value=SimpleNamespace(tree_id="tree-abc"))
@@ -30,6 +33,7 @@ def _make_tree_query() -> TreeQuery:
 
 @patch("code_analysis.core.cst_tree.tree_finder.find_nodes")
 def test_simple_mode_applies_filters(mock_find_nodes: MagicMock) -> None:
+    """Verify test simple mode applies filters."""
     meta = SimpleNamespace(short_id=7, code="def foo(): pass")
     mock_find_nodes.return_value = [meta]
     query = _make_tree_query()
@@ -56,6 +60,7 @@ def test_simple_mode_applies_filters(mock_find_nodes: MagicMock) -> None:
 
 @patch("code_analysis.core.cst_tree.tree_finder.find_nodes")
 def test_require_one_no_match(mock_find_nodes: MagicMock) -> None:
+    """Verify test require one no match."""
     mock_find_nodes.return_value = []
     query = _make_tree_query()
 
@@ -70,6 +75,7 @@ def test_require_one_no_match(mock_find_nodes: MagicMock) -> None:
 
 @patch("code_analysis.core.cst_tree.tree_finder.find_nodes")
 def test_require_one_single_match(mock_find_nodes: MagicMock) -> None:
+    """Verify test require one single match."""
     mock_find_nodes.return_value = [SimpleNamespace(short_id=2)]
     query = _make_tree_query()
 
@@ -84,6 +90,7 @@ def test_require_one_single_match(mock_find_nodes: MagicMock) -> None:
 
 @patch("code_analysis.core.cst_tree.tree_finder.find_nodes")
 def test_require_one_non_unique_match(mock_find_nodes: MagicMock) -> None:
+    """Verify test require one non unique match."""
     mock_find_nodes.return_value = [
         SimpleNamespace(short_id=1),
         SimpleNamespace(short_id=2),
@@ -101,6 +108,7 @@ def test_require_one_non_unique_match(mock_find_nodes: MagicMock) -> None:
 
 
 def test_line_range_guard_rejects_non_python() -> None:
+    """Verify test line range guard rejects non python."""
     query = _make_tree_query()
 
     with pytest.raises(TreeQueryError, match="Python only"):
@@ -113,6 +121,7 @@ def test_line_range_guard_rejects_non_python() -> None:
 
 @patch("code_analysis.tree.tree_query.CstQuerySelector")
 def test_xpath_mode_calls_cst_query_selector(mock_selector_cls: MagicMock) -> None:
+    """Verify test xpath mode calls cst query selector."""
     mock_selector = MagicMock()
     mock_selector.selector = "//FunctionDef[@name='foo']"
     mock_selector.evaluate.return_value = [NodeId(42)]

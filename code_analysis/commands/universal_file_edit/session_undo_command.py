@@ -40,10 +40,12 @@ class SessionUndoCommand(BaseMCPCommand):
 
     @staticmethod
     def get_name() -> str:
+        """Return get name."""
         return "session_undo"
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -56,6 +58,7 @@ class SessionUndoCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["SessionUndoCommand"]) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": "session_undo",
             "description": (
@@ -67,9 +70,7 @@ class SessionUndoCommand(BaseMCPCommand):
                 "project_id": {"type": "string", "required": True},
                 "session_id": {"type": "string", "required": True},
             },
-            "examples": [
-                {"command": {"project_id": "<uuid>", "session_id": "<uuid>"}}
-            ],
+            "examples": [{"command": {"project_id": "<uuid>", "session_id": "<uuid>"}}],
         }
 
     async def execute(  # type: ignore[override]
@@ -78,6 +79,7 @@ class SessionUndoCommand(BaseMCPCommand):
         session_id: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """Execute the command."""
         _ = project_id, kwargs
         try:
             session = get_session(session_id)

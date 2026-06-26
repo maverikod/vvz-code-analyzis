@@ -15,6 +15,7 @@ BLOCK_STARTER = re.compile(r"^\s{4}(try:|except\s|if\s|for\s|else:|elif\s|finall
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     with open(PATH, "r", encoding="utf-8") as f:
         lines = f.readlines()
 

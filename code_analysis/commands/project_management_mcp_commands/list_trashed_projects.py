@@ -34,6 +34,7 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ListTrashedProjectsMCPCommand"]) -> Dict[str, Any]:
+        """Return the schema for an optional trash-directory override."""
         return {
             "type": "object",
             "description": "List projects in trash (recycle bin)",
@@ -61,6 +62,7 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
         trash_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
+        """List and parse project entries in the configured trash directory."""
         params: Dict[str, Any] = {"trash_dir": trash_dir}
         params.update(kwargs)
         try:

@@ -122,28 +122,36 @@ class TestIsStructuredRetryableError:
     """is_structured_retryable_error follows ErrorResult.details contract."""
 
     def test_true_when_retryable_and_no_unknown(self) -> None:
+        """Verify test true when retryable and no unknown."""
         assert is_structured_retryable_error(
             {"retryable": True, "commit_outcome_unknown": False}
         )
         assert is_structured_retryable_error({"retryable": True}) is True
 
     def test_false_when_commit_outcome_unknown(self) -> None:
-        assert is_structured_retryable_error(
-            {
-                "retryable": True,
-                "commit_outcome_unknown": True,
-            }
-        ) is False
+        """Verify test false when commit outcome unknown."""
+        assert (
+            is_structured_retryable_error(
+                {
+                    "retryable": True,
+                    "commit_outcome_unknown": True,
+                }
+            )
+            is False
+        )
 
     def test_false_when_retryable_false(self) -> None:
+        """Verify test false when retryable false."""
         assert is_structured_retryable_error({"retryable": False}) is False
 
     def test_false_when_missing_or_malformed(self) -> None:
+        """Verify test false when missing or malformed."""
         assert is_structured_retryable_error(None) is False
         assert is_structured_retryable_error({}) is False
         assert is_structured_retryable_error("not a map") is False  # type: ignore[arg-type]
 
     def test_require_retryable_is_true(self) -> None:
+        """Verify test require retryable is true."""
         assert is_structured_retryable_error({"retryable": 1}) is False
 
 

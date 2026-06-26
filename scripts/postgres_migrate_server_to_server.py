@@ -49,6 +49,7 @@ from typing import Any, Mapping
 
 
 def _driver_config_from_json(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """Return driver config from json."""
     driver = cfg.get("code_analysis", {}).get("database", {}).get("driver") or {}
     dtype = str(driver.get("type") or "").strip().lower()
     if dtype not in ("postgres", "postgresql"):
@@ -62,6 +63,7 @@ def _driver_config_from_json(cfg: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _load_driver_config(path: Path) -> dict[str, Any]:
+    """Return load driver config."""
     if not path.is_file():
         raise SystemExit(f"ERROR: config file not found: {path}")
     cfg = json.loads(path.read_text(encoding="utf-8"))
@@ -69,6 +71,7 @@ def _load_driver_config(path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="pg_dump (custom) from source server, pg_restore to target server."
     )
@@ -138,6 +141,7 @@ def main() -> int:
     if args.dry_run:
 
         def _summ(dc: dict[str, Any]) -> str:
+            """Return summ."""
             pw = dc.get("password_env") or ("inline" if dc.get("password") else "unset")
             return (
                 f"{dc.get('user')}@{dc.get('host')}:{dc.get('port')}/{dc.get('dbname')} "

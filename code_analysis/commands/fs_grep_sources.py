@@ -29,6 +29,7 @@ class GrepScanTarget:
     session_id: Optional[str] = None
 
     def read_content(self, project_root: Path) -> str:
+        """Read grep content from a draft session or disk file."""
         if self.source == "draft_session":
             if not self.session_id:
                 raise ValueError("session_id required for draft_session source")

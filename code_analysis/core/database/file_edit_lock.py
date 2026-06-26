@@ -71,6 +71,7 @@ def _execute_with_optional_tid(
 
 
 def _project_root_path_str(database: Any, project_id: str) -> Optional[str]:
+    """Return project root path str."""
     from code_analysis.core.project_root_path import (
         resolve_projects_root_path_row_to_absolute_str,
     )

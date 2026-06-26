@@ -20,7 +20,10 @@ _MARKER_PREFIX_RE = re.compile(r"^\d+:")
 
 
 class TextHandler(FormatHandler):
+    """Represent TextHandler."""
+
     def parse_content(self, file_path: Path, content: str) -> List[TreeNode]:
+        """Return parse content."""
         if content == "":
             return []
         allocator = ShortIdAllocator(start=1)
@@ -65,6 +68,7 @@ class TextHandler(FormatHandler):
         return nodes
 
     def mark(self, content: str) -> str:
+        """Return mark."""
         allocator = ShortIdAllocator(1)
         in_paragraph = False
         result: List[str] = []
@@ -84,6 +88,7 @@ class TextHandler(FormatHandler):
         return "".join(result)
 
     def unmark(self, marked_text: str) -> str:
+        """Return unmark."""
         result: List[str] = []
         for line in marked_text.splitlines(keepends=True):
             line_without_newline = line.rstrip("\n")
@@ -96,6 +101,7 @@ class TextHandler(FormatHandler):
         return "".join(result)
 
     def sidecar_path(self, source_abs: Path) -> Path:
+        """Return sidecar path."""
         return source_abs.parent / (source_abs.name + ".tree")
 
     def op_insert(
@@ -106,6 +112,7 @@ class TextHandler(FormatHandler):
         new_content: str,
         next_free: int,
     ) -> str:
+        """Return op insert."""
         if next_free < 1:
             raise ValueError("next_free must be >= 1")
         if position not in ("before", "after", "first_child", "last_child"):
@@ -130,6 +137,7 @@ class TextHandler(FormatHandler):
         return _serialize_marked(nodes, blank_lines)
 
     def op_delete(self, marked_text: str, short_id: NodeId) -> str:
+        """Return op delete."""
         nodes, blank_lines = _parse_marked(marked_text)
         target = _find_node(nodes, short_id)
         anchor_idx = nodes.index(target)
@@ -144,12 +152,14 @@ class TextHandler(FormatHandler):
         return _serialize_marked(nodes, blank_lines)
 
     def op_replace(self, marked_text: str, short_id: NodeId, new_content: str) -> str:
+        """Return op replace."""
         nodes, blank_lines = _parse_marked(marked_text)
         node = _find_node(nodes, short_id)
         node.content = new_content
         return _serialize_marked(nodes, blank_lines)
 
     def extract_move_payload(self, marked_text: str, short_id: NodeId) -> str:
+        """Return extract move payload."""
         nodes, _blank_lines = _parse_marked(marked_text)
         src = _find_node(nodes, short_id)
         src_idx = nodes.index(src)
@@ -168,6 +178,7 @@ class TextHandler(FormatHandler):
         anchor_short_id: NodeId,
         position: str,
     ) -> str:
+        """Return op move."""
         next_free = self.peak_short_id_in_marked(marked_text) + 1
         return self.op_move_via_delete_insert(
             marked_text,
@@ -180,6 +191,7 @@ class TextHandler(FormatHandler):
     def op_edit_attributes(
         self, marked_text: str, short_id: NodeId, attributes: Dict[str, Any]
     ) -> str:
+        """Return op edit attributes."""
         nodes, blank_lines = _parse_marked(marked_text)
         node = _find_node(nodes, short_id)
         node.attributes.update(attributes)
@@ -188,6 +200,7 @@ class TextHandler(FormatHandler):
     def op_edit_content(
         self, marked_text: str, short_id: NodeId, new_content: str
     ) -> str:
+        """Return op edit content."""
         nodes, blank_lines = _parse_marked(marked_text)
         node = _find_node(nodes, short_id)
         if not _is_leaf_line_node(node, nodes):
@@ -197,6 +210,7 @@ class TextHandler(FormatHandler):
 
 
 def _parse_marked(marked_text: str) -> Tuple[List[TreeNode], List[Tuple[int, str]]]:
+    """Return parse marked."""
     lines = marked_text.splitlines(keepends=True)
     nodes: List[TreeNode] = []
     blank_lines: List[Tuple[int, str]] = []
@@ -230,6 +244,7 @@ def _parse_marked(marked_text: str) -> Tuple[List[TreeNode], List[Tuple[int, str
 
 
 def _serialize_marked(nodes: List[TreeNode], blank_lines: List[Tuple[int, str]]) -> str:
+    """Return serialize marked."""
     blank_at = {idx: line for idx, line in blank_lines}
     total = len(nodes) + len(blank_lines)
     if blank_at:
@@ -257,6 +272,7 @@ def _serialize_marked(nodes: List[TreeNode], blank_lines: List[Tuple[int, str]])
 
 
 def _find_node(nodes: List[TreeNode], short_id: NodeId) -> TreeNode:
+    """Return find node."""
     for node in nodes:
         if node.short_id == short_id:
             return node
@@ -264,6 +280,7 @@ def _find_node(nodes: List[TreeNode], short_id: NodeId) -> TreeNode:
 
 
 def _is_leaf_line_node(node: TreeNode, nodes: List[TreeNode]) -> bool:
+    """Return is leaf line node."""
     if node.kind == "line":
         return True
     if node.kind != "paragraph":

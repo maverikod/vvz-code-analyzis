@@ -22,6 +22,7 @@ class SchemaCompareOps:
         schema_definition: Dict[str, Any],
         snapshot_tables: Tuple[str, ...],
     ) -> None:
+        """Initialize the instance."""
         self.driver = driver
         self.schema_definition = schema_definition
         self.snapshot_tables = snapshot_tables
@@ -226,6 +227,7 @@ class SchemaCompareOps:
         return indexes
 
     def _indexes_match(self, current: IndexDef, expected: IndexDef) -> bool:
+        """Return indexes match."""
         return (
             current.table == expected.table
             and current.columns == expected.columns
@@ -332,10 +334,12 @@ class SchemaCompareOps:
     def _foreign_keys_match(
         self, expected: List[Dict[str, Any]], current: List[Dict[str, Any]]
     ) -> bool:
+        """Return foreign keys match."""
         if len(expected) != len(current):
             return False
 
         def _fk_key(d: Dict[str, Any]) -> tuple:
+            """Return fk key."""
             return (
                 tuple(d["columns"]),
                 d["references_table"],
@@ -344,6 +348,7 @@ class SchemaCompareOps:
             )
 
         def _norm(fks: List[Dict[str, Any]]) -> list:
+            """Return norm."""
             return [
                 {
                     "columns": tuple(sorted(fk["columns"])),
@@ -363,6 +368,7 @@ class SchemaCompareOps:
         expected: List[Dict[str, List[str]]],
         current: List[Dict[str, List[str]]],
     ) -> bool:
+        """Return unique constraints match."""
         if len(expected) != len(current):
             return False
         expected_sets = {tuple(sorted(uc["columns"])) for uc in expected}

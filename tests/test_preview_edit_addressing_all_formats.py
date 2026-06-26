@@ -34,6 +34,7 @@ _PROJECT_UUID = "cafebabe-cafe-4caf-babe-cafebabecafe"
 
 
 def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
+    """Return db for."""
     db = MagicMock()
     row = {
         "id": project_id,
@@ -49,12 +50,14 @@ def _db_for(tmp: Path, project_id: str = _PROJECT_UUID) -> MagicMock:
 
 
 def _ensure_project_root(tmp: Path) -> None:
+    """Return ensure project root."""
     marker = tmp / "projectid"
     if not marker.exists():
         marker.write_text(json.dumps({"id": _PROJECT_UUID}) + "\n", encoding="utf-8")
 
 
 async def _open_file(tmp: Path, rel: str, content: str) -> tuple[str, Path]:
+    """Return open file."""
     _ensure_project_root(tmp)
     target = tmp / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +76,7 @@ async def _open_file(tmp: Path, rel: str, content: str) -> tuple[str, Path]:
 async def _preview_blocks(
     tmp: Path, rel: str, *, session_id: str | None = None
 ) -> list[dict]:
+    """Return preview blocks."""
     cmd = UniversalFilePreviewCommand()
     params: dict = {"project_id": _PROJECT_UUID, "file_path": rel}
     if session_id is not None:
@@ -98,6 +102,7 @@ async def _preview_blocks(
 
 
 def _block_short_id(block: dict) -> str:
+    """Return block short id."""
     ref = block.get("node_ref")
     if isinstance(ref, int):
         return str(ref)
@@ -105,6 +110,7 @@ def _block_short_id(block: dict) -> str:
 
 
 def _find_block_by_key_path(blocks: list[dict], key: str) -> dict:
+    """Return find block by key path."""
     for block in blocks:
         summary = block.get("summary") or {}
         attrs = str(summary.get("attribute_summary") or "")
@@ -114,6 +120,7 @@ def _find_block_by_key_path(blocks: list[dict], key: str) -> dict:
 
 
 def _find_block_by_type(blocks: list[dict], node_type: str) -> dict:
+    """Return find block by type."""
     for block in blocks:
         summary = block.get("summary") or {}
         if summary.get("type") == node_type:
@@ -122,6 +129,7 @@ def _find_block_by_type(blocks: list[dict], node_type: str) -> dict:
 
 
 def _find_block_by_json_pointer(blocks: list[dict], pointer: str) -> dict:
+    """Return find block by json pointer."""
     for block in blocks:
         summary = block.get("summary") or {}
         attrs = str(summary.get("attribute_summary") or "")
@@ -131,6 +139,7 @@ def _find_block_by_json_pointer(blocks: list[dict], pointer: str) -> dict:
 
 
 async def _commit(tmp: Path, sid: str, target: Path) -> str:
+    """Return commit."""
     write = UniversalFileWriteCommand()
     close = UniversalFileCloseCommand()
     with patch.object(
@@ -153,6 +162,7 @@ async def _commit(tmp: Path, sid: str, target: Path) -> str:
 
 @pytest.fixture(autouse=True)
 def _reset_json_trees() -> None:
+    """Return reset json trees."""
     jtb._trees.clear()
     yield
     jtb._trees.clear()
@@ -162,6 +172,7 @@ def _reset_json_trees() -> None:
 async def test_json_insert_by_preview_short_id_target_node_id(
     tmp_path: Path,
 ) -> None:
+    """Verify test json insert by preview short id target node id."""
     rel = "data/doc.json"
     body = '{"items": [{"id": 1}], "meta": {"tag": "old"}}\n'
     sid, target = await _open_file(tmp_path, rel, body)
@@ -200,6 +211,7 @@ async def test_json_insert_by_preview_short_id_target_node_id(
 
 @pytest.mark.asyncio
 async def test_yaml_insert_by_preview_short_id_node_ref(tmp_path: Path) -> None:
+    """Verify test yaml insert by preview short id node ref."""
     rel = "cfg/app.yaml"
     body = "alpha: 1\nbeta: 2\n"
     sid, target = await _open_file(tmp_path, rel, body)
@@ -236,6 +248,7 @@ async def test_yaml_insert_by_preview_short_id_node_ref(tmp_path: Path) -> None:
 async def test_txt_insert_by_preview_short_id_target_node_id(
     tmp_path: Path,
 ) -> None:
+    """Verify test txt insert by preview short id target node id."""
     rel = "notes/readme.txt"
     body = "First paragraph line.\n\nSecond paragraph line.\n"
     sid, target = await _open_file(tmp_path, rel, body)
@@ -273,6 +286,7 @@ async def test_txt_insert_by_preview_short_id_target_node_id(
 
 @pytest.mark.asyncio
 async def test_jsonl_insert_by_preview_line_index_node_ref(tmp_path: Path) -> None:
+    """Verify test jsonl insert by preview line index node ref."""
     rel = "streams/events.jsonl"
     body = '{"event": "one"}\n{"event": "two"}\n'
     sid, target = await _open_file(tmp_path, rel, body)
@@ -309,6 +323,7 @@ async def test_jsonl_insert_by_preview_line_index_node_ref(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_py_insert_by_preview_short_id_target_node_id(tmp_path: Path) -> None:
+    """Verify test py insert by preview short id target node id."""
     rel = "src/mod.py"
     body = '"""Module."""\n\nimport os\n\ndef foo() -> int:\n    return 1\n'
     sid, target = await _open_file(tmp_path, rel, body)
@@ -346,6 +361,7 @@ async def test_py_insert_by_preview_short_id_target_node_id(tmp_path: Path) -> N
 
 @pytest.mark.asyncio
 async def test_json_unknown_node_ref_not_silent_success(tmp_path: Path) -> None:
+    """Verify test json unknown node ref not silent success."""
     rel = "data/x.json"
     sid, _target = await _open_file(tmp_path, rel, '{"a": 1}\n')
     edit = UniversalFileEditCommand()

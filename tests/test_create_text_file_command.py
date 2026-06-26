@@ -27,7 +27,10 @@ def _persist_ok(**_: object) -> dict:
 
 @pytest.mark.asyncio
 class TestCreateTextFileCommand:
+    """Represent TestCreateTextFileCommand."""
+
     async def test_create_empty_file(self, tmp_path: Path) -> None:
+        """Verify test create empty file."""
         f = tmp_path / "notes.txt"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -61,6 +64,7 @@ class TestCreateTextFileCommand:
         assert result.data["metadata_update"].get("success") is True
 
     async def test_create_file_with_content(self, tmp_path: Path) -> None:
+        """Verify test create file with content."""
         f = tmp_path / "notes.txt"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -94,6 +98,7 @@ class TestCreateTextFileCommand:
         assert result.data["bytes_written"] == len("alpha\nbeta\n".encode("utf-8"))
 
     async def test_create_md_file(self, tmp_path: Path) -> None:
+        """Verify test create md file."""
         f = tmp_path / "README.md"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -122,6 +127,7 @@ class TestCreateTextFileCommand:
         assert f.read_text(encoding="utf-8") == ""
 
     async def test_create_nested_parent_dirs(self, tmp_path: Path) -> None:
+        """Verify test create nested parent dirs."""
         f = tmp_path / "notes" / "a" / "b" / "sample.txt"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -155,6 +161,7 @@ class TestCreateTextFileCommand:
         assert result.data["parent_created"] is True
 
     async def test_parent_missing_and_create_dirs_false(self, tmp_path: Path) -> None:
+        """Verify test parent missing and create dirs false."""
         f = tmp_path / "notes" / "a" / "b" / "sample.txt"
         mock_db = MagicMock()
         mock_project = MagicMock()
@@ -183,6 +190,7 @@ class TestCreateTextFileCommand:
         assert result.code == "DIRECTORY_NOT_FOUND"
 
     async def test_existing_file_overwrite_false(self, tmp_path: Path) -> None:
+        """Verify test existing file overwrite false."""
         target = tmp_path / "notes.txt"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("old", encoding="utf-8")
@@ -219,6 +227,7 @@ class TestCreateTextFileCommand:
         assert target.read_text(encoding="utf-8") == "old"
 
     async def test_existing_file_overwrite_true(self, tmp_path: Path) -> None:
+        """Verify test existing file overwrite true."""
         target = tmp_path / "notes.txt"
         target.write_text("old", encoding="utf-8")
         mock_db = MagicMock()
@@ -264,6 +273,7 @@ class TestCreateTextFileCommand:
         bm.create_backup.assert_called_once()
 
     async def test_absolute_file_path_rejected(self, tmp_path: Path) -> None:
+        """Verify test absolute file path rejected."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(project_id=_PID, file_path="/tmp/outside.txt")
@@ -273,6 +283,7 @@ class TestCreateTextFileCommand:
         assert result.code == "INVALID_FILE_PATH"
 
     async def test_traversal_path_rejected(self, tmp_path: Path) -> None:
+        """Verify test traversal path rejected."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(project_id=_PID, file_path="../outside.txt")
@@ -282,6 +293,7 @@ class TestCreateTextFileCommand:
         assert result.code == "INVALID_FILE_PATH"
 
     async def test_json_rejected_before_database(self, tmp_path: Path) -> None:
+        """Verify test json rejected before database."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(
@@ -293,6 +305,7 @@ class TestCreateTextFileCommand:
         assert result.code == "JSON_CREATE_USE_UNIVERSAL_FILE_SAVE"
 
     async def test_yaml_rejected_before_database(self, tmp_path: Path) -> None:
+        """Verify test yaml rejected before database."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(
@@ -304,6 +317,7 @@ class TestCreateTextFileCommand:
         assert result.code == "YAML_CREATE_USE_UNIVERSAL_FILE_SAVE"
 
     async def test_py_forbidden_before_database(self, tmp_path: Path) -> None:
+        """Verify test py forbidden before database."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(
@@ -317,6 +331,7 @@ class TestCreateTextFileCommand:
         assert result.code == "PYTHON_FILE_FORBIDDEN"
 
     async def test_go_code_forbidden_before_database(self, tmp_path: Path) -> None:
+        """Verify test go code forbidden before database."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(project_id=_PID, file_path="main.go")
@@ -326,6 +341,7 @@ class TestCreateTextFileCommand:
         assert result.code == "CODE_FILE_FORBIDDEN"
 
     async def test_unsupported_suffix_before_database(self, tmp_path: Path) -> None:
+        """Verify test unsupported suffix before database."""
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
             result = await cmd.execute(project_id=_PID, file_path="x.toml")
@@ -335,6 +351,7 @@ class TestCreateTextFileCommand:
         assert result.code == "UNSUPPORTED_FILE_EXTENSION"
 
     async def test_directory_target_with_text_suffix(self, tmp_path: Path) -> None:
+        """Verify test directory target with text suffix."""
         d = tmp_path / "readme.md"
         d.mkdir(parents=False)
         mock_db = MagicMock()
@@ -366,11 +383,17 @@ class TestCreateTextFileCommand:
 
 
 def test_command_registration() -> None:
+    """Verify test command registration."""
+
     class _DummyRegistry:
+        """Represent DummyRegistry."""
+
         def __init__(self) -> None:
+            """Initialize the instance."""
             self.names: list[str] = []
 
         def register(self, command_cls: type, source: str) -> None:
+            """Return register."""
             self.names.append(getattr(command_cls, "name", ""))
 
     reg = _DummyRegistry()

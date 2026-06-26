@@ -35,6 +35,7 @@ class _AstCstChunksDbFacade:
     """Thin facade: binds ``update_file_data`` helpers to :class:`DatabaseClient` while exposing the RPC driver."""
 
     def __init__(self, client: DatabaseClient, driver: SQLiteDriver) -> None:
+        """Initialize the instance."""
         self._c = client
         self._driver = driver
         self.get_files_needing_chunking = types.MethodType(
@@ -43,32 +44,40 @@ class _AstCstChunksDbFacade:
         self.update_file_data = types.MethodType(update_file_data, self)
 
     def __getattr__(self, name: str) -> Any:
+        """Return getattr."""
         return getattr(self._c, name)
 
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
+        """Return execute."""
         self._c.execute(sql, params)
 
     def _commit(self) -> None:
+        """Return commit."""
         pass
 
     def _fetchone(self, sql: str, params: Optional[tuple] = None):
+        """Return fetchone."""
         r = self._c.execute(sql, params)
         rows = r.get("data") or []
         return rows[0] if rows else None
 
     def _fetchall(self, sql: str, params: Optional[tuple] = None) -> List[dict]:
+        """Return fetchall."""
         r = self._c.execute(sql, params)
         return list(r.get("data") or [])
 
     def _clear_file_vectors(self, file_id: Any) -> None:
+        """Return clear file vectors."""
         clear_file_vectors_via_driver(self._driver, str(file_id))
 
     def clear_file_data(self, file_id: Any) -> None:
+        """Return clear file data."""
         clear_file_data_via_driver(self._driver, str(file_id))
 
 
 @pytest.fixture
 def test_db(tmp_path: Path) -> Iterator[_AstCstChunksDbFacade]:
+    """Verify test db."""
     db_path = tmp_path / "test.db"
     driver = create_driver("sqlite", {"path": str(db_path)})
     assert isinstance(driver, SQLiteDriver)
@@ -272,7 +281,9 @@ class TestASTCSTChunksVerification:
             project_id, limit=10
         )
         file_ids_needing_chunking = [f["id"] for f in files_needing_chunking]
-        assert file_id in file_ids_needing_chunking, "File should be marked for chunking"
+        assert (
+            file_id in file_ids_needing_chunking
+        ), "File should be marked for chunking"
 
     def test_ast_cst_updated_after_file_modification(
         self, test_db, test_file_with_content, test_project
@@ -669,4 +680,6 @@ def new_function():
             test_project, limit=10
         )
         file_ids = [f["id"] for f in files_needing_chunking]
-        assert file_id in file_ids, "File should be marked for chunking after modification"
+        assert (
+            file_id in file_ids
+        ), "File should be marked for chunking after modification"

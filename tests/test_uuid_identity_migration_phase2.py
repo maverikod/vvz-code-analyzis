@@ -29,7 +29,6 @@ from code_analysis.core.database.migrations.uuid_identity_migration_postgres imp
     create_mapping_tables_postgres,
 )
 
-
 # FK checks off; minimal INTEGER PK tables matching migration sources (subset of prod DDL).
 _LEGACY_INTEGER_SCHEMA_SQL = """
 PRAGMA foreign_keys=OFF;
@@ -198,25 +197,31 @@ class _LegacySQLiteMigrConn:
     """Minimal SQLite connection wrapper used by Phase 1–2 migration helpers."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
+        """Initialize the instance."""
         self._conn = conn
         self._driver_type = "sqlite"
 
     def _execute(self, sql: str, params=None) -> None:
+        """Return execute."""
         self._conn.execute(sql, params or ())
 
     def _fetchone(self, sql: str, params=None):
+        """Return fetchone."""
         cur = self._conn.execute(sql, params or ())
         return cur.fetchone()
 
     def _fetchall(self, sql: str, params=None):
+        """Return fetchall."""
         cur = self._conn.execute(sql, params or ())
         return cur.fetchall()
 
     def _commit(self) -> None:
+        """Return commit."""
         self._conn.commit()
 
 
 def _scalar(db: _LegacySQLiteMigrConn, sql: str, params: tuple = ()) -> int:
+    """Return scalar."""
     r = db._fetchone(sql, params)
     if not r:
         return 0
@@ -224,6 +229,7 @@ def _scalar(db: _LegacySQLiteMigrConn, sql: str, params: tuple = ()) -> int:
 
 
 def _read_map_old_to_new(db: _LegacySQLiteMigrConn, mig_tbl: str) -> dict[int, str]:
+    """Return read map old to new."""
     rows = db._fetchall(f"SELECT old_id, new_id FROM {mig_tbl}")
     out: dict[int, str] = {}
     for row in rows:
@@ -232,6 +238,7 @@ def _read_map_old_to_new(db: _LegacySQLiteMigrConn, mig_tbl: str) -> dict[int, s
 
 
 def _seed_legacy_graph(db: _LegacySQLiteMigrConn) -> tuple[int, int, int]:
+    """Return seed legacy graph."""
     w = str(uuid.uuid4())
     p = str(uuid.uuid4())
     db._execute("INSERT INTO watch_dirs (id, name) VALUES (?, ?)", (w, "wd"))
@@ -287,6 +294,7 @@ def _seed_legacy_graph(db: _LegacySQLiteMigrConn) -> tuple[int, int, int]:
 
 
 def test_postgres_migration_ddl_contains_uuid_columns() -> None:
+    """Verify test postgres migration ddl contains uuid columns."""
     ddl = "\n".join(create_mapping_tables_postgres())
     assert "uuid_migration_files" in ddl
     assert "uuid_migration_indexing_errors" in ddl
@@ -294,6 +302,7 @@ def test_postgres_migration_ddl_contains_uuid_columns() -> None:
 
 
 def test_phase2_legacy_sqlite_mappings_idempotent(tmp_path: Path) -> None:
+    """Verify test phase2 legacy sqlite mappings idempotent."""
     path = Path(tmp_path) / "legacy_mig.sqlite"
     conn = sqlite3.connect(str(path))
     try:
@@ -349,9 +358,12 @@ def test_preflight_execute_only_db_like_rpc_client() -> None:
     wid = str(uuid.uuid4())
 
     class _ExecuteOnlyDb:
+        """Represent ExecuteOnlyDb."""
+
         _driver_type = "postgresql"
 
         def execute(self, sql: str, params=None):
+            """Execute the command."""
             s = " ".join(sql.split()).lower()
             if "count(*)" in s and " from projects" in s and "files" not in s:
                 return {"data": [{"n": 1}]}

@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 def _session_and_layout(tmp_path: Path):
+    """Return session and layout."""
     from code_analysis.core.search_session.directory import (
         provision_search_session_directory,
     )
@@ -41,9 +42,11 @@ def _fake_assembler_factory(
     max_results_per_block=None,
     **kwargs: object,
 ):
+    """Return fake assembler factory."""
     assembler = MagicMock()
 
     def run(search_completed=False):
+        """Return run."""
         (layout.blocks_dir / "block_1.json").write_text(
             json.dumps({"position": 1, "items": []})
         )
@@ -53,6 +56,7 @@ def _fake_assembler_factory(
 
 
 def test_indexed_finding_payload_fulltext_maps_content_and_score() -> None:
+    """Verify test indexed finding payload fulltext maps content and score."""
     raw = {
         "file_path": "src/mod.py",
         "content": "def foo() -> int:\n    return 1",
@@ -68,6 +72,7 @@ def test_indexed_finding_payload_fulltext_maps_content_and_score() -> None:
 
 
 def test_normalize_cross_finding_structural() -> None:
+    """Verify test normalize cross finding structural."""
     raw = {
         "file_path": "c.py",
         "confidence": "high",
@@ -80,12 +85,14 @@ def test_normalize_cross_finding_structural() -> None:
 
 
 def test_normalize_cross_finding_excludes_line_only_when_structural_required() -> None:
+    """Verify test normalize cross finding excludes line only when structural required."""
     raw = {"file_path": "c.py", "evidence": {"source_mode": "classic_line"}}
     finding = normalize_cross_finding(raw, index=0, require_structural_grep=True)
     assert finding is None
 
 
 def test_normalize_cross_finding_includes_line_only_when_not_required() -> None:
+    """Verify test normalize cross finding includes line only when not required."""
     raw = {
         "file_path": "c.py",
         "evidence": {"source_mode": "classic_line", "node_ref": "node-1"},
@@ -98,6 +105,7 @@ def test_normalize_cross_finding_includes_line_only_when_not_required() -> None:
 async def test_run_paginated_cross_publishes_block_from_fulltext(
     tmp_path: Path,
 ) -> None:
+    """Verify test run paginated cross publishes block from fulltext."""
     session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command._resolve_project_root.return_value = tmp_path
@@ -157,12 +165,14 @@ async def test_run_paginated_cross_publishes_block_from_fulltext(
 async def test_run_paginated_cross_publishes_block_structural_grep(
     tmp_path: Path,
 ) -> None:
+    """Verify test run paginated cross publishes block structural grep."""
     session, layout = _session_and_layout(tmp_path)
     command = MagicMock()
     command._resolve_project_root.return_value = tmp_path
     grep_cmd = MagicMock()
 
     async def _grep_execute(**kwargs: object) -> SuccessResult:
+        """Return grep execute."""
         on_batch = kwargs.get("on_match_batch")
         if callable(on_batch):
             on_batch(

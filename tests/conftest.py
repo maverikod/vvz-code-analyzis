@@ -24,7 +24,6 @@ from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
 
 from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
 
-
 TEST_SERVER_INSTANCE_ID = "11111111-1111-4111-8111-111111111111"
 
 
@@ -33,6 +32,7 @@ def _partition_tests_by_server_instance_id(monkeypatch: pytest.MonkeyPatch) -> N
     """All DB queries in tests use a fixed server instance partition key."""
 
     def _sid(**_kwargs: object) -> str:
+        """Return sid."""
         return TEST_SERVER_INSTANCE_ID
 
     monkeypatch.setattr(

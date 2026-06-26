@@ -19,14 +19,19 @@ from code_analysis.core.database_driver_pkg.rpc_handlers_file_trash import (
 
 
 class _Handler(_RPCHandlersFileTrashMixin):
+    """Represent Handler."""
+
     def __init__(self, driver: object) -> None:
+        """Initialize the instance."""
         self.driver = driver
 
 
 def test_mark_file_deleted_passes_driver_to_standalone(monkeypatch) -> None:
+    """Verify test mark file deleted passes driver to standalone."""
     calls: list[object] = []
 
     def _fake_via_driver(driver: object, **kwargs: Any) -> bool:
+        """Return fake via driver."""
         calls.append(driver)
         del kwargs
         return True
@@ -49,7 +54,10 @@ def test_mark_file_deleted_passes_driver_to_standalone(monkeypatch) -> None:
 
 
 def test_get_deleted_files_returns_data_result(monkeypatch) -> None:
+    """Verify test get deleted files returns data result."""
+
     def _fake_get_deleted(driver: object, project_id: str) -> list[Dict[str, Any]]:
+        """Return fake get deleted."""
         del driver
         return [{"id": 1, "path": "/tmp/trash/p1/a.txt", "project_id": project_id}]
 
@@ -67,12 +75,15 @@ def test_get_deleted_files_returns_data_result(monkeypatch) -> None:
 
 
 def test_unmark_file_deleted_returns_success(monkeypatch) -> None:
+    """Verify test unmark file deleted returns success."""
+
     def _fake_unmark(
         driver: object,
         file_path: str,
         project_id: str,
         out_error: Dict[str, str] | None = None,
     ) -> bool:
+        """Return fake unmark."""
         del driver, out_error
         return file_path == "notes/a.txt" and project_id == "p1"
 
@@ -92,8 +103,13 @@ def test_unmark_file_deleted_returns_success(monkeypatch) -> None:
 
 
 def test_cleanup_deleted_files_dry_run_with_client_without_db_path() -> None:
+    """Verify test cleanup deleted files dry run with client without db path."""
+
     class _FakeClient:
+        """Represent FakeClient."""
+
         def get_deleted_files(self, project_id: str) -> list[Dict[str, Any]]:
+            """Return get deleted files."""
             return [
                 {
                     "id": 10,
@@ -117,12 +133,17 @@ def test_cleanup_deleted_files_dry_run_with_client_without_db_path() -> None:
 
 
 def test_mark_file_deleted_with_sqlite_like_driver(monkeypatch) -> None:
+    """Verify test mark file deleted with sqlite like driver."""
+
     class _SQLiteLikeDriver:
+        """Represent SQLiteLikeDriver."""
+
         db_path = "/tmp/code_analysis.db"
 
     captured: list[object] = []
 
     def _capture(driver: object, **kwargs: Any) -> bool:
+        """Return capture."""
         captured.append(driver)
         del kwargs
         return True
@@ -145,9 +166,11 @@ def test_mark_file_deleted_with_sqlite_like_driver(monkeypatch) -> None:
 
 
 def test_hard_delete_file_accepts_uuid_string(monkeypatch) -> None:
+    """Verify test hard delete file accepts uuid string."""
     captured: list[object] = []
 
     def _fake_hard(driver: object, file_id: object) -> None:
+        """Return fake hard."""
         captured.append(file_id)
 
     monkeypatch.setattr(
@@ -165,9 +188,11 @@ def test_hard_delete_file_accepts_uuid_string(monkeypatch) -> None:
 
 
 def test_hard_delete_file_still_accepts_int(monkeypatch) -> None:
+    """Verify test hard delete file still accepts int."""
     captured: list[object] = []
 
     def _fake_hard(driver: object, file_id: object) -> None:
+        """Return fake hard."""
         captured.append(file_id)
 
     monkeypatch.setattr(
@@ -184,12 +209,15 @@ def test_hard_delete_file_still_accepts_int(monkeypatch) -> None:
 
 
 def test_missing_trash_file_returns_structured_error(monkeypatch) -> None:
+    """Verify test missing trash file returns structured error."""
+
     def _fake_unmark(
         driver: object,
         file_path: str,
         project_id: str,
         out_error: Dict[str, str] | None = None,
     ) -> bool:
+        """Return fake unmark."""
         del driver, file_path, project_id
         if out_error is not None:
             out_error["error_code"] = "TRASH_FILE_NOT_FOUND"

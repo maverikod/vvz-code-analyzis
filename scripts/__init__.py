@@ -1,1 +1,1 @@
-# Scripts package (pipeline and utilities).
+"""Scripts package for pipeline and maintenance utilities."""

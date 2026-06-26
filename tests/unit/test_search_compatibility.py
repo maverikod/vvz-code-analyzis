@@ -15,6 +15,7 @@ from code_analysis.core.search_session.session import (
 
 
 def test_bridge_commands_maps_search_start_backends() -> None:
+    """Verify test bridge commands maps search start backends."""
     assert "search_start" in BRIDGE_COMMANDS
     assert set(BRIDGE_COMMANDS["search_start"]) == {
         "fulltext",
@@ -26,6 +27,7 @@ def test_bridge_commands_maps_search_start_backends() -> None:
 
 
 def test_maybe_route_paginated_false_returns_legacy_payload() -> None:
+    """Verify test maybe route paginated false returns legacy payload."""
     legacy = {"success": True, "results": [{"file_path": "a.py"}]}
 
     result = maybe_route_paginated(
@@ -38,6 +40,7 @@ def test_maybe_route_paginated_false_returns_legacy_payload() -> None:
 
 
 def test_maybe_route_paginated_true_returns_job_handoff_only() -> None:
+    """Verify test maybe route paginated true returns job handoff only."""
     session = _session("job-123")
 
     result = maybe_route_paginated(
@@ -56,6 +59,7 @@ def test_maybe_route_paginated_true_returns_job_handoff_only() -> None:
 
 
 def test_handoff_to_response_serializes_dataclass() -> None:
+    """Verify test handoff to response serializes dataclass."""
     handoff = PaginatedSearchHandoff(
         job_id="abc",
         index_url="/search/jobs/abc/index",
@@ -68,6 +72,7 @@ def test_handoff_to_response_serializes_dataclass() -> None:
 
 
 def _session(search_id: str) -> SearchSession:
+    """Return session."""
     return SearchSession(
         search_id=search_id,
         state=SearchSessionState.running,

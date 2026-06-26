@@ -11,6 +11,7 @@ _SCRIPT = _REPO_ROOT / "scripts" / "postgres_setup_from_env_config.py"
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
+    """Return run."""
     return subprocess.run(
         [sys.executable, str(_SCRIPT), *args],
         cwd=_REPO_ROOT,
@@ -21,6 +22,7 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_config_after_subcommand_is_accepted() -> None:
+    """Verify test config after subcommand is accepted."""
     result = _run(
         "set-superuser-password",
         "--config",
@@ -32,6 +34,7 @@ def test_config_after_subcommand_is_accepted() -> None:
 
 
 def test_config_before_subcommand_is_accepted() -> None:
+    """Verify test config before subcommand is accepted."""
     result = _run(
         "--config",
         "/no/such/casmgr-config.json",

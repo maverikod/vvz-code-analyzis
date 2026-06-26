@@ -55,9 +55,11 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the schema for batched file lock and unlock operations."""
         return cast(Dict[str, Any], get_project_file_advisory_lock_batch_schema())
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate batch items, actions, sessions, and lock modes."""
         params = super().validate_params(params)
         items = params.get("items")
         if not isinstance(items, list) or not items:
@@ -106,6 +108,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: Type["ProjectFileAdvisoryLockBatchCommand"]) -> Dict[str, Any]:
+        """Return metadata for batched advisory file locking."""
         return cast(Dict[str, Any], get_project_file_advisory_lock_batch_metadata(cls))
 
     async def execute(
@@ -115,6 +118,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
         timeout_seconds: float | None = None,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Execute all lock/unlock items without failing the entire batch."""
         database = self._open_database_from_config(auto_analyze=False)
         current_session_id = get_session_id_for_current_pid(database, role="daemon")
         if not runtime_session_exists(database, current_session_id):
@@ -174,6 +178,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
         current_session_id: str,
         timeout_seconds: float | None = None,
     ) -> Dict[str, Any]:
+        """Execute one validated lock or unlock item."""
         session_id = base["session_id"]
         project_id = base["project_id"]
         file_path = base["file_path"]
@@ -278,6 +283,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
         *,
         details: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
+        """Build a structured per-item failure result."""
         item = dict(base)
         item.update({"ok": False, "code": code, "message": message})
         if details:

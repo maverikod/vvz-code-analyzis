@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class JsonFindNodeCommand(BaseMCPCommand):
+    """Resolve JSON tree nodes by RFC 6901 pointer or key path."""
+
     name = "json_find_node"
     version = "1.0.0"
     descr = "Find node_id by json_pointer and/or key_path (exact match)"
@@ -34,6 +36,7 @@ class JsonFindNodeCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -98,6 +101,7 @@ class JsonFindNodeCommand(BaseMCPCommand):
         key_path: Optional[Union[str, List[Any]]] = None,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Find node ids for the requested JSON pointer or key path."""
         t_start = time.perf_counter()
         try:
             tree = get_tree(tree_id)
@@ -167,6 +171,7 @@ class JsonFindNodeCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls: type["JsonFindNodeCommand"]) -> Dict[str, Any]:
+        """Return metadata for the JSON node lookup command."""
         from .json_tree_commands_metadata import json_tree_command_metadata
 
         return json_tree_command_metadata(

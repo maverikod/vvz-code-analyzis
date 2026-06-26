@@ -23,6 +23,7 @@ class RetryPolicy:
 
     @staticmethod
     def from_driver_config(config: Mapping[str, Any]) -> RetryPolicy:
+        """Return from driver config."""
         attempts = 3
         delay_seconds = 0.5
         backoff_multiplier = 2.0

@@ -64,12 +64,14 @@ class UuidMigrationPreflightError(UuidMigrationError):
 
 
 def _valid_ident(name: str) -> str:
+    """Return valid ident."""
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
         raise ValueError(f"invalid SQL identifier: {name!r}")
     return name
 
 
 def mapping_table_for_source(source_table: str) -> str:
+    """Return mapping table for source."""
     for src, mig in MANDATORY_SOURCE_TO_MIGRATION:
         if src == source_table:
             return mig
@@ -100,9 +102,7 @@ def map_polymorphic_entity_id_to_new_uuid(
     return lookup_new_uuid(src, old_entity_id)
 
 
-def _migration_fetchone(
-    db: Any, sql: str, params: Optional[tuple] = None
-) -> Any:
+def _migration_fetchone(db: Any, sql: str, params: Optional[tuple] = None) -> Any:
     """
     One row for migration SQL — works with :class:`CodeDatabase` (``_fetchone``) and
     :class:`DatabaseClient` (RPC ``execute`` → ``{"data": [row_dict, ...]}``).
@@ -122,9 +122,7 @@ def _migration_fetchone(
     return None
 
 
-def _migration_fetchall(
-    db: Any, sql: str, params: Optional[tuple] = None
-) -> List[Any]:
+def _migration_fetchall(db: Any, sql: str, params: Optional[tuple] = None) -> List[Any]:
     """All rows — ``_fetchall`` on CodeDatabase, else ``execute`` ``data`` list."""
     fetch = getattr(db, "_fetchall", None)
     if callable(fetch):
@@ -139,9 +137,7 @@ def _migration_fetchall(
     return []
 
 
-def _migration_execute(
-    db: Any, sql: str, params: Optional[tuple] = None
-) -> None:
+def _migration_execute(db: Any, sql: str, params: Optional[tuple] = None) -> None:
     """Run DDL/DML — ``_execute`` on :class:`CodeDatabase`, else ``execute`` (RPC client)."""
     fn = getattr(db, "_execute", None)
     if callable(fn):
@@ -210,6 +206,7 @@ def detect_backend_kind(db: Any) -> BackendKind:
 
 
 def _scalar_int(db: Any, sql: str, params: Optional[tuple] = None) -> int:
+    """Return scalar int."""
     r = _migration_fetchone(db, sql, params)
     if r is None:
         return 0
@@ -221,6 +218,7 @@ def _scalar_int(db: Any, sql: str, params: Optional[tuple] = None) -> int:
 
 
 def _rows_first_col(db: Any, sql: str, params: Optional[tuple] = None) -> List[int]:
+    """Return rows first col."""
     rows = _migration_fetchall(db, sql, params)
     out: List[int] = []
     for r in rows:
@@ -232,6 +230,7 @@ def _rows_first_col(db: Any, sql: str, params: Optional[tuple] = None) -> List[i
 
 
 def _rows_pk_values(db: Any, sql: str, params: Optional[tuple] = None) -> List[Any]:
+    """Return rows pk values."""
     rows = _migration_fetchall(db, sql, params)
     out: List[Any] = []
     for r in rows:
@@ -243,6 +242,7 @@ def _rows_pk_values(db: Any, sql: str, params: Optional[tuple] = None) -> List[A
 
 
 def _validate_uuid_text(s: str) -> uuid.UUID:
+    """Return validate uuid text."""
     try:
         return uuid.UUID(str(s).strip())
     except (ValueError, AttributeError) as e:
@@ -253,6 +253,8 @@ def _validate_uuid_text(s: str) -> uuid.UUID:
 
 @dataclass
 class PreflightReport:
+    """Represent PreflightReport."""
+
     backend: BackendKind
     projects_uuid_ok: bool = True
     watch_dirs_uuid_ok: bool = True
@@ -347,6 +349,8 @@ def run_uuid_migration_preflight_phase1(
 
 @dataclass
 class Phase2Report:
+    """Represent Phase2Report."""
+
     backend: BackendKind
     migration_tables: Tuple[str, ...]
     counts: Dict[str, Tuple[int, int]]  # migration_table -> (source_count, map_count)
@@ -358,6 +362,7 @@ def _insert_mapping_pairs(
     pairs: Sequence[Tuple[int, str]],
 ) -> None:
     # Unified ``?`` placeholders — PostgreSQL driver translates to ``%s`` (see postgres_run).
+    """Return insert mapping pairs."""
     sql = (
         f"INSERT INTO {_valid_ident(mig_table)} "
         "(old_id, new_id) VALUES (?, ?) ON CONFLICT (old_id) DO NOTHING"
@@ -372,6 +377,7 @@ def _fill_mapping_for_table(
     source_table: str,
     mig_table: str,
 ) -> None:
+    """Return fill mapping for table."""
     _valid_ident(source_table)
     _valid_ident(mig_table)
     missing_ids = _rows_first_col(
@@ -485,6 +491,7 @@ def make_mapping_lookup_closure(
     del _backend  # reserved for adapters that bypass driver placeholder rewrite
 
     def lookup(source_table: str, old_entity_id_int: int) -> Optional[str]:
+        """Return lookup."""
         mt = mapping_table_for_source(source_table)
         r = _migration_fetchone(
             db,

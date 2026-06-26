@@ -23,6 +23,7 @@ _CLIENT_SESSION_TABLES = (
 
 
 def _stub_fk_parents(conn: sqlite3.Connection) -> None:
+    """Return stub fk parents."""
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
     conn.execute(
         "CREATE TABLE files (id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id))"
@@ -31,10 +32,12 @@ def _stub_fk_parents(conn: sqlite3.Connection) -> None:
 
 
 def test_ensure_client_session_tables_falsy_conn_returns_immediately() -> None:
+    """Verify test ensure client session tables falsy conn returns immediately."""
     ensure_client_session_tables(None)
 
 
 def test_ensure_client_session_tables_idempotent_on_sqlite() -> None:
+    """Verify test ensure client session tables idempotent on sqlite."""
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.db"
         conn = sqlite3.connect(str(p))

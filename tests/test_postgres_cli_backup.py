@@ -16,6 +16,7 @@ from code_analysis.core.postgres_cli_backup import (
 
 
 def test_load_postgres_cli_config_requires_password() -> None:
+    """Verify test load postgres cli config requires password."""
     with pytest.raises(PostgresCliBackupError, match="password"):
         load_postgres_cli_config(
             {
@@ -28,6 +29,7 @@ def test_load_postgres_cli_config_requires_password() -> None:
 
 
 def test_backup_postgres_custom_format_success(tmp_path: Path) -> None:
+    """Verify test backup postgres custom format success."""
     driver_cfg = {
         "host": "127.0.0.1",
         "port": 5432,
@@ -39,6 +41,7 @@ def test_backup_postgres_custom_format_success(tmp_path: Path) -> None:
     def fake_run(
         argv, env=None, capture_output=False, text=False, timeout=None, check=False
     ):
+        """Return fake run."""
         out_idx = list(argv).index("-f") + 1
         Path(argv[out_idx]).write_bytes(b"PGDMP")
         m = MagicMock()
@@ -62,6 +65,7 @@ def test_backup_postgres_custom_format_success(tmp_path: Path) -> None:
 
 
 def test_reset_postgres_public_schema_uses_psycopg() -> None:
+    """Verify test reset postgres public schema uses psycopg."""
     pytest.importorskip("psycopg")
     import psycopg
 

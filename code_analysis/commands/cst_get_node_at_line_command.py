@@ -43,6 +43,7 @@ class CSTGetNodeAtLineCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -81,6 +82,7 @@ class CSTGetNodeAtLineCommand(BaseMCPCommand):
         statement_level: bool = True,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Return the CST node covering a line, with optional code and statement context."""
         t_start = time.perf_counter()
         try:
             if line < 1:

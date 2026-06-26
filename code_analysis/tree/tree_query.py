@@ -20,23 +20,31 @@ from code_analysis.tree.cst_query_selector import (
 
 
 class QueryMode(str, Enum):
+    """Represent QueryMode."""
+
     SIMPLE = "simple"
     XPATH = "xpath"
 
 
 @dataclass(frozen=True)
 class TreeQueryMatch:
+    """Represent TreeQueryMatch."""
+
     short_id: NodeId
     source_text: Optional[str] = None  # set when include_code and Python
 
 
 @dataclass(frozen=True)
 class NoMatch:
+    """Represent NoMatch."""
+
     message: str = "no nodes matched query"
 
 
 @dataclass(frozen=True)
 class NonUniqueMatch:
+    """Represent NonUniqueMatch."""
+
     candidates: List[NodeId]
     message: str = "query matched multiple nodes"
 
@@ -50,6 +58,8 @@ class TreeQueryError(ValueError):
 
 @dataclass(frozen=True)
 class TreeQueryFilters:
+    """Represent TreeQueryFilters."""
+
     node_type: Optional[str] = None
     name: Optional[str] = None
     qualified_name: Optional[str] = None
@@ -58,10 +68,12 @@ class TreeQueryFilters:
 
 
 def _is_python_format(source_path: Path) -> bool:
+    """Return is python format."""
     return source_path.suffix.lower() == ".py"
 
 
 def _validated_node_id(value: NodeId) -> NodeId:
+    """Return validated node id."""
     return validate_short_id(int(value))
 
 
@@ -72,6 +84,7 @@ def _matches_from_metadata(
     include_code: bool,
     is_python: bool,
 ) -> List[TreeQueryMatch]:
+    """Return matches from metadata."""
     matches: List[TreeQueryMatch] = []
     seen: set[NodeId] = set()
     for meta in metadata_list:
@@ -91,6 +104,7 @@ def _code_by_short_id_from_xpath(
     selector: str,
     short_id_mapper: Callable[[Any], NodeId],
 ) -> dict[NodeId, Optional[str]]:
+    """Return code by short id from xpath."""
     from code_analysis.core.cst_tree.tree_finder import find_nodes
 
     metadata_list = find_nodes(
@@ -108,12 +122,15 @@ def _code_by_short_id_from_xpath(
 
 
 class TreeQuery:
+    """Represent TreeQuery."""
+
     def __init__(
         self,
         *,
         tree_loader: Callable[[Path, Optional[str]], Any],
         short_id_mapper: Callable[[Any], NodeId],
     ) -> None:
+        """Initialize the instance."""
         self._tree_loader = tree_loader
         self._short_id_mapper = short_id_mapper
 
@@ -128,6 +145,7 @@ class TreeQuery:
         include_code: bool = False,
         require_one: bool = False,
     ) -> Union[List[TreeQueryMatch], RequireOneResult]:
+        """Return search."""
         tree = self._tree_loader(source_path, session_id)
         is_python = _is_python_format(source_path)
 
@@ -163,6 +181,7 @@ class TreeQuery:
         include_code: bool,
         is_python: bool,
     ) -> List[TreeQueryMatch]:
+        """Return search simple."""
         active = filters or TreeQueryFilters()
         if (
             active.start_line is not None or active.end_line is not None
@@ -201,6 +220,7 @@ class TreeQuery:
         include_code: bool,
         is_python: bool,
     ) -> List[TreeQueryMatch]:
+        """Return search xpath."""
         try:
             sel = CstQuerySelector.parse(selector or "")
         except CstQuerySelectorError:
@@ -231,6 +251,7 @@ class TreeQuery:
     def _apply_require_one(
         matches: List[TreeQueryMatch],
     ) -> RequireOneResult:
+        """Return apply require one."""
         if len(matches) == 0:
             return NoMatch()
         if len(matches) == 1:

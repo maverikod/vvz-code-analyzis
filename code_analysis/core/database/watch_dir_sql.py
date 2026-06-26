@@ -64,6 +64,7 @@ def watch_dirs_upsert_norm_for_postgres_adapter() -> str:
 
 
 def watch_dir_paths_upsert_norm_for_postgres_adapter() -> str:
+    """Return watch dir paths upsert norm for postgres adapter."""
     return (
         "INSERT OR REPLACE INTO watch_dir_paths "
         "(server_instance_id, watch_dir_id, absolute_path, updated_at) "
@@ -72,6 +73,7 @@ def watch_dir_paths_upsert_norm_for_postgres_adapter() -> str:
 
 
 def watch_dir_paths_upsert_null_norm_for_postgres_adapter() -> str:
+    """Return watch dir paths upsert null norm for postgres adapter."""
     return (
         "INSERT OR REPLACE INTO watch_dir_paths "
         "(server_instance_id, watch_dir_id, absolute_path, updated_at) "

@@ -17,6 +17,7 @@ This section has body text but no sub-sections.
 
 
 def test_section_replace_range_includes_heading_line() -> None:
+    """Verify test section replace range includes heading line."""
     bounds = resolve_markdown_line_range(_LEAF_SECTION, "only-section")
     assert not isinstance(bounds, PreviewError)
     start_line, end_line = bounds
@@ -27,6 +28,7 @@ def test_section_replace_range_includes_heading_line() -> None:
 
 
 def test_content_suffix_range_excludes_heading_line() -> None:
+    """Verify test content suffix range excludes heading line."""
     bounds = resolve_markdown_line_range(_LEAF_SECTION, "only-section/__content")
     assert not isinstance(bounds, PreviewError)
     start_line, _end_line = bounds
@@ -38,6 +40,7 @@ def test_content_suffix_range_excludes_heading_line() -> None:
 
 
 def test_uuid_block_node_ref_resolves_to_line_range(tmp_path) -> None:
+    """Verify test uuid block node ref resolves to line range."""
     md = tmp_path / "doc.md"
     path = str(md)
     content = "# Title\n\nBody paragraph.\n"

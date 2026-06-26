@@ -16,6 +16,7 @@ _PID = "550e8400-e29b-41d4-a716-446655440000"
 
 @pytest.mark.asyncio
 async def test_get_file_lines_rejects_range_beyond_file(tmp_path: Path) -> None:
+    """Verify test get file lines rejects range beyond file."""
     f = tmp_path / "sample.txt"
     f.write_text("line one\nline two\n", encoding="utf-8")
 
@@ -34,6 +35,7 @@ async def test_get_file_lines_rejects_range_beyond_file(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_get_file_lines_accepts_in_range_slice(tmp_path: Path) -> None:
+    """Verify test get file lines accepts in range slice."""
     f = tmp_path / "sample.txt"
     f.write_text("line one\nline two\nline three\n", encoding="utf-8")
 

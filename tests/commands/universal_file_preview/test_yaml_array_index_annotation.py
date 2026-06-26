@@ -14,6 +14,7 @@ from code_analysis.commands.universal_file_preview.errors import PreviewError
 
 
 def _concepts_yaml() -> str:
+    """Return concepts yaml."""
     lines = ["concepts:"]
     for i in range(12):
         lines.extend(
@@ -29,11 +30,13 @@ def _concepts_yaml() -> str:
 
 
 def _write_concepts(path: pathlib.Path) -> None:
+    """Return write concepts."""
     path.write_text(_concepts_yaml(), encoding="utf-8")
 
 
 @pytest.fixture
 def budget() -> PreviewBudget:
+    """Return budget."""
     return PreviewBudget(
         preview_lines=50,
         value_preview_len=120,
@@ -45,11 +48,14 @@ def test_distinct_array_indices_return_distinct_elements(
     tmp_path: pathlib.Path,
     budget: PreviewBudget,
 ) -> None:
+    """Verify test distinct array indices return distinct elements."""
     pytest.importorskip("yaml")
     path = tmp_path / "concepts.yaml"
     _write_concepts(path)
     handler = YamlFileHandler()
-    assert not isinstance(handler.open_root(str(path), None, budget=budget), PreviewError)
+    assert not isinstance(
+        handler.open_root(str(path), None, budget=budget), PreviewError
+    )
 
     zero = handler.resolve_node_ref("/concepts/0", None)
     nine = handler.resolve_node_ref("/concepts/9", None)
@@ -69,11 +75,14 @@ def test_array_index_annotations_use_correct_pointer(
     tmp_path: pathlib.Path,
     budget: PreviewBudget,
 ) -> None:
+    """Verify test array index annotations use correct pointer."""
     pytest.importorskip("yaml")
     path = tmp_path / "concepts.yaml"
     _write_concepts(path)
     handler = YamlFileHandler()
-    assert not isinstance(handler.open_root(str(path), None, budget=budget), PreviewError)
+    assert not isinstance(
+        handler.open_root(str(path), None, budget=budget), PreviewError
+    )
 
     resolved = handler.resolve_node_ref("/concepts/9", None)
     assert not isinstance(resolved, PreviewError)
@@ -88,11 +97,14 @@ def test_repeated_key_names_annotate_to_local_pointer(
     tmp_path: pathlib.Path,
     budget: PreviewBudget,
 ) -> None:
+    """Verify test repeated key names annotate to local pointer."""
     pytest.importorskip("yaml")
     path = tmp_path / "concepts.yaml"
     _write_concepts(path)
     handler = YamlFileHandler()
-    assert not isinstance(handler.open_root(str(path), None, budget=budget), PreviewError)
+    assert not isinstance(
+        handler.open_root(str(path), None, budget=budget), PreviewError
+    )
 
     resolved = handler.resolve_node_ref("/concepts/9", None)
     assert not isinstance(resolved, PreviewError)
@@ -109,6 +121,7 @@ def test_anchor_alias_preview_no_regression(
     tmp_path: pathlib.Path,
     budget: PreviewBudget,
 ) -> None:
+    """Verify test anchor alias preview no regression."""
     pytest.importorskip("yaml")
     path = tmp_path / "alias.yaml"
     path.write_text(

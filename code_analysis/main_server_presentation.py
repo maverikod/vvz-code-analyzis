@@ -35,6 +35,7 @@ refactoring helpers, and quality checks.
 
 
 def _package_version() -> str:
+    """Return package version."""
     try:
         from importlib.metadata import version
 

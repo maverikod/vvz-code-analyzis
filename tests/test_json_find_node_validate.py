@@ -12,17 +12,20 @@ from code_analysis.core.exceptions import ValidationError
 
 @pytest.fixture
 def cmd() -> JsonFindNodeCommand:
+    """Return cmd."""
     return JsonFindNodeCommand()
 
 
 @pytest.fixture
 def tree_id() -> str:
+    """Return tree id."""
     return str(uuid.uuid4())
 
 
 def test_validate_params_accepts_json_pointer(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params accepts json pointer."""
     out = cmd.validate_params({"tree_id": tree_id, "json_pointer": "/items/0"})
     assert out["json_pointer"] == "/items/0"
 
@@ -30,6 +33,7 @@ def test_validate_params_accepts_json_pointer(
 def test_validate_params_accepts_key_path_string(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params accepts key path string."""
     out = cmd.validate_params({"tree_id": tree_id, "key_path": "items.0"})
     assert out["key_path"] == "items.0"
 
@@ -37,6 +41,7 @@ def test_validate_params_accepts_key_path_string(
 def test_validate_params_accepts_key_path_string_array(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params accepts key path string array."""
     out = cmd.validate_params({"tree_id": tree_id, "key_path": ["items", "0"]})
     assert out["key_path"] == ["items", "0"]
 
@@ -44,6 +49,7 @@ def test_validate_params_accepts_key_path_string_array(
 def test_validate_params_accepts_json_pointer_and_key_path(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params accepts json pointer and key path."""
     out = cmd.validate_params(
         {
             "tree_id": tree_id,
@@ -58,6 +64,7 @@ def test_validate_params_accepts_json_pointer_and_key_path(
 def test_validate_params_rejects_tree_id_only(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params rejects tree id only."""
     with pytest.raises(
         ValidationError, match="json_pointer and/or key_path"
     ) as exc_info:
@@ -71,6 +78,7 @@ def test_validate_params_rejects_key_path_non_string_non_array(
     tree_id: str,
     bad_key_path: object,
 ) -> None:
+    """Verify test validate params rejects key path non string non array."""
     with pytest.raises(ValidationError, match="key_path") as exc_info:
         cmd.validate_params({"tree_id": tree_id, "key_path": bad_key_path})
     assert exc_info.value.field == "key_path"
@@ -85,6 +93,7 @@ def test_validate_params_rejects_key_path_array_with_non_string_items(
     tree_id: str,
     bad_key_path: list[object],
 ) -> None:
+    """Verify test validate params rejects key path array with non string items."""
     with pytest.raises(ValidationError, match="key_path") as exc_info:
         cmd.validate_params({"tree_id": tree_id, "key_path": bad_key_path})
     assert exc_info.value.field == "key_path"
@@ -93,6 +102,7 @@ def test_validate_params_rejects_key_path_array_with_non_string_items(
 def test_validate_params_rejects_unknown_param(
     cmd: JsonFindNodeCommand, tree_id: str
 ) -> None:
+    """Verify test validate params rejects unknown param."""
     with pytest.raises(ValidationError, match="unknown parameter"):
         cmd.validate_params(
             {

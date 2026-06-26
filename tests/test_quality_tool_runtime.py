@@ -12,12 +12,14 @@ from code_analysis.core.code_quality import tool_runtime as tr
 
 
 def test_tool_command_uses_server_interpreter():
+    """Verify test tool command uses server interpreter."""
     cmd = tr.tool_command("flake8", "--version")
     assert cmd[0] == sys.executable
     assert cmd[1:] == ["-m", "flake8", "--version"]
 
 
 def test_module_missing_detection():
+    """Verify test module missing detection."""
     assert tr.module_missing("/x/python: No module named flake8", "flake8") is True
     assert tr.module_missing("No module named 'mypy'", "mypy") is True
     assert tr.module_missing("some other error", "black") is False
@@ -25,14 +27,19 @@ def test_module_missing_detection():
 
 
 def _fake_proc(returncode=0, stdout="", stderr=""):
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+    """Return fake proc."""
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 def test_is_tool_available_true_and_cached(monkeypatch):
+    """Verify test is tool available true and cached."""
     tr.reset_availability_cache()
     calls = {"n": 0}
 
     def fake_run(tool, args, *, timeout=60):
+        """Return fake run."""
         calls["n"] += 1
         return _fake_proc(returncode=0, stdout="black, 24.0")
 
@@ -43,6 +50,7 @@ def test_is_tool_available_true_and_cached(monkeypatch):
 
 
 def test_is_tool_available_false_when_module_missing(monkeypatch):
+    """Verify test is tool available false when module missing."""
     tr.reset_availability_cache()
     monkeypatch.setattr(
         tr,
@@ -53,9 +61,11 @@ def test_is_tool_available_false_when_module_missing(monkeypatch):
 
 
 def test_is_tool_available_false_on_oserror(monkeypatch):
+    """Verify test is tool available false on oserror."""
     tr.reset_availability_cache()
 
     def boom(tool, args, *, timeout=60):
+        """Return boom."""
         raise OSError("nope")
 
     monkeypatch.setattr(tr, "run_quality_tool", boom)
@@ -63,6 +73,7 @@ def test_is_tool_available_false_on_oserror(monkeypatch):
 
 
 def test_tool_version_parses_varied_banners(monkeypatch):
+    """Verify test tool version parses varied banners."""
     tr.reset_availability_cache()
     banners = {
         "flake8": "7.3.0 (mccabe: 0.7.0) CPython 3.12",
@@ -73,6 +84,7 @@ def test_tool_version_parses_varied_banners(monkeypatch):
     }
 
     def fake_run(tool, args, *, timeout=60):
+        """Return fake run."""
         return _fake_proc(returncode=0, stdout=banners[tool])
 
     monkeypatch.setattr(tr, "run_quality_tool", fake_run)
@@ -84,9 +96,11 @@ def test_tool_version_parses_varied_banners(monkeypatch):
 
 
 def test_quality_tool_report_shape(monkeypatch):
+    """Verify test quality tool report shape."""
     tr.reset_availability_cache()
 
     def fake_run(tool, args, *, timeout=60):
+        """Return fake run."""
         if tool == "bandit":
             return _fake_proc(1, "", "No module named bandit")
         return _fake_proc(0, stdout=f"{tool} 1.2.3")

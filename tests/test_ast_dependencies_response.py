@@ -41,7 +41,10 @@ class TestDependenciesResponseContract:
         entity_name = "SomeClass"
 
         class MockDB:
+            """Represent MockDB."""
+
             def execute(self, sql, params=None):
+                """Execute the command."""
                 if params is None:
                     params = ()
                 # Inheritance query: returns classes with file_path, cst_node_id
@@ -64,15 +67,19 @@ class TestDependenciesResponseContract:
                 return {"data": []}
 
             def disconnect(self):
+                """Return disconnect."""
                 pass
 
         mock_db = MockDB()
-        with patch.object(
-            FindDependenciesMCPCommand, "_resolve_project_root", return_value=None
-        ), patch.object(
-            FindDependenciesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                FindDependenciesMCPCommand, "_resolve_project_root", return_value=None
+            ),
+            patch.object(
+                FindDependenciesMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = FindDependenciesMCPCommand()
             result = await cmd.execute(

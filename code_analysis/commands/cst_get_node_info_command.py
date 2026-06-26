@@ -58,6 +58,7 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -112,6 +113,7 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         children_depth: Any = 1,
         **kwargs,
     ) -> SuccessResult:
+        """Return CST node metadata with optional code, children, and parent data."""
         t_start = time.perf_counter()
         try:
             try:

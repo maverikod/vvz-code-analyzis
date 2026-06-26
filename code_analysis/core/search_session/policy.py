@@ -30,9 +30,9 @@ class SessionTTLPolicy:
 def load_session_ttl_policy(config_data: dict[str, Any]) -> SessionTTLPolicy:
     """Load policy from ``code_analysis.search_session`` or top-level ``search_session``."""
     code_analysis = config_data.get("code_analysis") or {}
-    search_session = code_analysis.get("search_session") or config_data.get(
-        "search_session"
-    ) or {}
+    search_session = (
+        code_analysis.get("search_session") or config_data.get("search_session") or {}
+    )
     ttl_raw = search_session.get("ttl_seconds", SEARCH_SESSION_TTL_SECONDS_DEFAULT)
     block_raw = search_session.get(
         "max_block_size_bytes",
@@ -67,6 +67,7 @@ def _validate_positive_int(
     minimum: int,
     maximum: int,
 ) -> None:
+    """Return validate positive int."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be int, got {type(value).__name__}")
     if value <= 0:

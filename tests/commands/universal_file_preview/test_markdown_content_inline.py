@@ -32,6 +32,7 @@ def _preview_md(
     node_ref: str | None = None,
     value_preview_len: int = 10,
 ) -> dict:
+    """Return preview md."""
     md = tmp_path / "doc.md"
     md.write_text(content, encoding="utf-8")
     budget = _section_tree_budget(value_preview_len=value_preview_len)

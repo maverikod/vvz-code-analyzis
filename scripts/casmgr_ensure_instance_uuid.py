@@ -20,6 +20,7 @@ DEFAULT_CONFIG = Path("/etc/casmgr/config.json")
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(
         description="Ensure registration.instance_uuid is a valid UUID4.",
     )

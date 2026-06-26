@@ -149,6 +149,7 @@ def handle_client_connection(
                 }
 
             def execute_job():
+                """Return execute job."""
                 try:
                     result = execute_operation(
                         operation=operation,

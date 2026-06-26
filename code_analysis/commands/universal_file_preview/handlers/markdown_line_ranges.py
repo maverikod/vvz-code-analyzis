@@ -38,6 +38,7 @@ def md_block_node_ref(file_path: str, token: Any) -> str:
 
 
 def _normalize_md_node_ref(node_ref: str) -> str:
+    """Return normalize md node ref."""
     ref = node_ref.strip()
     if ref.startswith("[") and ref.endswith("]"):
         return ref[1:-1].strip()
@@ -78,6 +79,7 @@ def _resolve_block_uuid_line_range(
 
 
 def _slugify(text: str) -> str:
+    """Return slugify."""
     text = text.lower().strip()
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
@@ -85,6 +87,7 @@ def _slugify(text: str) -> str:
 
 
 def _source_line_count(raw: str) -> int:
+    """Return source line count."""
     if not raw:
         return 0
     return raw.count("\n") + (1 if not raw.endswith("\n") else 0)

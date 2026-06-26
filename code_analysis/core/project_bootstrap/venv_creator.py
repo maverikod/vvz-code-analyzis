@@ -1,3 +1,5 @@
+"""Create and validate virtual environments for bootstrapped projects."""
+
 from __future__ import annotations
 
 import logging
@@ -23,6 +25,8 @@ class VenvResult:
     message: str = ""
     already_exists: bool = False
     errors: list[str] = field(default_factory=list)
+
+
 # @node-id: 1fef4c80-0c51-4961-8985-774b1fadcf41
 
 
@@ -49,6 +53,7 @@ class VenvCreator:
         """
         self.project_root = Path(project_root)
         self.python_executable = python_executable
+
     # @node-id: 4441dc54-c004-4422-b011-b0fbd4264cc4
 
     # ------------------------------------------------------------------
@@ -120,6 +125,7 @@ class VenvCreator:
             message=f"Created .venv at {venv_path}",
             errors=errors,
         )
+
     # @node-id: 62713a25-248b-4a79-8b3f-cf1133fc84ee
 
     # ------------------------------------------------------------------
@@ -153,6 +159,7 @@ class VenvCreator:
             }
         except Exception as exc:
             return {"ok": False, "error": f"Python check failed: {exc}"}
+
     # @node-id: 0d79fb4a-b4bf-43c8-9e51-7a4257cc94a0
 
     def _check_pip(self, python_executable: str) -> dict:

@@ -52,6 +52,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         base_props = cls._get_base_schema_properties()
         pagination = list_pagination_schema_properties()
         return {
@@ -84,6 +85,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         offset: int = 0,
         **kwargs,
     ) -> SuccessResult:
+        """Execute the command."""
         params: Dict[str, Any] = {
             "project_id": project_id,
             "entity_type": entity_type,

@@ -33,6 +33,7 @@ TEXT_SUFFIXES = frozenset({".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"})
 
 
 def ensure_text_suffix(file_path: str) -> None:
+    """Return ensure text suffix."""
     suf = Path(file_path).suffix.lower()
     if suf not in TEXT_SUFFIXES:
         raise ValueError(f"Not a configured plain-text suffix: {suf}")
@@ -136,6 +137,7 @@ def diff_context_lines_from_extra(extra: Dict[str, Any]) -> int:
 
 
 def validate_write_range(start_line: int, end_line: int, total_lines: int) -> None:
+    """Return validate write range."""
     validate_range_against_length(start_line, end_line, total_lines, strict=True)
 
 
@@ -226,6 +228,7 @@ def persist_plain_text_file_metadata(
     base: Dict[str, Any] = {"file_path": str(absolute_path)}
 
     def _locked_response() -> Dict[str, Any]:
+        """Return locked response."""
         return {
             "success": False,
             "error": (
@@ -364,12 +367,15 @@ class TextFileHandler(BaseFileHandler):
 
     @property
     def handler_id(self) -> str:
+        """Return handler id."""
         return HANDLER_TEXT
 
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
+        """Return json schema for."""
         return get_handler_schema(HANDLER_TEXT, operation)
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return read."""
         abs_path = request.extra.get("absolute_path")
         if not isinstance(abs_path, Path):
             return standard_error_result(
@@ -418,6 +424,7 @@ class TextFileHandler(BaseFileHandler):
         )
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return save."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -505,6 +512,7 @@ class TextFileHandler(BaseFileHandler):
         )
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return replace."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -626,6 +634,7 @@ class TextFileHandler(BaseFileHandler):
         )
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return delete."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre

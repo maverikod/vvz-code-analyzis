@@ -20,6 +20,7 @@ from code_analysis.core.file_handlers.text_handler import TextFileHandler
 
 
 def test_diff_data_skips_body_when_include_diff_false() -> None:
+    """Verify test diff data skips body when include diff false."""
     d = diff_data_for_text_mutation(
         "a\n",
         "b\n",
@@ -31,6 +32,7 @@ def test_diff_data_skips_body_when_include_diff_false() -> None:
 
 
 def test_unified_diff_headers_and_hunk() -> None:
+    """Verify test unified diff headers and hunk."""
     diff = unified_diff_text(
         "one\ntwo\n",
         "one\nTWO\n",
@@ -46,16 +48,19 @@ def test_unified_diff_headers_and_hunk() -> None:
 
 
 def test_changed_line_ranges_single_replacement() -> None:
+    """Verify test changed line ranges single replacement."""
     ranges = changed_line_ranges_for_text("a\nb\nc\n", "a\nX\nc\n")
     assert ranges == [(2, 2)]
 
 
 def test_merge_adjacent_changed_ranges() -> None:
+    """Verify test merge adjacent changed ranges."""
     assert merge_adjacent_changed_ranges([(1, 2), (3, 4)]) == [(1, 4)]
     assert merge_adjacent_changed_ranges([(2, 2), (4, 5)]) == [(2, 2), (4, 5)]
 
 
 def test_context_lines_zero_vs_three_changes_diff_size() -> None:
+    """Verify test context lines zero vs three changes diff size."""
     before = "\n".join([f"L{i}" for i in range(20)]) + "\n"
     after_lines = [f"L{i}" for i in range(20)]
     after_lines[10] = "CHANGED"
@@ -70,6 +75,7 @@ def test_context_lines_zero_vs_three_changes_diff_size() -> None:
 
 
 def test_diff_data_matches_diff_data_for_text_mutation_shape() -> None:
+    """Verify test diff data matches diff data for text mutation shape."""
     d = diff_data_for_text_mutation(
         "x\n",
         "y\n",
@@ -86,6 +92,7 @@ def test_diff_data_matches_diff_data_for_text_mutation_shape() -> None:
 def test_text_handler_dry_run_save_same_diff_shape_no_file_write(
     tmp_path: Path,
 ) -> None:
+    """Verify test text handler dry run save same diff shape no file write."""
     f = tmp_path / "n.md"
     f.write_text("alpha\nbeta\n", encoding="utf-8")
     h = TextFileHandler()
@@ -113,6 +120,7 @@ def test_text_handler_dry_run_save_same_diff_shape_no_file_write(
 
 
 def test_text_handler_apply_matches_dry_run_diff_fields(tmp_path: Path) -> None:
+    """Verify test text handler apply matches dry run diff fields."""
     f = tmp_path / "n.md"
     f.write_text("alpha\nbeta\n", encoding="utf-8")
     h = TextFileHandler()

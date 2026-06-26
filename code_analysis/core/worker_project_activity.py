@@ -63,11 +63,13 @@ _RELEASE_SQL = (
 
 
 def _validate_project_id(project_id: str) -> None:
+    """Return validate project id."""
     if not isinstance(project_id, str) or not project_id.strip():
         raise ValueError("project_id must be a non-empty string")
 
 
 def _validate_owner_type(owner_type: str) -> None:
+    """Return validate owner type."""
     if owner_type not in ALLOWED_OWNER_TYPES:
         raise ValueError(
             f"invalid owner_type: {owner_type!r}; allowed: {sorted(ALLOWED_OWNER_TYPES)}"
@@ -75,6 +77,7 @@ def _validate_owner_type(owner_type: str) -> None:
 
 
 def _validate_activity(activity: str) -> None:
+    """Return validate activity."""
     if activity not in ALLOWED_ACTIVITIES:
         raise ValueError(
             f"invalid activity: {activity!r}; allowed: {sorted(ALLOWED_ACTIVITIES)}"
@@ -82,16 +85,19 @@ def _validate_activity(activity: str) -> None:
 
 
 def _validate_ttl(ttl_seconds: float) -> None:
+    """Return validate ttl."""
     if not isinstance(ttl_seconds, (int, float)) or float(ttl_seconds) <= 0:
         raise ValueError("ttl_seconds must be a positive number")
 
 
 def _validate_owner_id(owner_id: str) -> None:
+    """Return validate owner id."""
     if not isinstance(owner_id, str) or not owner_id.strip():
         raise ValueError("owner_id must be a non-empty string")
 
 
 def _affected(result: Dict[str, Any]) -> int:
+    """Return affected."""
     n = result.get("affected_rows", 0)
     try:
         return int(n) if n is not None and int(n) >= 0 else 0
@@ -133,6 +139,7 @@ def _select_coord_lock_row(
     *,
     rpc_priority: int,
 ) -> Optional[Dict[str, Any]]:
+    """Return select coord lock row."""
     if rpc_priority:
         try:
             rows = database.select(
@@ -158,6 +165,7 @@ def _select_coord_lock_row(
 def _fetch_lock_row(
     database: Any, project_id: str, *, rpc_priority: int = 0
 ) -> Optional[Dict[str, Any]]:
+    """Return fetch lock row."""
     return _select_coord_lock_row(database, project_id, rpc_priority=rpc_priority)
 
 
@@ -171,6 +179,7 @@ def _log_coord(
     result: str,
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
+    """Return log coord."""
     base = (
         f"{_LOG_PREFIX} op={op} project_id={project_id!r} owner_type={owner_type!r} "
         f"owner_id={owner_id!r} activity={activity!r} result={result!r}"
@@ -264,6 +273,7 @@ def heartbeat_project_activity(
     *,
     rpc_priority: int = 0,
 ) -> bool:
+    """Return heartbeat project activity."""
     _validate_project_id(project_id)
     _validate_owner_type(owner_type)
     _validate_owner_id(owner_id)
@@ -299,6 +309,7 @@ def release_project_activity(
     *,
     rpc_priority: int = 0,
 ) -> bool:
+    """Return release project activity."""
     _validate_project_id(project_id)
     _validate_owner_type(owner_type)
     _validate_owner_id(owner_id)

@@ -57,6 +57,7 @@ def host_watch_catalog_from_config(config_data: Mapping[str, Any]) -> Optional[P
 
 
 def _worker_watch_dirs_raw(config_data: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Return worker watch dirs raw."""
     worker_config = config_data.get("code_analysis", {})
     if not isinstance(worker_config, dict):
         worker_config = {}
@@ -74,6 +75,7 @@ def _worker_watch_dirs_raw(config_data: Mapping[str, Any]) -> List[Dict[str, Any
 
 
 def _resolve_existing_dir(path: Path) -> Optional[Path]:
+    """Return resolve existing dir."""
     try:
         resolved = path.resolve()
     except OSError as exc:
@@ -92,6 +94,7 @@ def _add_entry(
     host_path: Path,
     source: str,
 ) -> None:
+    """Return add entry."""
     wid = watch_dir_id.strip()
     if not wid:
         result.errors.append(f"Empty watch_dir id from {source}")
@@ -121,6 +124,7 @@ def _scan_host_watch_catalog(
     *,
     config_path_by_resolved: Dict[Path, str],
 ) -> None:
+    """Return scan host watch catalog."""
     if not catalog_root.is_dir():
         result.errors.append(f"host_watch_catalog is not a directory: {catalog_root}")
         return

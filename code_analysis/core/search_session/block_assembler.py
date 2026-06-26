@@ -50,6 +50,7 @@ class BlockAssembler:
         update_manifest_metrics: Callable[[dict], None],
         on_block_published: Callable[[int, int, int], None] | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._layout = layout
         self._buffer = buffer
         self._max_block_size_bytes = max_block_size_bytes
@@ -197,6 +198,7 @@ class BlockAssembler:
         findings = [self._load_finding(p) for p in finding_paths]
 
         def _sort_key(f: dict) -> tuple:
+            """Return sort key."""
             score = f.get("score")
             score_val = -float(score) if score is not None else 0.0
             result_id = str(f.get("result_id") or "")
@@ -229,6 +231,7 @@ class BlockAssembler:
         return entries
 
     def _next_block_position(self) -> int:
+        """Return next block position."""
         highest = 0
         if self._layout.blocks_dir.is_dir():
             for path in self._layout.blocks_dir.iterdir():
@@ -239,6 +242,7 @@ class BlockAssembler:
 
     @staticmethod
     def _load_finding(path: Path) -> dict:
+        """Return load finding."""
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
         if not isinstance(payload, dict):

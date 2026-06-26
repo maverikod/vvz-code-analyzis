@@ -20,16 +20,20 @@ class TestQueryCSTCommandSelectorRangeInteraction:
 
     @pytest.mark.asyncio
     async def test_selector_only_replace_unchanged(self, project_root, mock_db):
+        """Verify test selector only replace unchanged."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "def f():\n    return 1\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -43,16 +47,20 @@ class TestQueryCSTCommandSelectorRangeInteraction:
 
     @pytest.mark.asyncio
     async def test_both_selector_and_range_range_used(self, project_root, mock_db):
+        """Verify test both selector and range range used."""
         py_file = project_root / "m.py"
         write_py_file(py_file, "a = 1\nb = 2\nc = 3\n")
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

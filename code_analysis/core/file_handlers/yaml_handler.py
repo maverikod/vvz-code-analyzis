@@ -58,18 +58,21 @@ _ARRAY_INDEX_RE = re.compile(r"^(0|[1-9][0-9]*)$")
 
 
 def ensure_yaml_suffix(file_path: str) -> None:
+    """Return ensure yaml suffix."""
     suf = Path(file_path).suffix.lower()
     if suf not in YAML_SUFFIXES:
         raise ValueError(f"Not a configured YAML suffix: {suf!r}")
 
 
 def is_registered_yaml_suffix(file_path: str) -> bool:
+    """Return is registered yaml suffix."""
     return Path(file_path).suffix.lower() in YAML_SUFFIXES
 
 
 def _reject_line_range_params(
     extra: Dict[str, Any], *, request: FileHandlerRequest
 ) -> Optional[FileHandlerResult]:
+    """Return reject line range params."""
     overlap = LINE_RANGE_EXTRA_KEYS.intersection(extra.keys())
     if not overlap:
         return None
@@ -85,6 +88,7 @@ def _reject_line_range_params(
 
 
 def _require_path_extra(request: FileHandlerRequest) -> Path | FileHandlerResult:
+    """Return require path extra."""
     abs_path = request.extra.get("absolute_path")
     if not isinstance(abs_path, Path):
         return standard_error_result(
@@ -266,6 +270,7 @@ def _serialize_document(data: Any) -> str:
 
 
 def _load_yaml_document(text: str) -> Any:
+    """Return load yaml document."""
     try:
         return yaml.safe_load(text)
     except yaml.YAMLError as e:
@@ -296,12 +301,15 @@ class YamlFileHandler(BaseFileHandler):
 
     @property
     def handler_id(self) -> str:
+        """Return handler id."""
         return HANDLER_YAML
 
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
+        """Return json schema for."""
         return get_handler_schema(HANDLER_YAML, operation)
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return read."""
         bad = _reject_line_range_params(request.extra, request=request)
         if bad is not None:
             return bad
@@ -349,6 +357,7 @@ class YamlFileHandler(BaseFileHandler):
         )
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return save."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -480,6 +489,7 @@ class YamlFileHandler(BaseFileHandler):
         )
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return replace."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre
@@ -644,6 +654,7 @@ class YamlFileHandler(BaseFileHandler):
         )
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
+        """Return delete."""
         pre = self.mutating_precheck(request)
         if pre is not None:
             return pre

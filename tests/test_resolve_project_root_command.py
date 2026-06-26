@@ -59,6 +59,7 @@ def segment_project_db(tmp_path: Path):
 def test_resolve_project_root_watch_relative_segment(
     segment_project_db,
 ) -> None:
+    """Verify test resolve project root watch relative segment."""
     pid, expected_root, _db = segment_project_db
     root = BaseMCPCommand._resolve_project_root(pid)
     assert root.resolve() == expected_root.resolve()
@@ -67,6 +68,7 @@ def test_resolve_project_root_watch_relative_segment(
 def test_resolve_project_root_rejects_unresolvable_not_cwd(
     segment_project_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Verify test resolve project root rejects unresolvable not cwd."""
     pid, _expected_root, db = segment_project_db
     sid = TEST_SERVER_INSTANCE_ID
     db.delete(
@@ -234,6 +236,7 @@ def test_resolve_project_root_rejects_missing_project_folder_on_disk(
 def test_open_resolve_abs_path_uses_watch_dir_not_cwd(
     segment_project_db,
 ) -> None:
+    """Verify test open resolve abs path uses watch dir not cwd."""
     pid, expected_root, _db = segment_project_db
     cmd = UniversalFileOpenCommand()
     resolved = cmd._resolve_abs_path(pid, "scripts/hello.py")

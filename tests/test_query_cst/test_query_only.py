@@ -20,19 +20,23 @@ class TestQueryCSTCommandQueryOnly:
 
     @pytest.mark.asyncio
     async def test_query_returns_matches_structure(self, project_root, mock_db):
+        """Verify test query returns matches structure."""
         py_file = project_root / "src" / "main.py"
         write_py_file(
             py_file,
             "def foo():\n    return 1\n\ndef bar():\n    return 2\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(
@@ -50,19 +54,23 @@ class TestQueryCSTCommandQueryOnly:
     async def test_query_with_selector_returns_matching_nodes(
         self, project_root, mock_db
     ):
+        """Verify test query with selector returns matching nodes."""
         py_file = project_root / "m.py"
         write_py_file(
             py_file,
             "def first():\n    return 1\n\ndef second():\n    return 2\n",
         )
-        with patch.object(
-            BaseMCPCommand,
-            "_resolve_project_root",
-            return_value=project_root,
-        ), patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_project_root",
+                return_value=project_root,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
         ):
             cmd = QueryCSTCommand()
             result = await cmd.execute(

@@ -35,6 +35,7 @@ PAGINATION_KEYS = frozenset(
 
 
 def test_merge_pagination_schema_preserves_base_required_keys() -> None:
+    """Verify test merge pagination schema preserves base required keys."""
     base = {
         "type": "object",
         "properties": {"project_id": {"type": "string"}, "query": {"type": "string"}},
@@ -47,12 +48,14 @@ def test_merge_pagination_schema_preserves_base_required_keys() -> None:
 
 
 def test_merge_pagination_schema_paginated_defaults_false() -> None:
+    """Verify test merge pagination schema paginated defaults false."""
     assert OPTIONAL_PAGINATION_PROPERTIES["paginated"]["default"] is False
     merged = merge_pagination_schema({"type": "object", "properties": {}})
     assert merged["properties"]["paginated"]["default"] is False
 
 
 def test_merge_pagination_schema_include_job_id_default_override() -> None:
+    """Verify test merge pagination schema include job id default override."""
     merged = merge_pagination_schema(
         {"type": "object", "properties": {}},
         include_job_id_default=False,
@@ -61,6 +64,7 @@ def test_merge_pagination_schema_include_job_id_default_override() -> None:
 
 
 def test_fs_ggrep_schema_with_pagination() -> None:
+    """Verify test fs ggrep schema with pagination."""
     schema = get_fs_ggrep_schema_with_pagination()
     props = schema.get("properties") or {}
     assert PAGINATION_KEYS <= set(props)
@@ -69,6 +73,7 @@ def test_fs_ggrep_schema_with_pagination() -> None:
 
 
 def test_project_cross_search_schema_with_pagination() -> None:
+    """Verify test project cross search schema with pagination."""
     schema = get_project_cross_search_schema_with_pagination()
     props = schema.get("properties") or {}
     assert PAGINATION_KEYS <= set(props)
@@ -77,6 +82,7 @@ def test_project_cross_search_schema_with_pagination() -> None:
 
 
 def test_semantic_search_schema_with_pagination() -> None:
+    """Verify test semantic search schema with pagination."""
     schema = get_semantic_search_schema_with_pagination()
     props = schema.get("properties") or {}
     assert PAGINATION_KEYS <= set(props)
@@ -85,6 +91,7 @@ def test_semantic_search_schema_with_pagination() -> None:
 
 
 def test_fulltext_search_schema_includes_optional_pagination() -> None:
+    """Verify test fulltext search schema includes optional pagination."""
     schema = FulltextSearchMCPCommand.get_schema()
     props = schema.get("properties") or {}
     assert PAGINATION_KEYS <= set(props)
@@ -93,6 +100,7 @@ def test_fulltext_search_schema_includes_optional_pagination() -> None:
 
 
 def test_fulltext_search_metadata_documents_pagination() -> None:
+    """Verify test fulltext search metadata documents pagination."""
     meta = FulltextSearchMCPCommand.metadata()
     params = meta.get("parameters") or {}
     assert PAGINATION_KEYS <= set(params)
@@ -101,6 +109,7 @@ def test_fulltext_search_metadata_documents_pagination() -> None:
 
 
 def test_existing_behavior_inventory_covers_plan_commands() -> None:
+    """Verify test existing behavior inventory covers plan commands."""
     assert INVENTORY_PATH.is_file()
     data = yaml.safe_load(INVENTORY_PATH.read_text(encoding="utf-8"))
     command_names = {entry["name"] for entry in data["commands"]}

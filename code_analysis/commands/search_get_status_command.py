@@ -42,6 +42,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return the command input schema."""
         return {
             "type": "object",
             "properties": {
@@ -55,6 +56,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Return validate params."""
         params = super().validate_params(params)
         if not str(params.get("job_id") or "").strip():
             raise ValidationError(
@@ -63,6 +65,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
+        """Execute the command."""
         job_id = str(kwargs.get("job_id") or "").strip()
         profile = open_search_profile_recorder(
             job_id=job_id,
@@ -116,6 +119,7 @@ class SearchGetStatusCommand(BaseMCPCommand):
 
     @classmethod
     def metadata(cls) -> Dict[str, Any]:
+        """Return command metadata."""
         return {
             "name": cls.name,
             "version": cls.version,

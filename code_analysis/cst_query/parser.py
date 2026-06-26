@@ -96,6 +96,8 @@ _parser = Lark(_GRAMMAR, parser="lalr", start="start")
 
 @dataclass(frozen=True)
 class _ParsedPseudo:
+    """Represent ParsedPseudo."""
+
     name: str
     index: Optional[int]
     not_query: Optional["Query"] = None
@@ -110,15 +112,19 @@ class _ToAst(Transformer):
         # lark (0.7.x) defaults to False, which left predicate values quoted
         # (value=="'test'" instead of "test"). Set it explicitly so the transform
         # is correct regardless of the installed lark version.
+        """Initialize the instance."""
         super().__init__(visit_tokens=True)
 
     def NAME(self, t: Token) -> str:  # noqa: N802
+        """Return NAME."""
         return str(t)
 
     def INT(self, t: Token) -> int:  # noqa: N802
+        """Return INT."""
         return int(str(t))
 
     def STAR(self, _t: Token) -> str:  # noqa: N802
+        """Return STAR."""
         return "*"
 
     def BAREWORD(self, t: Token) -> str:  # noqa: N802
@@ -154,6 +160,7 @@ class _ToAst(Transformer):
         return raw
 
     def OP(self, t: Token) -> str:  # noqa: N802
+        """Return OP."""
         return str(t)
 
     def predicate(self, items: list[Any]) -> Predicate:
@@ -267,6 +274,7 @@ class _ToAst(Transformer):
 
 
 def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
+    """Return pseudo from parsed."""
     name = p.name.lower()
     if name == PseudoKind.FIRST.value:
         if p.index is not None:

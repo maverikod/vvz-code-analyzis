@@ -19,13 +19,17 @@ from code_analysis.tree.tree_node import TreeNode
 
 @dataclass
 class _NodeListTree:
+    """Represent NodeListTree."""
+
     nodes: List[TreeNode]
 
     def all_nodes(self) -> List[TreeNode]:
+        """Return all nodes."""
         return self.nodes
 
 
 def _enumerate_children(tree: _NodeListTree, focus_short_id: NodeId) -> List[TreeNode]:
+    """Return enumerate children."""
     _, by_short_id, children_by_parent = _build_indexes(tree)
     focus = by_short_id.get(focus_short_id)
     assert focus is not None
@@ -35,6 +39,7 @@ def _enumerate_children(tree: _NodeListTree, focus_short_id: NodeId) -> List[Tre
 
 
 def test_python_function_focus_enumerates_body_statements() -> None:
+    """Verify test python function focus enumerates body statements."""
     source = "def foo():\n" "    x = 1\n" "    return x\n"
     nodes = PythonHandler().parse_content(Path("sample.py"), source)
     func = next(n for n in nodes if n.attributes.get("node_type") == "FunctionDef")
@@ -50,6 +55,7 @@ def test_python_function_focus_enumerates_body_statements() -> None:
 
 
 def test_json_scalar_focus_walks_up_via_parent_short_id() -> None:
+    """Verify test json scalar focus walks up via parent short id."""
     content = '{"a": 1, "b": {"c": 2}}'
     nodes = JsonHandler().parse_content(Path("sample.json"), content)
     by_pointer = {n.attributes["json_pointer"]: n for n in nodes}
@@ -72,6 +78,7 @@ def test_json_scalar_focus_walks_up_via_parent_short_id() -> None:
 
 
 def test_json_object_focus_lists_direct_children() -> None:
+    """Verify test json object focus lists direct children."""
     content = '{"a": 1, "b": 2}'
     nodes = JsonHandler().parse_content(Path("sample.json"), content)
     root = next(n for n in nodes if n.attributes["json_pointer"] == "/")

@@ -135,7 +135,7 @@ class LogViewerCommand:
                 imp = None
                 try:
                     imp = int(importance_str.strip())
-                except ValueError, AttributeError:
+                except (ValueError, AttributeError):
                     pass
                 return make_entry(timestamp, level.strip(), message.strip(), imp)
             except ValueError:

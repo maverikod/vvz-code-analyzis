@@ -90,7 +90,7 @@ def enrich_line_matches_structural(
             project_root=project_root,
             file_path=file_path,
         )
-    except NotImplementedError, FileNotFoundError, ValueError, OSError:
+    except (NotImplementedError, FileNotFoundError, ValueError, OSError):
         return list(line_matches)
 
     enriched: list[dict[str, Any]] = []

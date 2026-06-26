@@ -220,7 +220,7 @@ def _make_indexer_mock_for_abspath(
                     raw = row.get("updated_at", 0)
                     try:
                         ufv = float(raw)
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         ufv = 0.0
                     rid = row.get("id")
                     sid = str(rid) if rid is not None else ""

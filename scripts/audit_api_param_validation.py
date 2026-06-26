@@ -227,7 +227,7 @@ def analyze_execute(cls: type) -> List[Dict[str, Any]]:
         return issues
     try:
         src = inspect.getsource(execute)
-    except OSError, TypeError:
+    except (OSError, TypeError):
         return issues
     if (
         "if k in schema_props" in src

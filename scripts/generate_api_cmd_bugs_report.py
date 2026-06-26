@@ -388,7 +388,7 @@ def execute_signature_issues(
     schema_props = set((schema.get("properties") or {}).keys())
     try:
         sig = inspect.signature(cls.execute)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return issues
 
     skip = {"self", "context", "kwargs"}

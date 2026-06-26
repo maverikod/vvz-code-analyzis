@@ -252,7 +252,7 @@ def _load_python_sidecar_index(abs_path: Path) -> _SidecarPythonLineBlockIndex |
             project_root=resolved.parent,
             file_path=resolved.name,
         )
-    except FileNotFoundError, ValueError, OSError, NotImplementedError:
+    except (FileNotFoundError, ValueError, OSError, NotImplementedError):
         return None
     if not tree_ref.sidecar_path.is_file():
         return None

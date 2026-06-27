@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import ast
 import difflib
 import logging
 import time
@@ -34,6 +35,45 @@ from .compose_cst_writer import validate_and_write_temp
 logger = logging.getLogger(__name__)
 
 _OPS_BACKUP_COMMAND = "run_ops_mode"
+
+
+def _is_full_file_overwrite(replace_ops: List[ReplaceOp], source: str) -> bool:
+    """Return True for a single whole-file range replacement of existing source.
+
+    ``PythonFileHandler`` builds ``[{range 1..N}]`` for a full-file save (see
+    ``_ops_for_save_new_or_overwrite``). That range spans every top-level
+    statement, which the per-statement CST rewriter cannot match (it resolves a
+    range to the *one* statement that contains it), so ``apply_replace_ops``
+    silently drops the op and returns the original source. Such a save must be
+    handled as a direct content replacement instead of a CST range op.
+    """
+    if not source.strip():
+        return False
+    if len(replace_ops) != 1:
+        return False
+    sel = replace_ops[0].selector
+    if sel.kind != "range":
+        return False
+    if sel.start_line is None or sel.end_line is None:
+        return False
+    if sel.start_col is not None or sel.end_col is not None:
+        return False
+    total_lines = len(source.splitlines())
+    return sel.start_line <= 1 and sel.end_line >= total_lines
+
+
+def _ops_matched_nothing(stats: Dict[str, Any]) -> bool:
+    """Return True when an apply touched no node yet left selectors unmatched.
+
+    Guards against silently reporting success while writing the original bytes
+    back when every selector failed to match the current file.
+    """
+    touched = (
+        int(stats.get("replaced", 0))
+        + int(stats.get("removed", 0))
+        + int(stats.get("created", 0))
+    )
+    return touched == 0 and bool(stats.get("unmatched"))
 
 
 def run_ops_mode(
@@ -140,14 +180,39 @@ def run_ops_mode(
     else:
         source = ""
 
-    try:
-        new_source, stats = apply_replace_ops(source, replace_ops)
-    except CSTModulePatchError as e:
-        return ErrorResult(
-            message=str(e),
-            code="CST_REPLACE_ERROR",
-            details=getattr(e, "details", {}),
-        )
+    new_source: str
+    stats: Dict[str, Any]
+    full_overwrite = _is_full_file_overwrite(replace_ops, source)
+    if full_overwrite:
+        # Whole-file save: the new content is authoritative; write it directly
+        # rather than through the per-statement range rewriter, which cannot
+        # match a range spanning multiple top-level statements (it would drop
+        # the op and persist the original bytes while reporting success).
+        new_source = replace_ops[0].new_code
+        try:
+            ast.parse(new_source)
+        except SyntaxError as e:
+            return ErrorResult(
+                message=f"Replacement source is not valid Python: {e}",
+                code="CST_REPLACE_ERROR",
+                details={"file_path": str(target_path), "lineno": e.lineno},
+            )
+        stats = {
+            "replaced": 1,
+            "removed": 0,
+            "created": 0,
+            "unmatched": [],
+            "full_overwrite": True,
+        }
+    else:
+        try:
+            new_source, stats = apply_replace_ops(source, replace_ops)
+        except CSTModulePatchError as e:
+            return ErrorResult(
+                message=str(e),
+                code="CST_REPLACE_ERROR",
+                details=getattr(e, "details", {}),
+            )
 
     new_source = new_source.rstrip("\n\r") + "\n"
     data: Dict[str, Any] = {
@@ -171,6 +236,19 @@ def run_ops_mode(
         data["preview_only"] = True
         data["message"] = "Preview only; no file written"
         return SuccessResult(data=data)
+
+    if _ops_matched_nothing(stats):
+        return ErrorResult(
+            message=(
+                "No ops matched the target file; refusing to report success "
+                "without changes. Verify the selector(s) against the current file."
+            ),
+            code="OPS_UNMATCHED",
+            details={
+                "file_path": str(target_path),
+                "unmatched": stats.get("unmatched"),
+            },
+        )
 
     file_exists = target_path.exists()
     temp_file, validation_error, validation_results = validate_and_write_temp(

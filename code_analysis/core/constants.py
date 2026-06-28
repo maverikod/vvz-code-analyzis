@@ -199,6 +199,12 @@ DEFAULT_COMMAND_TIMEOUT: float = 60.0
 # Default git command timeout in seconds
 DEFAULT_GIT_TIMEOUT: float = 10.0
 
+# Default bounded timeout (seconds) for acquiring an advisory sidecar flock.
+# A blocking flock with no timeout can freeze the calling thread indefinitely;
+# command bodies run on a bounded worker pool, so an unbounded wait would starve
+# the pool. Callers may pass an explicit timeout, or math.inf for "wait forever".
+DEFAULT_FILE_LOCK_TIMEOUT: float = 30.0
+
 # Proxy driver poll interval in seconds
 PROXY_DRIVER_POLL_INTERVAL: float = 1.0
 

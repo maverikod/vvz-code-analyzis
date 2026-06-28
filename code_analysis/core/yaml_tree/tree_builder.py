@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import io
+import threading
 from pathlib import Path
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +23,8 @@ from .models import ROOT_POINTER, YamlNodeMetadata, YamlTree
 from .yaml_pointer import join_pointer
 
 _trees: Dict[str, YamlTree] = {}
+# Guards _trees against concurrent access from worker-pool command threads.
+_trees_lock = threading.RLock()
 
 PointerSpans = Dict[str, Tuple[int, int]]
 
@@ -236,7 +239,8 @@ def build_yaml_tree_from_text(
     tree = YamlTree.create(file_path, copy.deepcopy(loaded))
     _build_index(tree, line_spans=spans)
     if register:
-        _trees[tree.tree_id] = tree
+        with _trees_lock:
+            _trees[tree.tree_id] = tree
     return tree
 
 
@@ -255,18 +259,21 @@ def build_yaml_tree_from_data(
     tree = YamlTree.create(file_path, copy.deepcopy(data))
     _build_index(tree)
     if register:
-        _trees[tree.tree_id] = tree
+        with _trees_lock:
+            _trees[tree.tree_id] = tree
     return tree
 
 
 def get_tree(tree_id: str) -> Optional[YamlTree]:
     """Return get tree."""
-    return _trees.get(tree_id)
+    with _trees_lock:
+        return _trees.get(tree_id)
 
 
 def remove_tree(tree_id: str) -> bool:
     """Return remove tree."""
-    if tree_id in _trees:
-        del _trees[tree_id]
-        return True
+    with _trees_lock:
+        if tree_id in _trees:
+            del _trees[tree_id]
+            return True
     return False

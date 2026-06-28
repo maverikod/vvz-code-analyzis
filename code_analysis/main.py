@@ -197,6 +197,21 @@ def main() -> None:
 
     heartbeat_stop = setup_daemon_logging(args, full_config, config_path)
 
+    # Independent proxy-heartbeat watchdog: detects main-loop stalls (dumps
+    # tracebacks) and posts a best-effort heartbeat while the loop is alive, so a
+    # stray blocking call can no longer silently cause proxy deregistration.
+    # Stopped via the shared heartbeat_stop Event on shutdown.
+    try:
+        from code_analysis.core.proxy_heartbeat_watchdog import (
+            start_proxy_heartbeat_watchdog,
+        )
+
+        start_proxy_heartbeat_watchdog(full_config, config_path, heartbeat_stop)
+    except Exception as _wd_exc:  # pragma: no cover - watchdog must never block boot
+        logging.getLogger(__name__).warning(
+            "Failed to start proxy heartbeat watchdog: %s", _wd_exc
+        )
+
     app_config, simple_config, server_host, server_port = (
         ensure_storage_and_load_app_config(config_path, full_config, args)
     )

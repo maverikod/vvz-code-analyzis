@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Generator, Optional, Tuple
 from unittest.mock import Mock
 
+from .constants import DEFAULT_FILE_LOCK_TIMEOUT
 from .runtime_lock_sessions import (
     acquire_file_advisory_lease,
     get_session_id_for_current_pid,
@@ -187,10 +189,16 @@ def acquire_file_lock(
     try:
         if fcntl is not None:
             flag = _fcntl_flag_for_mode(normalized_mode)
-            if timeout is None:
+            # Resolve the effective wait budget. timeout=None means "use the
+            # bounded default" (never block the worker thread forever); pass
+            # math.inf explicitly to opt into a truly unbounded blocking flock.
+            effective_timeout = (
+                DEFAULT_FILE_LOCK_TIMEOUT if timeout is None else float(timeout)
+            )
+            if math.isinf(effective_timeout):
                 fcntl.flock(lock_file.fileno(), flag)
             else:
-                deadline = time.monotonic() + max(0.0, float(timeout))
+                deadline = time.monotonic() + max(0.0, effective_timeout)
                 while True:
                     try:
                         fcntl.flock(lock_file.fileno(), flag | fcntl.LOCK_NB)

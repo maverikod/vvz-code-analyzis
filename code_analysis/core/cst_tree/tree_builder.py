@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -72,8 +73,13 @@ def _on_disk_logical_matches_tree_snapshot(path: Path, tree: CSTTree) -> bool:
     return digest == hashlib.sha256(mod_bytes).hexdigest() and length == len(mod_bytes)
 
 
-# In-memory storage for CST trees
+# In-memory storage for CST trees.
+# Command bodies now run on a worker-thread pool, so this map is accessed
+# concurrently. ``_trees_lock`` guards every dict read/insert/pop/snapshot.
+# Scope is kept to the dict operation only — heavy CST parse/index work runs
+# outside the lock so trees for different files still build in parallel.
 _trees: dict[str, CSTTree] = {}
+_trees_lock = threading.RLock()
 
 
 def load_file_to_tree(
@@ -119,7 +125,8 @@ def load_file_to_tree(
         write_sidecar=True,
     )
 
-    _trees[tree.tree_id] = tree
+    with _trees_lock:
+        _trees[tree.tree_id] = tree
     return tree
 
 
@@ -175,7 +182,8 @@ def create_tree_from_code(
     tree.disk_source_length = 0
 
     if register_in_memory:
-        _trees[tree.tree_id] = tree
+        with _trees_lock:
+            _trees[tree.tree_id] = tree
     return tree
 
 
@@ -188,10 +196,11 @@ def get_tree(tree_id: str) -> Optional[CSTTree]:
     state match the file. Trees without a disk snapshot (e.g. rollback-only
     in-memory state) are returned as-is.
     """
-    tree = _trees.get(tree_id)
-    if tree is None:
-        return None
-    tree.last_accessed_at = time.monotonic()
+    with _trees_lock:
+        tree = _trees.get(tree_id)
+        if tree is None:
+            return None
+        tree.last_accessed_at = time.monotonic()
     path = Path(tree.file_path)
     snap = tree.disk_source_sha256_hex
     if snap is None or not path.is_file():
@@ -208,9 +217,10 @@ def get_tree(tree_id: str) -> Optional[CSTTree]:
 
 def remove_tree(tree_id: str) -> bool:
     """Remove tree from memory."""
-    if tree_id in _trees:
-        del _trees[tree_id]
-        return True
+    with _trees_lock:
+        if tree_id in _trees:
+            del _trees[tree_id]
+            return True
     return False
 
 
@@ -243,7 +253,8 @@ def reload_tree_from_file(
         FileNotFoundError: If file not found
         ValueError: If file is not a Python file
     """
-    tree = _trees.get(tree_id)
+    with _trees_lock:
+        tree = _trees.get(tree_id)
     if not tree:
         return None
 
@@ -321,7 +332,8 @@ def rollback_tree_to_code(
     Returns:
         True if tree was found and rolled back, False if tree not found
     """
-    tree = _trees.get(tree_id)
+    with _trees_lock:
+        tree = _trees.get(tree_id)
     if not tree:
         return False
     logical_source, persisted_node_ids = strip_persisted_node_ids(code)
@@ -363,13 +375,14 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
     while True:
         await asyncio.sleep(60)
         now = time.monotonic()
-        expired = [
-            tid
-            for tid, t in list(_trees.items())
-            if (now - t.last_accessed_at) > CST_TREE_TTL_SECONDS
-        ]
-        for tid in expired:
-            _trees.pop(tid, None)
+        with _trees_lock:
+            expired = [
+                tid
+                for tid, t in list(_trees.items())
+                if (now - t.last_accessed_at) > CST_TREE_TTL_SECONDS
+            ]
+            for tid in expired:
+                _trees.pop(tid, None)
 
 
 def start_cst_tree_ttl_cleanup() -> None:

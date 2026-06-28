@@ -115,6 +115,15 @@ def register_cleanup_handlers(
                 "cleanup_workers() invoked (shutdown path); stopping workers"
             )
             main_logger.info("🛑 Server shutdown: stopping all workers")
+            try:
+                from code_analysis.core import command_offload
+
+                command_offload.shutdown(wait=False)
+            except Exception:
+                main_logger.debug(
+                    "Command offload pool shutdown (cleanup path) failed",
+                    exc_info=True,
+                )
             shutdown_cfg = (
                 app_config.get("process_management")
                 or app_config.get("server_manager")

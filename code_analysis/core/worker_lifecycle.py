@@ -127,11 +127,17 @@ class WorkerLifecycleManager:
     ) -> Dict[str, Any]:
         """Stop async queue system."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
+            # On Python 3.14 get_event_loop() raises when there is no running
+            # loop on this thread (worker-pool threads). Detect a running loop
+            # explicitly and otherwise drive the coroutine on a fresh loop.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
                 asyncio.create_task(queue_system.stop())
             else:
-                loop.run_until_complete(queue_system.stop())
+                asyncio.run(queue_system.stop())
             logger.info(f"Stopped {worker_type} queue system: {name}")
             result["stopped"] += 1
         except Exception as e:

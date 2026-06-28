@@ -81,6 +81,29 @@ class BaseMCPCommand(Command):
         it is backed up and recreated automatically.
     """
 
+    @classmethod
+    async def run(cls, **kwargs: Any) -> Any:
+        """Run the command off the main event loop to keep the server responsive.
+
+        The adapter dispatcher awaits ``run()`` directly on the single server
+        event loop (the same loop that sends the proxy heartbeat). Command bodies
+        do synchronous blocking work (DB RPC, ``flock``, ``subprocess``, LibCST),
+        so executing them inline freezes the loop and the heartbeat, causing the
+        proxy to deregister the server. We relocate the inherited adapter
+        ``run()`` — which validates params and converts every exception into a
+        result object — onto a bounded worker-thread pool, and only await the
+        bridged future here so the main loop stays free.
+
+        ``use_queue=True`` commands already run in a separate worker process and
+        never reach here; they are handled inline defensively. Offload can be
+        disabled via config/env (escape hatch) — then we fall back to inline.
+        """
+        from ..core.command_offload import offload_command_run, offload_enabled
+
+        if getattr(cls, "use_queue", False) or not offload_enabled():
+            return await super().run(**kwargs)
+        return await offload_command_run(super().run, kwargs)
+
     @staticmethod
     def _ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
         """Ensure SQLite physical integrity; delegates to open_db module."""

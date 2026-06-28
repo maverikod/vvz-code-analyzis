@@ -15,6 +15,7 @@ import difflib
 import enum
 import os
 import shutil
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,7 +68,16 @@ SESSION_INVALID_TRUTH_INVARIANT = (
 )
 
 #: Process-level registry; open registers, close removes (C-012, C-014).
+#: Guarded by ``_active_sessions_lock`` because command bodies (which open/close
+#: sessions) now run concurrently on a worker-thread pool.
 _active_sessions: dict[str, EditSession] = {}
+_active_sessions_lock = threading.RLock()
+
+
+def active_sessions_snapshot() -> list["EditSession"]:
+    """Return a thread-safe snapshot of the live edit sessions for iteration."""
+    with _active_sessions_lock:
+        return list(_active_sessions.values())
 
 
 def _external_source_and_tree_valid(
@@ -224,7 +234,8 @@ class EditSession:
             is_open=True,
             history=history,
         )
-        _active_sessions[session_id] = session
+        with _active_sessions_lock:
+            _active_sessions[session_id] = session
         return session
 
     def apply_tree_operation(self, operation: EditOperation) -> None:
@@ -554,7 +565,8 @@ class EditSession:
 
     def close(self) -> None:
         """Return close."""
-        _active_sessions.pop(self.session_id, None)
+        with _active_sessions_lock:
+            _active_sessions.pop(self.session_id, None)
         if self.session_dir.exists():
             shutil.rmtree(self.session_dir)
         self.is_open = False
@@ -567,6 +579,7 @@ class EditSession:
 def get_active_session(session_id: str) -> EditSession:
     """Resolve live EditSession; KeyError if absent (no sessionless access)."""
     try:
-        return _active_sessions[session_id]
+        with _active_sessions_lock:
+            return _active_sessions[session_id]
     except KeyError as exc:
         raise KeyError(f"No active edit session: {session_id}") from exc

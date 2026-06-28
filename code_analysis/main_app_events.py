@@ -12,6 +12,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import threading
@@ -31,6 +32,8 @@ from code_analysis.core.shared_database import (
     set_shared_database,
 )
 from code_analysis.core.cst_tree.tree_builder import start_cst_tree_ttl_cleanup
+from code_analysis.core import command_offload
+from code_analysis.core.loop_liveness import loop_liveness_beat_loop
 from code_analysis.main_workers import (
     startup_database_driver,
     startup_file_watcher_worker,
@@ -157,8 +160,10 @@ def register_startup_shutdown_events(
             thread.start()
 
             # Wait for background DB open; on failure the HTTP server still runs (degraded).
+            # Offload the blocking Event.wait to a thread so the startup coroutine
+            # does not freeze the main event loop (and its heartbeat) for up to 60s.
             timeout_sec = 60.0
-            if not _db_open_done.wait(timeout=timeout_sec):
+            if not await asyncio.to_thread(_db_open_done.wait, timeout_sec):
                 logger.warning(
                     "⚠️ [STARTUP] Timed out waiting for shared database (%.1fs); "
                     "HTTP server stays up (degraded).",
@@ -190,6 +195,25 @@ def register_startup_shutdown_events(
                 )
 
             start_cst_tree_ttl_cleanup()
+            # Heartbeat liveness beacon: the watchdog thread reads this to tell
+            # "loop busy" from "loop wedged" (see proxy_heartbeat_watchdog).
+            asyncio.create_task(loop_liveness_beat_loop())
+            # Apply optional offload config, then pre-create the worker pool so the
+            # first request is not slowed by lazy startup of the worker threads/loops.
+            try:
+                off_cfg = (
+                    app_config.get("command_offload")
+                    if isinstance(app_config, dict)
+                    else None
+                )
+                if isinstance(off_cfg, dict):
+                    command_offload.configure_offload(
+                        enabled=off_cfg.get("enabled"),
+                        max_workers=off_cfg.get("max_workers"),
+                    )
+                command_offload.warm_up()
+            except Exception as e:  # pragma: no cover - non-fatal
+                logger.warning("Command offload warm-up failed: %s", e)
         except Exception as e:
             print(
                 f"❌ [STARTUP EVENT] Failed to start workers: {e}",
@@ -214,6 +238,12 @@ def register_startup_shutdown_events(
         )
 
         try:
+            try:
+                command_offload.shutdown(wait=True)
+                logger.info("✅ Command offload pool stopped")
+            except Exception as e:  # pragma: no cover - best-effort
+                logger.warning("Command offload pool shutdown failed: %s", e)
+
             close_shared_database()
             logger.info("✅ Shared database connection closed")
 

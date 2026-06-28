@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +20,8 @@ from .models import ROOT_POINTER, JSONTree, JsonNodeMetadata, stable_node_id_for
 logger = logging.getLogger(__name__)
 
 _trees: Dict[str, JSONTree] = {}
+# Guards _trees against concurrent access from worker-pool command threads.
+_trees_lock = threading.RLock()
 
 
 def _json_kind(value: Any) -> str:
@@ -117,20 +120,23 @@ def build_tree_from_data(
     tree = JSONTree.create(file_path, copy.deepcopy(data))
     _build_index(tree)
     if register:
-        _trees[tree.tree_id] = tree
+        with _trees_lock:
+            _trees[tree.tree_id] = tree
     return tree
 
 
 def get_tree(tree_id: str) -> Optional[JSONTree]:
     """Return get tree."""
-    return _trees.get(tree_id)
+    with _trees_lock:
+        return _trees.get(tree_id)
 
 
 def remove_tree(tree_id: str) -> bool:
     """Return remove tree."""
-    if tree_id in _trees:
-        del _trees[tree_id]
-        return True
+    with _trees_lock:
+        if tree_id in _trees:
+            del _trees[tree_id]
+            return True
     return False
 
 

@@ -136,7 +136,10 @@ async def _search_session_cleanup_loop(
     """Return search session cleanup loop."""
     while True:
         try:
-            deleted = cleanup_expired_sessions(
+            # Offload the synchronous filesystem sweep (iterdir + rmtree) to a
+            # thread so this background loop never blocks the main event loop.
+            deleted = await asyncio.to_thread(
+                cleanup_expired_sessions,
                 sessions_root=sessions_root,
                 config_path=config_path,
                 now=time.time(),

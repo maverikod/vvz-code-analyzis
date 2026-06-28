@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from code_analysis.core.constants import DEFAULT_FILE_LOCK_TIMEOUT
+from code_analysis.core.file_lock import FileLockTimeoutError
 from code_analysis.core.search_session.directory import SearchSessionDirectoryLayout
 
 METRIC_PRODUCED_RESULTS = "produced_results"
@@ -213,7 +215,20 @@ def update_manifest_atomic(
     lock_file_path = _lock_path(layout.manifest_path)
     lock_file_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_file_path, "a+", encoding="utf-8") as lock_handle:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        # Bounded acquire: an unbounded LOCK_EX can freeze a worker-pool thread
+        # forever under contention. Poll with LOCK_NB up to a default budget and
+        # surface FileLockTimeoutError (handled as LOCK_ACQUIRE_FAILED upstream).
+        _deadline = time.monotonic() + DEFAULT_FILE_LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= _deadline:
+                    raise FileLockTimeoutError(
+                        f"Timed out acquiring manifest lock for {layout.manifest_path}"
+                    ) from exc
+                time.sleep(0.05)
         try:
             if layout.manifest_path.is_file():
                 current = read_manifest(layout)

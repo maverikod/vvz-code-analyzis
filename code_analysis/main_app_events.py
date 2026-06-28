@@ -34,6 +34,10 @@ from code_analysis.core.shared_database import (
 from code_analysis.core.cst_tree.tree_builder import start_cst_tree_ttl_cleanup
 from code_analysis.core import command_offload
 from code_analysis.core.loop_liveness import loop_liveness_beat_loop
+
+# Strong references to long-lived background tasks. asyncio.create_task keeps only
+# a weak reference, so without this the beat task can be garbage-collected and stop.
+_background_tasks: set = set()
 from code_analysis.main_workers import (
     startup_database_driver,
     startup_file_watcher_worker,
@@ -197,7 +201,10 @@ def register_startup_shutdown_events(
             start_cst_tree_ttl_cleanup()
             # Heartbeat liveness beacon: the watchdog thread reads this to tell
             # "loop busy" from "loop wedged" (see proxy_heartbeat_watchdog).
-            asyncio.create_task(loop_liveness_beat_loop())
+            # Keep a strong reference so the task is not garbage-collected.
+            _beat_task = asyncio.create_task(loop_liveness_beat_loop())
+            _background_tasks.add(_beat_task)
+            _beat_task.add_done_callback(_background_tasks.discard)
             # Apply optional offload config, then pre-create the worker pool so the
             # first request is not slowed by lazy startup of the worker threads/loops.
             try:

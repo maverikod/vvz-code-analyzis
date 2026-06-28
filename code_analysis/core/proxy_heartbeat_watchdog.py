@@ -94,7 +94,12 @@ def _resolve_settings(
     cert: Optional[Tuple[str, str]] = (
         (cert_file, key_file) if cert_file and key_file else None
     )
-    verify: Union[bool, str] = ca_file if ca_file else False
+    # Honor the registration SSL posture: when hostname checking is disabled (the
+    # proxy server cert is not issued for the LAN IP), full httpx verification
+    # against the CA fails, so verify server-side loosely and rely on the mTLS
+    # client cert to authenticate to the local proxy.
+    check_hostname = bool(ssl_cfg.get("check_hostname", False))
+    verify: Union[bool, str] = ca_file if (ca_file and check_hostname) else False
 
     server = full_config.get("server") if isinstance(full_config, dict) else {}
     server = server if isinstance(server, dict) else {}
@@ -180,21 +185,37 @@ def _watchdog_main(
             client = None
 
     next_heartbeat = 0.0  # monotonic deadline; 0 → send on first healthy tick
+    hb_fail_logged = False  # throttle: log a heartbeat failure once until it recovers
+
+    def _maybe_send_heartbeat() -> None:
+        """Send the independent heartbeat if due; throttle failure logging."""
+        nonlocal next_heartbeat, hb_fail_logged
+        if client is None or settings is None:
+            return
+        now = time.monotonic()
+        if now < next_heartbeat:
+            return
+        next_heartbeat = now + heartbeat_interval
+        try:
+            resp = client.post(settings["url"], json=_build_payload(settings))
+            resp.raise_for_status()
+            if hb_fail_logged:
+                logger.info("Independent proxy heartbeat recovered.")
+                hb_fail_logged = False
+        except Exception as exc:
+            if not hb_fail_logged:
+                logger.warning(
+                    "Independent proxy heartbeat failing (suppressing repeats): %s",
+                    exc,
+                )
+                hb_fail_logged = True
+
     try:
         while not heartbeat_stop.wait(tick):
             # During startup the beat coroutine has not run yet; don't treat the
             # boot window as a stall. Heartbeats below still flow (server booting).
             if not loop_liveness.has_beaten():
-                if client is not None and settings is not None:
-                    now = time.monotonic()
-                    if now >= next_heartbeat:
-                        next_heartbeat = now + heartbeat_interval
-                        try:
-                            client.post(settings["url"], json=_build_payload(settings))
-                        except Exception as exc:
-                            logger.warning(
-                                "Independent proxy heartbeat (startup) failed: %s", exc
-                            )
+                _maybe_send_heartbeat()
                 continue
             stale = loop_liveness.seconds_since_beat()
             if stale > STALL_LIMIT_SECONDS:
@@ -217,17 +238,7 @@ def _watchdog_main(
                     stale,
                 )
                 stall_logged = False
-            if client is None or settings is None:
-                continue
-            now = time.monotonic()
-            if now < next_heartbeat:
-                continue
-            next_heartbeat = now + heartbeat_interval
-            try:
-                resp = client.post(settings["url"], json=_build_payload(settings))
-                resp.raise_for_status()
-            except Exception as exc:
-                logger.warning("Independent proxy heartbeat failed: %s", exc)
+            _maybe_send_heartbeat()
     finally:
         if client is not None:
             try:

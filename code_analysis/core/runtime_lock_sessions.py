@@ -526,6 +526,36 @@ def get_file_advisory_lock_status(
     }
 
 
+def list_locked_file_paths(database: Any, project_id: str) -> set[str]:
+    """
+    Return the set of project-relative file paths with an active advisory lease.
+
+    Path-level (session-independent) lookup used by the file watcher to skip files
+    that an editing session currently owns. The query is engine-neutral and runs
+    on both SQLite and PostgreSQL through the universal database client.
+
+    Args:
+        database: Database client exposing ``execute``.
+        project_id: Project UUID.
+
+    Returns:
+        Set of normalized project-relative POSIX paths currently locked (any mode).
+    """
+    ensure_runtime_lock_tables(database)
+    rows = database.execute(
+        "SELECT DISTINCT file_path FROM file_advisory_lock_leases WHERE project_id = ?",
+        (str(project_id).strip(),),
+    )
+    data = rows.get("data") if isinstance(rows, dict) else []
+    locked: set[str] = set()
+    for row in data or []:
+        if isinstance(row, dict):
+            path = str(row.get("file_path") or "").strip()
+            if path:
+                locked.add(path)
+    return locked
+
+
 def count_advisory_lease_rows_for_session(database: Any, session_id: str) -> int:
     """Count ``file_advisory_lock_leases`` rows for a client/runtime session id."""
     ensure_runtime_lock_tables(database)

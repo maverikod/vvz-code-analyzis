@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -19,20 +20,81 @@ from code_analysis.core.file_identity import (
 logger = logging.getLogger(__name__)
 
 
+def collect_content_metadata(content: str) -> Tuple[int, bool]:
+    """Derive line count and docstring flag from in-memory file content."""
+    lines = content.count("\n") + (1 if content else 0)
+    stripped = content.lstrip()
+    has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
+    return lines, has_docstring
+
+
 def collect_file_disk_metadata(path: Path) -> Tuple[int, bool]:
     """Read line count and docstring flag from a regular file on disk."""
-    lines = 0
-    has_docstring = False
     if not path.exists() or not path.is_file():
-        return lines, has_docstring
+        return 0, False
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
-        lines = text.count("\n") + (1 if text else 0)
-        stripped = text.lstrip()
-        has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
     except Exception:
         logger.debug("Failed to read file for metadata: %s", path, exc_info=True)
-    return lines, has_docstring
+        return 0, False
+    return collect_content_metadata(text)
+
+
+def register_file_row_for_new_content(
+    database: Any,
+    project_id: str,
+    absolute_path: Path | str,
+    content: str,
+    *,
+    last_modified: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Register a ``files`` row for a not-yet-written project file from its content.
+
+    Unlike :func:`ensure_file_row_for_disk_path`, this does not require the path
+    to exist on disk: it allocates ``files.id`` from in-memory ``content`` so the
+    row can be created before the bytes are persisted (atomic
+    lock-then-register-then-write). Returns the active row dict (with ``id``), or
+    an existing row when the path is already registered, or ``None`` when the
+    database client cannot register the row.
+
+    Args:
+        database: Database client with ``get_file_by_path`` and ``add_file``.
+        project_id: Registered project UUID.
+        absolute_path: Absolute filesystem path the file will be written to.
+        content: The text content the file will hold (used for line/docstring
+            metadata only).
+        last_modified: Optional provisional mtime; defaults to the current time.
+            The file watcher reconciles the real mtime on its next pass after the
+            file is unlocked.
+    """
+    path = Path(absolute_path)
+    try:
+        path = path.resolve()
+    except OSError:
+        path = Path(absolute_path)
+
+    pid = str(project_id).strip()
+    abs_str = str(path)
+    get_by_path = getattr(database, "get_file_by_path", None)
+    if not callable(get_by_path):
+        logger.warning("database has no get_file_by_path; skip register %s", abs_str)
+        return None
+
+    existing = get_by_path(abs_str, pid, include_deleted=False)
+    if existing and existing.get("id") is not None:
+        return dict(existing)
+
+    add_file = getattr(database, "add_file", None)
+    if not callable(add_file):
+        logger.warning("database has no add_file; skip register %s", abs_str)
+        return None
+
+    mtime = last_modified if last_modified is not None else time.time()
+    lines, has_docstring = collect_content_metadata(content)
+    add_file(abs_str, lines, float(mtime), has_docstring, pid)
+    fetched = get_by_path(abs_str, pid, include_deleted=False)
+    return dict(fetched) if fetched else None
 
 
 def ensure_file_row_for_disk_path(

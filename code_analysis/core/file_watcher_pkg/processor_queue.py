@@ -29,6 +29,7 @@ from .ignore_pre_scan_purge import (
 from .processor_delta import FileDelta
 
 from code_analysis.core.database.file_edit_lock import file_row_has_live_edit_lock
+from code_analysis.core.runtime_lock_sessions import list_locked_file_paths
 from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 from code_analysis.core.file_disk_registration import (
     collect_file_disk_metadata,
@@ -42,6 +43,27 @@ from code_analysis.core.file_identity import (
 from code_analysis.core.tree_lifecycle.checksum import validate_or_recreate_tree_file
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_delta_locked_paths(delta: FileDelta, locked_paths: set[str]) -> FileDelta:
+    """Drop advisory-locked paths from every branch of a scan delta.
+
+    A locked file is owned by an editing session; the file watcher must not index,
+    vectorize, mutate, or delete its ``files`` row until it is unlocked. Filtering
+    all four lists (new, changed, deleted, ignore-purge) at the single delta entry
+    point covers every processing branch, including deletion.
+    """
+    if not locked_paths:
+        return delta
+    return FileDelta(
+        new_files=[f for f in delta.new_files if f[0] not in locked_paths],
+        changed_files=[f for f in delta.changed_files if f[0] not in locked_paths],
+        deleted_files=[p for p in delta.deleted_files if p not in locked_paths],
+        ignore_purge_paths=[
+            p for p in delta.ignore_purge_paths if p not in locked_paths
+        ],
+    )
+
 
 _WATCHER_PHASE_HB = 50
 
@@ -244,6 +266,32 @@ class ProcessorQueueOps:
         """Queue file changes for a single project (new rows first, then updates, then deletes)."""
         from ..path_normalization import normalize_file_path
         from ..exceptions import ProjectIdMismatchError
+
+        # Skip files an editing session currently holds (advisory lease). Filtering
+        # the delta here covers every downstream branch (index/vectorize/update/
+        # delete) before any DB mutation.
+        locked_paths = list_locked_file_paths(self.database, project_id)
+        if locked_paths:
+            before = (
+                len(delta.new_files)
+                + len(delta.changed_files)
+                + len(delta.deleted_files)
+                + len(delta.ignore_purge_paths)
+            )
+            delta = _filter_delta_locked_paths(delta, locked_paths)
+            after = (
+                len(delta.new_files)
+                + len(delta.changed_files)
+                + len(delta.deleted_files)
+                + len(delta.ignore_purge_paths)
+            )
+            if after < before:
+                logger.info(
+                    "[WATCHER LOCK SKIP] project_id=%s skipped=%s locked_paths=%s",
+                    project_id,
+                    before - after,
+                    len(locked_paths),
+                )
 
         stats: Dict[str, int] = {
             "new_files": 0,
@@ -679,11 +727,16 @@ class ProcessorQueueOps:
                 ):
                     raise RuntimeError("watcher queueing phase not acquired")
             wd_id = watch_dir_id or _watch_dir_id_for_project(self.database, project_id)
+            # Resolve advisory-locked paths with the real DB client and pass them
+            # into the (pure) program builder so locked files are left untouched by
+            # the bulk INSERT/UPDATE/DELETE.
+            locked_paths = list_locked_file_paths(self.database, project_id)
             bulk_stats = submit_watcher_bulk_sync(
                 self.database,
                 project_id,
                 wd_id,
                 disk_rows,
+                locked_paths=locked_paths,
             )
             stats.update(bulk_stats)
         except Exception as exc:

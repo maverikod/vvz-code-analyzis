@@ -58,6 +58,7 @@ class FileLockHandle:
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
         file_path: Optional[str] = None,
+        reused: bool = False,
     ) -> None:
         """Initialize the instance."""
         self.path = path
@@ -69,12 +70,18 @@ class FileLockHandle:
         self.project_id = project_id
         self.file_path = file_path
         self.released = False
+        # True when this handle did not take a real flock/lease because the
+        # process already holds a persistent lock for the path: release is a no-op
+        # so the owning lock (and its sidecar/lease) is left intact.
+        self.reused = reused
 
     def release(self, *, force_lease: bool = False) -> None:
         """Release the OS flock and best-effort DB lease."""
         if self.released:
             return
         self.released = True
+        if self.reused:
+            return
         if (
             self.database is not None
             and self.session_id
@@ -155,7 +162,9 @@ class PersistentFileLock:
         self.release()
 
 
-_persistent_guard = threading.Lock()
+# Re-entrant: acquire_persistent_file_lock holds this while calling
+# acquire_file_lock, which re-checks the registry via _persistent_lock_held_for.
+_persistent_guard = threading.RLock()
 _persistent_locks: Dict[Tuple[str, str, str], FileLockHandle] = {}
 
 
@@ -165,6 +174,31 @@ def _fcntl_flag_for_mode(mode: str) -> int:
     if normalized == "shared":
         return fcntl.LOCK_SH if fcntl is not None else 0
     return fcntl.LOCK_EX if fcntl is not None else 0
+
+
+def _persistent_lock_held_for(target: Path) -> bool:
+    """Return True if this process already holds a persistent lock for ``target``.
+
+    The locking owner is a single command/worker (create, open, or file watcher)
+    that took ``acquire_persistent_file_lock``. When that lock is already held,
+    an inner byte-write must not take a second flock on the same sidecar (it would
+    block on the lock the same process owns); it writes under the held lock.
+    """
+    try:
+        resolved = target.resolve()
+    except OSError:
+        resolved = target
+    with _persistent_guard:
+        for handle in _persistent_locks.values():
+            if handle.released:
+                continue
+            try:
+                if handle.path.resolve() == resolved:
+                    return True
+            except OSError:
+                if handle.path == target:
+                    return True
+    return False
 
 
 def acquire_file_lock(
@@ -183,6 +217,17 @@ def acquire_file_lock(
     """Acquire a sidecar flock and optional DB advisory lease."""
     target = Path(path)
     normalized_mode = "shared" if shared else normalize_lock_mode(mode)
+    # Single-owner rule: if this process already holds a persistent lock for the
+    # path, the driving command owns the lock — reuse it (no second flock/lease).
+    # The returned handle's release is a no-op, leaving the owning lock intact.
+    if normalized_mode != "none" and _persistent_lock_held_for(target):
+        return FileLockHandle(
+            path=target,
+            lock_file=None,
+            lock_path=Path(str(target) + ".lock"),
+            mode=normalized_mode,
+            reused=True,
+        )
     lock_path = Path(str(target) + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, "w", encoding="utf-8")

@@ -18,6 +18,7 @@ from code_analysis.commands.sessions.session_close_file_command_metadata import 
 from code_analysis.core.client_sessions import (
     SessionNotFoundError,
     close_session_file,
+    release_session_advisory_write_lease,
     touch_or_error,
 )
 from code_analysis.core.security_policy_guard import (
@@ -111,6 +112,13 @@ class SessionCloseFileCommand(BaseMCPCommand):
         result = close_session_file(
             database, session_id=session_id, project_id=project_id, file_id=file_id
         )
+        # Release the exclusive advisory lease so the file watcher resumes
+        # processing this path on its next pass (idempotent: a missing lease is
+        # not an error).
+        released_lease = release_session_advisory_write_lease(
+            database, session_id=session_id, project_id=project_id, file_id=file_id
+        )
+        result["advisory_lease_released"] = released_lease
         return SuccessResult(data=result)
 
     @classmethod

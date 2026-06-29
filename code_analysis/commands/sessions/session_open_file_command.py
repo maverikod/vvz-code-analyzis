@@ -18,6 +18,7 @@ from code_analysis.commands.sessions.session_open_file_command_metadata import (
 from code_analysis.core.client_sessions import (
     FileLockedByOtherSessionError,
     SessionNotFoundError,
+    acquire_session_advisory_write_lease,
     open_session_file,
     touch_or_error,
 )
@@ -114,6 +115,15 @@ class SessionOpenFileCommand(BaseMCPCommand):
             )
         except FileLockedByOtherSessionError as exc:
             return ErrorResult(code="FILE_LOCKED", message=str(exc))
+
+        # Record an exclusive advisory lease so the file watcher skips this path and
+        # project_file_lock_status reports it consistently with files locked at
+        # creation through the transfer-save path. Best effort: a missing index row
+        # must not fail the session lock itself.
+        lease = acquire_session_advisory_write_lease(
+            database, session_id=session_id, project_id=project_id, file_id=file_id
+        )
+        result["advisory_lease_acquired"] = lease is not None
         return SuccessResult(data=result)
 
     @classmethod

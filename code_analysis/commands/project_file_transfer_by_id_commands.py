@@ -41,7 +41,10 @@ from .project_file_transfer_by_id_commands_schema import (
     get_project_file_transfer_upload_save_schema,
 )
 from .universal_file_save_command import UniversalFileSaveCommand
-from ..core.file_disk_registration import ensure_file_row_for_disk_path
+from ..core.file_disk_registration import (
+    ensure_file_row_for_disk_path,
+    register_file_row_for_new_content,
+)
 from ..core.backup_manager import BackupManager
 from ..core.client_sessions import (
     SessionNotFoundError,
@@ -463,6 +466,48 @@ def _ensure_db_row_for_on_disk_file(
     return registered, abs_path
 
 
+def _create_path_on_disk(
+    database: DatabaseClient, project_id: str, rel_posix: str
+) -> bool:
+    """Return True when the project-relative path currently exists on disk."""
+    project = database.get_project(project_id)
+    if project is None:
+        return False
+    try:
+        abs_path = resolve_under_project_root(
+            Path(project.root_path).resolve(),
+            rel_posix,
+            require_exists=False,
+            must_be_file=None,
+        )
+    except ValidationError:
+        return False
+    return Path(abs_path).is_file()
+
+
+def _rollback_registered_file_row(
+    database: DatabaseClient,
+    project_id: str,
+    file_id: str,
+) -> None:
+    """Remove a files row registered for a new file whose write later failed.
+
+    Best-effort cascade purge so the atomic create path leaves no orphan row when
+    the subsequent disk write does not succeed.
+    """
+    try:
+        database.purge_file_ids_cascade(
+            project_id, [file_id], operation_name="upload_save_rollback"
+        )
+    except Exception:
+        logger.warning(
+            "Failed to roll back registered file row id=%s in project %s",
+            file_id,
+            project_id,
+            exc_info=True,
+        )
+
+
 def _resolve_file_target(
     database: DatabaseClient,
     project_id: Optional[str],
@@ -841,19 +886,24 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             return resolved
         _row, rel_posix, effective_project_id = resolved
         if not str(file_id or "").strip() and str(file_path or "").strip() and _row:
-            existing_id = str(_row.get("id") or "").strip()
-            return ErrorResult(
-                message=(
-                    f"Path {rel_posix!r} is already indexed in the database; "
-                    "use file_id to update an existing file"
-                ),
-                code="FILE_ALREADY_INDEXED",
-                details={
-                    "project_id": effective_project_id,
-                    "file_path": rel_posix,
-                    "file_id": existing_id or None,
-                },
-            )
+            # A row already exists for this create path. Only reject when the file
+            # is genuinely on disk: a row without bytes is an interrupted prior
+            # create (e.g. a sync-timeout retry) and is completed idempotently
+            # below by treating the existing row as the write target.
+            if _create_path_on_disk(database, effective_project_id, rel_posix):
+                existing_id = str(_row.get("id") or "").strip()
+                return ErrorResult(
+                    message=(
+                        f"Path {rel_posix!r} is already indexed in the database; "
+                        "use file_id to update an existing file"
+                    ),
+                    code="FILE_ALREADY_INDEXED",
+                    details={
+                        "project_id": effective_project_id,
+                        "file_path": rel_posix,
+                        "file_id": existing_id or None,
+                    },
+                )
 
         read_out = _read_completed_upload_text(transfer_id)
         if isinstance(read_out, ErrorResult):
@@ -861,9 +911,14 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         content, _compression = read_out
 
         mode = normalize_lock_mode(lock_mode)
+        is_create = _row is None
         lock_session_id: Optional[str] = None
         lock_handle = None
-        if mode != "none":
+        abs_path: Optional[Path] = None
+
+        # Resolve the absolute target path up front: the advisory lock (when
+        # requested) and the pre-write row registration for a new file both need it.
+        if mode != "none" or is_create:
             project = database.get_project(effective_project_id)
             if not project:
                 return ErrorResult(
@@ -885,6 +940,11 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                     code="PATH_ERROR",
                     details=getattr(e, "details", None) or {},
                 )
+
+        # Step 1 — acquire the advisory lock FIRST so its lease row is committed
+        # and visible before any files row or bytes appear. The file watcher skips
+        # locked paths, so it cannot race the registration/write below.
+        if mode != "none":
             lock_session_id = _resolve_advisory_lock_session_id(
                 database,
                 client_session_id=session_id,
@@ -892,7 +952,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             )
             try:
                 lock_handle = acquire_persistent_file_lock(
-                    abs_path,
+                    cast(Path, abs_path),
                     mode=lock_mode,
                     database=database,
                     project_id=effective_project_id,
@@ -912,6 +972,32 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
                     },
                 )
 
+        # Step 2 — register the files row for a NEW file BEFORE writing bytes, so
+        # the caller's commit has files.id immediately and does not depend on the
+        # file watcher. A real write (not dry-run) is required to allocate the row;
+        # any later failure rolls this row back (see the failure branch below).
+        pre_registered_file_id: Optional[str] = None
+        if is_create and not dry_run:
+            reg_row = register_file_row_for_new_content(
+                database,
+                effective_project_id,
+                cast(Path, abs_path),
+                content,
+            )
+            if reg_row is None or reg_row.get("id") is None:
+                if lock_handle is not None:
+                    lock_handle.release(force_lease=True)
+                return ErrorResult(
+                    message=f"Failed to register file row for {rel_posix!r}",
+                    code="FILE_REGISTER_FAILED",
+                    details={
+                        "project_id": effective_project_id,
+                        "file_path": rel_posix,
+                    },
+                )
+            pre_registered_file_id = str(reg_row["id"])
+
+        # Step 3 — write the bytes to disk.
         saver = UniversalFileSaveCommand()
         result = await saver.execute(
             project_id=effective_project_id,
@@ -926,29 +1012,39 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             tree_id=tree_id,
             **kwargs,
         )
-        if not isinstance(result, SuccessResult) and lock_handle is not None:
-            lock_handle.release(force_lease=True)
+        if not isinstance(result, SuccessResult):
+            # Roll back so no partial lock/row/bytes state persists: drop the
+            # pre-registered row, then release the lock.
+            if pre_registered_file_id is not None:
+                _rollback_registered_file_row(
+                    database, effective_project_id, pre_registered_file_id
+                )
+            if lock_handle is not None:
+                lock_handle.release(force_lease=True)
         if isinstance(result, SuccessResult) and isinstance(result.data, dict):
             result.data.setdefault("resolved_file_path", rel_posix)
             result.data.setdefault("lock_mode", lock_mode)
             result.data.setdefault("lock_session_id", lock_session_id)
             if not dry_run:
-                disk_out = _require_on_disk_project_file(
-                    database, effective_project_id, rel_posix
-                )
-                if isinstance(disk_out, ErrorResult):
-                    return disk_out
-                ensured = _ensure_db_row_for_on_disk_file(
-                    database,
-                    effective_project_id,
-                    disk_out,
-                    rel_posix,
-                    _row,
-                )
-                if isinstance(ensured, ErrorResult):
-                    return ensured
-                reg_row, _abs_path = ensured
-                result.data["file_id"] = str(reg_row["id"])
+                if pre_registered_file_id is not None:
+                    result.data["file_id"] = pre_registered_file_id
+                else:
+                    disk_out = _require_on_disk_project_file(
+                        database, effective_project_id, rel_posix
+                    )
+                    if isinstance(disk_out, ErrorResult):
+                        return disk_out
+                    ensured = _ensure_db_row_for_on_disk_file(
+                        database,
+                        effective_project_id,
+                        disk_out,
+                        rel_posix,
+                        _row,
+                    )
+                    if isinstance(ensured, ErrorResult):
+                        return ensured
+                    reg_row_existing, _abs_path = ensured
+                    result.data["file_id"] = str(reg_row_existing["id"])
             if bool(unlock_after_write) and not bool(dry_run):
                 released_by_transfer = release_transfer_lock(
                     str(transfer_id),

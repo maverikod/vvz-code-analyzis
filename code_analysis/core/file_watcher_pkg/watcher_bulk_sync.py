@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from code_analysis.core.database.file_purge_cascade import (
     TEMP_PURGE_TABLE,
@@ -79,9 +79,16 @@ def build_watcher_bulk_sync_program(
     watch_dir_id: Optional[str],
     disk_rows: Sequence[WatcherDiskFileRow],
     database: Any,
+    *,
+    locked_paths: Optional[Iterable[str]] = None,
 ) -> LogicalWriteProgramV1:
     """
     Build logical-write program: load disk temp → diff temp → DML + optional purge.
+
+    ``locked_paths`` (project-relative POSIX) are advisory-locked files owned by an
+    editing session; their rows are deleted from the sync table so the bulk DML
+    leaves them untouched. This builder performs no database I/O — the caller
+    resolves the locked set with a live client and passes it in.
     """
     if not database_uses_postgres(database):
         raise RuntimeError("build_watcher_bulk_sync_program requires PostgreSQL")
@@ -212,6 +219,20 @@ UNION ALL
         ),
     ]
 
+    # Skip files an editing session currently holds (advisory lease): remove their
+    # rows from the sync table so the bulk INSERT/UPDATE/DELETE below leave them
+    # untouched. Removing from the disk manifest instead would make the diff treat
+    # a locked-but-on-disk file as deleted and purge its row, which must not happen.
+    locked_sorted = sorted(set(locked_paths or ()))
+    if locked_sorted:
+        placeholders = ", ".join(["?"] * len(locked_sorted))
+        batch_b.append(
+            (
+                f"DELETE FROM {TEMP_SYNC} WHERE relative_path IN ({placeholders})",
+                tuple(locked_sorted),
+            )
+        )
+
     insert_sql = f"""
 INSERT INTO files (
   id, project_id, watch_dir_id, path, relative_path,
@@ -278,12 +299,17 @@ def submit_watcher_bulk_sync(
     project_id: str,
     watch_dir_id: Optional[str],
     disk_rows: Sequence[WatcherDiskFileRow],
+    *,
+    locked_paths: Optional[Iterable[str]] = None,
 ) -> Dict[str, int]:
     """
     Run bulk sync for one project. Returns coarse stats (manifest size based).
+
+    ``locked_paths`` are advisory-locked project-relative POSIX paths to leave
+    untouched (resolved by the caller with a live database client).
     """
     program = build_watcher_bulk_sync_program(
-        project_id, watch_dir_id, disk_rows, database
+        project_id, watch_dir_id, disk_rows, database, locked_paths=locked_paths
     )
     submit_logical_write_program_or_fallback(database, program)
     n_disk = len(disk_rows)

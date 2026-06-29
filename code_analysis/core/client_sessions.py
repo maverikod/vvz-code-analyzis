@@ -544,6 +544,109 @@ def close_session_file(
     }
 
 
+def _session_file_relative_posix(
+    database: DatabaseClient, project_id: str, file_id: str
+) -> Optional[str]:
+    """Resolve the project-relative POSIX path of a session-held file by id.
+
+    Returns ``None`` when the file row or the project root cannot be resolved. The
+    returned form matches the key used by ``project_file_lock_status`` and the
+    file watcher's advisory-lock lookups.
+    """
+    from code_analysis.core.file_identity import (
+        absolute_path_for_indexed_file,
+        relative_path_for_project,
+    )
+
+    get_file_by_id = getattr(database, "get_file_by_id", None)
+    if not callable(get_file_by_id):
+        return None
+    row = get_file_by_id(file_id)
+    if not row:
+        return None
+    project = database.get_project(project_id)
+    root = getattr(project, "root_path", None)
+    if isinstance(project, dict):
+        root = project.get("root_path")
+    if not root:
+        return None
+    try:
+        abs_path = absolute_path_for_indexed_file(root, row)
+        return relative_path_for_project(abs_path, root)
+    except ValueError:
+        return None
+
+
+def acquire_session_advisory_write_lease(
+    database: DatabaseClient,
+    *,
+    session_id: str,
+    project_id: str,
+    file_id: str,
+) -> Optional[dict[str, Any]]:
+    """Record an exclusive advisory lease for a session-held file.
+
+    Bridges the client session into the runtime lock-session table and writes an
+    exclusive lease keyed by the file's project-relative path, so the file watcher
+    skips the path and ``project_file_lock_status`` reports it as ``fully_locked``
+    — consistent with files created-and-locked through the transfer-save path.
+    Returns the lease payload, or ``None`` when the file path cannot be resolved.
+    """
+    from code_analysis.core.runtime_lock_sessions import (
+        acquire_file_advisory_lease,
+        ensure_client_lock_session,
+    )
+
+    rel_posix = _session_file_relative_posix(database, project_id, file_id)
+    if rel_posix is None:
+        return None
+    runtime_session_id = ensure_client_lock_session(database, session_id)
+    return acquire_file_advisory_lease(
+        database,
+        session_id=runtime_session_id,
+        project_id=project_id,
+        file_path=rel_posix,
+        lock_mode="exclusive",
+    )
+
+
+def release_session_advisory_write_lease(
+    database: DatabaseClient,
+    *,
+    session_id: str,
+    project_id: str,
+    file_id: str,
+) -> bool:
+    """Release the exclusive advisory lease for a session-held file (idempotent).
+
+    Force-removes the lease regardless of refcount so the file watcher resumes
+    processing the path immediately after the session closes the file. Returns
+    ``True`` when a lease row was removed, ``False`` when none existed or the
+    path/session could not be resolved (no error raised).
+    """
+    from code_analysis.core.runtime_lock_sessions import (
+        ensure_client_lock_session,
+        release_file_advisory_lease,
+    )
+
+    rel_posix = _session_file_relative_posix(database, project_id, file_id)
+    if rel_posix is None:
+        return False
+    try:
+        runtime_session_id = ensure_client_lock_session(database, session_id)
+    except ValueError:
+        return False
+    result = release_file_advisory_lease(
+        database,
+        session_id=runtime_session_id,
+        project_id=project_id,
+        file_path=rel_posix,
+        lock_mode="exclusive",
+        force=True,
+    )
+    return bool(result.get("released"))
+
+
 def list_session_file_locks(
     database: DatabaseClient,
     session_id: str,

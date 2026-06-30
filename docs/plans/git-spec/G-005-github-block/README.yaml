@@ -1,0 +1,27 @@
+step_id: G-005
+name: GitHub command block and token authentication
+description: The GitHub platform operations on a registered project and the token
+  mechanism that authenticates them. The block exposes repository inspection, pull-request
+  listing, retrieval, creation and merging, issue listing, creation and commenting,
+  and release creation. These operations act against the GitHub HTTP API rather than
+  the local filesystem and are a layer distinct from local and remote git. Merging
+  a pull request that targets a protected branch is rejected unless explicitly permitted.
+  Every GitHub operation authenticates with a configured access token; the token is
+  never logged or echoed. GitHub operations are bounded by a timeout so a stuck endpoint
+  cannot hang the server.
+concepts:
+- C-018
+- C-019
+- C-020
+relations:
+- from_concept: C-018
+  to_concept: C-020
+  type: depends_on
+source_labels:
+- '{q3r4}'
+- '{s5t6}'
+- '{u7v8}'
+depends_on:
+- G-006
+tactical_steps: []
+status: draft

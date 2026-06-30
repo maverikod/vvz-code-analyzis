@@ -1,0 +1,39 @@
+step_id: T-002
+parent_global_step: G-006
+name: Path confinement and virtual-environment write guard
+description: 'Confine every path parameter accepted by any git operation to the resolved
+  project root and reject any path that resolves outside it, while exempting revision
+  identifiers, which are not paths, from path confinement. Layered on top of confinement,
+  enforce the protected-location write guard: writes that land under a project''s
+  virtual-environment directory or under installed-package directories are rejected,
+  and the git block does not bypass this guard. The guard applies uniformly to commit-on-write,
+  staging, restore, and any other operation that writes into the working tree.
+
+  '
+concepts:
+- C-022
+- C-027
+inputs:
+- name: path_parameter
+  type: string
+  description: A project-relative path supplied to a git operation, to be confined
+    to the resolved project root.
+- name: revision_identifier
+  type: string
+  description: A revision or ref string that is not a path and is exempt from path
+    confinement.
+- name: working_tree_write_target
+  type: path
+  description: The destination of any working-tree write, checked against protected
+    virtual-environment and installed-package locations.
+outputs:
+- name: confinement_rejection
+  type: outcome
+  description: A rejection outcome emitted when a path resolves outside the project
+    root.
+- name: protected_location_rejection
+  type: outcome
+  description: A rejection outcome emitted when a write targets a virtual-environment
+    or installed-package directory.
+atomic_steps: []
+status: draft

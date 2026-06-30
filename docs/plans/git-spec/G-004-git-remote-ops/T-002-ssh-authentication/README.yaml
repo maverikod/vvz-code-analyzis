@@ -1,0 +1,36 @@
+step_id: T-002
+parent_global_step: G-004
+name: SSH authentication for remote operations
+description: 'Define how remote-contacting operations authenticate to a remote over
+  SSH. The identity used is a configured SSH key belonging to the server user; no
+  interactive credential prompt is ever issued, and a missing or unusable key yields
+  a distinct authentication outcome rather than blocking on input. Host key verification
+  is honoured against the server user''s known-hosts so that an unrecognised host
+  is reported as an authentication failure rather than silently trusted. The SSH identity
+  is supplied to fetch, pull, and push uniformly and is never derived from the caller.
+  Authentication failures are reported as a distinct named outcome carrying no secret
+  material.
+
+  '
+concepts:
+- C-017
+inputs:
+- name: configured_ssh_identity
+  type: identity
+  description: The server user's configured SSH key used for all remote authentication,
+    never supplied by the caller.
+- name: known_hosts_reference
+  type: structure
+  description: The server user's known-hosts used to verify the remote host key before
+    contact.
+outputs:
+- name: authenticated_remote_channel
+  type: structure
+  description: An established SSH-authenticated channel to the remote for a fetch,
+    pull, or push, with the host key verified.
+- name: authentication_failure_outcome
+  type: outcome
+  description: A distinct outcome for a missing or unusable key or an unrecognised
+    host, carrying no secret material and issuing no prompt.
+atomic_steps: []
+status: draft

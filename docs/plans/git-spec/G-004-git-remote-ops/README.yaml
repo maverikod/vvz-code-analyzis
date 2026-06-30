@@ -1,0 +1,30 @@
+step_id: G-004
+name: Project-scoped git remote operations and SSH authentication
+description: 'The remote-contacting git operations on a registered project repository
+  and the SSH mechanism that authenticates them. Fetching retrieves remote refs and
+  objects; pulling integrates remote changes into the current branch with a defined
+  integration policy; pushing publishes local commits to a remote. Push is the only
+  route by which local history reaches a remote, and it is gated: pushes to protected
+  branches and force pushes are rejected unless explicitly permitted. Every remote
+  operation requires resolved remote configuration and authenticates over SSH using
+  a single configured key with pinned known-hosts and strict host-key checking. Remote
+  operations are bounded by a timeout so a stuck remote cannot hang the server.'
+concepts:
+- C-014
+- C-015
+- C-016
+- C-017
+relations:
+- from_concept: C-014
+  to_concept: C-017
+  type: depends_on
+source_labels:
+- '{g3h4}'
+- '{i5j6}'
+- '{k7l8}'
+- '{m9n0}'
+- '{o1p2}'
+depends_on:
+- G-006
+tactical_steps: []
+status: draft

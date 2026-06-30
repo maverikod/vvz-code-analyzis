@@ -1,0 +1,37 @@
+step_id: G-006
+name: Cross-cutting invariants and integration
+description: 'The framing and the invariants that apply uniformly across the read,
+  local-mutating, remote, and GitHub git operations. The git capability is one coherent
+  block of project-scoped commands, layered on top of the project model and kept distinct
+  from the file-edit session machinery; every git command name carries a reserved
+  prefix. A single resolved project root governs both the git operations and any commit
+  produced on write, and that root is resolved before any operation acts. Every operation
+  is confined to paths inside the resolved project root; paths that escape the root
+  are rejected. Operations that write into the working tree honour the project virtual-environment
+  write guard. Ownership of the repository state is invariant across operations. Remote-contacting
+  operations are bounded by a timeout. This step is infrastructural: the other git
+  steps depend on it.'
+concepts:
+- C-001
+- C-002
+- C-021
+- C-022
+- C-023
+- C-026
+- C-027
+- C-028
+- C-029
+relations: []
+source_labels:
+- '{a1b2}'
+- '{c3d4}'
+- '{w9x0}'
+- '{y1z2}'
+- '{a3b4}'
+- '{j3k4}'
+- '{d7e8}'
+- '{f9g0}'
+- '{h1i2}'
+depends_on: []
+tactical_steps: []
+status: draft

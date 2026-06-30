@@ -1,0 +1,36 @@
+step_id: T-001
+parent_global_step: G-002
+name: Read operation repository resolution and availability outcomes
+description: 'Define how every read-only git operation resolves its target repository
+  and what it returns when the working tree is not a usable repository. Each read
+  operation acts on the resolved project root and treats that root as the single repository
+  under inspection. When the resolved root is not a git repository, or the repository
+  has no commits yet, the read operation returns a distinct, non-error availability
+  outcome that names the condition rather than raising as though the call were malformed.
+  Read operations never modify the working tree, the index, or any ref; they only
+  report state. The availability outcome is uniform across the whole read set so a
+  caller can branch on repository presence once rather than per operation.
+
+  '
+concepts:
+- C-009
+inputs:
+- name: resolved_repository_root
+  type: path
+  description: The project root resolved per G-006, treated as the repository under
+    inspection.
+- name: read_request
+  type: structure
+  description: A read operation request naming which state to report, carrying no
+    working-tree mutation.
+outputs:
+- name: repository_state_report
+  type: structure
+  description: The reported git state for a usable repository, produced without mutating
+    the working tree or refs.
+- name: repository_availability_outcome
+  type: outcome
+  description: A distinct non-error outcome naming not-a-repository or no-commits-yet,
+    uniform across all read operations.
+atomic_steps: []
+status: draft

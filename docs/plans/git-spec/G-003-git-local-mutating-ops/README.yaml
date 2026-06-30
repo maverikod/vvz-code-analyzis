@@ -1,0 +1,27 @@
+step_id: G-003
+name: Project-scoped git local mutating operations
+description: 'The local history- and working-tree-mutating git operations on a registered
+  project repository: staging changes, creating commits, switching and creating and
+  deleting branches, restoring paths, stashing, resetting, merging, applying individual
+  commits, reverting commits, and managing tags. A hard reset is gated behind an explicit
+  confirmation flag because it discards working-tree changes. Merge and individual-commit-application
+  operations are local and are not subject to the protected-branch restriction; their
+  only route to a remote is an explicit push. Reverting a commit produces a new inverse
+  commit rather than rewriting history, so it is safe on branches whose history must
+  be preserved. All operations resolve and confirm the repository root before acting
+  and exchange project-relative paths. None of these operations contact a remote.'
+concepts:
+- C-010
+- C-011
+- C-012
+- C-013
+relations: []
+source_labels:
+- '{y5z6}'
+- '{a7b8}'
+- '{c9d0}'
+- '{e1f2}'
+depends_on:
+- G-006
+tactical_steps: []
+status: draft

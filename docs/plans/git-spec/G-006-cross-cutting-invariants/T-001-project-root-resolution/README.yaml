@@ -1,0 +1,39 @@
+step_id: T-001
+parent_global_step: G-006
+name: Project root resolution
+description: 'Establish the single repository-root resolution rule that governs every
+  git operation and any commit produced on write. The root is derived from the pair
+  (watched-directory id, project id) as the project''s folder beneath the watched
+  directory''s absolute path; it is never accepted as a free absolute path from the
+  caller. A bare absolute root is honoured only as a legacy form. When the resolution
+  yields an empty or ambiguous result, the operation refuses rather than acting on
+  a guessed location. The same resolved root is the one shared by read, local-mutating,
+  remote, and GitHub-adjacent operations and by commit-on-write, so resolution happens
+  once and is reused, never recomputed divergently per operation.
+
+  '
+concepts:
+- C-026
+inputs:
+- name: watch_dir_id
+  type: string
+  description: Identifier of the watched directory whose absolute path anchors resolution.
+- name: project_id
+  type: string
+  description: Identifier of the registered project whose folder under the watched
+    directory is the repository root.
+- name: legacy_absolute_root
+  type: string
+  description: Optional bare absolute path accepted only as a legacy form when the
+    id pair is absent.
+outputs:
+- name: resolved_repository_root
+  type: path
+  description: The absolute repository root derived from the id pair, shared by all
+    git operations and commit-on-write.
+- name: resolution_refusal
+  type: outcome
+  description: A refusal outcome emitted when resolution is empty or ambiguous, with
+    no operation performed.
+atomic_steps: []
+status: draft

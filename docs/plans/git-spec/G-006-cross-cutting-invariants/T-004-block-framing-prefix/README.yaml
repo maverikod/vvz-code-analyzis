@@ -1,0 +1,40 @@
+step_id: T-004
+parent_global_step: G-006
+name: Git block framing, layer boundary, and reserved command prefix
+description: 'Frame the git capability as one coherent block of project-scoped commands
+  and fix its boundaries. The block is composed of three independently configurable,
+  independently failing capability members and is layered so the git member acts on
+  the filesystem working tree through subprocess git while never touching the server''s
+  internal command-to-driver-to-database chain. The project-scoped git block is kept
+  distinct from and parallel to the pre-existing edit-session git facility: it operates
+  on the registered project''s own working tree, the edit-session facility operates
+  on a temporary per-edit-session repository, and the new block neither replaces nor
+  alters the existing facility. Every command in the project-scoped block carries
+  a reserved naming prefix that keeps it disjoint from the edit-session git commands
+  so no name or routing collision arises.
+
+  '
+concepts:
+- C-001
+- C-002
+- C-028
+- C-029
+inputs:
+- name: capability_member
+  type: enum
+  description: One of the three capability members (git block, github block, commit-on-write)
+    being framed and bounded.
+- name: command_name
+  type: string
+  description: A project-scoped git command name that must carry the reserved prefix.
+outputs:
+- name: bounded_git_block
+  type: structure
+  description: The git capability framed as a coherent block with its layer boundary
+    fixed away from the driver-database chain.
+- name: prefixed_command_namespace
+  type: namespace
+  description: A command namespace under the reserved prefix, disjoint from edit-session
+    git commands.
+atomic_steps: []
+status: draft

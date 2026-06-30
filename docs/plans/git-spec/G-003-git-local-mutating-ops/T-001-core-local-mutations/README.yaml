@@ -1,0 +1,42 @@
+step_id: T-001
+parent_global_step: G-003
+name: Core local working-tree and history mutations
+description: 'Provide the set of local mutating git operations that act only on the
+  resolved project repository and never contact a remote: staging and unstaging paths,
+  creating a commit from the staged state, switching the working tree to a branch
+  or restoring paths, creating and deleting branches, stashing and restoring uncommitted
+  changes, merging a branch into the current one, applying a commit onto the current
+  branch, and creating a tag. Every operation confines its path parameters to the
+  resolved root and treats revision identifiers as opaque refs. Each operation reports
+  the resulting repository state in structured form. A commit created here records
+  authorship from the project git configuration and is never pushed. Operations that
+  would conflict or that target a missing ref return a distinct named outcome rather
+  than leaving the working tree in a partially mutated state.
+
+  '
+concepts:
+- C-010
+inputs:
+- name: mutation_selector
+  type: enum
+  description: Which local mutation to run - stage, unstage, commit, switch, restore,
+    branch create or delete, stash, merge, cherry-pick, or tag.
+- name: path_parameters
+  type: structure
+  description: Paths confined to the resolved root, consumed by stage, unstage, and
+    restore.
+- name: revision_parameters
+  type: structure
+  description: Opaque ref or revision identifiers consumed by switch, branch, merge,
+    cherry-pick, and tag.
+outputs:
+- name: mutation_state_report
+  type: structure
+  description: The structured repository state after the mutation, including any created
+    commit, branch, or tag.
+- name: mutation_conflict_outcome
+  type: outcome
+  description: A distinct named outcome for a conflicting or missing-ref mutation,
+    emitted without leaving a partially mutated tree.
+atomic_steps: []
+status: draft

@@ -1,0 +1,38 @@
+step_id: T-002
+parent_global_step: G-002
+name: Read operation set over the resolved repository
+description: 'Provide the set of read-only git inspection operations over the resolved
+  repository: reporting working-tree and index status, commit history, the difference
+  between revisions or between a revision and the working tree, the branch list with
+  the current branch marked, the details of a single named commit, the configured
+  remotes, and line-by-line authorship of a tracked file. Every operation in this
+  set only reports state and never mutates the working tree, index, or refs. Each
+  operation accepts the revision and path parameters it needs, where revision identifiers
+  are treated as opaque refs and path parameters are confined to the resolved root
+  per G-006. Results are returned in a structured form a caller can consume directly.
+  When the repository is unavailable, each operation returns the uniform availability
+  outcome defined for the read set rather than a malformed-call error.
+
+  '
+concepts:
+- C-009
+inputs:
+- name: read_operation_selector
+  type: enum
+  description: Which read operation to run - status, history, diff, branch list, commit
+    show, remotes, or blame.
+- name: revision_parameters
+  type: structure
+  description: Optional revision or ref identifiers consumed by history, diff, and
+    commit show, treated as opaque refs.
+- name: tracked_path_parameter
+  type: string
+  description: A path confined to the resolved root, consumed by diff and blame to
+    scope the report to one file.
+outputs:
+- name: structured_read_result
+  type: structure
+  description: The structured report for the selected read operation - status, history,
+    diff, branches, commit detail, remotes, or blame.
+atomic_steps: []
+status: draft

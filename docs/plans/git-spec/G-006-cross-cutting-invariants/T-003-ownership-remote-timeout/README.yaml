@@ -1,0 +1,35 @@
+step_id: T-003
+parent_global_step: G-006
+name: Ownership invariant and remote operation timeout
+description: 'Guarantee two cross-cutting runtime invariants for the git capability.
+  First, every git and write operation runs as the unprivileged server user and never
+  as a privileged user, so that every created or updated file and every repository
+  object retains the server user''s ownership with no post-hoc ownership change. Second,
+  every remote-contacting git operation and every GitHub operation is bounded by a
+  configured timeout; exceeding the timeout yields a distinct timeout outcome and
+  the operation is not retried inside the same call. The two invariants apply uniformly
+  regardless of which specific operation is invoked.
+
+  '
+concepts:
+- C-021
+- C-023
+inputs:
+- name: server_user_context
+  type: identity
+  description: The unprivileged server user identity under which all git and write
+    operations execute.
+- name: configured_timeout
+  type: duration
+  description: The configured upper bound applied to every remote git and GitHub operation.
+outputs:
+- name: ownership_preserved_result
+  type: invariant
+  description: Created and updated files and repository objects retain the server
+    user's ownership with no chown.
+- name: timeout_outcome
+  type: outcome
+  description: A distinct timeout outcome emitted when a remote operation exceeds
+    the configured bound, with no in-operation retry.
+atomic_steps: []
+status: draft

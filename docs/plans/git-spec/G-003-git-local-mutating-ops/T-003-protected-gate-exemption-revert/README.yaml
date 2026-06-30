@@ -1,0 +1,38 @@
+step_id: T-003
+parent_global_step: G-003
+name: Protected-location gate scope and revert as inverse commit
+description: 'Fix two refinements of the local mutating set. First, local branch-merge
+  and individual-commit-application operations are not subject to the protected-branch
+  restriction: they act on the working tree and history of the resolved repository
+  and are never gated by protected-branch policy, and their only route to a remote
+  is a separate, separately-restricted push operation. The protected-branch restriction
+  therefore governs only the remote publication path, not these local operations.
+  Second, revert is defined as the creation of a new commit whose content is the inverse
+  of a named target commit, leaving prior history intact rather than discarding it;
+  revert never rewrites or removes existing commits, which makes it safe to apply
+  on branches whose history must be preserved, and its recorded authorship comes from
+  the project git configuration like any commit produced locally.'
+concepts:
+- C-012
+- C-013
+inputs:
+- name: local_mutation_operation
+  type: enum
+  description: A local branch-merge or individual-commit-application operation, evaluated
+    against the protected-branch restriction that does not gate it.
+- name: revert_target_commit
+  type: string
+  description: The opaque ref of the commit whose inverse a revert records as a new
+    commit.
+outputs:
+- name: protected_gate_exemption_decision
+  type: outcome
+  description: The decision that a local merge or commit-application operation is
+    not gated by the protected-branch restriction, whose only route to a remote remains
+    a separate push.
+- name: inverse_commit_result
+  type: structure
+  description: A new commit recording the inverse of the target commit, authored from
+    project git config, with prior history left intact.
+atomic_steps: []
+status: draft

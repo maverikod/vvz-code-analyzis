@@ -1,0 +1,39 @@
+step_id: T-002
+parent_global_step: G-003
+name: Destructive reset guard
+description: 'Govern the reset operation, which can discard committed history and
+  uncommitted working-tree changes. A reset that would irrecoverably drop changes
+  is gated behind an explicit confirmation parameter: without the confirmation the
+  operation refuses and reports what would be lost, and only with the explicit confirmation
+  does it proceed. The guard distinguishes a mode that preserves working-tree changes
+  from a mode that discards them, and applies the confirmation requirement only to
+  the discarding mode. The reset acts solely on the resolved project repository, treats
+  its target as an opaque ref, and never contacts a remote. A guarded refusal leaves
+  the repository exactly as it was.
+
+  '
+concepts:
+- C-011
+inputs:
+- name: reset_target
+  type: string
+  description: An opaque ref or revision the reset moves the current branch to.
+- name: reset_mode
+  type: enum
+  description: Whether the reset preserves or discards working-tree changes; only
+    the discarding mode is guarded.
+- name: discard_confirmation
+  type: boolean
+  description: Explicit confirmation required for a discarding reset; absent confirmation
+    forces a refusal.
+outputs:
+- name: reset_state_report
+  type: structure
+  description: The repository state after a permitted reset, naming the new position
+    of the current branch.
+- name: reset_guard_refusal
+  type: outcome
+  description: A refusal naming what would be lost, emitted when a discarding reset
+    lacks confirmation, leaving the repository unchanged.
+atomic_steps: []
+status: draft

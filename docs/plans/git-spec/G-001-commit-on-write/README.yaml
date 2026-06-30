@@ -34,5 +34,8 @@ source_labels:
 - '{c5d6}'
 depends_on:
 - G-006
-tactical_steps: []
+tactical_steps:
+- T-001
+- T-002
+- T-003
 status: draft

@@ -1,0 +1,54 @@
+step_id: T-001
+parent_global_step: G-005
+name: GitHub operation set and pull-request merge guard
+description: 'Provide the GitHub operation set as a block distinct from the plain
+  git remote operations: listing and inspecting repositories, issues, and pull requests,
+  creating an issue or a pull request, commenting, and merging a pull request. Each
+  operation targets a repository identified to the GitHub API and is bounded by the
+  configured remote timeout (C-023). These operations act through the GitHub API rather
+  than through the local working tree, and read operations never mutate remote state.
+  Merging a pull request is a remote mutation that bypasses the local protected-branch
+  gate and is therefore independently guarded: a merge proceeds only when the GitHub
+  block is configured to permit pull-request merging, and a merge whose pull request
+  targets a protected base branch is refused unless an explicit protected-branch override
+  is supplied and policy permits it. When pull-request merging is not permitted by
+  configuration the merge is refused with a distinct disabled outcome, and a merge
+  targeting a protected base without a permitted override is refused with a distinct
+  protected-branch outcome; neither refusal partially merges. Every operation returns
+  a structured result, and an API error or a not-found target is reported as a distinct
+  named outcome rather than a malformed-call error.'
+concepts:
+- C-018
+- C-019
+inputs:
+- name: github_operation_selector
+  type: enum
+  description: Which GitHub operation to run - list or inspect repos, issues, or pull
+    requests, create issue or pull request, comment, or merge pull request.
+- name: github_target_reference
+  type: structure
+  description: The repository and issue or pull-request identifiers the operation
+    targets through the GitHub API, including the base branch of a pull request being
+    merged.
+- name: pr_merge_permission
+  type: boolean
+  description: The GitHub block configuration permission that must enable pull-request
+    merging; when it does not permit merging, a merge is refused with the disabled
+    outcome.
+- name: protected_base_override
+  type: boolean
+  description: Explicit override required to merge a pull request whose base is a
+    protected branch; absent the override and a permitting policy, such a merge is
+    refused with the protected-branch outcome.
+outputs:
+- name: github_operation_result
+  type: structure
+  description: A structured result for the GitHub operation - the listing, the created
+    or updated issue or pull request, or the merge outcome.
+- name: github_guard_outcome
+  type: outcome
+  description: A distinct named outcome for a refused merge - merging not permitted
+    by configuration, or a protected-base merge without a permitted override - and
+    for an API error or not-found target, each emitted without partially merging.
+atomic_steps: []
+status: draft

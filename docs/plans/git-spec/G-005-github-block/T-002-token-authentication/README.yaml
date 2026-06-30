@@ -1,0 +1,32 @@
+step_id: T-002
+parent_global_step: G-005
+name: Token authentication for GitHub operations
+description: 'Define how GitHub operations authenticate to the GitHub API. The credential
+  is a configured access token belonging to the server, supplied to every GitHub operation
+  uniformly and never derived from the caller. A missing or rejected token yields
+  a distinct authentication outcome rather than blocking on input, and the token value
+  is never echoed into any result, log, or error. The token scopes the operations
+  the block can perform; an operation the token is not authorised for is reported
+  as a distinct authorization outcome carrying no secret material. Token handling
+  is confined to the GitHub block and is kept separate from the SSH identity used
+  by the plain git remote operations.
+
+  '
+concepts:
+- C-020
+inputs:
+- name: configured_github_token
+  type: identity
+  description: The server's configured GitHub access token used for all GitHub API
+    authentication, never supplied by the caller.
+outputs:
+- name: authenticated_github_session
+  type: structure
+  description: An authenticated GitHub API context for an operation, established without
+    echoing the token anywhere.
+- name: github_authentication_outcome
+  type: outcome
+  description: A distinct outcome for a missing, rejected, or under-scoped token,
+    carrying no secret material and issuing no prompt.
+atomic_steps: []
+status: draft

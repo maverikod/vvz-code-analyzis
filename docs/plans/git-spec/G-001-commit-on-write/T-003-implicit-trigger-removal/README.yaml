@@ -1,0 +1,31 @@
+step_id: T-003
+parent_global_step: G-001
+name: Removal of the implicit message-only commit trigger
+description: 'Remove the prior implicit behaviour in which supplying a commit message
+  alone triggered a commit on write. After the change there is exactly one path to
+  a commit on write — the explicit commit-intent flag together with a valid message
+  — and a commit message supplied without commit-intent is rejected rather than silently
+  producing a commit. This is a breaking migration: any existing caller that relied
+  on the message-only implicit trigger now fails loudly and must adopt the explicit
+  flag. The change establishes that no implicit path to a commit on write remains
+  anywhere.
+
+  '
+concepts:
+- C-024
+inputs:
+- name: message_without_intent_call
+  type: structure
+  description: A legacy write call carrying a commit message but no commit-intent
+    flag, formerly triggering an implicit commit.
+outputs:
+- name: message_without_intent_rejection
+  type: outcome
+  description: A rejection emitted for a message-without-intent call, replacing the
+    removed implicit commit trigger.
+- name: breaking_migration_signal
+  type: outcome
+  description: The loud failure surfaced to callers that relied on the implicit trigger,
+    directing them to the explicit flag.
+atomic_steps: []
+status: draft

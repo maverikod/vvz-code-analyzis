@@ -1,0 +1,51 @@
+step_id: T-001
+parent_global_step: G-004
+name: Remote-contacting operations and their guards
+description: 'Provide the remote-contacting git operations over the resolved repository:
+  fetching refs and objects from a remote without changing the working tree, pulling
+  a remote branch into the current branch, and pushing local commits to a remote.
+  Each operation names its remote and the refs it acts on, and is bounded by the configured
+  remote timeout from G-006. Remote operations require the block to be configured
+  for remote access; when that configuration is absent they fail fast with a distinct
+  outcome, while local mutating operations and read operations continue to function.
+  Fetch only updates remote-tracking refs and never mutates the working tree. A pull
+  defaults to a fast-forward-only merge; when a rebase pull is requested the fast-forward-only
+  constraint does not also apply and the two settings are never combined; a pull that
+  cannot complete cleanly leaves the working tree in a clean state and reports a distinct
+  conflict outcome. Pushing local commits never rewrites remote history implicitly:
+  a push to a protected branch is refused unless an explicit protected-branch override
+  is supplied and policy permits, a force push is refused unless force is both permitted
+  by configuration and explicitly requested, and a dry-run push performs no remote
+  write. Every remote operation returns a structured result naming the remote, the
+  refs moved, and the outcome, and exceeding the timeout yields the distinct timeout
+  outcome rather than a partial result.'
+concepts:
+- C-014
+- C-015
+- C-016
+inputs:
+- name: remote_operation_selector
+  type: enum
+  description: Which remote operation to run - fetch, pull, or push.
+- name: remote_and_refs
+  type: structure
+  description: The named remote and the refs the operation acts on, treated as opaque
+    ref identifiers.
+- description: 'Explicit push guard parameters: a protected-branch override and a
+    force-push request, each required before the corresponding otherwise-refused push
+    proceeds.'
+  name: push_guard_confirmation
+  type: structure
+outputs:
+- name: remote_operation_result
+  type: structure
+  description: A structured result naming the remote, the refs moved, and the outcome
+    of the fetch, pull, or push.
+- description: 'A distinct named outcome for a remote operation that did not complete
+    normally: remote access not configured, a pull conflict with a clean working tree,
+    a refused protected-branch or force push, or a timeout, each emitted without a
+    partial result.'
+  name: remote_guard_outcome
+  type: outcome
+atomic_steps: []
+status: draft

@@ -1,0 +1,40 @@
+step_id: T-001
+parent_global_step: G-001
+name: Commit-intent flag and mandatory commit message contract
+description: 'Define the explicit per-write commit-intent flag and the commit message
+  contract that governs every write that may produce a commit. The commit-intent flag
+  is a boolean that defaults to unset; when set, the write produces a commit after
+  the content is persisted, and when unset the write never produces a commit. When
+  commit-intent is set, a commit message is mandatory: it must be a text value that
+  is non-empty after surrounding whitespace is stripped, and the message is validated
+  before any content is written so that an invalid message rejects the write while
+  leaving the target file untouched. The same contract is the single unified commit
+  contract for every writer that produces a commit: each such writer accepts and forwards
+  an explicit non-empty caller-supplied message, and no server-side default message
+  generator exists anywhere.
+
+  '
+concepts:
+- C-004
+- C-005
+- C-025
+inputs:
+- name: commit_intent_flag
+  type: boolean
+  description: Explicit per-write flag defaulting to unset; when set the write produces
+    a commit on changed content.
+- name: commit_message
+  type: string
+  description: Caller-supplied commit message, mandatory when commit-intent is set,
+    validated non-empty after strip before any write.
+outputs:
+- name: validated_commit_message
+  type: string
+  description: The accepted non-empty message forwarded to the commit, identical across
+    every writer that commits.
+- name: invalid_message_rejection
+  type: outcome
+  description: A pre-write rejection emitted when commit-intent is set but the message
+    is missing or empty, leaving the file untouched.
+atomic_steps: []
+status: draft

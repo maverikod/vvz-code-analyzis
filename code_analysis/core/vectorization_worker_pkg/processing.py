@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
@@ -103,24 +103,32 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         )
 
         while not self._stop_event.is_set():
-            (database, db_available, backoff, db_status_logged) = (
-                await ensure_database_connection(
-                    self,
-                    cfg_path,
-                    db_available=db_available,
-                    db_status_logged=db_status_logged,
-                    backoff=backoff,
-                    backoff_max=backoff_max,
-                )
-            )
+            # Reuse the existing client across cycles. Reconnecting every poll
+            # (the previous behaviour) built a fresh PostgreSQL driver each cycle
+            # — a main connection plus 5 pool connections — and overwrote the old
+            # client without disconnecting it, orphaning 6 idle backend
+            # connections per cycle until PostgreSQL ran out of slots. Only
+            # (re)connect when there is no live client; the error path below sets
+            # ``database = None`` (after disconnecting) to request a reconnect.
             if database is None:
-                logger.debug(
-                    "Retrying database connection in %.1fs...",
-                    backoff,
+                (database, db_available, backoff, db_status_logged) = (
+                    await ensure_database_connection(
+                        self,
+                        cfg_path,
+                        db_available=db_available,
+                        db_status_logged=db_status_logged,
+                        backoff=backoff,
+                        backoff_max=backoff_max,
+                    )
                 )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2.0, backoff_max)
-                continue
+                if database is None:
+                    logger.debug(
+                        "Retrying database connection in %.1fs...",
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2.0, backoff_max)
+                    continue
 
             cycle_count += 1
             logger.debug(

@@ -147,6 +147,39 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             commit_outcome_unknown=False,
         )
 
+    def _teardown_stale_state_if_any(self) -> None:
+        """Close any pre-existing connection/pool/manager/reaper before reconnect.
+
+        ``connect()`` must be idempotent: calling it a second time on the same
+        driver instance would otherwise overwrite ``self.conn`` (1 backend
+        connection), ``self._pool`` (5), ``self._transaction_manager``, and the
+        reaper thread *by reference*, orphaning the old objects — their backend
+        connections stay open forever because nothing can reach them to close
+        them. Route teardown through the existing ``disconnect()`` (pool +
+        ``close_all()`` + main conn + reaper). A failure to close stale state is
+        logged and swallowed so the fresh connect can still proceed.
+        """
+        already_initialized = (
+            self.conn is not None
+            or self._pool is not None
+            or self._transaction_manager is not None
+            or (self._reaper_thread is not None and self._reaper_thread.is_alive())
+        )
+        if not already_initialized:
+            return
+        logger.warning(
+            "PostgreSQLDriver.connect() called on an already-initialized driver; "
+            "tearing down stale connection/pool/reaper to avoid orphaning them"
+        )
+        try:
+            self.disconnect()
+        except Exception as e:
+            logger.warning(
+                "PostgreSQLDriver: failed to tear down stale state before "
+                "reconnect: %s",
+                e,
+            )
+
     def connect(self, config: Dict[str, Any]) -> None:
         """Return connect."""
         try:
@@ -157,6 +190,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             ) from e
 
         try:
+            # Idempotency guard (Defect A): never leave two main connections /
+            # two pools / two reapers behind when connect() runs twice.
+            self._teardown_stale_state_if_any()
             self._connect_kwargs = _connect_kwargs_from_config(config)
             self._schema_vector_dim = int(config.get("vector_dim", 384))
             logger.info(
@@ -237,6 +273,11 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         ``transaction_max_age_seconds`` so a caller that fails to reach
         commit/rollback cannot orphan a backend connection indefinitely.
         """
+        # Self-protect against a leaked second reaper: this is reachable directly
+        # (not only via connect()), so stop any live reaper before starting a new
+        # one. Guarantees at most one ``pg-transaction-reaper`` thread per driver.
+        if self._reaper_thread is not None and self._reaper_thread.is_alive():
+            self._stop_transaction_reaper()
         interval = self._transaction_reaper_interval_seconds
         if interval <= 0:
             logger.info(
@@ -427,6 +468,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 self._query_journal = None
             if self._transaction_manager:
                 self._transaction_manager.close_all()
+                self._transaction_manager = None
             if self._pool:
                 self._pool.close_all()
                 self._pool = None

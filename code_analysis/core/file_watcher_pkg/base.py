@@ -107,6 +107,7 @@ class FileWatcherWorker:
             f"watching {len(self.watch_dirs)} directories"
         )
 
+        database: Any = None
         try:
             from ..database_client.factory import create_worker_database_client
 
@@ -149,13 +150,19 @@ class FileWatcherWorker:
                 # Wait for next scan interval
                 await asyncio.sleep(self.scan_interval)
 
-            database.disconnect()
-
         except KeyboardInterrupt:
             logger.info("File watcher worker interrupted")
         except Exception as e:
             logger.error(f"File watcher worker error: {e}", exc_info=True)
             total_stats["errors"] += 1
+        finally:
+            # Always release the worker's DB client so a normal teardown does not
+            # rely on driver-level cleanup (no orphaned backend connections).
+            if database is not None:
+                try:
+                    database.disconnect()
+                except Exception:
+                    pass
 
         return total_stats
 

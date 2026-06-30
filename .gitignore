@@ -221,3 +221,6 @@ config-venv.json
 /.mcp_terminal/
 
 *.tree
+
+*.lock
+

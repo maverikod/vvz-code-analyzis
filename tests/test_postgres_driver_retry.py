@@ -116,6 +116,7 @@ def test_external_transaction_execute_and_batch_skips_pool_acquire() -> None:
     d._transaction_manager = MagicMock()
     ext = MagicMock()
     d._transaction_manager._transactions = {"ext-tx": ext}
+    d._transaction_manager.get_connection.return_value = ext
 
     with patch.object(postgres_mod, "run_execute") as mock_run:
         mock_run.return_value = {
@@ -149,6 +150,7 @@ def test_external_transaction_id_not_retried(_sleep: MagicMock) -> None:
     d._transaction_manager = MagicMock()
     ext = MagicMock()
     d._transaction_manager._transactions = {"ext-tx": ext}
+    d._transaction_manager.get_connection.return_value = ext
     n = 0
 
     def side(*a: object, **k: object) -> dict:

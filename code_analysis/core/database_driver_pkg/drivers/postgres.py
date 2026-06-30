@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
@@ -117,6 +118,11 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._qa_transient_injections_remaining: int = 0
         self._pool_max_wait_seconds: float = 30.0
         self._schema_vector_dim: int = 384
+        # Transaction reaper (safety net for orphaned explicit transactions).
+        self._transaction_max_age_seconds: float = 300.0
+        self._transaction_reaper_interval_seconds: float = 30.0
+        self._reaper_stop: Optional[threading.Event] = None
+        self._reaper_thread: Optional[threading.Thread] = None
 
     def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
         """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock."""
@@ -212,10 +218,77 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self._pool = PostgreSQLConnectionPool(
                 self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds
             )
+            self._transaction_max_age_seconds = float(
+                config.get("transaction_max_age_seconds", 300.0)
+            )
+            self._transaction_reaper_interval_seconds = float(
+                config.get("transaction_reaper_interval_seconds", 30.0)
+            )
+            self._start_transaction_reaper()
         except DriverConnectionError:
             raise
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to PostgreSQL: {e}") from e
+
+    def _start_transaction_reaper(self) -> None:
+        """Start the background reaper unless the interval is disabled (0).
+
+        The reaper force-closes explicit transactions older than
+        ``transaction_max_age_seconds`` so a caller that fails to reach
+        commit/rollback cannot orphan a backend connection indefinitely.
+        """
+        interval = self._transaction_reaper_interval_seconds
+        if interval <= 0:
+            logger.info(
+                "PostgreSQL transaction reaper disabled (interval=%s)", interval
+            )
+            return
+        self._reaper_stop = threading.Event()
+        self._reaper_thread = threading.Thread(
+            target=self._transaction_reaper_loop,
+            name="pg-transaction-reaper",
+            daemon=True,
+        )
+        self._reaper_thread.start()
+        logger.info(
+            "PostgreSQL transaction reaper started (interval=%ss max_age=%ss)",
+            interval,
+            self._transaction_max_age_seconds,
+        )
+
+    def _transaction_reaper_loop(self) -> None:
+        """Periodically reap orphaned explicit transactions until stopped."""
+        stop = self._reaper_stop
+        if stop is None:
+            return
+        interval = self._transaction_reaper_interval_seconds
+        max_age = self._transaction_max_age_seconds
+        while not stop.wait(interval):
+            manager = self._transaction_manager
+            if manager is None:
+                continue
+            try:
+                reaped = manager.reap_expired(max_age)
+            except Exception as e:
+                logger.warning("PostgreSQL transaction reaper sweep failed: %s", e)
+                continue
+            if reaped >= 1:
+                logger.info(
+                    "PostgreSQL transaction reaper closed %s orphaned "
+                    "transaction(s) older than %ss",
+                    reaped,
+                    max_age,
+                )
+
+    def _stop_transaction_reaper(self) -> None:
+        """Signal the reaper thread to stop and wait briefly for it to exit."""
+        if self._reaper_stop is not None:
+            self._reaper_stop.set()
+        thread = self._reaper_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)
+        self._reaper_thread = None
+        self._reaper_stop = None
 
     def commit(self) -> None:
         """Commit the main connection (legacy SQL facade transaction_id=local)."""
@@ -345,6 +418,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     def disconnect(self) -> None:
         """Return disconnect."""
         try:
+            self._stop_transaction_reaper()
             if self._query_journal:
                 try:
                     self._query_journal.close()
@@ -456,9 +530,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         if not _is_self_managed_transaction(transaction_id):
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
-            if transaction_id not in self._transaction_manager._transactions:
+            conn = self._transaction_manager.get_connection(transaction_id)
+            if conn is None:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
-            conn = self._transaction_manager._transactions[transaction_id]
             return run_execute_batch(
                 conn,
                 operations,
@@ -502,9 +576,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         if not _is_self_managed_transaction(transaction_id):
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
-            if transaction_id not in self._transaction_manager._transactions:
+            conn = self._transaction_manager.get_connection(transaction_id)
+            if conn is None:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
-            conn = self._transaction_manager._transactions[transaction_id]
             return run_execute(
                 conn,
                 sql,

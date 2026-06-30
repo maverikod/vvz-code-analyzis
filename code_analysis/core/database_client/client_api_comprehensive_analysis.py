@@ -248,10 +248,12 @@ VALUES (?, ?, ?, ?, ?, {_now})
                     (file_id, project_id, file_mtime, results_json, summary_json),
                 )
             )
+        tid = self.begin_transaction()
+        committed = False
         try:
-            tid = self.begin_transaction()
             self.execute_batch(operations, transaction_id=tid)
             self.commit_transaction(tid)
+            committed = True
         except Exception as e:
             logger.warning(
                 "save_comprehensive_analysis_results_batch failed (n=%s): %s",
@@ -259,3 +261,18 @@ VALUES (?, ?, ?, ?, ?, {_now})
                 e,
             )
             raise
+        finally:
+            # Guarantee the transaction connection is released on every exit path
+            # (exception before/at commit, early return). Rolling back an already
+            # committed transaction would raise "not found", so only roll back when
+            # commit did not complete.
+            if not committed:
+                try:
+                    self.rollback_transaction(tid)
+                except Exception as rb:
+                    logger.warning(
+                        "save_comprehensive_analysis_results_batch rollback "
+                        "failed (n=%s): %s",
+                        len(items),
+                        rb,
+                    )

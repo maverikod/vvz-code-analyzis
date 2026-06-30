@@ -508,6 +508,43 @@ def _rollback_registered_file_row(
         )
 
 
+def _create_row_is_persisted(
+    database: DatabaseClient,
+    project_id: str,
+    absolute_path: Path,
+    expected_file_id: str,
+) -> bool:
+    """Confirm a freshly registered ``files`` row is durably visible.
+
+    Re-reads the row by path on a fresh statement (a different pooled connection
+    than the INSERT) so a row that was inserted but not committed — or otherwise
+    not visible — is detected. Returns True only when a row exists and its id
+    matches the id the caller is about to return. When the database client cannot
+    answer (no ``get_file_by_path``), returns True so the check never blocks a
+    backend that does not support it.
+    """
+    get_by_path = getattr(database, "get_file_by_path", None)
+    if not callable(get_by_path):
+        return True
+    try:
+        path = Path(absolute_path).resolve()
+    except OSError:
+        path = Path(absolute_path)
+    try:
+        row = get_by_path(str(path), str(project_id).strip(), include_deleted=False)
+    except Exception:
+        logger.warning(
+            "Persistence check failed to re-read file row id=%s path=%s",
+            expected_file_id,
+            path,
+            exc_info=True,
+        )
+        return False
+    return bool(
+        row and str(row.get("id") or "").strip() == str(expected_file_id).strip()
+    )
+
+
 def _resolve_file_target(
     database: DatabaseClient,
     project_id: Optional[str],
@@ -1027,6 +1064,34 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
             result.data.setdefault("lock_session_id", lock_session_id)
             if not dry_run:
                 if pre_registered_file_id is not None:
+                    # Durability post-condition: never return a file_id whose row
+                    # is not actually persisted. A phantom id would make a later
+                    # commit fail with "file not found in project index" even
+                    # though create reported success. If the row is not visible on
+                    # a fresh read, roll it back and fail loudly instead.
+                    if not _create_row_is_persisted(
+                        database,
+                        effective_project_id,
+                        cast(Path, abs_path),
+                        pre_registered_file_id,
+                    ):
+                        _rollback_registered_file_row(
+                            database, effective_project_id, pre_registered_file_id
+                        )
+                        if lock_handle is not None:
+                            lock_handle.release(force_lease=True)
+                        return ErrorResult(
+                            message=(
+                                f"Registered file row for {rel_posix!r} did not "
+                                "persist; refusing to return a phantom file_id"
+                            ),
+                            code="FILE_REGISTER_NOT_PERSISTED",
+                            details={
+                                "project_id": effective_project_id,
+                                "file_path": rel_posix,
+                                "file_id": pre_registered_file_id,
+                            },
+                        )
                     result.data["file_id"] = pre_registered_file_id
                 else:
                     disk_out = _require_on_disk_project_file(

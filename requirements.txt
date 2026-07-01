@@ -12,8 +12,8 @@ markdown-it-py>=4.0
 lark>=1.1.0
 libcst>=1.1.0
 embed-client>=3.1.9.3
-mcp-proxy-adapter>=8.10.13
-queuemgr>=1.0.19
+mcp-proxy-adapter>=8.10.15
+queuemgr>=1.0.20
 
 # PostgreSQL driver (основная СУБД в конфиге)
 psycopg[binary]>=3.1

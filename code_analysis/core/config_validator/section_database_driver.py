@@ -255,6 +255,42 @@ def _validate_driver_retry_timeout_config(
                 )
 
 
+def _validate_driver_pool_size_config(
+    driver_config: Dict[str, Any], results: List[ValidationResult]
+) -> None:
+    """Validate postgres pool lane-size keys under code_analysis.database.driver.config.
+
+    ``pool_write_size`` and ``pool_read_size`` set the number of write/read
+    connections in the self-managed pool. Each must be an integer >= 1.
+
+    :param driver_config: the ``database.driver.config`` mapping to inspect.
+    :param results: accumulator that receives a ``ValidationResult`` per
+        offending key.
+    :return: None; problems are appended to ``results`` in place.
+    """
+    cfg_prefix = "code_analysis.database.driver.config"
+
+    for key in ("pool_write_size", "pool_read_size"):
+        if key not in driver_config:
+            continue
+        v = driver_config[key]
+        if v is None:
+            continue
+        if not _is_int_non_bool(v) or v < 1:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} must be an integer >= 1 "
+                        f"(not bool, float, or string), got {v!r}"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion=f"Set {key} to an integer of at least 1",
+                )
+            )
+
+
 def validate_database_driver_section_impl(
     config_data: Dict[str, Any], results: List[ValidationResult]
 ) -> None:
@@ -431,6 +467,7 @@ def validate_database_driver_section_impl(
                             suggestion="Set port to an integer (e.g. 5432)",
                         )
                     )
+            _validate_driver_pool_size_config(driver_config, results)
 
         if driver_type == "sqlite_proxy":
             worker_config = driver_config.get("worker_config")

@@ -117,6 +117,8 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._retry_policy: RetryPolicy = RetryPolicy()
         self._qa_transient_injections_remaining: int = 0
         self._pool_max_wait_seconds: float = 30.0
+        self._pool_write_size: int = 3
+        self._pool_read_size: int = 2
         self._schema_vector_dim: int = 384
         # Transaction reaper (safety net for orphaned explicit transactions).
         self._transaction_max_age_seconds: float = 300.0
@@ -227,12 +229,15 @@ class PostgreSQLDriver(BaseDatabaseDriver):
 
             # Connection topology (phase 1): one **main** ``self.conn`` for schema manager,
             # ``PostgreSQLOperations``, and ``commit``/``rollback`` on the default session;
-            # **five** pool connections (3 write + 2 read) for self-managed ``execute`` /
-            # ``execute_batch`` only; ``begin_transaction`` / explicit ``transaction_id`` uses
-            # additional connections from ``PostgreSQLTransactionManager`` (not the pool).
+            # a configurable number of pool connections (write_pool_size + read_pool_size,
+            # defaults 3 write + 2 read) for self-managed ``execute`` / ``execute_batch``
+            # only; ``begin_transaction`` / explicit ``transaction_id`` uses additional
+            # connections from ``PostgreSQLTransactionManager`` (not the pool).
             self._pool_max_wait_seconds = float(
                 config.get("pool_max_wait_seconds", 30.0)
             )
+            self._pool_write_size = int(config.get("pool_write_size", 3))
+            self._pool_read_size = int(config.get("pool_read_size", 2))
             query_log_path = config.get("query_log_path")
             if query_log_path:
                 from ..sqlite_query_journal import (
@@ -252,7 +257,10 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 )
                 logger.info("Query journal enabled: %s", query_log_path)
             self._pool = PostgreSQLConnectionPool(
-                self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds
+                self._connect_kwargs,
+                max_wait_seconds=self._pool_max_wait_seconds,
+                write_pool_size=self._pool_write_size,
+                read_pool_size=self._pool_read_size,
             )
             self._transaction_max_age_seconds = float(
                 config.get("transaction_max_age_seconds", 300.0)
@@ -370,7 +378,10 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         )
         self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
         self._pool = PostgreSQLConnectionPool(
-            self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds
+            self._connect_kwargs,
+            max_wait_seconds=self._pool_max_wait_seconds,
+            write_pool_size=self._pool_write_size,
+            read_pool_size=self._pool_read_size,
         )
 
     def _sleep_before_retry(self, attempt_1based: int) -> None:

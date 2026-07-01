@@ -1,13 +1,17 @@
 """
-Thread-safe PostgreSQL connection pool: 3 write + 2 read lanes (first-free).
+Thread-safe PostgreSQL connection pool: configurable write + read lanes.
+
+Lane sizes default to 3 write + 2 read (first-free slot per lane) and can be
+overridden via the ``write_pool_size`` / ``read_pool_size`` constructor
+parameters (wired from ``config.json``).
 
 Used only for **self-managed** driver work (no external ``transaction_id``, or
 ``transaction_id=\"local\"``). Explicit RPC transactions use separate connections
 via ``PostgreSQLTransactionManager`` and do not lease from this pool.
 
-**Contention:** if all three write connections are busy with long-running
+**Contention:** if all write connections are busy with long-running
 self-managed writes, ``acquire(write=True)`` waits up to ``max_wait_seconds`` (default
-30s) for a slot, then raises ``DriverOperationError``. The two read connections
+30s) for a slot, then raises ``DriverOperationError``. The read connections
 are independent; read traffic can proceed while writes are saturated, subject to DB
 locks and SQL semantics.
 
@@ -29,18 +33,34 @@ logger = logging.getLogger(__name__)
 
 
 class PostgreSQLConnectionPool:
-    """Exactly five connections: three write, two read; first idle slot per lane."""
-
-    WRITE_POOL_SIZE = 3
-    READ_POOL_SIZE = 2
+    """Configurable write/read lanes (default 3 write, 2 read); first idle slot per lane."""
 
     def __init__(
         self,
         connect_kwargs: Dict[str, Any],
         *,
         max_wait_seconds: float = 30.0,
+        write_pool_size: int = 3,
+        read_pool_size: int = 2,
     ) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        :param connect_kwargs: keyword arguments passed to ``psycopg.connect``
+            for every lane connection.
+        :param max_wait_seconds: how long ``acquire`` waits for a free slot
+            before raising ``DriverOperationError``.
+        :param write_pool_size: number of write-lane connections (default 3);
+            must be >= 1.
+        :param read_pool_size: number of read-lane connections (default 2);
+            must be >= 1.
+        """
+        if write_pool_size < 1 or read_pool_size < 1:
+            raise DriverConnectionError(
+                "PostgreSQL pool lane sizes must be >= 1 "
+                f"(got write_pool_size={write_pool_size}, "
+                f"read_pool_size={read_pool_size}); both lanes need at least "
+                "one connection"
+            )
         try:
             import psycopg
         except ImportError as e:
@@ -48,6 +68,8 @@ class PostgreSQLConnectionPool:
                 "PostgreSQL pool requires psycopg (pip install 'psycopg[binary]>=3.1')"
             ) from e
 
+        self.WRITE_POOL_SIZE = write_pool_size
+        self.READ_POOL_SIZE = read_pool_size
         self._connect_kwargs = connect_kwargs
         self._max_wait_seconds = float(max_wait_seconds)
         self._closed = False

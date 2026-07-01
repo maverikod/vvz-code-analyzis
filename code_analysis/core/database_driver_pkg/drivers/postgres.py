@@ -581,6 +581,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         if not operations:
             return []
         if not _is_self_managed_transaction(transaction_id):
+            # Non-self-managed => transaction_id is a real external id (the
+            # helper treats None/""/"local" as self-managed), so it is a str.
+            assert transaction_id is not None
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             conn = self._transaction_manager.get_connection(transaction_id)
@@ -627,6 +630,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         all three write connections are busy).
         """
         if not _is_self_managed_transaction(transaction_id):
+            # Non-self-managed => transaction_id is a real external id (the
+            # helper treats None/""/"local" as self-managed), so it is a str.
+            assert transaction_id is not None
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             conn = self._transaction_manager.get_connection(transaction_id)

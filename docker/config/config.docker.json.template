@@ -3,6 +3,12 @@
 #
 # Watch directories: each entry.path MUST be a direct child of /watched
 # (bind-mount host trees as /watched/<name> in docker-compose.yml).
+#
+# registration.server_id ships with the "-vvz" suffix used on the current production host
+# (192.168.254.26); rename it to match the local host when installing elsewhere.
+# registration.register_url / unregister_url / heartbeat.url default to the mcp-proxy
+# published on the docker host gateway (172.18.0.1:3004) of the smart-assistant docker
+# network; override if the proxy is reachable at a different address.
 {
   "server": {
     "host": "0.0.0.0",
@@ -23,15 +29,15 @@
   "registration": {
     "enabled": true,
     "protocol": "https",
-    "register_url": "https://MCP_PROXY_HOST:3004/register",
-    "unregister_url": "https://MCP_PROXY_HOST:3004/unregister",
-    "server_id": "code-analysis-server",
+    "register_url": "https://172.18.0.1:3004/register",
+    "unregister_url": "https://172.18.0.1:3004/unregister",
+    "server_id": "code-analysis-server-vvz",
     "server_name": "Code Analysis Server",
     "instance_uuid": "REPLACE_ON_INSTALL",
     "auto_on_startup": true,
     "auto_on_shutdown": true,
     "heartbeat": {
-      "url": "https://MCP_PROXY_HOST:3004/proxy/heartbeat",
+      "url": "https://172.18.0.1:3004/proxy/heartbeat",
       "interval": 30
     },
     "ssl": {

@@ -2,11 +2,16 @@
 # Lines starting with # or // are allowed (JSONC via commentjson).
 #
 # Port and registration defaults (same host as dev checkout):
-#   Production (this file):  server.port = 15010, registration.server_id = code-analysis-server
+#   Production (this file):  server.port = 15010, registration.server_id = code-analysis-server-vvz
 #   Development (repo root): server.port = 15000, registration.server_id = code-analysis-server-dev
 #   PostgreSQL (Docker):     127.0.0.1:5432 — may be shared; each server needs its own instance_uuid
 #   Vectorization requires code_analysis.chunker and code_analysis.embedding (SVO chunker + embedding API).
 #   Replace CHUNKER_HOST / EMBEDDING_HOST with reachable hostnames or IPs (defaults: port 8009 / 8001, HTTPS + mTLS).
+#   registration.server_id ships with the "-vvz" suffix used on the current production host
+#   (192.168.254.26); rename it to match the local host when installing elsewhere.
+#   registration.register_url / unregister_url default to the mcp-proxy published on the
+#   docker host gateway (172.18.0.1:3004) of the smart-assistant docker network; override if
+#   the proxy is reachable at a different address.
 {
   "server": {
     "host": "0.0.0.0",
@@ -31,15 +36,15 @@
   "registration": {
     "enabled": true,
     "protocol": "https",
-    "register_url": "https://MCP_PROXY_HOST:3004/register",
-    "unregister_url": "https://MCP_PROXY_HOST:3004/unregister",
-    "server_id": "code-analysis-server",
+    "register_url": "https://172.18.0.1:3004/register",
+    "unregister_url": "https://172.18.0.1:3004/unregister",
+    "server_id": "code-analysis-server-vvz",
     "server_name": "Code Analysis Server",
     "instance_uuid": "REPLACE_ON_INSTALL",
     "auto_on_startup": true,
     "auto_on_shutdown": true,
     "heartbeat": {
-      "url": "https://MCP_PROXY_HOST:3004/proxy/heartbeat",
+      "url": "https://172.18.0.1:3004/proxy/heartbeat",
       "interval": 30
     },
     "ssl": {

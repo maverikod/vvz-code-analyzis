@@ -6,12 +6,12 @@ pyyaml>=6.0
 click>=8.0
 mcp>=1.0.0
 pydantic>=2.1.0
-svo-client>=3.3.1
+svo-client>=3.3.2
 python-dateutil>=2.8
 markdown-it-py>=4.0
 lark>=1.1.0
 libcst>=1.1.0
-embed-client>=3.1.9.4
+embed-client>=3.1.9.5
 mcp-proxy-adapter>=8.10.15
 queuemgr>=1.0.20
 

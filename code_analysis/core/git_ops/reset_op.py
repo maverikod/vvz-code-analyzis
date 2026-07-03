@@ -8,10 +8,9 @@ and commits that would be dropped via `git rev-list <target>..HEAD`) and moves
 nothing. The preserving modes ("soft", "mixed") are never guarded. This module
 never contacts a remote and treats `target` as an opaque ref (not path-confined).
 """
-
 from __future__ import annotations
 
-from code_analysis.core.git_ops.common import run_git
+from code_analysis.core.git_ops.common import ensure_local_repo, run_git
 
 MODE_SOFT = "soft"
 MODE_MIXED = "mixed"
@@ -58,3 +57,94 @@ def _build_would_lose_report(root_dir: str, target: str) -> dict:
         ]
 
     return would_lose
+
+
+def reset_repo(root_dir: str, target: str, mode: str, confirm: bool = False) -> dict:
+    """Reset the current branch of the repository at `root_dir` to `target`.
+
+    Implements the C-011 HardResetGuard: only `mode == MODE_HARD` is guarded.
+    A hard reset without `confirm=True` performs no mutation: it returns a
+    dry-run refusal naming what would be lost, built by
+    `_build_would_lose_report`. A hard reset with `confirm=True` proceeds and
+    returns the new repository state. The preserving modes (`MODE_SOFT`,
+    `MODE_MIXED`) are never guarded and always proceed directly regardless of
+    `confirm`. `target` is treated as an opaque ref: it is never path-confined
+    or validated as a filesystem path. This function never contacts a remote.
+
+    :param root_dir: str - absolute path to the project's resolved repository root.
+    :param target: str - opaque ref or revision the reset moves the current
+        branch to.
+    :param mode: str - one of MODE_SOFT ("soft"), MODE_MIXED ("mixed"),
+        MODE_HARD ("hard"). Any other value is rejected with a failure outcome.
+    :param confirm: bool - explicit confirmation required for mode == MODE_HARD;
+        defaults to False. Ignored for MODE_SOFT and MODE_MIXED.
+    :return: dict - exactly one of the following shapes:
+        Not a repo / git unavailable: the dict returned by `ensure_local_repo`
+            when it is not None, e.g.
+            {"success": False, "code": "GIT_NOT_A_REPO", "message": str} or
+            {"success": False, "code": "GIT_NOT_AVAILABLE", "message": str}.
+        Invalid mode:
+            {"success": False, "code": "GIT_RESET_INVALID_MODE", "message": str}
+            where message names the invalid mode value received.
+        Hard reset without confirmation (guarded refusal, repository unchanged):
+            {"success": True, "performed": False,
+             "code": "GIT_RESET_CONFIRMATION_REQUIRED",
+             "would_lose": {"uncommitted_changes": list[str], "commits_to_drop": list[str]}}
+            where "would_lose" is exactly the dict returned by
+            `_build_would_lose_report(root_dir, target)`.
+        Reset command failure:
+            {"success": False, "code": "GIT_RESET_FAILED", "message": str}
+            where message is the stderr text produced by the failed `git reset`
+            invocation.
+        Successful reset:
+            {"success": True, "performed": True, "mode": str, "target": str,
+             "new_head": str, "branch": str}
+            where "mode" and "target" echo the input parameters, "new_head" is
+            the stripped stdout of `git rev-parse HEAD` run after the reset
+            (empty string if that command fails), and "branch" is the stripped
+            stdout of `git rev-parse --abbrev-ref HEAD` run after the reset
+            (empty string if that command fails).
+    """
+    not_repo = ensure_local_repo(root_dir)
+    if not_repo is not None:
+        return not_repo
+
+    if mode not in VALID_MODES:
+        return {
+            "success": False,
+            "code": "GIT_RESET_INVALID_MODE",
+            "message": f"Invalid reset mode: {mode!r}. Must be one of {VALID_MODES!r}.",
+        }
+
+    if mode == MODE_HARD and not confirm:
+        return {
+            "success": True,
+            "performed": False,
+            "code": "GIT_RESET_CONFIRMATION_REQUIRED",
+            "would_lose": _build_would_lose_report(root_dir, target),
+        }
+
+    reset_code, _reset_out, reset_err = run_git(root_dir, ["reset", f"--{mode}", target])
+    if reset_code != 0:
+        return {
+            "success": False,
+            "code": "GIT_RESET_FAILED",
+            "message": reset_err,
+        }
+
+    head_code, head_out, _head_err = run_git(root_dir, ["rev-parse", "HEAD"])
+    new_head = head_out.strip() if head_code == 0 else ""
+
+    branch_code, branch_out, _branch_err = run_git(
+        root_dir, ["rev-parse", "--abbrev-ref", "HEAD"]
+    )
+    branch = branch_out.strip() if branch_code == 0 else ""
+
+    return {
+        "success": True,
+        "performed": True,
+        "mode": mode,
+        "target": target,
+        "new_head": new_head,
+        "branch": branch,
+    }

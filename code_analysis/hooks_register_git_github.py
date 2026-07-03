@@ -86,7 +86,17 @@ def register_commands_git_github(reg: Any) -> None:
         from .commands.git_fetch_command import GitFetchCommand
         from .commands.git_pull_command import GitPullCommand
         from .commands.git_push_command import GitPushCommand
+        from .commands.git_worktree_commands import (
+            GitAddCommand,
+            GitCommitCommand,
+            GitRestoreCommand,
+            GitStashApplyCommand,
+            GitStashDropCommand,
+            GitStashListCommand,
+            GitStashPushCommand,
+        )
 
+        reg.register(GitAddCommand, "custom")
         reg.register(GitBranchCheckoutCommand, "custom")
         reg.register(GitBranchCreateCommand, "custom")
         reg.register(GitBranchDeleteCommand, "custom")
@@ -100,12 +110,20 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitFetchCommand, "custom")
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
+        reg.register(GitCommitCommand, "custom")
+        reg.register(GitRestoreCommand, "custom")
+        reg.register(GitStashApplyCommand, "custom")
+        reg.register(GitStashDropCommand, "custom")
+        reg.register(GitStashListCommand, "custom")
+        reg.register(GitStashPushCommand, "custom")
         logger.info(
-            "✅ Registered git remote commands: git_branch_checkout, "
+            "✅ Registered git write commands: git_add, git_branch_checkout, "
             "git_branch_create, git_branch_delete, git_branch_delete_remote, "
             "git_branch_fetch, git_branch_pull, git_branch_push, "
             "git_branch_track_remote, git_branch_set_upstream, "
-            "git_branch_unset_upstream, git_fetch, git_pull, git_push"
+            "git_branch_unset_upstream, git_fetch, git_pull, git_push, "
+            "git_commit, git_restore, git_stash_apply, git_stash_drop, "
+            "git_stash_list, git_stash_push"
         )
     except ImportError as e:
         logger.warning("Failed to import git remote commands: %s", e)

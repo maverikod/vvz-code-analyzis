@@ -1,31 +1,40 @@
 """Tests for GitHub command-block authentication configuration."""
 
-from __future__ import annotations
-
-from code_analysis.core.github_auth import (
-    DEFAULT_GITHUB_TOKEN_ENV,
-    GITHUB_NOT_CONFIGURED,
-    resolve_github_auth,
-)
+from code_analysis.core.github_auth import GITHUB_NOT_CONFIGURED, resolve_github_auth
 
 
-def test_resolve_github_auth_uses_default_env(monkeypatch) -> None:
-    """Verify GitHub auth reads the token from the default environment variable."""
-    monkeypatch.setenv(DEFAULT_GITHUB_TOKEN_ENV, "ghp_example")
+def test_resolve_github_auth_reads_token_path(tmp_path) -> None:
+    """Verify GitHub auth reads the token from the configured token file."""
+    token_file = tmp_path / "github-token"
+    token_file.write_text(" ghp_example \n", encoding="utf-8")
 
-    headers, error = resolve_github_auth({"code_analysis": {"github": {}}})
+    headers, error = resolve_github_auth(
+        {"code_analysis": {"github": {"token_path": str(token_file)}}}
+    )
 
     assert error is None
     assert headers is not None
     assert headers["Authorization"] == "Bearer ghp_example"
+    assert headers["Accept"] == "application/vnd.github+json"
+    assert headers["X-GitHub-Api-Version"] == "2022-11-28"
 
 
-def test_resolve_github_auth_missing_env_returns_not_configured(monkeypatch) -> None:
-    """Verify GitHub auth reports not configured when env tokens are absent."""
-    monkeypatch.delenv(DEFAULT_GITHUB_TOKEN_ENV, raising=False)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-
+def test_resolve_github_auth_missing_token_path_returns_not_configured() -> None:
+    """Verify GitHub auth reports not configured when token_path is absent."""
     headers, error = resolve_github_auth({"code_analysis": {"github": {}}})
+
+    assert headers is None
+    assert error == GITHUB_NOT_CONFIGURED
+
+
+def test_resolve_github_auth_empty_token_file_returns_not_configured(tmp_path) -> None:
+    """Verify GitHub auth reports not configured when token content is empty."""
+    token_file = tmp_path / "github-token"
+    token_file.write_text(" \n", encoding="utf-8")
+
+    headers, error = resolve_github_auth(
+        {"code_analysis": {"github": {"token_path": str(token_file)}}}
+    )
 
     assert headers is None
     assert error == GITHUB_NOT_CONFIGURED

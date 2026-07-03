@@ -738,6 +738,57 @@ merge/rebase, conflicts are reported as command failures with Git
 diagnostics in stderr; use status/diff commands plus MCP file editing to
 resolve, then continue or abort.
 
+Repository maintenance and safe automation
+==========================================
+
+The MCP Git layer includes administrative repository maintenance commands
+so agents do not need a host shell when normal Git workflows are blocked
+by stale locks, mixed ownership, or write-permission drift in a
+registered project.
+
+‘git_repo_permissions_check’
+     Inspect ‘.git’, the working tree, or both for owner/group
+     mismatches, missing write/search permissions, and effective CAS
+     write access.  The command also performs short-lived write probes in
+     the project root and ‘.git/objects’.
+‘git_repo_permissions_repair’
+     Repair owner/group and file modes for ‘.git’, the working tree, or
+     both.  It defaults to ‘dry_run=true’; real changes require
+     ‘confirm_repair=true’.  If files are owned by a user the CAS process
+     cannot change, the command reports the exact paths and the required
+     host-level repair.
+‘git_repo_doctor’
+     Produce one operational report: branch/status, stash list, stale
+     lock candidates, permission report, and write probes.  Run this
+     before a multi-step automation or after a failed pull/stash/commit.
+‘git_repo_lock_cleanup’
+     List or remove stale ‘.git/*.lock’ and ‘.git/**.lock’ files.
+     Deletion requires ‘confirm_cleanup=true’; use ‘dry_run=true’ first.
+‘git_pull_safe’
+     Guarded pull workflow: capture status, stash dirty tracked/untracked
+     work, pull the selected remote/ref, optionally apply the temporary
+     stash, and optionally drop it after a clean apply.  The response is
+     a step-by-step audit trail, not just a final success flag.
+
+   Recommended recovery flow when ‘git_pull’, ‘git_stash_push’, or
+‘git_commit’ fails with permission or lock diagnostics:
+
+  1. Run ‘git_repo_doctor’.
+  2. If permissions are dirty, run ‘git_repo_permissions_repair’ with
+     ‘dry_run=true’; inspect planned actions.
+  3. Run ‘git_repo_permissions_repair dry_run=false
+     confirm_repair=true’ only when the planned owner/group/mode changes
+     are correct for the registered project.
+  4. If stale locks remain, run ‘git_repo_lock_cleanup dry_run=true’;
+     delete only confirmed stale locks.
+  5. Prefer ‘git_pull_safe’ over manually composing stash/pull/apply/drop
+     when updating a dirty server checkout from a remote branch.
+
+   These commands are project-scoped and use ‘project_id’; they never
+accept a host working directory.  Their full JSON schemas, return
+contracts, error cases, and examples are included in *note Command
+reference::.
+
 GitHub operations
 =================
 

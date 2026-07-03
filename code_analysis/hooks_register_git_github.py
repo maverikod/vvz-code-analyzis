@@ -106,6 +106,13 @@ def register_commands_git_github(reg: Any) -> None:
             GitStashPushCommand,
             GitTagCommand,
         )
+        from .commands.git_admin_commands import (
+            GitPullSafeCommand,
+            GitRepoDoctorCommand,
+            GitRepoLockCleanupCommand,
+            GitRepoPermissionsCheckCommand,
+            GitRepoPermissionsRepairCommand,
+        )
 
         reg.register(GitAddCommand, "custom")
         reg.register(GitBranchCheckoutCommand, "custom")
@@ -138,6 +145,11 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitStashListCommand, "custom")
         reg.register(GitStashPushCommand, "custom")
         reg.register(GitTagCommand, "custom")
+        reg.register(GitRepoPermissionsCheckCommand, "custom")
+        reg.register(GitRepoPermissionsRepairCommand, "custom")
+        reg.register(GitRepoDoctorCommand, "custom")
+        reg.register(GitRepoLockCleanupCommand, "custom")
+        reg.register(GitPullSafeCommand, "custom")
         logger.info(
             "✅ Registered git write commands: git_add, git_branch_checkout, "
             "git_branch_create, git_branch_delete, git_branch_delete_remote, "
@@ -147,7 +159,9 @@ def register_commands_git_github(reg: Any) -> None:
             "git_cherry_pick, git_clean, git_commit, git_config_get, "
             "git_config_list, git_identity_get, git_identity_set, git_merge, "
             "git_rebase, git_reset, git_restore, git_revert, git_stash_apply, "
-            "git_stash_drop, git_stash_list, git_stash_push, git_tag"
+            "git_stash_drop, git_stash_list, git_stash_push, git_tag, "
+            "git_repo_permissions_check, git_repo_permissions_repair, "
+            "git_repo_doctor, git_repo_lock_cleanup, git_pull_safe"
         )
     except ImportError as e:
         logger.warning("Failed to import git remote commands: %s", e)

@@ -126,3 +126,29 @@ def resolve_github_auth(
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
     }
     return (headers, None)
+
+
+GITHUB_AUTH_FAILED = "GITHUB_AUTH_FAILED"
+GITHUB_INSUFFICIENT_SCOPE = "GITHUB_INSUFFICIENT_SCOPE"
+
+
+def classify_github_auth_error(status_code: int) -> Optional[str]:
+    """
+    Classify a GitHub API HTTP status code as an authentication outcome.
+
+    Pure function: performs no I/O, emits no log, and carries no secret
+    material.
+
+    Args:
+        status_code: HTTP status code returned by the GitHub API.
+
+    Returns:
+        "GITHUB_AUTH_FAILED" for status 401 (rejected token),
+        "GITHUB_INSUFFICIENT_SCOPE" for status 403 (under-scoped token),
+        None for any other status code.
+    """
+    if status_code == 401:
+        return GITHUB_AUTH_FAILED
+    if status_code == 403:
+        return GITHUB_INSUFFICIENT_SCOPE
+    return None

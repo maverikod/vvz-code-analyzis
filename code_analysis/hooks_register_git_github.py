@@ -89,6 +89,10 @@ def register_commands_git_github(reg: Any) -> None:
         from .commands.git_worktree_commands import (
             GitAddCommand,
             GitCommitCommand,
+            GitConfigGetCommand,
+            GitConfigListCommand,
+            GitIdentityGetCommand,
+            GitIdentitySetCommand,
             GitRestoreCommand,
             GitStashApplyCommand,
             GitStashDropCommand,
@@ -111,6 +115,10 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
         reg.register(GitCommitCommand, "custom")
+        reg.register(GitConfigGetCommand, "custom")
+        reg.register(GitConfigListCommand, "custom")
+        reg.register(GitIdentityGetCommand, "custom")
+        reg.register(GitIdentitySetCommand, "custom")
         reg.register(GitRestoreCommand, "custom")
         reg.register(GitStashApplyCommand, "custom")
         reg.register(GitStashDropCommand, "custom")
@@ -122,8 +130,9 @@ def register_commands_git_github(reg: Any) -> None:
             "git_branch_fetch, git_branch_pull, git_branch_push, "
             "git_branch_track_remote, git_branch_set_upstream, "
             "git_branch_unset_upstream, git_fetch, git_pull, git_push, "
-            "git_commit, git_restore, git_stash_apply, git_stash_drop, "
-            "git_stash_list, git_stash_push"
+            "git_commit, git_config_get, git_config_list, "
+            "git_identity_get, git_identity_set, git_restore, "
+            "git_stash_apply, git_stash_drop, git_stash_list, git_stash_push"
         )
     except ImportError as e:
         logger.warning("Failed to import git remote commands: %s", e)

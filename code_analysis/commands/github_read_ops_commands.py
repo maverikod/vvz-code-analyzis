@@ -14,14 +14,11 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from code_analysis.core.github_auth import (
-    classify_github_auth_error,
-    resolve_github_auth,
-)
+from code_analysis.core.github_auth import resolve_github_auth, classify_github_auth_error
 
 from .base_mcp_command import BaseMCPCommand
 from .github_http import github_api_request, github_timeout_seconds_from_config
@@ -44,10 +41,7 @@ class GithubRepoGetCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner login (user or organization).",
-                },
+                "owner": {"type": "string", "description": "Repository owner login (user or organization)."},
                 "repo": {"type": "string", "description": "Repository name."},
             },
             "required": ["owner", "repo"],
@@ -74,9 +68,7 @@ class GithubRepoGetCommand(BaseMCPCommand):
             timeout_seconds=github_timeout_seconds_from_config(config_data),
         )
         if error_code is not None:
-            classified = (
-                classify_github_auth_error(status) if status is not None else None
-            )
+            classified = classify_github_auth_error(status) if status is not None else None
             return ErrorResult(
                 message=f"GitHub repo_get failed for {owner}/{repo}",
                 code=classified or error_code,
@@ -102,19 +94,11 @@ class GithubRepoListCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": (
-                        "User or organization login whose repositories are listed."
-                    ),
-                },
+                "owner": {"type": "string", "description": "User or organization login whose repositories are listed."},
                 "per_page": {
                     "type": "integer",
                     "default": 30,
-                    "description": (
-                        "Maximum number of repositories to return "
-                        "(GitHub API per_page)."
-                    ),
+                    "description": "Maximum number of repositories to return (GitHub API per_page).",
                 },
             },
             "required": ["owner"],
@@ -142,9 +126,7 @@ class GithubRepoListCommand(BaseMCPCommand):
             timeout_seconds=github_timeout_seconds_from_config(config_data),
         )
         if error_code is not None:
-            classified = (
-                classify_github_auth_error(status) if status is not None else None
-            )
+            classified = classify_github_auth_error(status) if status is not None else None
             return ErrorResult(
                 message=f"GitHub repo_list failed for {owner}",
                 code=classified or error_code,
@@ -170,10 +152,7 @@ class GithubPrListCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner login.",
-                },
+                "owner": {"type": "string", "description": "Repository owner login."},
                 "repo": {"type": "string", "description": "Repository name."},
                 "state": {
                     "type": "string",
@@ -207,9 +186,7 @@ class GithubPrListCommand(BaseMCPCommand):
             timeout_seconds=github_timeout_seconds_from_config(config_data),
         )
         if error_code is not None:
-            classified = (
-                classify_github_auth_error(status) if status is not None else None
-            )
+            classified = classify_github_auth_error(status) if status is not None else None
             return ErrorResult(
                 message=f"GitHub pr_list failed for {owner}/{repo}",
                 code=classified or error_code,
@@ -235,15 +212,9 @@ class GithubPrGetCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner login.",
-                },
+                "owner": {"type": "string", "description": "Repository owner login."},
                 "repo": {"type": "string", "description": "Repository name."},
-                "pr_number": {
-                    "type": "integer",
-                    "description": "Pull request number.",
-                },
+                "pr_number": {"type": "integer", "description": "Pull request number."},
             },
             "required": ["owner", "repo", "pr_number"],
             "additionalProperties": False,
@@ -269,18 +240,11 @@ class GithubPrGetCommand(BaseMCPCommand):
             timeout_seconds=github_timeout_seconds_from_config(config_data),
         )
         if error_code is not None:
-            classified = (
-                classify_github_auth_error(status) if status is not None else None
-            )
+            classified = classify_github_auth_error(status) if status is not None else None
             return ErrorResult(
                 message=f"GitHub pr_get failed for {owner}/{repo}#{pr_number}",
                 code=classified or error_code,
-                details={
-                    "owner": owner,
-                    "repo": repo,
-                    "pr_number": pr_number,
-                    "status": status,
-                },
+                details={"owner": owner, "repo": repo, "pr_number": pr_number, "status": status},
             )
         return SuccessResult(data={"pull_request": data})
 
@@ -302,10 +266,7 @@ class GithubIssueListCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "owner": {
-                    "type": "string",
-                    "description": "Repository owner login.",
-                },
+                "owner": {"type": "string", "description": "Repository owner login."},
                 "repo": {"type": "string", "description": "Repository name."},
                 "state": {
                     "type": "string",
@@ -339,9 +300,7 @@ class GithubIssueListCommand(BaseMCPCommand):
             timeout_seconds=github_timeout_seconds_from_config(config_data),
         )
         if error_code is not None:
-            classified = (
-                classify_github_auth_error(status) if status is not None else None
-            )
+            classified = classify_github_auth_error(status) if status is not None else None
             return ErrorResult(
                 message=f"GitHub issue_list failed for {owner}/{repo}",
                 code=classified or error_code,

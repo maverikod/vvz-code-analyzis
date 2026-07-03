@@ -6,6 +6,20 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+from code_analysis.commands.git_config_commands import (
+    GitConfigGetCommand,
+    GitConfigListCommand,
+    GitIdentityGetCommand,
+    GitIdentitySetCommand,
+)
+from code_analysis.commands.git_history_commands import (
+    GitCherryPickCommand,
+    GitCleanCommand,
+    GitMergeCommand,
+    GitResetCommand,
+    GitRevertCommand,
+    GitTagCommand,
+)
 from code_analysis.commands.git_stage_commands import (
     GitAddCommand,
     GitCommitCommand,
@@ -21,9 +35,19 @@ from code_analysis.commands.git_stash_commands import (
 __all__ = [
     "GitAddCommand",
     "GitCommitCommand",
+    "GitConfigGetCommand",
+    "GitConfigListCommand",
+    "GitCherryPickCommand",
+    "GitCleanCommand",
+    "GitIdentityGetCommand",
+    "GitIdentitySetCommand",
+    "GitMergeCommand",
+    "GitResetCommand",
     "GitRestoreCommand",
+    "GitRevertCommand",
     "GitStashApplyCommand",
     "GitStashDropCommand",
     "GitStashListCommand",
     "GitStashPushCommand",
+    "GitTagCommand",
 ]

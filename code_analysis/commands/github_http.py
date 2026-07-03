@@ -95,7 +95,9 @@ def github_api_request(
                 parsed_body = json.loads(raw_body.decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 parsed_body = None
-        logger.warning("GitHub API HTTP error %s for %s %s", status_code, method, path)
+        logger.warning(
+            "GitHub API HTTP error %s for %s %s", status_code, method, path
+        )
         return (parsed_body, status_code, "GITHUB_API_ERROR")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         logger.warning("GitHub API request failed for %s %s: %s", method, path, exc)

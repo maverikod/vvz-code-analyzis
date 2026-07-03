@@ -13,13 +13,12 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-
-from mcp_proxy_adapter.commands.command_registry import registry
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def register_commands_git_github(reg: registry) -> None:
+def register_commands_git_github(reg: Any) -> None:
     """Register the git block and github block MCP command classes.
 
     Args:
@@ -33,6 +32,14 @@ def register_commands_git_github(reg: registry) -> None:
         from .commands.git_ops.git_log_command import GitLogCommand
         from .commands.git_ops.git_diff_command import GitDiffCommand
         from .commands.git_ops.git_branch_command import GitBranchCommand
+        from .commands.git_ops.git_branch_compare_command import GitBranchCompareCommand
+        from .commands.git_ops.git_branch_current_command import (
+            GitBranchCurrentCommand,
+        )
+        from .commands.git_ops.git_branch_list_command import GitBranchListCommand
+        from .commands.git_ops.git_branch_sync_status_command import (
+            GitBranchSyncStatusCommand,
+        )
         from .commands.git_ops.git_show_command import GitShowCommand
         from .commands.git_ops.git_remote_command import GitRemoteCommand
         from .commands.git_ops.git_blame_command import GitBlameCommand
@@ -41,25 +48,65 @@ def register_commands_git_github(reg: registry) -> None:
         reg.register(GitLogCommand, "custom")
         reg.register(GitDiffCommand, "custom")
         reg.register(GitBranchCommand, "custom")
+        reg.register(GitBranchCompareCommand, "custom")
+        reg.register(GitBranchCurrentCommand, "custom")
+        reg.register(GitBranchListCommand, "custom")
+        reg.register(GitBranchSyncStatusCommand, "custom")
         reg.register(GitShowCommand, "custom")
         reg.register(GitRemoteCommand, "custom")
         reg.register(GitBlameCommand, "custom")
         logger.info(
             "✅ Registered git read commands: git_status, git_log, git_diff, "
-            "git_branch, git_show, git_remote, git_blame"
+            "git_branch, git_branch_compare, git_branch_current, "
+            "git_branch_list, git_branch_sync_status, git_show, git_remote, "
+            "git_blame"
         )
     except ImportError as e:
         logger.warning("Failed to import git read commands: %s", e)
 
     try:
+        from .commands.git_branch_checkout_command import GitBranchCheckoutCommand
+        from .commands.git_branch_create_command import GitBranchCreateCommand
+        from .commands.git_branch_delete_command import GitBranchDeleteCommand
+        from .commands.git_branch_delete_remote_command import (
+            GitBranchDeleteRemoteCommand,
+        )
+        from .commands.git_branch_fetch_pull_commands import (
+            GitBranchFetchCommand,
+            GitBranchPullCommand,
+        )
+        from .commands.git_branch_push_command import GitBranchPushCommand
+        from .commands.git_branch_track_remote_command import (
+            GitBranchTrackRemoteCommand,
+        )
+        from .commands.git_branch_upstream_commands import (
+            GitBranchSetUpstreamCommand,
+            GitBranchUnsetUpstreamCommand,
+        )
         from .commands.git_fetch_command import GitFetchCommand
         from .commands.git_pull_command import GitPullCommand
         from .commands.git_push_command import GitPushCommand
 
+        reg.register(GitBranchCheckoutCommand, "custom")
+        reg.register(GitBranchCreateCommand, "custom")
+        reg.register(GitBranchDeleteCommand, "custom")
+        reg.register(GitBranchDeleteRemoteCommand, "custom")
+        reg.register(GitBranchFetchCommand, "custom")
+        reg.register(GitBranchPullCommand, "custom")
+        reg.register(GitBranchPushCommand, "custom")
+        reg.register(GitBranchTrackRemoteCommand, "custom")
+        reg.register(GitBranchSetUpstreamCommand, "custom")
+        reg.register(GitBranchUnsetUpstreamCommand, "custom")
         reg.register(GitFetchCommand, "custom")
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
-        logger.info("✅ Registered git remote commands: git_fetch, git_pull, git_push")
+        logger.info(
+            "✅ Registered git remote commands: git_branch_checkout, "
+            "git_branch_create, git_branch_delete, git_branch_delete_remote, "
+            "git_branch_fetch, git_branch_pull, git_branch_push, "
+            "git_branch_track_remote, git_branch_set_upstream, "
+            "git_branch_unset_upstream, git_fetch, git_pull, git_push"
+        )
     except ImportError as e:
         logger.warning("Failed to import git remote commands: %s", e)
 

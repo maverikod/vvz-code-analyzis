@@ -1,0 +1,153 @@
+meta:
+  plan: git-spec
+  artifact: object_matrix
+  purpose: >
+    The object/work axis of the coverage contract. Each row is a concrete
+    domain entity (class, module boundary, data schema, API contract, or
+    configuration object — per tactical_step_creation_standard.yaml
+    vocabulary.entity) that one tactical step creates or modifies, assigned
+    to exactly one owning_tactical_step. Not files or functions (Phase B,
+    atomic-step level). Binding on Phase B: an atomic step touching one of
+    these entities must belong to the tactical step listed as its owner.
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+objects:
+- object_id: read_repo_availability_protocol
+  kind: new_entity
+  description: The shared repository-resolution and availability-outcome protocol used by every read-only git operation, reporting a uniform non-error outcome when the root is not a git repository or has no commits yet.
+  evidence: "G-002/T-001 description and outputs (repository_state_report, repository_availability_outcome)"
+  owning_tactical_step: G-002/T-001
+- object_id: git_read_operation_set
+  kind: new_entity
+  description: The status/log/diff/branch/show/remote/blame read command group over the resolved repository.
+  evidence: "G-002/T-002 description"
+  owning_tactical_step: G-002/T-002
+- object_id: git_local_mutation_operation_set
+  kind: new_entity
+  description: The stage/unstage/commit/switch/restore/branch-create/branch-delete/stash/merge/cherry-pick/tag local mutation command group acting only on the resolved repository, never contacting a remote.
+  evidence: "G-003/T-001 description and outputs (mutation_state_report, mutation_conflict_outcome)"
+  owning_tactical_step: G-003/T-001
+- object_id: hard_reset_guard
+  kind: new_entity
+  description: The guard on the discarding reset mode requiring an explicit confirmation parameter before the operation proceeds; without confirmation the operation reports what would be lost and leaves the repository unchanged.
+  evidence: "G-003/T-002 description and inputs (reset_mode, discard_confirmation)"
+  owning_tactical_step: G-003/T-002
+- object_id: local_merge_cherry_pick_gate_exemption
+  kind: new_entity
+  description: The rule that local branch-merge and individual-commit-application (cherry-pick) operations are never gated by the protected-branch restriction, since their only route to a remote is a separate, separately-restricted push.
+  evidence: "G-003/T-003 description and output protected_gate_exemption_decision"
+  owning_tactical_step: G-003/T-003
+- object_id: revert_inverse_commit_operation
+  kind: new_entity
+  description: The revert operation that creates a new commit whose content is the inverse of a named target commit, leaving prior history intact and safe on protected branches.
+  evidence: "G-003/T-003 description and output inverse_commit_result"
+  owning_tactical_step: G-003/T-003
+- object_id: git_remote_operation_set
+  kind: new_entity
+  description: The fetch/pull/push remote-contacting command group, including the fast-forward-only/rebase pull policy and the protected-branch, force-push, and dry-run push guards, bounded by the configured remote timeout.
+  evidence: "G-004/T-001 description and outputs (remote_operation_result, remote_guard_outcome)"
+  owning_tactical_step: G-004/T-001
+- object_id: git_ssh_authentication_mechanism
+  kind: new_entity
+  description: The per-operation SSH authentication mechanism using a single configured server-user key with pinned known-hosts and strict host-key checking, uniformly supplied to fetch, pull, and push.
+  evidence: "G-004/T-002 description and outputs (authenticated_remote_channel, authentication_failure_outcome)"
+  owning_tactical_step: G-004/T-002
+- object_id: github_operation_set
+  kind: new_entity
+  description: The repository/issue/pull-request listing, inspection, creation, and commenting command group operating through the GitHub HTTP API.
+  evidence: "G-005/T-001 description and output github_operation_result"
+  owning_tactical_step: G-005/T-001
+- object_id: github_pr_merge_guard
+  kind: new_entity
+  description: The guard on pull-request merge requiring an explicit configuration permission and, for a protected base branch, an explicit override permitted by policy.
+  evidence: "G-005/T-001 inputs (pr_merge_permission, protected_base_override) and output github_guard_outcome"
+  owning_tactical_step: G-005/T-001
+- object_id: github_token_authentication_mechanism
+  kind: new_entity
+  description: The personal-access-token authentication mechanism for GitHub operations, supplied uniformly and never echoed, kept separate from the SSH identity used by plain git remote operations.
+  evidence: "G-005/T-002 description and outputs (authenticated_github_session, github_authentication_outcome)"
+  owning_tactical_step: G-005/T-002
+- object_id: project_root_resolution_rule
+  kind: existing_code
+  description: The rule deriving the repository root from the (watched-directory id, project id) pair as the project's folder under the watched directory's absolute path, honouring a bare absolute path only as legacy, and refusing on empty or ambiguous resolution; the same root is shared by every git operation and commit-on-write.
+  evidence: "verified_code_facts.yaml#project_root_resolution (resolve_project_root_absolute_str, code_analysis/core/project_root_path.py)"
+  owning_tactical_step: G-006/T-001
+- object_id: git_path_confinement_mechanism
+  kind: existing_code
+  description: The mechanism confining every path parameter accepted by a git operation to the resolved project root, rejecting paths that resolve outside it, exempting revision identifiers; must emit the git block's own GIT_PATH_OUTSIDE_PROJECT outcome rather than reusing the existing INVALID_FILE_PATH code as-is.
+  evidence: "verified_code_facts.yaml#path_confinement (resolve_under_project_root, _normalize_relative_file_path, code_analysis/core/... ; git_block_requirement note)"
+  owning_tactical_step: G-006/T-002
+- object_id: venv_write_guard
+  kind: existing_code
+  description: The cross-cutting protected-location write guard rejecting writes under a project's virtual-environment directory or installed-package directories, applied uniformly to commit-on-write, staging, restore, and any other working-tree write; the git block does not bypass it.
+  evidence: "verified_code_facts.yaml#venv_write_guard (reject_if_write_under_project_venv)"
+  owning_tactical_step: G-006/T-002
+- object_id: ownership_invariant
+  kind: new_entity
+  description: The cross-cutting runtime invariant that every git and write operation runs as the unprivileged server user, never a privileged user, so created or updated files and repository objects retain server-user ownership with no post-hoc chown.
+  evidence: "G-006/T-003 description and output ownership_preserved_result"
+  owning_tactical_step: G-006/T-003
+- object_id: remote_operation_timeout_bound
+  kind: new_entity
+  description: The configured timeout bounding every remote-contacting git operation and every GitHub operation, yielding a distinct timeout outcome on excess with no in-operation retry.
+  evidence: "G-006/T-003 description and output timeout_outcome"
+  owning_tactical_step: G-006/T-003
+- object_id: git_capability_block_framing
+  kind: new_entity
+  description: The framing of the git capability as one of three independently configurable, independently failing capability members, layered so the git member acts on the filesystem working tree via subprocess git while never touching the server's internal command-to-driver-to-database chain.
+  evidence: "G-006/T-004 description and output bounded_git_block"
+  owning_tactical_step: G-006/T-004
+- object_id: edit_session_git_distinction
+  kind: new_entity
+  description: The separation establishing the project-scoped git block as parallel to and independent of the pre-existing edit-session git facility, which operates on a temporary per-edit-session repository; the new block neither replaces nor alters it.
+  evidence: "G-006/T-004 description (edit-session facility distinction)"
+  owning_tactical_step: G-006/T-004
+- object_id: reserved_command_prefix_namespace
+  kind: new_entity
+  description: The reserved naming prefix carried by every command in the project-scoped git block, keeping it disjoint from edit-session git command names so no name or routing collision arises.
+  evidence: "G-006/T-004 description and output prefixed_command_namespace"
+  owning_tactical_step: G-006/T-004
+- object_id: command_registry_wiring
+  kind: existing_code-extension
+  description: The extension of the existing command-registration mechanism (code_analysis/hooks.py's register_code_analysis_commands, which calls register_commands_part1 and register_commands_part2, each importing command classes and calling reg.register(CommandClass, "custom"), installed via mcp_proxy_adapter's register_custom_commands_hook) to import and register the plan's 20 new git_*/github_* command classes so the git and github capability blocks framed by G-006/T-004 are actually invocable rather than merely defined.
+  evidence: "zero-trust code read 2026-07-03 of code_analysis/hooks.py, code_analysis/hooks_register_part1.py, code_analysis/hooks_register_part2.py: neither register_commands_part1 nor register_commands_part2 imports or registers any of the 7 G-002/T-002 git read commands, the G-004/T-001 git_fetch/git_pull/git_push commands, or the 10 G-005/T-001..T-002 github_* commands; no prior object row owned this registration-wiring gap"
+  owning_tactical_step: G-006/T-004
+verification:
+  total_objects: 20
+  no_overlap: true
+  notes: >
+    Checked pairwise for entities describing the same underlying thing under
+    two different owners. Cross-references exist (e.g. git_remote_operation_set
+    in G-004/T-001 consumes git_ssh_authentication_mechanism owned by
+    G-004/T-002; git_read_operation_set in G-002/T-002 consumes
+    project_root_resolution_rule owned by G-006/T-001; several objects
+    consume remote_operation_timeout_bound owned by G-006/T-003) but each
+    such reference is consumption of an entity owned elsewhere, not a second
+    creation/modification claim on the same entity — every object row has
+    exactly one owning_tactical_step and no entity name or description is
+    duplicated across rows. Every one of the 13 remaining tactical steps
+    contributes at least one object row. Per-T breakdown: G-002/T-001=1,
+    G-002/T-002=1, G-003/T-001=1, G-003/T-002=1, G-003/T-003=2,
+    G-004/T-001=1, G-004/T-002=1, G-005/T-001=2, G-005/T-002=1,
+    G-006/T-001=1, G-006/T-002=2, G-006/T-003=2, G-006/T-004=4. Sum = 20,
+    matching total_objects. G-001-commit-on-write (tactical steps T-001,
+    T-002, T-003 and their 7 object rows: commit_after_write_dispatcher,
+    commit_message_validation_rule, lock_opacity_decision_rule,
+    no_op_unchanged_outcome, commit_on_write_identity_binding,
+    commit_never_pushes_invariant, implicit_trigger_removal_migration) was
+    excised from plan scope by explicit user decision on 2026-07-03
+    (commit-on-write is out of scope; this plan covers git_* and github_*
+    server commands only); archived at
+    docs/plans/git-spec/_archive/G-001-commit-on-write/. Original total was
+    26 objects across 16 tactical steps; post-excision total is 19 objects
+    across 13 tactical steps (26-7=19; 16-3=13). A 20th object row,
+    command_registry_wiring (kind existing_code-extension), was added on
+    2026-07-03 under orchestrator approval: zero-trust review of the real
+    command-registration mechanism (code_analysis/hooks.py,
+    hooks_register_part1.py, hooks_register_part2.py) found no object row
+    owning the wiring of the plan's 20 new git_*/github_* MCP commands into
+    the server's command registry. The row is owned by G-006/T-004 (already
+    owning concepts C-001 CapabilityBlock and C-029 ReservedCommandPrefix).
+    Updated per-T breakdown: G-006/T-004=4 (was 3). New total_objects: 20
+    (19+1); still across 13 tactical steps (unchanged — no new tactical step
+    was created).

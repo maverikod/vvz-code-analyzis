@@ -1,0 +1,205 @@
+step_id: A-002
+parent_tactical_step: T-004
+name: Capability-block enumeration and layer-boundary constraint
+target_file: code_analysis/core/project_git/block.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-002
+prompt: |
+  Create the new file at the exact project-relative path
+  code_analysis/core/project_git/block.py with operation create_file (the
+  file does not exist yet; the parent directory
+  code_analysis/core/project_git/ already exists or is created as part of
+  this operation).
+
+  CONTEXT (background only, do not restate it in the file). The system adds
+  three independent capability blocks/members to the server: a project-scoped
+  git command block, a GitHub command block, and a commit-on-write behaviour
+  attached to the existing project file write path. Each of the three is
+  separable: each can be configured, enabled, and can fail independently of
+  the other two. The git block acts only on the filesystem working tree of a
+  registered project via subprocess git invocations. The GitHub block acts
+  only on the GitHub remote HTTP API. Neither of these two blocks ever
+  touches the server's own internal command-to-driver-to-database chain (the
+  internal routing used by the server's own commands to reach their drivers
+  and database). This file fixes both facts as data: the three-member
+  enumeration, and the layer boundary each of the two externally-facing
+  members is confined to.
+
+  MRS EXCERPT (machine_spec concepts referenced by this file — quoted for
+  grounding only, do not copy this YAML into the file verbatim):
+
+  concept_id: C-001
+  name: CapabilityBlock
+  definition: "One of three independently configurable and independently
+    failing capability blocks the system adds."
+  properties:
+    members: [git_block, github_block, commit_on_write_behaviour]
+    separable: true
+    independent_config: true
+    independent_failure: true
+  source_labels:
+    "{a1b2}": "The system adds three independent capability blocks to the
+      server: a project-scoped git command block operating on a registered
+      project's working tree, a GitHub command block operating on the GitHub
+      HTTP API, and a commit-on-write behaviour attached to the existing
+      project file write path. The three blocks are separable: each can be
+      configured, enabled, and fail independently of the others."
+    "{c3d4}": "The git command block operates only on the filesystem working
+      tree of a registered project via subprocess git. The GitHub command
+      block operates only on the GitHub remote HTTP API. Neither block
+      touches the server's internal command-to-driver-to-database chain."
+
+  concept_id: C-002
+  name: LayerBoundary
+  definition: "The boundary that confines the git block to the filesystem
+    and the github block to the HTTP API, never touching the internal
+    driver-database chain."
+  properties:
+    git_block_layer: filesystem_subprocess_git
+    github_block_layer: github_http_api
+    forbidden_touch: command_to_driver_to_database_chain
+  source_labels:
+    "{c3d4}": "The git command block operates only on the filesystem working
+      tree of a registered project via subprocess git. The GitHub command
+      block operates only on the GitHub remote HTTP API. Neither block
+      touches the server's internal command-to-driver-to-database chain."
+
+  REQUIRED FILE CONTENT. Write the file with EXACTLY this content, character
+  for character (the outer fence below is not part of the file; do not
+  include triple-backtick fences in the actual file):
+
+  ```
+  """
+  Capability-block framing and layer-boundary constraints for the
+  project-scoped git capability.
+
+  Fixes, as data, the framing of the git capability as one of three
+  independently configurable and independently failing capability members,
+  and the layer boundary that confines each externally-facing member's
+  reach so that neither the git member nor the github member ever touches
+  the server's internal command-to-driver-to-database chain.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  import enum
+  from typing import FrozenSet
+
+
+  class CapabilityMember(enum.Enum):
+      """One of three independently configurable, independently failing capability members.
+
+      Each member can be configured, enabled, and can fail independently of
+      the other two members; none of the three members implies or depends on
+      the configuration or failure state of another.
+
+      Attributes:
+          GIT_BLOCK: The project-scoped git command block, operating on the
+              filesystem working tree of a registered project via subprocess
+              git.
+          GITHUB_BLOCK: The GitHub command block, operating on the GitHub
+              remote HTTP API.
+          COMMIT_ON_WRITE_BEHAVIOUR: The commit-on-write behaviour attached
+              to the existing project file write path.
+      """
+
+      GIT_BLOCK = "git_block"
+      GITHUB_BLOCK = "github_block"
+      COMMIT_ON_WRITE_BEHAVIOUR = "commit_on_write_behaviour"
+
+
+  CAPABILITY_MEMBERS: FrozenSet[CapabilityMember] = frozenset(CapabilityMember)
+
+  GIT_BLOCK_LAYER: str = "filesystem_subprocess_git"
+  GITHUB_BLOCK_LAYER: str = "github_http_api"
+  FORBIDDEN_TOUCH: str = "command_to_driver_to_database_chain"
+
+
+  class LayerBoundary:
+      """The boundary confining the git block to the filesystem and the github block to the HTTP API.
+
+      Neither the git block nor the github block touches the server's
+      internal command-to-driver-to-database chain used by the server's own
+      commands to reach their drivers and database.
+
+      Attributes:
+          git_block_layer: The layer the git capability member is confined
+              to — the filesystem working tree of a registered project,
+              accessed exclusively via subprocess git invocations.
+          github_block_layer: The layer the github capability member is
+              confined to — the GitHub HTTP API.
+          forbidden_touch: The internal server layer neither the git block
+              nor the github block may touch: the command-to-driver-to-database
+              chain used by the server's own commands.
+      """
+
+      git_block_layer: str = GIT_BLOCK_LAYER
+      github_block_layer: str = GITHUB_BLOCK_LAYER
+      forbidden_touch: str = FORBIDDEN_TOUCH
+
+      @staticmethod
+      def is_touch_forbidden(layer_name: str) -> bool:
+          """Report whether the named layer is the forbidden internal chain.
+
+          Args:
+              layer_name: The name of a layer to check.
+
+          Returns:
+              True if layer_name equals the forbidden internal
+              command-to-driver-to-database chain layer, False otherwise.
+          """
+          return layer_name == FORBIDDEN_TOUCH
+  ```
+
+  CONSTRAINTS (all mandatory, no exceptions):
+  - The file must start with the module docstring shown above, as the first
+    statement in the file (a plain triple-double-quoted string, not a
+    comment), reproduced exactly including blank lines and the trailing
+    "Author:"/"email:" lines.
+  - Imports, in this exact order: `from __future__ import annotations`, then
+    a blank line, then `import enum`, then `from typing import FrozenSet`.
+  - `CapabilityMember` is a `class CapabilityMember(enum.Enum):` with exactly
+    three members, in this order: `GIT_BLOCK = "git_block"`,
+    `GITHUB_BLOCK = "github_block"`,
+    `COMMIT_ON_WRITE_BEHAVIOUR = "commit_on_write_behaviour"`. No other
+    members.
+  - `CAPABILITY_MEMBERS` is a module-level constant of type
+    `FrozenSet[CapabilityMember]` built as `frozenset(CapabilityMember)`.
+  - `GIT_BLOCK_LAYER`, `GITHUB_BLOCK_LAYER`, `FORBIDDEN_TOUCH` are
+    module-level `str` constants with exactly the values shown.
+  - `LayerBoundary` is a plain class (not a dataclass, not an enum) with the
+    three class attributes shown, each typed `str` and initialised from the
+    module-level constants, plus the one `@staticmethod` method
+    `is_touch_forbidden(layer_name: str) -> bool` with the exact body shown.
+  - Every class and every method/function has a docstring following
+    Google-style conventions: class docstrings list class attributes under
+    an `Attributes:` section using the exact attribute names; the
+    `is_touch_forbidden` method docstring has `Args:` and `Returns:`
+    sections.
+  - Every function/method parameter (except `self`) has a type annotation;
+    every function/method has a return type annotation.
+  - Do not add any other imports, classes, functions, constants, or
+    executable code beyond what is shown above.
+  - Do not create, modify, or read any file other than
+    code_analysis/core/project_git/block.py.
+  - Encoding is UTF-8, no BOM. Use LF line endings.
+verification:
+  type: import
+  target: code_analysis.core.project_git.block
+  expected: Importing code_analysis.core.project_git.block succeeds without raising
+    any exception. CapabilityMember is an Enum with exactly three members — GIT_BLOCK,
+    GITHUB_BLOCK, COMMIT_ON_WRITE_BEHAVIOUR — whose values equal git_block, github_block,
+    commit_on_write_behaviour respectively. CAPABILITY_MEMBERS contains exactly those
+    three members. LayerBoundary.git_block_layer equals filesystem_subprocess_git,
+    LayerBoundary.github_block_layer equals github_http_api, and LayerBoundary.forbidden_touch
+    equals command_to_driver_to_database_chain. LayerBoundary.is_touch_forbidden('command_to_driver_to_database_chain')
+    returns True, and calling it with any other string (for example filesystem_subprocess_git)
+    returns False.
+status: frozen

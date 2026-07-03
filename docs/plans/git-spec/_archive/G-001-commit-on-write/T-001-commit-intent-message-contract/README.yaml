@@ -36,5 +36,7 @@ outputs:
   type: outcome
   description: A pre-write rejection emitted when commit-intent is set but the message
     is missing or empty, leaving the file untouched.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: ready_for_review

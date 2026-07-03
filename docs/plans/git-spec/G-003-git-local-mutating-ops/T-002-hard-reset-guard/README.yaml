@@ -35,5 +35,7 @@ outputs:
   type: outcome
   description: A refusal naming what would be lost, emitted when a discarding reset
     lacks confirmation, leaving the repository unchanged.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

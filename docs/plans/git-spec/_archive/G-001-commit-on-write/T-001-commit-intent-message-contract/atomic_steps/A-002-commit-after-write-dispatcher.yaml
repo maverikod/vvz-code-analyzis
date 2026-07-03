@@ -1,0 +1,522 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: Commit after write dispatcher rework
+target_file: code_analysis/core/git_integration.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-004
+- C-025
+- C-005
+prompt: |
+  Target file: code_analysis/core/git_integration.py
+
+  Operation: modify_file. Replace exactly one existing function,
+  `commit_after_write`, with a new version described below. Do not change any
+  other function, class, import, constant, docstring (module-level or
+  function-level on any other function), comment, or blank-line layout
+  elsewhere in the file.
+
+  The full current content of the target file (301 lines, already including
+  the `validate_commit_intent_message` function appended by a prior change),
+  which you must reproduce unchanged except for the replaced
+  `commit_after_write` function, is:
+
+  ```python
+  """
+  Git integration for automatic commits.
+
+  When ``code_analysis.git_commit_on_write`` is true, mutating commands should call
+  :func:`commit_after_write` after a successful write so changes are staged and committed.
+  When false, only filesystem history applies — callers must still use
+  :class:`code_analysis.core.backup_manager.BackupManager` before overwriting or deleting
+  files (see :mod:`code_analysis.core.file_write_history`).
+
+  Refactor commands may also commit *before* the operation (see command docs).
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  import logging
+  import subprocess
+  from pathlib import Path
+  from typing import Any, List, Mapping, Optional, Tuple
+
+  logger = logging.getLogger(__name__)
+
+  CONFIG_KEY_GIT_COMMIT_ON_WRITE = "git_commit_on_write"
+
+
+  def get_git_commit_on_write_from_config(
+      config_data: Optional[Mapping[str, Any]] = None,
+  ) -> bool:
+      """
+      Read whether git commit on write is enabled from config.
+
+      Looks at code_analysis.git_commit_on_write. If config_data is None or key
+      is missing, returns False.
+
+      Args:
+          config_data: Full config dict (e.g. from load_raw_config). If None, returns False.
+
+      Returns:
+          True if git commit after (and before refactor) should be performed.
+      """
+      if not config_data:
+          return False
+      ca = config_data.get("code_analysis")
+      if not isinstance(ca, Mapping):
+          return False
+      return bool(ca.get(CONFIG_KEY_GIT_COMMIT_ON_WRITE))
+
+
+  def is_git_repository(root_dir: Path) -> bool:
+      """
+      Check if directory is a git repository.
+
+      Args:
+          root_dir: Root directory to check
+
+      Returns:
+          True if directory is a git repository, False otherwise
+      """
+      git_dir = root_dir / ".git"
+      return git_dir.exists() and git_dir.is_dir()
+
+
+  def is_git_available() -> bool:
+      """
+      Check if git command is available in system.
+
+      Returns:
+          True if git is available, False otherwise
+      """
+      try:
+          subprocess.run(
+              ["git", "--version"],
+              capture_output=True,
+              check=True,
+              timeout=5,
+          )
+          return True
+      except (
+          subprocess.CalledProcessError,
+          FileNotFoundError,
+          subprocess.TimeoutExpired,
+      ):
+          return False
+
+
+  def create_git_commit(
+      root_dir: Path,
+      file_path: Path,
+      commit_message: str,
+  ) -> Tuple[bool, Optional[str]]:
+      """
+      Create git commit for file changes.
+
+      Args:
+          root_dir: Git repository root directory
+          file_path: Path to file that was changed (relative to root_dir)
+          commit_message: Commit message
+
+      Returns:
+          Tuple of (success, error_message)
+      """
+      if not is_git_available():
+          return (False, "Git is not available in system")
+
+      if not is_git_repository(root_dir):
+          return (False, "Directory is not a git repository")
+
+      try:
+          # Get relative path from root_dir
+          try:
+              relative_path = str(file_path.relative_to(root_dir))
+          except ValueError:
+              # If not relative, use absolute path
+              relative_path = str(file_path)
+
+          # Stage file
+          result = subprocess.run(
+              ["git", "add", relative_path],
+              cwd=root_dir,
+              capture_output=True,
+              text=True,
+              timeout=10,
+          )
+          if result.returncode != 0:
+              return (False, f"Failed to stage file: {result.stderr}")
+
+          # Check if there are changes to commit
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"],
+              cwd=root_dir,
+              capture_output=True,
+              text=True,
+              timeout=5,
+          )
+          if result.returncode == 0:
+              # No changes to commit
+              logger.info(f"No changes to commit for {relative_path}")
+              return (True, None)
+
+          # Create commit
+          result = subprocess.run(
+              ["git", "commit", "-m", commit_message],
+              cwd=root_dir,
+              capture_output=True,
+              text=True,
+              timeout=10,
+          )
+          if result.returncode != 0:
+              return (False, f"Failed to create commit: {result.stderr}")
+
+          logger.info(f"Git commit created: {commit_message}")
+          return (True, None)
+      except subprocess.TimeoutExpired:
+          return (False, "Git command timed out")
+      except Exception as e:
+          logger.error(f"Error creating git commit: {e}")
+          return (False, str(e))
+
+
+  def create_git_commit_paths(
+      root_dir: Path,
+      file_paths: List[Path],
+      commit_message: str,
+  ) -> Tuple[bool, Optional[str]]:
+      """
+      Stage multiple paths and create a single git commit.
+
+      Args:
+          root_dir: Git repository root directory
+          file_paths: Paths to files/dirs that were changed (relative to root_dir or absolute)
+          commit_message: Commit message
+
+      Returns:
+          Tuple of (success, error_message)
+      """
+      if not file_paths:
+          return (True, None)
+      if not is_git_available():
+          return (False, "Git is not available in system")
+      if not is_git_repository(root_dir):
+          return (False, "Directory is not a git repository")
+
+      try:
+          rel_paths: List[str] = []
+          for fp in file_paths:
+              try:
+                  rel_paths.append(str(Path(fp).relative_to(root_dir)))
+              except ValueError:
+                  rel_paths.append(str(Path(fp).resolve()))
+
+          for rel in rel_paths:
+              result = subprocess.run(
+                  ["git", "add", rel],
+                  cwd=root_dir,
+                  capture_output=True,
+                  text=True,
+                  timeout=10,
+              )
+              if result.returncode != 0:
+                  return (False, f"Failed to stage {rel}: {result.stderr}")
+
+          result = subprocess.run(
+              ["git", "diff", "--cached", "--quiet"],
+              cwd=root_dir,
+              capture_output=True,
+              text=True,
+              timeout=5,
+          )
+          if result.returncode == 0:
+              logger.info("No changes to commit")
+              return (True, None)
+
+          result = subprocess.run(
+              ["git", "commit", "-m", commit_message],
+              cwd=root_dir,
+              capture_output=True,
+              text=True,
+              timeout=10,
+          )
+          if result.returncode != 0:
+              return (False, f"Failed to create commit: {result.stderr}")
+          logger.info(f"Git commit created: {commit_message}")
+          return (True, None)
+      except subprocess.TimeoutExpired:
+          return (False, "Git command timed out")
+      except Exception as e:
+          logger.error(f"Error creating git commit: {e}")
+          return (False, str(e))
+
+
+  def commit_after_write(
+      root_dir: Path,
+      paths: List[Path],
+      command_name: str,
+      commit_message_override: Optional[str] = None,
+      config_data: Optional[Mapping[str, Any]] = None,
+  ) -> Tuple[bool, Optional[str]]:
+      """
+      After a write command: create git commit if config has git_commit_on_write,
+      otherwise do nothing (caller is responsible for backup/version).
+
+      For refactor commands, call this also *before* the operation with
+      commit_message_override like "Before split_class: path/to/file.py".
+
+      Args:
+          root_dir: Project root (git repo root)
+          paths: One or more file/dir paths that were written
+          command_name: Command name for default message (e.g. "cst_save_tree")
+          commit_message_override: If provided, use as commit message
+          config_data: Config dict to read code_analysis.git_commit_on_write. If None, no commit.
+
+      Returns:
+          Tuple of (success, error_message). (True, None) when no commit was requested.
+      """
+      if not get_git_commit_on_write_from_config(config_data):
+          return (True, None)
+      msg = (
+          commit_message_override or f"{command_name}: {paths[0].name}"
+          if paths
+          else command_name
+      )
+      if len(paths) == 1:
+          return create_git_commit(root_dir, paths[0], msg)
+      return create_git_commit_paths(root_dir, paths, msg)
+
+
+  def validate_commit_intent_message(
+      commit_on_write: bool,
+      commit_message: Optional[str],
+  ) -> Optional[str]:
+      """
+      Validate the commit message contract for a write that may produce a commit.
+
+      Implements the commit-intent message validation rule: when commit_on_write is
+      True, commit_message must be a string and non-empty after stripping leading and
+      trailing whitespace, or the write is rejected before any content is persisted.
+      When commit_on_write is False, no message is required and the function always
+      returns None (valid). This function validates only the intent-set direction:
+      a message required and non-empty when the flag is set. It does not validate
+      or reject a message supplied without commit-intent; that check is out of scope
+      for this function.
+
+      Args:
+          commit_on_write: Explicit per-write commit-intent flag. True means the
+              write is requesting a commit after the content is persisted.
+          commit_message: Caller-supplied commit message, or None if none was
+              supplied.
+
+      Returns:
+          None if the message is valid (or commit_on_write is False, in which case
+          no message is required). An error message string describing the validation
+          failure if commit_on_write is True and commit_message is not a string, or
+          is a string that is empty after stripping whitespace.
+      """
+      if not commit_on_write:
+          return None
+      if not isinstance(commit_message, str):
+          return "commit_message is required and must be a string when commit-intent is set"
+      if not commit_message.strip():
+          return "commit_message must be non-empty (after stripping whitespace) when commit-intent is set"
+      return None
+  ```
+
+  Replace the `commit_after_write` function shown above (the one still using
+  `commit_message_override` and the config gate) with the following new
+  version. Every other function, including the appended
+  `validate_commit_intent_message`, `is_git_repository`, `is_git_available`,
+  `create_git_commit`, `create_git_commit_paths`,
+  `get_git_commit_on_write_from_config`, the module docstring, the imports,
+  the `logger` assignment, and the `CONFIG_KEY_GIT_COMMIT_ON_WRITE` constant
+  must be reproduced byte-for-byte unchanged, in their same relative order.
+
+  Exact new signature:
+  `def commit_after_write(root_dir: Path, paths: List[Path], command_name: str, commit_on_write: bool = False, commit_message: Optional[str] = None, config_data: Optional[Mapping[str, Any]] = None) -> Tuple[bool, Optional[str]]:`
+
+  Required imports: none beyond what the file already imports (`Path` from
+  `pathlib`; `Any`, `List`, `Mapping`, `Optional`, `Tuple` from `typing`). Do
+  not add, remove, or reorder any import. The function body calls
+  `validate_commit_intent_message`, `create_git_commit`, and
+  `create_git_commit_paths`, all already defined earlier in this same file;
+  no import is needed for same-module calls.
+
+  Exact docstring (Google-style, matching the file's existing docstring style
+  with Args: and Returns: sections):
+
+  ```
+  After a write, create a git commit if the caller set explicit commit-intent.
+
+  The commit-intent flag (commit_on_write) is the only path to a commit on
+  write: when False, this function never commits and returns (True, None)
+  immediately. When True, the caller-supplied commit_message is validated via
+  validate_commit_intent_message before anything is committed; an invalid
+  message rejects the call without committing. When the message is valid, it
+  is forwarded verbatim to create_git_commit (single path) or
+  create_git_commit_paths (multiple paths) with no server-generated default
+  message and no modification of the caller's text.
+
+  Args:
+      root_dir: Project root (git repo root).
+      paths: One or more file/dir paths that were written.
+      command_name: Command name that invoked the write; recorded for caller
+          logging/diagnostics only and no longer used to build a default
+          commit message.
+      commit_on_write: Explicit per-write commit-intent flag. Defaults to
+          False. When False, the write never produces a commit. When True,
+          the write produces a commit after the content is persisted and
+          only if a valid commit_message is supplied.
+      commit_message: Caller-supplied commit message. Required and validated
+          (non-empty after stripping whitespace) when commit_on_write is
+          True. Ignored when commit_on_write is False.
+      config_data: Config dict retained for caller compatibility. No longer
+          read to decide whether a commit occurs; the commit_on_write flag is
+          the sole decision input.
+
+  Returns:
+      Tuple of (success, error_message). (True, None) when commit_on_write is
+      False (no commit requested). (False, error_message) when commit_on_write
+      is True and commit_message fails validation, or when the underlying git
+      commit operation fails. (True, None) when the commit operation succeeds,
+      including when it finds no changes to commit.
+  ```
+
+  Exact body logic, in this exact order:
+  1. If `commit_on_write` is falsy (False): return `(True, None)` immediately.
+     Never call `validate_commit_intent_message` or any commit function in
+     this branch.
+  2. Else, call `validate_commit_intent_message(commit_on_write,
+     commit_message)` and store the result.
+  3. If that result is not `None` (validation failed): return
+     `(False, <that result>)` immediately, without staging or committing
+     anything.
+  4. Else (validation passed, so `commit_message` is a non-empty-after-strip
+     string): if `len(paths) == 1`, return
+     `create_git_commit(root_dir, paths[0], commit_message)`. Otherwise
+     (`len(paths) != 1`, including zero paths), return
+     `create_git_commit_paths(root_dir, paths, commit_message)`.
+
+  Full exact function text that replaces the old `commit_after_write`
+  (reproduce verbatim, including blank lines inside the docstring):
+
+  ```python
+  def commit_after_write(
+      root_dir: Path,
+      paths: List[Path],
+      command_name: str,
+      commit_on_write: bool = False,
+      commit_message: Optional[str] = None,
+      config_data: Optional[Mapping[str, Any]] = None,
+  ) -> Tuple[bool, Optional[str]]:
+      """
+      After a write, create a git commit if the caller set explicit commit-intent.
+
+      The commit-intent flag (commit_on_write) is the only path to a commit on
+      write: when False, this function never commits and returns (True, None)
+      immediately. When True, the caller-supplied commit_message is validated via
+      validate_commit_intent_message before anything is committed; an invalid
+      message rejects the call without committing. When the message is valid, it
+      is forwarded verbatim to create_git_commit (single path) or
+      create_git_commit_paths (multiple paths) with no server-generated default
+      message and no modification of the caller's text.
+
+      Args:
+          root_dir: Project root (git repo root).
+          paths: One or more file/dir paths that were written.
+          command_name: Command name that invoked the write; recorded for caller
+              logging/diagnostics only and no longer used to build a default
+              commit message.
+          commit_on_write: Explicit per-write commit-intent flag. Defaults to
+              False. When False, the write never produces a commit. When True,
+              the write produces a commit after the content is persisted and
+              only if a valid commit_message is supplied.
+          commit_message: Caller-supplied commit message. Required and validated
+              (non-empty after stripping whitespace) when commit_on_write is
+              True. Ignored when commit_on_write is False.
+          config_data: Config dict retained for caller compatibility. No longer
+              read to decide whether a commit occurs; the commit_on_write flag is
+              the sole decision input.
+
+      Returns:
+          Tuple of (success, error_message). (True, None) when commit_on_write is
+          False (no commit requested). (False, error_message) when commit_on_write
+          is True and commit_message fails validation, or when the underlying git
+          commit operation fails. (True, None) when the commit operation succeeds,
+          including when it finds no changes to commit.
+      """
+      if not commit_on_write:
+          return (True, None)
+      validation_error = validate_commit_intent_message(commit_on_write, commit_message)
+      if validation_error is not None:
+          return (False, validation_error)
+      if len(paths) == 1:
+          return create_git_commit(root_dir, paths[0], commit_message)
+      return create_git_commit_paths(root_dir, paths, commit_message)
+  ```
+
+  Constraints (all mandatory, no exceptions):
+  - Do not modify `validate_commit_intent_message`,
+    `get_git_commit_on_write_from_config`, `is_git_repository`,
+    `is_git_available`, `create_git_commit`, or `create_git_commit_paths`.
+    Reproduce them byte-for-byte as shown above.
+  - Do not modify the module docstring, the `import` lines, the `logger`
+    assignment, or the `CONFIG_KEY_GIT_COMMIT_ON_WRITE` constant, even though
+    the module docstring's prose about config-gating no longer fully
+    describes `commit_after_write`'s new behaviour — leave it exactly as
+    shown; it is out of scope for this change.
+  - `get_git_commit_on_write_from_config` remains defined in the module and
+    is still called by other code paths outside this file; do not remove it
+    and do not call it from the new `commit_after_write` body.
+  - Do not rename `commit_message_override` usages anywhere except inside the
+    replaced `commit_after_write` function itself (the parameter no longer
+    exists after this change; do not leave any reference to
+    `commit_message_override` anywhere in the file).
+  - Do not add a server-generated default commit message (such as
+    `f"{command_name}: {paths[0].name}"`) anywhere in the new function body.
+  - Do not add any other function, class, constant, or import.
+  - Preserve the existing two-blank-line separation between top-level
+    functions.
+  - Final file size after this change must be under 400 lines total.
+
+  Relevant machine-spec concept excerpts (quote for context; do not restate in
+  code, only guide the implementation):
+
+  C-004 CommitIntentFlag: "The explicit per-write flag that, when set,
+  produces a commit after a changed write and otherwise never commits."
+  Properties: type=boolean; default=false; effect_when_set=
+  commit_after_persist_if_changed; effect_when_unset=never_commit.
+
+  C-005 CommitMessage: "The mandatory non-empty caller-supplied text validated
+  before any commit occurs, with no server-generated default anywhere."
+  Properties: required_when=any_commit_occurs; validation_timing=before_write;
+  on_invalid=reject_without_writing; server_generated_default=
+  forbidden_everywhere; supplied_by=write_initiator.
+
+  C-025 UnifiedCommitContract: "The contract that every writer producing a
+  commit accepts and forwards an explicit non-empty message, with the server
+  default generator removed." Properties: applies_to=every_writer_that_commits;
+  invariant=no_commit_without_explicit_non_empty_commit_message_from_initiator;
+  message_param=required_field_where_commit_occurs;
+  remove_server_default_generator=true.
+verification:
+  type: import
+  target: code_analysis.core.git_integration.commit_after_write
+  expected: >-
+    The module code_analysis.core.git_integration imports without error and
+    commit_after_write accepts the new signature (root_dir, paths,
+    command_name, commit_on_write=False, commit_message=None,
+    config_data=None). Calling it with commit_on_write=False returns
+    (True, None) regardless of commit_message or config_data. Calling it
+    with commit_on_write=True and commit_message=None or an empty/whitespace
+    string returns (False, <non-empty error string>) without invoking any git
+    subprocess. Calling it with commit_on_write=True and a valid non-empty
+    commit_message delegates to create_git_commit or create_git_commit_paths
+    with that exact message and no server-generated default text appears
+    anywhere in the returned error or in the commit message passed onward.
+status: draft

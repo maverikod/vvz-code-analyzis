@@ -1,0 +1,283 @@
+step_id: A-004
+parent_tactical_step: T-004
+name: Git and github command registry wiring module
+target_file: code_analysis/hooks_register_git_github.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-001
+- C-029
+prompt: |
+  Create the new file at the exact project-relative path
+  code_analysis/hooks_register_git_github.py with operation create_file (the
+  file does not exist yet).
+
+  CONTEXT (background only, do not restate it in the file). The server
+  registers its MCP command classes through an existing mechanism:
+  code_analysis/hooks.py defines register_code_analysis_commands(reg), which
+  calls register_commands_part1(reg) (from code_analysis/hooks_register_part1.py)
+  and register_commands_part2(reg) (from code_analysis/hooks_register_part2.py),
+  each of which imports command classes and calls reg.register(CommandClass,
+  "custom") per class, installed via mcp_proxy_adapter's
+  register_custom_commands_hook. Two capability blocks — the project-scoped
+  git command block (C-001 CapabilityBlock member git_block) and the GitHub
+  command block (C-001 CapabilityBlock member github_block) — have been
+  authored elsewhere in this code base as command classes, each already
+  carrying the reserved "git_"/"github_" command-name prefix (C-029
+  ReservedCommandPrefix covers the git_ prefix), but none of those classes is
+  yet imported or registered by register_commands_part1 or
+  register_commands_part2, so neither block is actually invocable yet. This
+  file adds a third, independent registration function, following the exact
+  same structural pattern as register_commands_part1/register_commands_part2
+  (a module-level function that imports each command class inside a
+  try/except ImportError block and calls reg.register(CommandClass, "custom")
+  for each), so that a later step can wire it into
+  register_code_analysis_commands the same way the other two are wired in.
+
+  The following 20 command classes already exist in this code base (created
+  by other tactical steps of this plan) and must each be imported and
+  registered exactly once, grouped into five independent try/except
+  ImportError blocks exactly as shown below, in this exact order:
+
+  Group 1 — git read commands, from module code_analysis.commands.git_ops
+  (one class per its own submodule): GitStatusCommand
+  (code_analysis.commands.git_ops.git_status_command), GitLogCommand
+  (code_analysis.commands.git_ops.git_log_command), GitDiffCommand
+  (code_analysis.commands.git_ops.git_diff_command), GitBranchCommand
+  (code_analysis.commands.git_ops.git_branch_command), GitShowCommand
+  (code_analysis.commands.git_ops.git_show_command), GitRemoteCommand
+  (code_analysis.commands.git_ops.git_remote_command), GitBlameCommand
+  (code_analysis.commands.git_ops.git_blame_command).
+
+  Group 2 — git remote commands, one class per its own top-level commands
+  submodule: GitFetchCommand (code_analysis.commands.git_fetch_command),
+  GitPullCommand (code_analysis.commands.git_pull_command), GitPushCommand
+  (code_analysis.commands.git_push_command).
+
+  Group 3 — github read commands, all from one module
+  code_analysis.commands.github_read_ops_commands: GithubRepoGetCommand,
+  GithubRepoListCommand, GithubPrListCommand, GithubPrGetCommand,
+  GithubIssueListCommand.
+
+  Group 4 — github write commands, all from one module
+  code_analysis.commands.github_write_ops_commands: GithubPrCreateCommand,
+  GithubIssueCreateCommand, GithubIssueCommentCommand,
+  GithubReleaseCreateCommand.
+
+  Group 5 — github merge command, from module
+  code_analysis.commands.github_pr_merge_command: GithubPrMergeCommand.
+
+  MRS EXCERPT (machine_spec concepts referenced by this file — quoted for
+  grounding only, do not copy this YAML into the file verbatim):
+
+  concept_id: C-001
+  name: CapabilityBlock
+  definition: "One of three independently configurable and independently
+    failing capability blocks the system adds."
+  properties:
+    members: [git_block, github_block, commit_on_write_behaviour]
+    separable: true
+    independent_config: true
+    independent_failure: true
+  source_labels:
+    "{a1b2}": "The system adds three independent capability blocks to the
+      server: a project-scoped git command block operating on a registered
+      project's working tree, a GitHub command block operating on the GitHub
+      HTTP API, and a commit-on-write behaviour attached to the existing
+      project file write path. The three blocks are separable: each can be
+      configured, enabled, and fail independently of the others."
+    "{c3d4}": "The git command block operates only on the filesystem working
+      tree of a registered project via subprocess git. The GitHub command
+      block operates only on the GitHub remote HTTP API. Neither block
+      touches the server's internal command-to-driver-to-database chain."
+
+  concept_id: C-029
+  name: ReservedCommandPrefix
+  definition: "The naming rule placing every project-scoped git command
+    under a reserved prefix disjoint from the edit-session git commands."
+  properties:
+    prefix: git_
+    disjoint_from: session_git_commands
+    prevents: [name_collision, routing_collision]
+  source_label: "{h1i2} Every command in the project-scoped git block is
+    named under a reserved prefix that keeps it disjoint from the
+    edit-session git commands, so that no name or routing collision arises
+    between the two facilities."
+
+  REQUIRED FILE CONTENT. Write the file with EXACTLY this content, character
+  for character (the outer fence below is not part of the file; do not
+  include triple-backtick fences in the actual file):
+
+  ```
+  """
+  Register git block and github block MCP command classes.
+
+  Wires the project-scoped git command block (code_analysis.commands.git_ops
+  and the git remote commands) and the GitHub command block
+  (code_analysis.commands.github_read_ops_commands,
+  github_write_ops_commands, github_pr_merge_command) into the server's
+  command registry, so both capability blocks framed by G-006/T-004 are
+  actually invocable and not merely defined.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  import logging
+
+  from mcp_proxy_adapter.commands.command_registry import registry
+
+  logger = logging.getLogger(__name__)
+
+
+  def register_commands_git_github(reg: registry) -> None:
+      """Register the git block and github block MCP command classes.
+
+      Args:
+          reg: MCP command registry instance.
+
+      Returns:
+          None
+      """
+      try:
+          from .commands.git_ops.git_status_command import GitStatusCommand
+          from .commands.git_ops.git_log_command import GitLogCommand
+          from .commands.git_ops.git_diff_command import GitDiffCommand
+          from .commands.git_ops.git_branch_command import GitBranchCommand
+          from .commands.git_ops.git_show_command import GitShowCommand
+          from .commands.git_ops.git_remote_command import GitRemoteCommand
+          from .commands.git_ops.git_blame_command import GitBlameCommand
+
+          reg.register(GitStatusCommand, "custom")
+          reg.register(GitLogCommand, "custom")
+          reg.register(GitDiffCommand, "custom")
+          reg.register(GitBranchCommand, "custom")
+          reg.register(GitShowCommand, "custom")
+          reg.register(GitRemoteCommand, "custom")
+          reg.register(GitBlameCommand, "custom")
+          logger.info(
+              "✅ Registered git read commands: git_status, git_log, git_diff, "
+              "git_branch, git_show, git_remote, git_blame"
+          )
+      except ImportError as e:
+          logger.warning("Failed to import git read commands: %s", e)
+
+      try:
+          from .commands.git_fetch_command import GitFetchCommand
+          from .commands.git_pull_command import GitPullCommand
+          from .commands.git_push_command import GitPushCommand
+
+          reg.register(GitFetchCommand, "custom")
+          reg.register(GitPullCommand, "custom")
+          reg.register(GitPushCommand, "custom")
+          logger.info(
+              "✅ Registered git remote commands: git_fetch, git_pull, git_push"
+          )
+      except ImportError as e:
+          logger.warning("Failed to import git remote commands: %s", e)
+
+      try:
+          from .commands.github_read_ops_commands import (
+              GithubRepoGetCommand,
+              GithubRepoListCommand,
+              GithubPrListCommand,
+              GithubPrGetCommand,
+              GithubIssueListCommand,
+          )
+
+          reg.register(GithubRepoGetCommand, "custom")
+          reg.register(GithubRepoListCommand, "custom")
+          reg.register(GithubPrListCommand, "custom")
+          reg.register(GithubPrGetCommand, "custom")
+          reg.register(GithubIssueListCommand, "custom")
+          logger.info(
+              "✅ Registered github read commands: github_repo_get, "
+              "github_repo_list, github_pr_list, github_pr_get, "
+              "github_issue_list"
+          )
+      except ImportError as e:
+          logger.warning("Failed to import github read commands: %s", e)
+
+      try:
+          from .commands.github_write_ops_commands import (
+              GithubPrCreateCommand,
+              GithubIssueCreateCommand,
+              GithubIssueCommentCommand,
+              GithubReleaseCreateCommand,
+          )
+
+          reg.register(GithubPrCreateCommand, "custom")
+          reg.register(GithubIssueCreateCommand, "custom")
+          reg.register(GithubIssueCommentCommand, "custom")
+          reg.register(GithubReleaseCreateCommand, "custom")
+          logger.info(
+              "✅ Registered github write commands: github_pr_create, "
+              "github_issue_create, github_issue_comment, "
+              "github_release_create"
+          )
+      except ImportError as e:
+          logger.warning("Failed to import github write commands: %s", e)
+
+      try:
+          from .commands.github_pr_merge_command import GithubPrMergeCommand
+
+          reg.register(GithubPrMergeCommand, "custom")
+          logger.info("✅ Registered github merge command: github_pr_merge")
+      except ImportError as e:
+          logger.warning("Failed to import github merge command: %s", e)
+  ```
+
+  CONSTRAINTS (all mandatory, no exceptions):
+  - The file must start with the module docstring shown above, as the first
+    statement in the file (a plain triple-double-quoted string, not a
+    comment), reproduced exactly including blank lines and the trailing
+    "Author:"/"email:" lines.
+  - Imports, in this exact order: `import logging`, blank line, `from
+    mcp_proxy_adapter.commands.command_registry import registry`, blank
+    line, then `logger = logging.getLogger(__name__)`.
+  - Exactly one module-level function `register_commands_git_github(reg:
+    registry) -> None`, with the Google-style docstring shown (Args/Returns
+    sections), containing exactly five try/except ImportError blocks in the
+    exact order shown (git read commands, git remote commands, github read
+    commands, github write commands, github merge command), each importing
+    only the classes listed for that group via relative imports (leading
+    dot, e.g. `from .commands.git_ops.git_status_command import
+    GitStatusCommand`), each calling `reg.register(<Class>, "custom")` once
+    per class in that group in the order shown, each followed by exactly
+    one `logger.info(...)` call with the exact message text shown, and each
+    `except ImportError as e:` branch calling exactly one
+    `logger.warning("Failed to import <group description>: %s", e)` with the
+    exact message text shown — no `except Exception` branches, no other
+    exception handling.
+  - Do not add any other function, class, constant, import, or executable
+    code beyond what is shown above.
+  - Do not create, modify, or read any file other than
+    code_analysis/hooks_register_git_github.py.
+  - Do not modify code_analysis/hooks.py, code_analysis/hooks_register_part1.py,
+    or code_analysis/hooks_register_part2.py in this step.
+  - Encoding is UTF-8, no BOM. Use LF line endings. Final file is 116 lines.
+verification:
+  type: import
+  target: code_analysis.hooks_register_git_github
+  expected: Importing code_analysis.hooks_register_git_github succeeds without
+    raising any exception (only logging and the registry type are imported at
+    module level). The module exposes a callable register_commands_git_github
+    accepting one positional argument reg. Calling register_commands_git_github
+    with a real mcp_proxy_adapter registry attempts, across five independent
+    try/except ImportError blocks, to import and register via
+    reg.register(<Class>, "custom") each of these 20 command classes exactly
+    once, namely GitStatusCommand, GitLogCommand, GitDiffCommand, GitBranchCommand,
+    GitShowCommand, GitRemoteCommand, GitBlameCommand (from
+    code_analysis.commands.git_ops submodules); GitFetchCommand,
+    GitPullCommand, GitPushCommand (from their own top-level commands
+    submodules); GithubRepoGetCommand, GithubRepoListCommand,
+    GithubPrListCommand, GithubPrGetCommand, GithubIssueListCommand (from
+    code_analysis.commands.github_read_ops_commands); GithubPrCreateCommand,
+    GithubIssueCreateCommand, GithubIssueCommentCommand,
+    GithubReleaseCreateCommand (from
+    code_analysis.commands.github_write_ops_commands); and
+    GithubPrMergeCommand (from code_analysis.commands.github_pr_merge_command).
+    A failure to import the classes for any one group is caught and logged
+    without preventing the other four groups from being attempted.
+status: frozen

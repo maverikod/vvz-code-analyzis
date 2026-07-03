@@ -1,0 +1,100 @@
+step_id: A-006
+parent_tactical_step: T-001
+name: Create git_ops working-tree restore module
+target_file: code_analysis/core/git_ops/restore_op.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/restore_op.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Local git working-tree restore operation: discards uncommitted working-tree
+  changes on the given project-relative paths, restoring them to the last
+  committed (or staged) content. Acts only on the resolved project repository
+  and never contacts a remote.
+  """
+
+  from code_analysis.core.git_ops.common import confine_relative_path, ensure_local_repo, run_git
+
+
+  def git_restore_paths(root_dir: str, paths: list[str]) -> dict:
+      """Restore the working-tree content of the given project-relative paths.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          paths: Project-relative paths to restore.
+
+      Returns:
+          On success: {"success": True, "restored_paths": list[str]} where
+          restored_paths are the input paths that were restored.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_PATH_OUTSIDE_PROJECT", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      confined_paths = []
+      for rel_path in paths:
+          absolute_path, path_failure = confine_relative_path(root_dir, rel_path)
+          if path_failure is not None:
+              return path_failure
+          confined_paths.append(absolute_path)
+
+      returncode, _stdout, stderr = run_git(root_dir, ["restore", "--"] + confined_paths)
+      if returncode != 0:
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git restore failed.",
+          }
+      return {"success": True, "restored_paths": paths}
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import confine_relative_path, ensure_local_repo, run_git`.
+  - Must call ensure_local_repo(root_dir) first and return its failure dict
+    immediately if not None.
+  - Must confine EVERY path in `paths` via confine_relative_path before
+    running any git command (collect all confined absolute paths into a
+    list; if any single path fails confinement, return that failure
+    immediately without running git and without restoring any path).
+  - This function restores working-tree content only (plain `git restore`),
+    not the staged index; do not add a --staged flag here.
+  - Do not add any other function, class, or module-level variable.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+  - `def confine_relative_path(root_dir: str, rel_path: str) -> tuple[str | None, dict | None]:` — returns (absolute_path_str, None) on success; else (None, {"success": False, "code": "GIT_PATH_OUTSIDE_PROJECT", "message": str}).
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "restore" operation (working-tree paths)
+    owned by tactical step G-003/T-001 ("restoring working-tree or staged
+    files"; the staged-file counterpart is git_unstage in staging.py, also
+    owned by G-003/T-001). reset and revert are owned by sibling tactical
+    steps and are out of scope for this file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.restore_op
+  expected: Importing code_analysis.core.git_ops.restore_op succeeds and
+    exposes a callable named git_restore_paths with the specified signature.
+status: frozen

@@ -23,5 +23,7 @@ source_labels:
 - '{u7v8}'
 depends_on:
 - G-006
-tactical_steps: []
-status: draft
+tactical_steps:
+- T-001
+- T-002
+status: frozen

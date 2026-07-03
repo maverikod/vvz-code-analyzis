@@ -36,7 +36,7 @@ Rule IDs: `CR-*`, `LAYOUT-*`, `NAME-*`. A matching file in `.cursor/agents/*.md`
 |------|--------|
 | 1 | Current user message. |
 | 2 | Safety / repo boundary — **CR-002**. |
-| 3 | Active subagent — `.cursor/agents/<name>.md`. |
+| 3 | Active subagent — `.cursor/agents/<name>.md` (Cursor) or `docs/agent-ref/roles/<role>.yaml` (Claude). |
 | 4 | This file — `CR-*`, `LAYOUT-*`, `NAME-*`, Profile. |
 | 5 | Tool / IDE defaults. |
 
@@ -62,6 +62,7 @@ Rule IDs: `CR-*`, `LAYOUT-*`, `NAME-*`. A matching file in `.cursor/agents/*.md`
 | **CR-013** | 2 | Imports at top unless lazy-loading is intentional. |
 | **CR-014** | 3 | If the project defines log importance (0–10), use it consistently. |
 | **CR-016** | 1 | Parallelize independent work when safe; do not serialize without a stated reason. |
+| **CR-017** | 0 | **Prompts are tool-agnostic.** `CLAUDE.md` and `docs/agent-ref/roles/*.yaml` contain NO mechanics of concrete tools, servers, or proxies (call syntax, server ids, command names). Tool specifics live ONLY in `docs/standards/`, referenced via `roles/tooling.yaml: manuals`. |
 
 **P:** 0 = governance / stop, 1 = quality, 2 = hygiene, 3 = optional.
 
@@ -134,3 +135,10 @@ Python (PEP 8) defaults.
 
 - IDE pointer: `.cursor/rules/project_canonical.mdc` → this file and `docs/agents/*`.
 - Subagent roles: `.cursor/agents/*.md` with shared rules in `docs/agents/common_agent_rules.md`.
+
+## 7. Claude agents
+
+- Entry point: repo-root [`CLAUDE.md`](../CLAUDE.md) — orchestrator operating contract for local Claude Code sessions.
+- Role contracts: [`docs/agent-ref/roles/`](agent-ref/roles/) (`common.yaml` + `tooling.yaml` + one file per role); index: [`docs/agent-ref/README.md`](agent-ref/README.md).
+- Local tooling manuals: `docs/standards/LOCAL_CODE_SEARCH_STANDARD.yaml`, `LOCAL_EDITING_STANDARD.yaml`, `LOCAL_TERMINAL_STANDARD.yaml` (**CR-017**: tool specifics live only there, never in prompts).
+- Remote agents working through the code-analysis server keep following the server-mode standards (`SEARCH_WORKFLOW.yaml`, `FILE_EDIT_WORKFLOW.yaml`, `FILE_VIEW_WORKFLOW.yaml`, `TERMINAL_WORKFLOW.yaml`) and `docs/agents/claude/CLAUDE_INSTRUCTIONS.md`.

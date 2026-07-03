@@ -1,0 +1,221 @@
+step_id: A-012
+parent_tactical_step: T-001
+name: "github_pr_merge command"
+target_file: code_analysis/commands/github_pr_merge_command.py
+operation: modify_file
+priority: 2
+depends_on:
+  - A-011
+concepts:
+  - C-018
+  - C-019
+status: frozen
+
+verification:
+  type: manual
+  target: code_analysis.commands.github_pr_merge_command.GithubPrMergeCommand
+  expected: "GithubPrMergeCommand.execute() reads allow_pr_merge and allow_protected_base_merge from the code_analysis.github config section and the protected_branches list from the code_analysis.git config section, then calls evaluate_github_pr_merge_guard() before any GitHub API request. When the guard returns GITHUB_PR_MERGE_DISABLED or GITHUB_PROTECTED_BRANCH, execute() returns an ErrorResult carrying that exact code without calling github_api_request or resolve_github_auth. When the guard returns None, execute() authenticates via resolve_github_auth and issues a PUT request to /repos/{owner}/{repo}/pulls/{pr_number}/merge through github_api_request, returning a SuccessResult with the merge result on success or an ErrorResult with the classified or generic error code on failure."
+
+prompt: |
+  Modify the existing Python file at the exact path `code_analysis/commands/github_pr_merge_command.py` (operation: modify_file). The file currently contains exactly the content shown below (this is its full current state after the prior step; do not assume any other content). Append the new class `GithubPrMergeCommand` to the end of this file, after the existing `evaluate_github_pr_merge_guard` function, separated by two blank lines. Do not change any existing line in the file.
+
+  Context (for traceability only, not code): this file belongs to global step G-005 "GitHub command block and token authentication" and tactical step T-001 "GitHub operation set and pull-request merge guard", which states: "Merging a pull request is a remote mutation that bypasses the local protected-branch gate and is therefore independently guarded: a merge proceeds only when the GitHub block is configured to permit pull-request merging, and a merge whose pull request targets a protected base branch is refused unless an explicit protected-branch override is supplied and policy permits it. When pull-request merging is not permitted by configuration the merge is refused with a distinct disabled outcome, and a merge targeting a protected base without a permitted override is refused with a distinct protected-branch outcome; neither refusal partially merges."
+
+  MRS excerpt (machine_spec.yaml), the concepts needed for this file:
+
+  concept_id: C-018
+  name: GithubBlock
+  definition: "The minimal sufficient set of GitHub HTTP API operations for an operator cycle, excluding second-tier capabilities until needed."
+  properties:
+    operations: [repo_get, repo_list, pr_list, pr_get, pr_create, pr_merge, issue_list, issue_create, issue_comment, release_create]
+    layer: github_http_api
+    set_policy: minimal_sufficient
+  source_labels: ["{q3r4}"]
+
+  concept_id: C-019
+  name: GithubPrMergeGuard
+  definition: "The guard that gates pull-request merge behind explicit configuration permission and a protected-base check."
+  properties:
+    bypasses_local_protected_gate: true
+    requires_config_permission: allow_pr_merge
+    when_disabled: GITHUB_PR_MERGE_DISABLED
+    protected_base: reject_unless_override_and_policy
+    protected_outcome: GITHUB_PROTECTED_BRANCH
+  source_labels: ["{s5t6}"]
+
+  Also note: the canonical config key for the protected-base-merge policy permission is `allow_protected_base_merge` (under code_analysis.github, sibling of allow_pr_merge), and the protected-branch set is read from the git-block config section `code_analysis.git.protected_branches` (a list of branch name strings).
+
+  CURRENT FULL FILE CONTENT (post-prior-AS state; reproduce it unchanged, then append the new class):
+
+  ```python
+  """
+  MCP command: github_pr_merge
+
+  Merge a GitHub pull request, gated by the pull-request merge guard (C-019
+  GithubPrMergeGuard). Authenticates via resolve_github_auth() from
+  code_analysis.core.github_auth and issues one request through
+  github_api_request() from code_analysis.commands.github_http.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  from typing import Any, Dict, Optional
+
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from code_analysis.core.github_auth import resolve_github_auth, classify_github_auth_error
+
+  from .base_mcp_command import BaseMCPCommand
+  from .github_http import github_api_request, github_timeout_seconds_from_config
+
+
+  def evaluate_github_pr_merge_guard(
+      *,
+      allow_pr_merge: bool,
+      is_protected_base: bool,
+      protected_base_override: bool,
+      allow_protected_base_merge: bool,
+  ) -> Optional[str]:
+      """
+      Decide whether a pull-request merge is permitted before any API call.
+
+      Implements C-019 GithubPrMergeGuard: merging bypasses the local
+      protected-branch restriction and is independently gated. A merge
+      proceeds only when merging is permitted by configuration; a merge
+      whose pull request targets a protected base branch additionally
+      requires an explicit override supplied by the caller together with
+      the policy config flag permitting a protected-base merge.
+
+      Args:
+          allow_pr_merge: The code_analysis.github.allow_pr_merge config flag.
+              When false, merging is refused regardless of other flags.
+          is_protected_base: Whether the pull request's base branch is a
+              member of the code_analysis.git.protected_branches set.
+          protected_base_override: The caller-supplied explicit override
+              for a protected-base merge.
+          allow_protected_base_merge: The code_analysis.github.allow_protected_base_merge
+              config flag permitting a protected-base merge when the caller
+              also supplies protected_base_override.
+
+      Returns:
+          None when the merge is permitted to proceed. Otherwise one of:
+          "GITHUB_PR_MERGE_DISABLED" when allow_pr_merge is false.
+          "GITHUB_PROTECTED_BRANCH" when the base is protected and the
+          override plus policy condition is not fully satisfied.
+      """
+      if not allow_pr_merge:
+          return "GITHUB_PR_MERGE_DISABLED"
+      if is_protected_base and not (protected_base_override and allow_protected_base_merge):
+          return "GITHUB_PROTECTED_BRANCH"
+      return None
+  ```
+
+  APPEND exactly this new class at the end of the file (after two blank lines):
+
+  ```python
+  class GithubPrMergeCommand(BaseMCPCommand):
+      """Merge a GitHub pull request, gated by the pull-request merge guard."""
+
+      name = "github_pr_merge"
+      version = "1.0.0"
+      descr = (
+          "Merge a pull request via the GitHub API. Requires the "
+          "code_analysis.github.allow_pr_merge config permission; a pull request "
+          "targeting a protected base branch additionally requires "
+          "protected_base_override together with the "
+          "code_analysis.github.allow_protected_base_merge config flag."
+      )
+      category = "github"
+      author = "Vasiliy Zdanovskiy"
+      email = "vasilyvz@gmail.com"
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the command input schema."""
+          return {
+              "type": "object",
+              "properties": {
+                  "owner": {"type": "string", "description": "Repository owner login."},
+                  "repo": {"type": "string", "description": "Repository name."},
+                  "pr_number": {"type": "integer", "description": "Pull request number."},
+                  "base_branch": {
+                      "type": "string",
+                      "description": "Base branch the pull request targets, checked against code_analysis.git.protected_branches.",
+                  },
+                  "protected_base_override": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "Explicit override required when base_branch is protected.",
+                  },
+              },
+              "required": ["owner", "repo", "pr_number", "base_branch"],
+              "additionalProperties": False,
+          }
+
+      async def execute(
+          self,
+          owner: str,
+          repo: str,
+          pr_number: int,
+          base_branch: str,
+          protected_base_override: bool = False,
+          **kwargs: Any,
+      ) -> SuccessResult | ErrorResult:
+          """Merge a pull request after evaluating the merge guard."""
+          config_data = BaseMCPCommand._get_raw_config()
+          github_cfg = config_data.get("code_analysis", {}).get("github", {}) if isinstance(config_data, dict) else {}
+          git_cfg = config_data.get("code_analysis", {}).get("git", {}) if isinstance(config_data, dict) else {}
+          allow_pr_merge = bool(github_cfg.get("allow_pr_merge", False))
+          allow_protected_base_merge = bool(github_cfg.get("allow_protected_base_merge", False))
+          protected_branches = git_cfg.get("protected_branches", []) if isinstance(git_cfg, dict) else []
+          is_protected_base = base_branch in protected_branches
+
+          guard_code = evaluate_github_pr_merge_guard(
+              allow_pr_merge=allow_pr_merge,
+              is_protected_base=is_protected_base,
+              protected_base_override=bool(protected_base_override),
+              allow_protected_base_merge=allow_protected_base_merge,
+          )
+          if guard_code is not None:
+              return ErrorResult(
+                  message=f"GitHub pull request merge refused: {guard_code}",
+                  code=guard_code,
+                  details={"owner": owner, "repo": repo, "pr_number": pr_number, "base_branch": base_branch},
+              )
+
+          headers, auth_error = resolve_github_auth(config_data)
+          if auth_error is not None:
+              return ErrorResult(
+                  message="GitHub authentication is not configured",
+                  code=auth_error,
+                  details={"owner": owner, "repo": repo, "pr_number": pr_number},
+              )
+          assert headers is not None
+          timeout_seconds = github_timeout_seconds_from_config(config_data)
+          data, status, error_code = github_api_request(
+              "PUT",
+              f"/repos/{owner}/{repo}/pulls/{pr_number}/merge",
+              headers,
+              timeout_seconds=timeout_seconds,
+          )
+          if error_code is not None:
+              classified = classify_github_auth_error(status) if status is not None else None
+              return ErrorResult(
+                  message=f"GitHub pull request merge failed for {owner}/{repo}#{pr_number}",
+                  code=classified or error_code,
+                  details={"owner": owner, "repo": repo, "pr_number": pr_number, "status": status},
+              )
+          return SuccessResult(data={"merge_result": data})
+  ```
+
+  Constraints (all mandatory, no exceptions, no alternatives):
+  - Reproduce the CURRENT FULL FILE CONTENT exactly unchanged, then append the new class exactly as shown, separated by two blank lines from the end of the existing function.
+  - Do not add a metadata() classmethod; the base Command.metadata() default already returns an empty dict.
+  - Class name, attributes, method signatures, and docstrings must match exactly as given above.
+  - The appended class calls functions already imported at the top of the file; their exact contracts are: `resolve_github_auth(config_data: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, str]], Optional[str]]` from code_analysis.core.github_auth returns (headers, None) on success, where headers = {"Authorization": "Bearer <token>", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, and returns (None, "GITHUB_NOT_CONFIGURED") when the code_analysis.github config section or token path is absent/unreadable/empty; `classify_github_auth_error(status_code: int) -> Optional[str]` returns "GITHUB_AUTH_FAILED" for 401, "GITHUB_INSUFFICIENT_SCOPE" for 403, and None otherwise; `github_api_request(method: str, path: str, headers: Dict[str, str], *, query: Optional[Dict[str, str]] = None, json_body: Optional[Dict[str, Any]] = None, timeout_seconds: int = 30) -> Tuple[Optional[Any], Optional[int], Optional[str]]` from .github_http returns (data, status, error_code); and `github_timeout_seconds_from_config(config_data: Dict[str, Any]) -> int` from .github_http returns the configured code_analysis.github.timeout_seconds value or 30. Do not create or modify those modules.
+  - The class must call `evaluate_github_pr_merge_guard` (defined earlier in this same file) before calling `resolve_github_auth` or `github_api_request` — the guard check happens first, exactly in the order shown.
+  - Do not create, modify, or reference any other file. This is the last class added to this file in this tactical step.

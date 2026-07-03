@@ -1,0 +1,44 @@
+meta:
+  title: Local Code Search Standard
+  version: '1.0'
+  locale: en
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  description: >
+    How agents search and analyze code in LOCAL Claude Code sessions on this
+    repository (native tools). Remote agents reaching this repo through the
+    code-analysis server follow docs/standards/SEARCH_WORKFLOW.yaml instead.
+  scope:
+    covers:
+      - search order and tool choice in local sessions
+      - directories excluded from search
+      - special subtrees (test_data, client, .tree sidecars)
+      - citation format for findings
+    excludes:
+      - server-mode search (SEARCH_WORKFLOW.yaml)
+      - editing rules (LOCAL_EDITING_STANDARD.yaml)
+
+search_order:
+  1_targeted: 'Glob for file discovery, Grep for content; narrow by path/type first; read only the needed line ranges of large files'
+  2_structure: 'for file structure overviews a sibling <file>.tree sidecar may be read as an outline — treat it as generated, possibly stale, never as source of truth'
+  3_full_read: 'full-file Read only for small files or when edits are planned'
+
+layout_facts:
+  production_code: code_analysis/          # the package under development (the CA server itself)
+  python_client: client/                   # importable client; on pythonpath for pytest
+  tests: tests/                            # pytest suite (pytest.ini: testpaths=tests)
+  fixtures: test_data/                     # sample projects watched by the server; each has its OWN projectid
+  docs: docs/
+
+exclude_from_search:
+  - .venv/ / .git/ / .mypy_cache/ / .pytest_cache/ / __pycache__/
+  - build/ / code_analysis.egg-info/ / htmlcov/          # build and coverage artifacts
+  - old_code/ / backups/                                 # legacy snapshots; never a source of truth
+  - data/ / logs/ / logs-prod-test/                      # runtime state and logs
+  - '*.tree sidecars when searching for CODE (they duplicate structure of their sibling file)'
+
+special_rules:
+  test_data: 'search there only when the task concerns fixtures/watched-project behavior; findings there are fixture content, not production code'
+  generated_vs_source: 'a hit in build/, egg-info/, old_code/ or a .tree sidecar is NOT a code fact; re-locate it in the live tree'
+
+output: 'cite findings as file:line (or file:symbol); distinguish production code (code_analysis/), client (client/), tests, and fixtures'

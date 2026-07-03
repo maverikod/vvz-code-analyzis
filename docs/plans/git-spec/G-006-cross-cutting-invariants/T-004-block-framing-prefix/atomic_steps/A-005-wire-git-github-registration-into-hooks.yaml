@@ -1,0 +1,308 @@
+step_id: A-005
+parent_tactical_step: T-004
+name: Wire git and github command registration into the server's registration hook
+target_file: code_analysis/hooks.py
+operation: modify_file
+priority: 1
+depends_on:
+- A-004
+concepts:
+- C-001
+prompt: |
+  Modify the existing Python source file at the exact path
+  code_analysis/hooks.py (operation: modify_file). Do not create, read, or
+  modify any other file.
+
+  CONTEXT (background only, do not restate it in the file). This file
+  defines register_code_analysis_commands(reg), the single entry point
+  installed via mcp_proxy_adapter's register_custom_commands_hook, which
+  currently calls register_commands_part1(reg) and
+  register_commands_part2(reg) in sequence before running metadata
+  finalization. A third registration function,
+  register_commands_git_github(reg), has been added in a sibling module
+  code_analysis/hooks_register_git_github.py, following the exact same
+  structural pattern as the other two (a module-level function importing
+  command classes inside try/except ImportError blocks and calling
+  reg.register(CommandClass, "custom") for each) — it registers the
+  project-scoped git command block and the GitHub command block (C-001
+  CapabilityBlock members git_block and github_block), so that both blocks
+  are actually invocable rather than merely defined. This step wires that
+  third function into register_code_analysis_commands the same way the
+  first two are already wired in: one import line alongside the two
+  existing import lines, and one call alongside the two existing calls,
+  before the metadata finalization import and call.
+
+  MRS EXCERPT (machine_spec concept referenced by this file — quoted for
+  grounding only, do not copy this YAML into the file verbatim):
+
+  concept_id: C-001
+  name: CapabilityBlock
+  definition: "One of three independently configurable and independently
+    failing capability blocks the system adds."
+  properties:
+    members: [git_block, github_block, commit_on_write_behaviour]
+    separable: true
+    independent_config: true
+    independent_failure: true
+  source_labels:
+    "{a1b2}": "The system adds three independent capability blocks to the
+      server: a project-scoped git command block operating on a registered
+      project's working tree, a GitHub command block operating on the GitHub
+      HTTP API, and a commit-on-write behaviour attached to the existing
+      project file write path. The three blocks are separable: each can be
+      configured, enabled, and fail independently of the others."
+    "{c3d4}": "The git command block operates only on the filesystem working
+      tree of a registered project via subprocess git. The GitHub command
+      block operates only on the GitHub remote HTTP API. Neither block
+      touches the server's internal command-to-driver-to-database chain."
+
+  The file currently contains EXACTLY the following content (this is the
+  full current content, 102 lines):
+
+  ```python
+  """
+  Command registration hooks for code-analysis-server.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  # Import patch for CommandExecutionJob to support progress tracking
+  # This must be imported before CommandExecutionJob is used
+  from .core.command_execution_job_patch import patch_command_execution_job  # noqa: F401
+
+  from mcp_proxy_adapter.commands.hooks import register_custom_commands_hook
+  from mcp_proxy_adapter.commands.command_registry import registry
+  from mcp_proxy_adapter.commands.hooks import register_auto_import_module
+
+  from .core.config_command_gate import install_config_command_gate
+  from .hooks_register_part1 import register_commands_part1
+  from .hooks_register_part2 import register_commands_part2
+
+
+  def register_code_analysis_commands(reg: registry) -> None:
+      """Register all code analysis commands.
+
+      Args:
+          reg: MCP command registry instance.
+
+      Returns:
+          None
+      """
+      register_commands_part1(reg)
+      register_commands_part2(reg)
+      from .commands.command_metadata_helpers import (
+          apply_metadata_finalization_to_registry,
+      )
+
+      apply_metadata_finalization_to_registry(reg)
+
+
+  # Register hook
+  install_config_command_gate()
+  register_custom_commands_hook(register_code_analysis_commands)
+
+  # Register modules for auto-import in child processes (spawn mode).
+  # Patch must be imported in the worker so CommandExecutionJob.run is patched and
+  # context["progress_tracker"] is set; otherwise progress/description never update.
+  register_auto_import_module("code_analysis.core.command_execution_job_patch")
+  register_auto_import_module("code_analysis.core.shared_database_spawn_init")
+  register_auto_import_module("code_analysis.commands.info_command")
+  register_auto_import_module("code_analysis.commands.check_vectors_command")
+  register_auto_import_module("code_analysis.commands.ast_mcp_commands")
+  register_auto_import_module("code_analysis.commands.fs_grep_command")
+  register_auto_import_module("code_analysis.commands.fs_copy_move_remove_commands")
+  register_auto_import_module("code_analysis.commands.project_fs_enumerate")
+  register_auto_import_module("code_analysis.commands.vector_commands")
+  register_auto_import_module("code_analysis.commands.search_mcp_command")
+  register_auto_import_module("code_analysis.commands.search_paginated_cross")
+  register_auto_import_module("code_analysis.commands.code_quality_commands")
+  register_auto_import_module("code_analysis.commands.analyze_complexity_mcp")
+  register_auto_import_module("code_analysis.commands.find_duplicates_mcp")
+  register_auto_import_module("code_analysis.commands.comprehensive_analysis_mcp")
+  register_auto_import_module("code_analysis.commands.comprehensive_analysis_results_mcp")
+  register_auto_import_module("code_analysis.commands.search_mcp_commands")
+  register_auto_import_module("code_analysis.commands.code_mapper_mcp_command")
+  register_auto_import_module("code_analysis.commands.backup_mcp_commands")
+  register_auto_import_module("code_analysis.commands.log_viewer_mcp_commands")
+  register_auto_import_module("code_analysis.commands.worker_status_mcp_commands")
+  register_auto_import_module("code_analysis.commands.repair_worker_mcp_commands")
+  register_auto_import_module("code_analysis.commands.worker_management_mcp_commands")
+  register_auto_import_module("code_analysis.commands.database_integrity_mcp_commands")
+  register_auto_import_module("code_analysis.commands.database_restore_mcp_commands")
+  register_auto_import_module("code_analysis.commands.project_management_mcp_commands")
+  register_auto_import_module("code_analysis.commands.run_project_script_command")
+  register_auto_import_module("code_analysis.commands.run_project_module_command")
+  register_auto_import_module("code_analysis.commands.project_pip_commands")
+  register_auto_import_module(
+      "code_analysis.commands.project_file_transfer_by_id_commands"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.project_file_advisory_lock_batch_command"
+  )
+  register_auto_import_module("code_analysis.commands.project_file_lock_status_command")
+  register_auto_import_module("code_analysis.commands.list_yaml_blocks_command")
+  register_auto_import_module("code_analysis.commands.qa_sleep_command")
+  register_auto_import_module("code_analysis.core.transfer_lock_registry")
+  register_auto_import_module("code_analysis.commands.universal_file_preview_command")
+  register_auto_import_module("code_analysis.commands.universal_file_preview_command")
+  register_auto_import_module("code_analysis.commands.project_cross_search_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_create_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_validate_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_delete_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_list_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_view_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_open_file_command")
+  register_auto_import_module(
+      "code_analysis.commands.sessions.session_close_file_command"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.sessions.session_list_file_locks_command"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.sessions.subordinate_session_commands"
+  )
+  ```
+
+  Replace the ENTIRE file content with the following new content, verbatim
+  (this is the complete target file after this step, 104 lines — it consists
+  of the current content shown above with exactly two one-line additions:
+  one new import line placed directly after the existing
+  "from .hooks_register_part2 import register_commands_part2" line, and one
+  new call line placed directly after the existing
+  "register_commands_part2(reg)" call, before the
+  "from .commands.command_metadata_helpers import (" line; nothing else
+  changes):
+
+  ```python
+  """
+  Command registration hooks for code-analysis-server.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  # Import patch for CommandExecutionJob to support progress tracking
+  # This must be imported before CommandExecutionJob is used
+  from .core.command_execution_job_patch import patch_command_execution_job  # noqa: F401
+
+  from mcp_proxy_adapter.commands.hooks import register_custom_commands_hook
+  from mcp_proxy_adapter.commands.command_registry import registry
+  from mcp_proxy_adapter.commands.hooks import register_auto_import_module
+
+  from .core.config_command_gate import install_config_command_gate
+  from .hooks_register_part1 import register_commands_part1
+  from .hooks_register_part2 import register_commands_part2
+  from .hooks_register_git_github import register_commands_git_github
+
+
+  def register_code_analysis_commands(reg: registry) -> None:
+      """Register all code analysis commands.
+
+      Args:
+          reg: MCP command registry instance.
+
+      Returns:
+          None
+      """
+      register_commands_part1(reg)
+      register_commands_part2(reg)
+      register_commands_git_github(reg)
+      from .commands.command_metadata_helpers import (
+          apply_metadata_finalization_to_registry,
+      )
+
+      apply_metadata_finalization_to_registry(reg)
+
+
+  # Register hook
+  install_config_command_gate()
+  register_custom_commands_hook(register_code_analysis_commands)
+
+  # Register modules for auto-import in child processes (spawn mode).
+  # Patch must be imported in the worker so CommandExecutionJob.run is patched and
+  # context["progress_tracker"] is set; otherwise progress/description never update.
+  register_auto_import_module("code_analysis.core.command_execution_job_patch")
+  register_auto_import_module("code_analysis.core.shared_database_spawn_init")
+  register_auto_import_module("code_analysis.commands.info_command")
+  register_auto_import_module("code_analysis.commands.check_vectors_command")
+  register_auto_import_module("code_analysis.commands.ast_mcp_commands")
+  register_auto_import_module("code_analysis.commands.fs_grep_command")
+  register_auto_import_module("code_analysis.commands.fs_copy_move_remove_commands")
+  register_auto_import_module("code_analysis.commands.project_fs_enumerate")
+  register_auto_import_module("code_analysis.commands.vector_commands")
+  register_auto_import_module("code_analysis.commands.search_mcp_command")
+  register_auto_import_module("code_analysis.commands.search_paginated_cross")
+  register_auto_import_module("code_analysis.commands.code_quality_commands")
+  register_auto_import_module("code_analysis.commands.analyze_complexity_mcp")
+  register_auto_import_module("code_analysis.commands.find_duplicates_mcp")
+  register_auto_import_module("code_analysis.commands.comprehensive_analysis_mcp")
+  register_auto_import_module("code_analysis.commands.comprehensive_analysis_results_mcp")
+  register_auto_import_module("code_analysis.commands.search_mcp_commands")
+  register_auto_import_module("code_analysis.commands.code_mapper_mcp_command")
+  register_auto_import_module("code_analysis.commands.backup_mcp_commands")
+  register_auto_import_module("code_analysis.commands.log_viewer_mcp_commands")
+  register_auto_import_module("code_analysis.commands.worker_status_mcp_commands")
+  register_auto_import_module("code_analysis.commands.repair_worker_mcp_commands")
+  register_auto_import_module("code_analysis.commands.worker_management_mcp_commands")
+  register_auto_import_module("code_analysis.commands.database_integrity_mcp_commands")
+  register_auto_import_module("code_analysis.commands.database_restore_mcp_commands")
+  register_auto_import_module("code_analysis.commands.project_management_mcp_commands")
+  register_auto_import_module("code_analysis.commands.run_project_script_command")
+  register_auto_import_module("code_analysis.commands.run_project_module_command")
+  register_auto_import_module("code_analysis.commands.project_pip_commands")
+  register_auto_import_module(
+      "code_analysis.commands.project_file_transfer_by_id_commands"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.project_file_advisory_lock_batch_command"
+  )
+  register_auto_import_module("code_analysis.commands.project_file_lock_status_command")
+  register_auto_import_module("code_analysis.commands.list_yaml_blocks_command")
+  register_auto_import_module("code_analysis.commands.qa_sleep_command")
+  register_auto_import_module("code_analysis.core.transfer_lock_registry")
+  register_auto_import_module("code_analysis.commands.universal_file_preview_command")
+  register_auto_import_module("code_analysis.commands.universal_file_preview_command")
+  register_auto_import_module("code_analysis.commands.project_cross_search_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_create_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_validate_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_delete_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_list_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_view_command")
+  register_auto_import_module("code_analysis.commands.sessions.session_open_file_command")
+  register_auto_import_module(
+      "code_analysis.commands.sessions.session_close_file_command"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.sessions.session_list_file_locks_command"
+  )
+  register_auto_import_module(
+      "code_analysis.commands.sessions.subordinate_session_commands"
+  )
+  ```
+
+  End of exact target content (104 lines). Write the file so its content is
+  exactly this, nothing more, nothing less.
+
+  Constraints (all mandatory, no exceptions):
+  - Target file: exactly code_analysis/hooks.py. Do not create, read, or
+    modify any other file.
+  - The only changes relative to the current content are the one new import
+    line and the one new call line shown above, in the exact positions
+    shown; every other line is unchanged, in the same order.
+  - Do not reformat, reorder, or reflow any existing line.
+  - Do not add comments, logging, or error handling around the new call.
+  - Encoding is UTF-8, no BOM. Use LF line endings. Final file is 104 lines.
+verification:
+  type: import
+  target: code_analysis.hooks.register_code_analysis_commands
+  expected: Importing code_analysis.hooks succeeds without raising any
+    exception, exactly as it did before this change. Calling
+    register_code_analysis_commands(reg) with a real registry now calls, in
+    order, register_commands_part1(reg), register_commands_part2(reg), and
+    register_commands_git_github(reg) (imported from the sibling module
+    code_analysis.hooks_register_git_github), before running
+    apply_metadata_finalization_to_registry(reg); all other module-level
+    behaviour (install_config_command_gate(), register_custom_commands_hook,
+    and every register_auto_import_module call) is unchanged.
+status: frozen

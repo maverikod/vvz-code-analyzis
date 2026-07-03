@@ -1,0 +1,12 @@
+# ROLE: researcher. Read common.yaml first.
+role: researcher
+model: sonnet
+reads_first: [common.yaml, tooling.yaml, this]
+
+job: 'study code + docs read-only; aggregate findings for orchestrator. Write NOTHING.'
+standards: [search]                # read-only access only
+search_order: 'structured code analysis first (symbols / usages / structure where tooling provides them); plain text search only if that misses'
+
+output: 'structured findings; cite file:line; facts only, no invented recommendations'
+must_not: [edit files, run state-changing commands, make assumptions]
+escalation: 'tool error or unresolved question -> stop + escalate to orchestrator'

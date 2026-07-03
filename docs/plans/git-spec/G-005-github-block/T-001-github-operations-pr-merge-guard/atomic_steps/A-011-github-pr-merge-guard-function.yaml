@@ -1,0 +1,125 @@
+step_id: A-011
+parent_tactical_step: T-001
+name: "GitHub pull-request merge guard evaluation function"
+target_file: code_analysis/commands/github_pr_merge_command.py
+operation: create_file
+priority: 1
+depends_on:
+  - A-001
+concepts:
+  - C-018
+  - C-019
+status: frozen
+
+verification:
+  type: import
+  target: code_analysis.commands.github_pr_merge_command
+  expected: "The module imports successfully and exposes the callable evaluate_github_pr_merge_guard with keyword-only parameters allow_pr_merge, is_protected_base, protected_base_override, allow_protected_base_merge."
+
+prompt: |
+  Create a new Python file at the exact path `code_analysis/commands/github_pr_merge_command.py` (operation: create_file). This file does not exist yet; do not assume any pre-existing content. This step writes only the guard-evaluation function; the command class that uses it is added to this same file by a later step, not part of this step.
+
+  Context (for traceability only, not code): this file belongs to global step G-005 "GitHub command block and token authentication" and tactical step T-001 "GitHub operation set and pull-request merge guard". T-001 states: "Merging a pull request is a remote mutation that bypasses the local protected-branch gate and is therefore independently guarded: a merge proceeds only when the GitHub block is configured to permit pull-request merging, and a merge whose pull request targets a protected base branch is refused unless an explicit protected-branch override is supplied and policy permits it. When pull-request merging is not permitted by configuration the merge is refused with a distinct disabled outcome, and a merge targeting a protected base without a permitted override is refused with a distinct protected-branch outcome; neither refusal partially merges."
+
+  MRS excerpt (machine_spec.yaml), the concepts needed for this file:
+
+  concept_id: C-018
+  name: GithubBlock
+  definition: "The minimal sufficient set of GitHub HTTP API operations for an operator cycle, excluding second-tier capabilities until needed."
+  properties:
+    operations: [repo_get, repo_list, pr_list, pr_get, pr_create, pr_merge, issue_list, issue_create, issue_comment, release_create]
+    layer: github_http_api
+    set_policy: minimal_sufficient
+  source_labels: ["{q3r4}"]
+
+  concept_id: C-019
+  name: GithubPrMergeGuard
+  definition: "The guard that gates pull-request merge behind explicit configuration permission and a protected-base check."
+  properties:
+    bypasses_local_protected_gate: true
+    requires_config_permission: allow_pr_merge
+    when_disabled: GITHUB_PR_MERGE_DISABLED
+    protected_base: reject_unless_override_and_policy
+    protected_outcome: GITHUB_PROTECTED_BRANCH
+  source_labels: ["{s5t6}"]
+
+  Also note: the canonical config key for the protected-base-merge policy permission is `allow_protected_base_merge` (under code_analysis.github, sibling of allow_pr_merge), and the protected-branch set is read from the git-block config section `code_analysis.git.protected_branches` (a list of branch name strings). This function does not read config itself — it receives already-resolved booleans as parameters; the config reading happens in the command class added by a later step.
+
+  Write the file with EXACTLY this content:
+
+  ```python
+  """
+  MCP command: github_pr_merge
+
+  Merge a GitHub pull request, gated by the pull-request merge guard (C-019
+  GithubPrMergeGuard). Authenticates via resolve_github_auth() from
+  code_analysis.core.github_auth and issues one request through
+  github_api_request() from code_analysis.commands.github_http.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  from typing import Any, Dict, Optional
+
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from code_analysis.core.github_auth import resolve_github_auth, classify_github_auth_error
+
+  from .base_mcp_command import BaseMCPCommand
+  from .github_http import github_api_request, github_timeout_seconds_from_config
+
+
+  def evaluate_github_pr_merge_guard(
+      *,
+      allow_pr_merge: bool,
+      is_protected_base: bool,
+      protected_base_override: bool,
+      allow_protected_base_merge: bool,
+  ) -> Optional[str]:
+      """
+      Decide whether a pull-request merge is permitted before any API call.
+
+      Implements C-019 GithubPrMergeGuard: merging bypasses the local
+      protected-branch restriction and is independently gated. A merge
+      proceeds only when merging is permitted by configuration; a merge
+      whose pull request targets a protected base branch additionally
+      requires an explicit override supplied by the caller together with
+      the policy config flag permitting a protected-base merge.
+
+      Args:
+          allow_pr_merge: The code_analysis.github.allow_pr_merge config flag.
+              When false, merging is refused regardless of other flags.
+          is_protected_base: Whether the pull request's base branch is a
+              member of the code_analysis.git.protected_branches set.
+          protected_base_override: The caller-supplied explicit override
+              for a protected-base merge.
+          allow_protected_base_merge: The code_analysis.github.allow_protected_base_merge
+              config flag permitting a protected-base merge when the caller
+              also supplies protected_base_override.
+
+      Returns:
+          None when the merge is permitted to proceed. Otherwise one of:
+          "GITHUB_PR_MERGE_DISABLED" when allow_pr_merge is false.
+          "GITHUB_PROTECTED_BRANCH" when the base is protected and the
+          override plus policy condition is not fully satisfied.
+      """
+      if not allow_pr_merge:
+          return "GITHUB_PR_MERGE_DISABLED"
+      if is_protected_base and not (protected_base_override and allow_protected_base_merge):
+          return "GITHUB_PROTECTED_BRANCH"
+      return None
+  ```
+
+  Constraints (all mandatory, no exceptions, no alternatives):
+  - The imports shown (mcp_proxy_adapter.commands.result, code_analysis.core.github_auth, .base_mcp_command, .github_http) are for the command class that a LATER step adds to this same file; include them exactly as shown even though this step's own function does not use all of them, so the file's import block is already complete for the next step. Do not add any other imports.
+  - The file `code_analysis/core/github_auth.py` (providing resolve_github_auth, classify_github_auth_error) already exists, created by a separate tactical step; do not create or modify it, only import from it exactly as shown: `from code_analysis.core.github_auth import resolve_github_auth, classify_github_auth_error`.
+    - `resolve_github_auth(config_data: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, str]], Optional[str]]` returns (headers, None) on success where headers = {"Authorization": "Bearer <token>", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, or (None, "GITHUB_NOT_CONFIGURED") when the code_analysis.github config section or token path is absent/unreadable/empty.
+    - `classify_github_auth_error(status_code: int) -> Optional[str]` returns "GITHUB_AUTH_FAILED" for 401, "GITHUB_INSUFFICIENT_SCOPE" for 403, None otherwise.
+  - The file `code_analysis/commands/github_http.py` already exists (created by a prior step in this same tactical step) and exposes `github_api_request(method, path, headers, *, query=None, json_body=None, timeout_seconds=30) -> Tuple[Optional[Any], Optional[int], Optional[str]]` and `github_timeout_seconds_from_config(config_data: Dict[str, Any]) -> int`; do not create or modify that file, only import from it exactly as shown: `from .github_http import github_api_request, github_timeout_seconds_from_config`.
+  - The file `code_analysis/commands/base_mcp_command.py` already exists and exposes class `BaseMCPCommand` with static method `BaseMCPCommand._get_raw_config() -> Dict[str, Any]`; do not create or modify it, only import from it exactly as shown: `from .base_mcp_command import BaseMCPCommand`.
+  - Function name, keyword-only parameters, return type, and docstring must match exactly as given above.
+  - The function body must contain only the two `if` checks shown, in that order, returning the exact string codes shown; no other logic, no logging, no side effects.
+  - The file must end after `evaluate_github_pr_merge_guard` with no additional code — do not add a command class in this step.

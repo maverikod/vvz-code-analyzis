@@ -1,0 +1,1030 @@
+step_id: A-004
+parent_tactical_step: T-003
+name: Wire commit-intent pre-write guard into universal_file_save_command/save_command.py (package variant)
+target_file: code_analysis/commands/universal_file_save_command/save_command.py
+operation: modify_file
+priority: 1
+depends_on:
+- A-001
+- A-002
+concepts:
+- C-024
+status: draft
+prompt: |
+  Modify the existing file
+  `code_analysis/commands/universal_file_save_command/save_command.py` in
+  place. Operation: modify_file. This file currently has 475 lines; it exceeds
+  the 400-line file-size cap. This AS performs a minimal mechanical split —
+  moving the schema-building code and the payload-validation code out to a
+  separate, already-existing module — plus wiring in a pre-write
+  commit-intent rejection check, with no other behaviour change. Do not use a
+  patch/diff strategy: replace the ENTIRE file content with the exact final
+  content given at the bottom of this prompt (under "## Final full file
+  content to write"). That final content is the complete, correct result of
+  applying every edit described below to the current file; you do not need to
+  compute the edits yourself, only write the final content exactly as given.
+
+  ## MRS excerpt (only the concept relevant to this file)
+
+  concept_id: C-024
+  name: ImplicitTriggerRemoval
+  definition: The breaking migration that removes the prior message-only commit
+    trigger so a message without intent is now rejected.
+  properties:
+    removed: message_only_implies_commit
+    after_change: message_without_intent_rejected
+    breaking: true
+    old_caller: fails_loudly
+  source_labels: ['{c5d6}']
+  source_spec text (label {c5d6}): "Introducing the explicit commit-intent flag
+  removes a prior implicit behaviour in which supplying a commit message alone
+  triggered a commit. After the change, a message without the flag is rejected
+  rather than silently committing, so any existing caller that relied on the
+  implicit behaviour fails loudly and must adopt the explicit flag."
+
+  Relevance to this file: this file's `execute` method gains a new boolean
+  parameter `commit_on_write` (the explicit per-write commit-intent flag
+  referenced by C-024). Immediately after payload validation and before any
+  database access, backup, or write side effect, `execute` calls a pre-write
+  guard function `reject_message_without_intent(commit_on_write, commit_message)`
+  imported from `code_analysis/core/commit_intent_migration.py`. That function's
+  full contract (restated here in full, so no other file needs to be read):
+
+  ```python
+  def reject_message_without_intent(
+      commit_on_write: bool, commit_message: Optional[str]
+  ) -> Optional[Dict[str, Any]]:
+  ```
+
+  - `commit_on_write: bool` — True means the explicit commit-intent flag is
+    set; False means it is unset or absent.
+  - `commit_message: Optional[str]` — the caller-supplied commit message, or
+    None when no message was supplied.
+  - Returns `None` when no rejection applies (the write may proceed).
+  - Returns a rejection payload dict when the legacy implicit-trigger
+    condition is detected (i.e. `commit_on_write` is False and
+    `commit_message` is a non-empty, non-whitespace-only string). The payload
+    dict always has exactly these three keys: `"code"` (str),
+    `"message"` (str), `"details"` (dict with keys `"breaking_migration"` and
+    `"removed_behaviour"`).
+
+  When `reject_message_without_intent` returns a non-None payload, `execute`
+  must immediately return
+  `ErrorResult(message=rejection["message"], code=rejection["code"], details=rejection["details"])`
+  without writing any file content, without opening the database, and without
+  producing any commit.
+
+  ## Current full file content (before this AS; 475 lines)
+
+  ```python
+  """
+  MCP command: universal_file_save
+
+  Registry-first full-file save: routes by extension to text, JSON, YAML, or Python
+  handlers. Resolves handler before validation, backup, or writes.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+  import logging
+  from pathlib import Path
+  from typing import Any, Dict, Optional, Type
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from code_analysis.commands.base_mcp_command import BaseMCPCommand
+  from code_analysis.commands.project_text_file_guard import (
+      reject_if_write_under_project_venv,
+  )
+  from code_analysis.commands.registration import (
+      MCP_FILE_MANAGEMENT_REGISTRY_HELP,
+      REGISTRY_SCHEMA_DISCOVERY_SHORT,
+  )
+  from code_analysis.commands.universal_file_save_command.save_helpers import (
+      _error_from_handler,
+      _success_from_handler,
+  )
+  from code_analysis.core.backup_manager import BackupManager
+  from code_analysis.core.exceptions import ValidationError
+  from code_analysis.core.file_handlers.base import FileHandlerRequest, FileHandlerResult
+  from code_analysis.core.file_handlers.json_handler import JsonFileHandler
+  from code_analysis.core.file_handlers.python_handler import PythonFileHandler
+  from code_analysis.core.file_handlers.registry import (
+      HANDLER_JSON,
+      HANDLER_PYTHON,
+      HANDLER_TEXT,
+      HANDLER_YAML,
+      RegistryError,
+      resolve_handler,
+  )
+  from code_analysis.core.file_handlers.text_handler import (
+      TextFileHandler,
+      persist_plain_text_file_metadata,
+  )
+  from code_analysis.core.file_handlers.yaml_handler import YamlFileHandler
+  from code_analysis.core.file_lock import file_lock
+  from code_analysis.core.git_integration import commit_after_write
+  from code_analysis.core.path_normalization import normalize_path_simple
+
+  logger = logging.getLogger(__name__)
+
+
+  class UniversalFileSaveCommand(BaseMCPCommand):
+      """Save project files via handler registry (extension routing before side effects)."""
+
+      name = "universal_file_save"
+
+      version = "1.0.0"
+
+      descr = (
+          "Full-file save using the universal handler registry. Unsupported extensions fail "
+          "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Creates the file when "
+          "missing (parent dirs included), then applies the same handler pipeline as overwrite. "
+          "Text: full `content` string; JSON/YAML: parseable serialized document; Python: "
+          "CST-safe save. Supports dry_run and diff when the handler can serialize before/after."
+          + " "
+          + MCP_FILE_MANAGEMENT_REGISTRY_HELP
+      )
+
+      category = "file_management"
+
+      author = "Vasiliy Zdanovskiy"
+
+      email = "vasilyvz@gmail.com"
+
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the command input schema."""
+          return {
+              "type": "object",
+              "title": "universal_file_save",
+              "description": (
+                  "Registry-first save for text, json, yaml, and python handlers. "
+                  "Required: project_id, file_path, content (string). "
+                  "Optional: dry_run, diff, backup (default true), create_parent_dirs "
+                  "(default true, mkdir -p for all handlers), commit_message, "
+                  "diff_context_lines; validate_syntax_only and tree_id apply only to Python. "
+                  "Creates missing files and parent directories when allowed; same overwrite "
+                  "pipelines apply once the file exists. "
+                  + REGISTRY_SCHEMA_DISCOVERY_SHORT
+              ),
+              "properties": {
+                  "project_id": {
+                      "type": "string",
+                      "description": "Project UUID (from create_project or list_projects).",
+                  },
+                  "file_path": {
+                      "type": "string",
+                      "description": (
+                          "Single path relative to project root (literal; globs/wildcards not supported). "
+                          "May name a file that does not exist yet: all handlers support create with "
+                          "create_parent_dirs (mkdir -p). Routing: text (.md, .txt, …), .json, "
+                          ".yaml/.yml, .py/.pyi/.pyw — see list_handler_mappings()."
+                      ),
+                  },
+                  "content": {
+                      "type": "string",
+                      "description": (
+                          "Full file body: plain text for .md/.txt/.rst/.adoc; JSON or YAML text "
+                          "for .json / .yaml/.yml; Python source for .py/.pyi/.pyw."
+                      ),
+                  },
+                  "dry_run": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "If true, no write, backup, or DB/index side effects.",
+                  },
+                  "diff": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "If true, include unified diff in the response when supported.",
+                  },
+                  "backup": {
+                      "type": "boolean",
+                      "default": True,
+                      "description": "If true (default), create backups where the handler does so.",
+                  },
+                  "create_parent_dirs": {
+                      "type": "boolean",
+                      "default": True,
+                      "description": (
+                          "When true (default), create missing parent directories for file_path "
+                          "(like mkdir -p) before writing. When false, fail with "
+                          "PARENT_DIR_MISSING if a parent directory is absent."
+                      ),
+                  },
+                  "commit_message": {
+                      "type": "string",
+                      "description": "Optional git commit message for handlers that support it.",
+                  },
+                  "diff_context_lines": {
+                      "type": "integer",
+                      "description": "Optional unified-diff context line count (default 3).",
+                  },
+                  "validate_syntax_only": {
+                      "type": "boolean",
+                      "default": False,
+                      "description": "Python handler: validate syntax only when applying ops.",
+                  },
+                  "tree_id": {
+                      "type": "string",
+                      "description": "Optional CST tree_id for Python save path.",
+                  },
+              },
+              "required": ["project_id", "file_path", "content"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
+          """Return command metadata."""
+          from .universal_file_save_metadata import get_universal_file_save_metadata
+
+          return get_universal_file_save_metadata(cls)
+
+      @staticmethod
+      def _validate_save_payload(content: Optional[str]) -> Optional[ErrorResult]:
+          """Return validate save payload."""
+          if content is None:
+              return ErrorResult(
+                  message="content is required",
+                  code="VALIDATION_ERROR",
+                  details={"field": "content"},
+              )
+          if not isinstance(content, str):
+              return ErrorResult(
+                  message="content must be a string",
+                  code="VALIDATION_ERROR",
+                  details={"field": "content"},
+              )
+          return None
+
+      async def execute(
+          self,
+          project_id: str,
+          file_path: str,
+          content: Optional[str] = None,
+          dry_run: bool = False,
+          diff: bool = False,
+          backup: bool = True,
+          commit_message: Optional[str] = None,
+          diff_context_lines: Optional[int] = None,
+          validate_syntax_only: bool = False,
+          tree_id: Optional[str] = None,
+          create_parent_dirs: bool = True,
+          **kwargs: Any,
+      ) -> SuccessResult | ErrorResult:
+          """Execute the command."""
+          try:
+              try:
+                  handler_id = resolve_handler(file_path, "save")
+              except RegistryError as e:
+                  return ErrorResult(
+                      message=str(e),
+                      code=e.code,
+                      details=e.details,
+                  )
+
+              bad = self._validate_save_payload(content)
+              if bad is not None:
+                  return bad
+
+              assert content is not None
+
+              database = self._open_database_from_config(auto_analyze=False)
+              absolute_path = self._resolve_file_path_from_project(
+                  database, project_id, file_path, require_exists=False
+              )
+              project = database.get_project(project_id)
+              if not project:
+                  return ErrorResult(
+                      message=f"Project {project_id} not found",
+                      code="PROJECT_NOT_FOUND",
+                      details={"project_id": project_id},
+                  )
+              root_dir = Path(project.root_path)
+
+              blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
+              if blocked_venv is not None:
+                  return blocked_venv
+
+              existed_before = absolute_path.exists()
+
+              extra: Dict[str, Any] = {
+                  "absolute_path": absolute_path,
+                  "content": content,
+                  "create_parent_dirs": bool(create_parent_dirs),
+              }
+              if diff_context_lines is not None:
+                  extra["diff_context_lines"] = diff_context_lines
+              if isinstance(commit_message, str) and commit_message.strip():
+                  extra["commit_message"] = commit_message
+
+              if handler_id == HANDLER_TEXT:
+                  backup_for_handler = bool(backup)
+                  if not dry_run and backup_for_handler:
+                      backup_for_handler = False
+                  req = FileHandlerRequest(
+                      project_id=project_id,
+                      file_path=file_path,
+                      handler_id=handler_id,
+                      operation="save",
+                      dry_run=bool(dry_run),
+                      diff=bool(diff),
+                      backup=backup_for_handler,
+                      extra=extra,
+                  )
+                  fr = self._run_text_save(
+                      req=req,
+                      database=database,
+                      absolute_path=absolute_path,
+                      root_dir=root_dir,
+                      backup=bool(backup),
+                      dry_run=bool(dry_run),
+                  )
+              elif handler_id == HANDLER_JSON:
+                  extra["database"] = database
+                  extra["root_dir"] = root_dir.resolve()
+                  extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                  fr = JsonFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              elif handler_id == HANDLER_YAML:
+                  extra["database"] = database
+                  extra["root_dir"] = root_dir.resolve()
+                  extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                  fr = YamlFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              elif handler_id == HANDLER_PYTHON:
+                  extra["root_path"] = root_dir.resolve()
+                  extra["database"] = database
+                  extra["git_command_name"] = "universal_file_save"
+                  extra["validate_syntax_only"] = bool(validate_syntax_only)
+                  if tree_id is not None:
+                      extra["tree_id"] = tree_id
+                  if isinstance(commit_message, str) and commit_message.strip():
+                      extra["commit_message"] = commit_message.strip()
+                  fr = PythonFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              else:
+                  return ErrorResult(
+                      message=f"Unhandled handler_id after registry resolve: {handler_id!r}",
+                      code="INTERNAL_ERROR",
+                      details={
+                          "project_id": project_id,
+                          "file_path": file_path,
+                          "handler_id": handler_id,
+                          "operation": "save",
+                      },
+                  )
+
+              if not fr.success:
+                  return _error_from_handler(fr)
+              if not dry_run and handler_id != HANDLER_PYTHON:
+                  cm = (
+                      commit_message.strip()
+                      if isinstance(commit_message, str) and commit_message.strip()
+                      else None
+                  )
+                  git_ok, git_err = commit_after_write(
+                      root_dir.resolve(),
+                      [absolute_path],
+                      "universal_file_save",
+                      commit_message_override=cm,
+                      config_data=BaseMCPCommand._get_raw_config(),
+                  )
+                  if not git_ok and git_err:
+                      logger.warning("Git commit after universal_file_save: %s", git_err)
+              result = _success_from_handler(fr, operation="save")
+              if isinstance(result, SuccessResult):
+                  result.data["created"] = not existed_before
+              return result
+
+          except ValidationError as e:
+              return ErrorResult(
+                  message=str(e),
+                  code="VALIDATION_ERROR",
+                  details=getattr(e, "details", None)
+                  or {"field": getattr(e, "field", None)},
+              )
+          except Exception as e:
+              logger.exception("universal_file_save failed: %s", e)
+              return ErrorResult(
+                  message=f"universal_file_save failed: {e}",
+                  code="UNIVERSAL_FILE_SAVE_ERROR",
+              )
+
+      def _run_text_save(
+          self,
+          *,
+          req: FileHandlerRequest,
+          database: Any,
+          absolute_path: Path,
+          root_dir: Path,
+          backup: bool,
+          dry_run: bool,
+      ) -> FileHandlerResult:
+          """Text save with BackupManager (handler does not) and files-table metadata."""
+
+          def _restore(rel: str, uuid_: str) -> None:
+              """Return restore."""
+              bm = BackupManager(root_dir)
+              bm.restore_file(rel, uuid_)
+
+          with file_lock(
+              absolute_path,
+              mode="full",
+              database=database,
+              project_id=req.project_id,
+              file_path=req.file_path,
+          ):
+              normalized_path = normalize_path_simple(str(absolute_path))
+
+              backup_uuid: Optional[str] = None
+              if not dry_run and backup and absolute_path.exists():
+                  bm = BackupManager(root_dir)
+                  try:
+                      rel = str(absolute_path.relative_to(root_dir.resolve()))
+                  except ValueError:
+                      rel = str(absolute_path)
+                  backup_uuid = bm.create_backup(
+                      absolute_path,
+                      command="universal_file_save",
+                      comment=f"Before universal_file_save {req.file_path}",
+                  )
+                  if not backup_uuid:
+                      return FileHandlerResult(
+                          success=False,
+                          handler_id=req.handler_id,
+                          operation=req.operation,
+                          file_path=req.file_path,
+                          project_id=req.project_id,
+                          dry_run=False,
+                          changed=False,
+                          message=(
+                              "Backup to old_code (versions) is mandatory before write; "
+                              "create_backup failed. Aborting universal_file_save."
+                          ),
+                          code="BACKUP_REQUIRED",
+                          details={
+                              "file_path": req.file_path,
+                              "resolved_path": str(absolute_path),
+                          },
+                      )
+
+              fr = TextFileHandler().save(req)
+              if not fr.success:
+                  return fr
+
+              if dry_run:
+                  return fr
+
+              meta = persist_plain_text_file_metadata(
+                  database=database,
+                  project_id=req.project_id,
+                  absolute_path=absolute_path,
+                  normalized_path=normalized_path,
+                  source_code=absolute_path.read_text(encoding="utf-8", errors="replace"),
+              )
+              if not meta.get("success"):
+                  if backup_uuid:
+                      try:
+                          rel = str(absolute_path.relative_to(root_dir.resolve()))
+                      except ValueError:
+                          rel = str(absolute_path)
+                      _restore(rel, backup_uuid)
+                  return FileHandlerResult(
+                      success=False,
+                      handler_id=req.handler_id,
+                      operation=req.operation,
+                      file_path=req.file_path,
+                      project_id=req.project_id,
+                      dry_run=False,
+                      changed=False,
+                      message="Failed to update file metadata: "
+                      + str(meta.get("error", "unknown")),
+                      code="UPDATE_FILE_DATA_ERROR",
+                      details=meta,
+                  )
+              out = dict(fr.data or {})
+              out["metadata_update"] = meta
+              if backup_uuid:
+                  out["backup_uuid"] = backup_uuid
+              return FileHandlerResult(
+                  success=True,
+                  handler_id=fr.handler_id,
+                  operation=fr.operation,
+                  file_path=fr.file_path,
+                  project_id=fr.project_id,
+                  dry_run=fr.dry_run,
+                  changed=fr.changed,
+                  data=out,
+              )
+  ```
+
+  ## Edits applied to produce the final content (informational — the exact
+  result is given verbatim below, you do not need to derive it yourself)
+
+  1. `get_schema` body replaced with a single line delegating to
+     `get_universal_file_save_schema()`, imported from
+     `code_analysis/commands/universal_file_save_schema.py` (one package
+     level up from this file's own package
+     `code_analysis.commands.universal_file_save_command`, so the relative
+     import uses two leading dots: `from ..universal_file_save_schema import
+     ...`).
+  2. The `_validate_save_payload` staticmethod is deleted; its call site
+     (`bad = self._validate_save_payload(content)`) becomes
+     `bad = validate_save_payload_content(content)`, using the function
+     imported from the same sibling module.
+  3. A new parameter `commit_on_write: bool = False` is added to the
+     `execute` signature, directly after `commit_message: Optional[str] =
+     None`.
+  4. A pre-write guard call is inserted immediately after
+     `assert content is not None` and before
+     `database = self._open_database_from_config(auto_analyze=False)`:
+     `rejection = reject_message_without_intent(commit_on_write,
+     commit_message)`, followed by `if rejection is not None: return
+     ErrorResult(...)` using the three keys of the rejection payload. The
+     guard function is imported from `code_analysis/core/commit_intent_migration.py`,
+     which — relative to this file's own package
+     `code_analysis.commands.universal_file_save_command` — is three package
+     levels up then down into `core`, so the relative import uses three
+     leading dots: `from ...core.commit_intent_migration import
+     reject_message_without_intent`.
+  5. Two new imports are added, in the positions shown in the final content
+     below: `from ..universal_file_save_schema import
+     get_universal_file_save_schema, validate_save_payload_content` (wrapped
+     across multiple lines to respect the 88-column line-length limit used in
+     this repository) and `from ...core.commit_intent_migration import
+     reject_message_without_intent` (fits on one line).
+  6. The import `REGISTRY_SCHEMA_DISCOVERY_SHORT` is removed from the
+     `from code_analysis.commands.registration import (...)` block: it was
+     only ever used inside `get_schema`'s description string, and
+     `get_schema` no longer builds that string in this file (it now
+     delegates to the sibling module, which imports
+     `REGISTRY_SCHEMA_DISCOVERY_SHORT` itself). The import becomes a single
+     line: `from code_analysis.commands.registration import
+     MCP_FILE_MANAGEMENT_REGISTRY_HELP` (still used by the class `descr`
+     attribute). No other import in this file is removed — every other
+     currently-imported name (including `BackupManager`, `file_lock`, and
+     the `save_helpers` import of `_error_from_handler` /
+     `_success_from_handler`) is still used exactly as before and stays
+     untouched.
+  7. No other line in the file changes. The commit_message pass-through
+     logic (`if isinstance(commit_message, str) and commit_message.strip():
+     extra["commit_message"] = commit_message`) is left exactly as-is. The
+     `_run_text_save` method body is left exactly as-is.
+
+  ## Final full file content to write (this replaces the entire file; 391 lines)
+
+  ```python
+  """
+  MCP command: universal_file_save
+
+  Registry-first full-file save: routes by extension to text, JSON, YAML, or Python
+  handlers. Resolves handler before validation, backup, or writes.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+  import logging
+  from pathlib import Path
+  from typing import Any, Dict, Optional, Type
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from code_analysis.commands.base_mcp_command import BaseMCPCommand
+  from code_analysis.commands.project_text_file_guard import (
+      reject_if_write_under_project_venv,
+  )
+  from code_analysis.commands.registration import MCP_FILE_MANAGEMENT_REGISTRY_HELP
+  from code_analysis.commands.universal_file_save_command.save_helpers import (
+      _error_from_handler,
+      _success_from_handler,
+  )
+  from ..universal_file_save_schema import (
+      get_universal_file_save_schema,
+      validate_save_payload_content,
+  )
+  from code_analysis.core.backup_manager import BackupManager
+  from code_analysis.core.exceptions import ValidationError
+  from code_analysis.core.file_handlers.base import FileHandlerRequest, FileHandlerResult
+  from code_analysis.core.file_handlers.json_handler import JsonFileHandler
+  from code_analysis.core.file_handlers.python_handler import PythonFileHandler
+  from code_analysis.core.file_handlers.registry import (
+      HANDLER_JSON,
+      HANDLER_PYTHON,
+      HANDLER_TEXT,
+      HANDLER_YAML,
+      RegistryError,
+      resolve_handler,
+  )
+  from code_analysis.core.file_handlers.text_handler import (
+      TextFileHandler,
+      persist_plain_text_file_metadata,
+  )
+  from code_analysis.core.file_handlers.yaml_handler import YamlFileHandler
+  from code_analysis.core.file_lock import file_lock
+  from code_analysis.core.git_integration import commit_after_write
+  from code_analysis.core.path_normalization import normalize_path_simple
+  from ...core.commit_intent_migration import reject_message_without_intent
+
+  logger = logging.getLogger(__name__)
+
+
+  class UniversalFileSaveCommand(BaseMCPCommand):
+      """Save project files via handler registry (extension routing before side effects)."""
+
+      name = "universal_file_save"
+
+      version = "1.0.0"
+
+      descr = (
+          "Full-file save using the universal handler registry. Unsupported extensions fail "
+          "with UNSUPPORTED_FILE_EXTENSION before any backup or write. Creates the file when "
+          "missing (parent dirs included), then applies the same handler pipeline as overwrite. "
+          "Text: full `content` string; JSON/YAML: parseable serialized document; Python: "
+          "CST-safe save. Supports dry_run and diff when the handler can serialize before/after."
+          + " "
+          + MCP_FILE_MANAGEMENT_REGISTRY_HELP
+      )
+
+      category = "file_management"
+
+      author = "Vasiliy Zdanovskiy"
+
+      email = "vasilyvz@gmail.com"
+
+      use_queue = False
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the command input schema."""
+          return get_universal_file_save_schema()
+
+      @classmethod
+      def metadata(cls: Type["UniversalFileSaveCommand"]) -> Dict[str, Any]:
+          """Return command metadata."""
+          from .universal_file_save_metadata import get_universal_file_save_metadata
+
+          return get_universal_file_save_metadata(cls)
+
+      async def execute(
+          self,
+          project_id: str,
+          file_path: str,
+          content: Optional[str] = None,
+          dry_run: bool = False,
+          diff: bool = False,
+          backup: bool = True,
+          commit_message: Optional[str] = None,
+          commit_on_write: bool = False,
+          diff_context_lines: Optional[int] = None,
+          validate_syntax_only: bool = False,
+          tree_id: Optional[str] = None,
+          create_parent_dirs: bool = True,
+          **kwargs: Any,
+      ) -> SuccessResult | ErrorResult:
+          """Execute the command."""
+          try:
+              try:
+                  handler_id = resolve_handler(file_path, "save")
+              except RegistryError as e:
+                  return ErrorResult(
+                      message=str(e),
+                      code=e.code,
+                      details=e.details,
+                  )
+
+              bad = validate_save_payload_content(content)
+              if bad is not None:
+                  return bad
+
+              assert content is not None
+
+              rejection = reject_message_without_intent(commit_on_write, commit_message)
+              if rejection is not None:
+                  return ErrorResult(
+                      message=rejection["message"],
+                      code=rejection["code"],
+                      details=rejection["details"],
+                  )
+
+              database = self._open_database_from_config(auto_analyze=False)
+              absolute_path = self._resolve_file_path_from_project(
+                  database, project_id, file_path, require_exists=False
+              )
+              project = database.get_project(project_id)
+              if not project:
+                  return ErrorResult(
+                      message=f"Project {project_id} not found",
+                      code="PROJECT_NOT_FOUND",
+                      details={"project_id": project_id},
+                  )
+              root_dir = Path(project.root_path)
+
+              blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
+              if blocked_venv is not None:
+                  return blocked_venv
+
+              existed_before = absolute_path.exists()
+
+              extra: Dict[str, Any] = {
+                  "absolute_path": absolute_path,
+                  "content": content,
+                  "create_parent_dirs": bool(create_parent_dirs),
+              }
+              if diff_context_lines is not None:
+                  extra["diff_context_lines"] = diff_context_lines
+              if isinstance(commit_message, str) and commit_message.strip():
+                  extra["commit_message"] = commit_message
+
+              if handler_id == HANDLER_TEXT:
+                  backup_for_handler = bool(backup)
+                  if not dry_run and backup_for_handler:
+                      backup_for_handler = False
+                  req = FileHandlerRequest(
+                      project_id=project_id,
+                      file_path=file_path,
+                      handler_id=handler_id,
+                      operation="save",
+                      dry_run=bool(dry_run),
+                      diff=bool(diff),
+                      backup=backup_for_handler,
+                      extra=extra,
+                  )
+                  fr = self._run_text_save(
+                      req=req,
+                      database=database,
+                      absolute_path=absolute_path,
+                      root_dir=root_dir,
+                      backup=bool(backup),
+                      dry_run=bool(dry_run),
+                  )
+              elif handler_id == HANDLER_JSON:
+                  extra["database"] = database
+                  extra["root_dir"] = root_dir.resolve()
+                  extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                  fr = JsonFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              elif handler_id == HANDLER_YAML:
+                  extra["database"] = database
+                  extra["root_dir"] = root_dir.resolve()
+                  extra["normalized_path"] = normalize_path_simple(str(absolute_path))
+                  fr = YamlFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              elif handler_id == HANDLER_PYTHON:
+                  extra["root_path"] = root_dir.resolve()
+                  extra["database"] = database
+                  extra["git_command_name"] = "universal_file_save"
+                  extra["validate_syntax_only"] = bool(validate_syntax_only)
+                  if tree_id is not None:
+                      extra["tree_id"] = tree_id
+                  if isinstance(commit_message, str) and commit_message.strip():
+                      extra["commit_message"] = commit_message.strip()
+                  fr = PythonFileHandler().save(
+                      FileHandlerRequest(
+                          project_id=project_id,
+                          file_path=file_path,
+                          handler_id=handler_id,
+                          operation="save",
+                          dry_run=bool(dry_run),
+                          diff=bool(diff),
+                          backup=bool(backup),
+                          extra=extra,
+                      )
+                  )
+              else:
+                  return ErrorResult(
+                      message=f"Unhandled handler_id after registry resolve: {handler_id!r}",
+                      code="INTERNAL_ERROR",
+                      details={
+                          "project_id": project_id,
+                          "file_path": file_path,
+                          "handler_id": handler_id,
+                          "operation": "save",
+                      },
+                  )
+
+              if not fr.success:
+                  return _error_from_handler(fr)
+              if not dry_run and handler_id != HANDLER_PYTHON:
+                  cm = (
+                      commit_message.strip()
+                      if isinstance(commit_message, str) and commit_message.strip()
+                      else None
+                  )
+                  git_ok, git_err = commit_after_write(
+                      root_dir.resolve(),
+                      [absolute_path],
+                      "universal_file_save",
+                      commit_message_override=cm,
+                      config_data=BaseMCPCommand._get_raw_config(),
+                  )
+                  if not git_ok and git_err:
+                      logger.warning("Git commit after universal_file_save: %s", git_err)
+              result = _success_from_handler(fr, operation="save")
+              if isinstance(result, SuccessResult):
+                  result.data["created"] = not existed_before
+              return result
+
+          except ValidationError as e:
+              return ErrorResult(
+                  message=str(e),
+                  code="VALIDATION_ERROR",
+                  details=getattr(e, "details", None)
+                  or {"field": getattr(e, "field", None)},
+              )
+          except Exception as e:
+              logger.exception("universal_file_save failed: %s", e)
+              return ErrorResult(
+                  message=f"universal_file_save failed: {e}",
+                  code="UNIVERSAL_FILE_SAVE_ERROR",
+              )
+
+      def _run_text_save(
+          self,
+          *,
+          req: FileHandlerRequest,
+          database: Any,
+          absolute_path: Path,
+          root_dir: Path,
+          backup: bool,
+          dry_run: bool,
+      ) -> FileHandlerResult:
+          """Text save with BackupManager (handler does not) and files-table metadata."""
+
+          def _restore(rel: str, uuid_: str) -> None:
+              """Return restore."""
+              bm = BackupManager(root_dir)
+              bm.restore_file(rel, uuid_)
+
+          with file_lock(
+              absolute_path,
+              mode="full",
+              database=database,
+              project_id=req.project_id,
+              file_path=req.file_path,
+          ):
+              normalized_path = normalize_path_simple(str(absolute_path))
+
+              backup_uuid: Optional[str] = None
+              if not dry_run and backup and absolute_path.exists():
+                  bm = BackupManager(root_dir)
+                  try:
+                      rel = str(absolute_path.relative_to(root_dir.resolve()))
+                  except ValueError:
+                      rel = str(absolute_path)
+                  backup_uuid = bm.create_backup(
+                      absolute_path,
+                      command="universal_file_save",
+                      comment=f"Before universal_file_save {req.file_path}",
+                  )
+                  if not backup_uuid:
+                      return FileHandlerResult(
+                          success=False,
+                          handler_id=req.handler_id,
+                          operation=req.operation,
+                          file_path=req.file_path,
+                          project_id=req.project_id,
+                          dry_run=False,
+                          changed=False,
+                          message=(
+                              "Backup to old_code (versions) is mandatory before write; "
+                              "create_backup failed. Aborting universal_file_save."
+                          ),
+                          code="BACKUP_REQUIRED",
+                          details={
+                              "file_path": req.file_path,
+                              "resolved_path": str(absolute_path),
+                          },
+                      )
+
+              fr = TextFileHandler().save(req)
+              if not fr.success:
+                  return fr
+
+              if dry_run:
+                  return fr
+
+              meta = persist_plain_text_file_metadata(
+                  database=database,
+                  project_id=req.project_id,
+                  absolute_path=absolute_path,
+                  normalized_path=normalized_path,
+                  source_code=absolute_path.read_text(encoding="utf-8", errors="replace"),
+              )
+              if not meta.get("success"):
+                  if backup_uuid:
+                      try:
+                          rel = str(absolute_path.relative_to(root_dir.resolve()))
+                      except ValueError:
+                          rel = str(absolute_path)
+                      _restore(rel, backup_uuid)
+                  return FileHandlerResult(
+                      success=False,
+                      handler_id=req.handler_id,
+                      operation=req.operation,
+                      file_path=req.file_path,
+                      project_id=req.project_id,
+                      dry_run=False,
+                      changed=False,
+                      message="Failed to update file metadata: "
+                      + str(meta.get("error", "unknown")),
+                      code="UPDATE_FILE_DATA_ERROR",
+                      details=meta,
+                  )
+              out = dict(fr.data or {})
+              out["metadata_update"] = meta
+              if backup_uuid:
+                  out["backup_uuid"] = backup_uuid
+              return FileHandlerResult(
+                  success=True,
+                  handler_id=fr.handler_id,
+                  operation=fr.operation,
+                  file_path=fr.file_path,
+                  project_id=fr.project_id,
+                  dry_run=fr.dry_run,
+                  changed=fr.changed,
+                  data=out,
+              )
+  ```
+
+  ## Constraints (all mandatory, no exceptions)
+
+  - Write EXACTLY the "Final full file content to write" shown above,
+    character-for-character, replacing the entire current file. Do not add,
+    remove, or reorder anything beyond what that final content shows.
+  - Do not touch any other file.
+  - All docstrings and comments remain in English.
+verification:
+  type: static_analysis
+  target: code_analysis/commands/universal_file_save_command/save_command.py
+  expected: >
+    The file is exactly 391 lines and parses as valid Python (imports cleanly).
+    UniversalFileSaveCommand.get_schema() returns the same dict as
+    get_universal_file_save_schema() from the sibling
+    universal_file_save_schema module, including a "commit_on_write" boolean
+    property. The execute method signature includes
+    commit_on_write: bool = False directly after commit_message. Reading the
+    execute method body top to bottom, the call to
+    reject_message_without_intent appears strictly before the call to
+    self._open_database_from_config, and before any call that opens a
+    database, creates a backup, or writes file content — so a rejection
+    returns before any such side effect. No reference to
+    _validate_save_payload or REGISTRY_SCHEMA_DISCOVERY_SHORT remains in the
+    file. The _run_text_save method and its BackupManager and file_lock usage
+    are unchanged from the pre-edit version.

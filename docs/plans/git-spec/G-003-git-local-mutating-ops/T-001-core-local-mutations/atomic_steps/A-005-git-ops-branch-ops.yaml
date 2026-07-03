@@ -1,0 +1,187 @@
+step_id: A-005
+parent_tactical_step: T-001
+name: Create git_ops branch operations module
+target_file: code_analysis/core/git_ops/branch_ops.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/branch_ops.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Local git branch operations: switch the working tree to a branch, create a
+  branch, and delete a branch. Acts only on the resolved project repository and
+  never contacts a remote.
+  """
+
+  from code_analysis.core.git_ops.common import ensure_local_repo, run_git
+
+
+  def git_switch_branch(root_dir: str, branch: str) -> dict:
+      """Switch the working tree to an existing branch.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          branch: The opaque name of the branch to switch to.
+
+      Returns:
+          On success: {"success": True, "branch": str} naming the now-current
+          branch.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_REF_NOT_FOUND", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      returncode, _stdout, stderr = run_git(root_dir, ["switch", branch])
+      if returncode != 0:
+          lowered = stderr.lower()
+          if "did not match" in lowered or "invalid reference" in lowered or "not a commit" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_NOT_FOUND",
+                  "message": stderr.strip() or f"Branch '{branch}' was not found.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git switch failed.",
+          }
+      return {"success": True, "branch": branch}
+
+
+  def git_create_branch(root_dir: str, branch: str, start_point: str | None = None) -> dict:
+      """Create a new branch, optionally starting at an opaque revision.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          branch: The name of the branch to create.
+          start_point: An opaque ref/revision to start the branch at, or None
+              to start at the current HEAD.
+
+      Returns:
+          On success: {"success": True, "branch": str} naming the created
+          branch.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_REF_ALREADY_EXISTS", "GIT_REF_NOT_FOUND", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      args = ["branch", branch]
+      if start_point is not None:
+          args.append(start_point)
+      returncode, _stdout, stderr = run_git(root_dir, args)
+      if returncode != 0:
+          lowered = stderr.lower()
+          if "already exists" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_ALREADY_EXISTS",
+                  "message": stderr.strip() or f"Branch '{branch}' already exists.",
+              }
+          if "not a valid" in lowered or "unknown revision" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_NOT_FOUND",
+                  "message": stderr.strip() or f"Start point '{start_point}' was not found.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git branch create failed.",
+          }
+      return {"success": True, "branch": branch}
+
+
+  def git_delete_branch(root_dir: str, branch: str, force: bool = False) -> dict:
+      """Delete a branch.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          branch: The name of the branch to delete.
+          force: When False, uses the safe delete (git branch -d), which
+              refuses to delete a branch not fully merged. When True, uses
+              the forced delete (git branch -D).
+
+      Returns:
+          On success: {"success": True, "branch": str} naming the deleted
+          branch.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_REF_NOT_FOUND", "GIT_BRANCH_NOT_MERGED", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      flag = "-D" if force else "-d"
+      returncode, _stdout, stderr = run_git(root_dir, ["branch", flag, branch])
+      if returncode != 0:
+          lowered = stderr.lower()
+          if "not found" in lowered or "not a valid" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_NOT_FOUND",
+                  "message": stderr.strip() or f"Branch '{branch}' was not found.",
+              }
+          if "not fully merged" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_BRANCH_NOT_MERGED",
+                  "message": stderr.strip() or f"Branch '{branch}' is not fully merged.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git branch delete failed.",
+          }
+      return {"success": True, "branch": branch}
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import ensure_local_repo, run_git`.
+  - All three functions must call ensure_local_repo(root_dir) first and
+    return its failure dict immediately if not None.
+  - branch and start_point/target are opaque strings passed to git as-is;
+    never pass them through path confinement.
+  - Do not add any other function, class, or module-level variable.
+  - Do not call git push or contact any remote.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "switch", "branch_create", and
+    "branch_delete" operations owned by tactical step G-003/T-001
+    ("switching the working tree to a branch...creating and deleting
+    branches"). reset and revert are owned by sibling tactical steps
+    G-003/T-002 and G-003/T-003 and are out of scope for this file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.branch_ops
+  expected: Importing code_analysis.core.git_ops.branch_ops succeeds and
+    exposes three callables named git_switch_branch, git_create_branch, and
+    git_delete_branch with the specified signatures.
+status: frozen

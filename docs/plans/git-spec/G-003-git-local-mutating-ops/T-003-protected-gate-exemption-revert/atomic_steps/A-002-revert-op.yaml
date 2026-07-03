@@ -1,0 +1,167 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: Revert operation as inverse commit
+target_file: code_analysis/core/git_ops/revert_op.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-013
+object_id: revert_inverse_commit_operation
+source_labels:
+- '{e1f2}'
+prompt: |
+  Create a new Python source file at the exact project-relative path
+  `code_analysis/core/git_ops/revert_op.py`. This is a brand-new file
+  (operation: create_file); do not assume any pre-existing content in it.
+  Do not read, create, or modify any other file, and do not create or
+  modify `code_analysis/core/git_ops/__init__.py` or
+  `code_analysis/core/git_ops/common.py` - both already exist in the
+  package (created elsewhere) and must not be touched.
+
+  IMPORT REQUIRED (exact, single import line):
+  from code_analysis.core.git_ops.common import run_git, ensure_local_repo
+
+  These two imported functions have exactly these signatures and behavior
+  (given as fact, they exist in `code_analysis/core/git_ops/common.py`; do
+  not redefine them):
+    def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:
+        Runs `git -C <root_dir> <args>` as a subprocess (no shell). Returns
+        a 3-tuple (returncode, stdout, stderr) where returncode is the
+        process exit code (int), stdout and stderr are the captured
+        process output (str).
+    def ensure_local_repo(root_dir: str) -> dict | None:
+        Returns None when git is available and root_dir is a git work
+        tree. Otherwise returns a dict:
+        {"success": False, "code": "GIT_NOT_AVAILABLE", "message": <str>}
+        or
+        {"success": False, "code": "GIT_NOT_A_REPO", "message": <str>}.
+
+  Write a module-level docstring, as the very first statement in the file,
+  stating in substance: "Revert creates a new commit whose content is the
+  inverse of a named target commit. It never rewrites or removes existing
+  history, which makes it safe to apply on branches whose history must be
+  preserved. The recorded authorship of the new commit comes from the
+  resolved repository's own git configuration, not from any override
+  passed by this module. This operation never contacts a remote."
+
+  Write exactly one function, with exactly this signature:
+  def revert_commit(root_dir: str, target_commit: str) -> dict:
+
+  Parameters: `root_dir` (str) is the resolved absolute path of the
+  project's git working tree. `target_commit` (str) is an opaque revision
+  reference identifying the commit to revert; it is never treated as a
+  filesystem path and is never path-confined. Return type is `dict`.
+
+  The function's docstring (its first statement) must state: this reverts
+  `target_commit` by creating a new inverse commit via
+  `git revert --no-edit`, never rewriting existing history; on success it
+  returns a dict with key "success": True plus the new commit hash, the
+  reverted target, and the current branch name; on failure it returns a
+  dict with key "success": False plus a "code" and a "message"; it never
+  contacts a remote; authorship of the new commit comes from the
+  repository's own git configuration because no `-c user.name` or
+  `-c user.email` override is ever passed to git.
+
+  Function body, implementing exactly this control flow and nothing else:
+
+  1. Call `ensure_local_repo(root_dir)` and store the result in a local
+  variable. If the result is not None, return that result immediately,
+  unchanged, as the function's return value (this is the failure outcome
+  for git being unavailable or root_dir not being a repository).
+
+  2. Otherwise call
+  `run_git(root_dir, ["revert", "--no-edit", target_commit])` and unpack
+  the returned 3-tuple into three local variables: the return code (int),
+  stdout (str), stderr (str).
+
+  3. If that return code is not equal to 0: call
+  `run_git(root_dir, ["revert", "--abort"])` (ignore its return value;
+  this call exists solely to leave the working tree clean after the
+  failed revert), then return the dict:
+     {"success": False, "code": "GIT_REVERT_CONFLICT", "message": <m>}
+     where <m> is computed as: the stripped (leading/trailing whitespace
+     removed via `.strip()`) stderr string from step 2 if that stripped
+     string is non-empty; otherwise the stripped stdout string from step 2
+     if that stripped string is non-empty; otherwise the literal string
+     "git revert failed".
+
+  4. Otherwise (return code from step 2 was 0): call
+  `run_git(root_dir, ["rev-parse", "HEAD"])` and unpack its returned
+  3-tuple into three local variables (return code, stdout, stderr). If
+  this return code is not equal to 0, return the dict:
+     {"success": False, "code": "GIT_REVERT_STATE_UNREADABLE", "message": <m>}
+     where <m> is the stripped stderr string from this call if non-empty,
+     otherwise the literal string "git rev-parse HEAD failed". Otherwise
+     store the stripped stdout string from this call as the new commit
+     hash.
+
+  5. Call `run_git(root_dir, ["rev-parse", "--abbrev-ref", "HEAD"])` and
+  unpack its returned 3-tuple into three local variables (return code,
+  stdout, stderr). If this return code is not equal to 0, return the
+  dict:
+     {"success": False, "code": "GIT_REVERT_STATE_UNREADABLE", "message": <m>}
+     where <m> is the stripped stderr string from this call if non-empty,
+     otherwise the literal string "git rev-parse --abbrev-ref HEAD
+     failed". Otherwise store the stripped stdout string from this call as
+     the current branch name.
+
+  6. Return the dict:
+     {"success": True, "new_commit_hash": <new commit hash from step 4>,
+     "reverted_target": target_commit, "current_branch": <current branch
+     name from step 5>}
+
+  MACHINE-SPEC EXCERPT this file realizes (concept C-013, quoted verbatim
+  from docs/plans/git-spec/spec.yaml):
+    concept_id: C-013
+    name: RevertIsInverseCommit
+    definition: The behaviour that revert creates a new inverse commit
+      without rewriting history, safe on protected branches.
+    properties:
+      rewrites_history: false
+      safe_on_protected: true
+    source_labels: ['{e1f2}']
+
+  SOURCE-SPEC EXCERPT this file realizes (label {e1f2}, quoted verbatim
+  from docs/plans/git-spec/source_spec.md): "Reverting a commit produces a
+  new inverse commit rather than rewriting history, making it safe to
+  apply on branches whose history must be preserved."
+
+  For traceability only (consumed facts from other steps, not implemented
+  here): authorship of the commit is bound to the project's own git
+  configuration (the general git identity behavior shared by every local
+  mutating operation in this block) - this is why no
+  `-c user.name`/`-c user.email` override is ever passed to `run_git`.
+  Revert is one member of the local git mutating operation group defined
+  by concept C-010, owned elsewhere - this file implements only the
+  revert member.
+
+  CONSTRAINTS (all mandatory):
+  - The file contains only: the one import line shown above, the module
+    docstring, and the one function `revert_commit` with its docstring
+    and the exact control flow described above. Nothing else - no
+    classes, no additional functions, no additional constants, no
+    additional imports, no `if __name__ == "__main__"` block.
+  - Never pass `-c user.name` or `-c user.email` or any other identity
+    override to `run_git`.
+  - Never call any networking or remote-contacting command; the only
+    subprocess calls are the three `run_git` calls listed above (revert,
+    and on success two rev-parse calls; on conflict, revert then abort).
+  - Do not implement `ensure_local_repo` or `run_git` - they are
+    imported, not redefined.
+  - All text (docstrings, comments) must be in English.
+  - Total file length must be far under 400 lines (expected under 90
+    lines).
+verification:
+  type: import
+  target: code_analysis.core.git_ops.revert_op
+  expected: >
+    The module imports successfully (given code_analysis/core/git_ops/common.py
+    already provides run_git and ensure_local_repo). The function
+    revert_commit is present with signature (root_dir: str, target_commit:
+    str) -> dict. On a repository where ensure_local_repo returns None and
+    git revert succeeds, it returns a dict with success True,
+    new_commit_hash, reverted_target equal to the passed target_commit,
+    and current_branch. On a git revert conflict it aborts the revert and
+    returns success False with code GIT_REVERT_CONFLICT.
+status: frozen

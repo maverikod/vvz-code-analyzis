@@ -1,0 +1,306 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: git_fetch MCP command
+target_file: code_analysis/commands/git_fetch_command.py
+operation: create_file
+priority: 1
+depends_on:
+- A-001
+concepts:
+- C-014
+prompt: |
+  Create a new Python file at the exact project-relative path
+  `code_analysis/commands/git_fetch_command.py`. This is a `create_file`
+  operation: the file does not exist yet and must not assume any
+  pre-existing content.
+
+  ## MRS concept excerpt (spec.yaml, quoted verbatim)
+
+  C-014 GitRemoteOps:
+  ```
+  definition: The remote git operations that require remote configuration and
+    fail fast when it is absent while local and read operations still work.
+  properties:
+    operations: [fetch, pull, push]
+    queue: true
+    requires_remote_config: true
+    when_unconfigured: GIT_REMOTE_NOT_CONFIGURED
+    local_and_read_still_work: true
+  source_labels: ['{g3h4}']
+  ```
+  Source spec {g3h4} (source_spec.md section 6): "The git block provides
+  remote operations: fetching, pulling, and pushing. Remote operations
+  require the git block to be configured for remote access; when that
+  configuration is absent, remote operations fail fast with a distinct
+  outcome while local and read operations continue to function." Fetch
+  semantics: fetch updates remote-tracking refs only and never mutates the
+  working tree.
+
+  ## Exact file content to produce
+
+  Write the file with exactly the following structure and logic (you may
+  only vary whitespace to satisfy PEP 8 line length; do not change any
+  identifier, string literal, or control-flow).
+
+  Module docstring (first content in the file):
+  ```python
+  """git_fetch MCP command (C-014): fetch remote refs and objects for a project's git repository.
+
+  Fetch only updates remote-tracking refs; it never mutates the working
+  tree. Requires remote operations to be enabled in configuration
+  (code_analysis.git.remote_enabled); when absent, fails fast with
+  GIT_REMOTE_NOT_CONFIGURED while local and read operations remain
+  unaffected.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+  ```
+
+  Imports, exactly these, in this order:
+  ```python
+  from __future__ import annotations
+
+  from pathlib import Path
+  from typing import Any, Dict, List, Optional, Type, cast
+
+  from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+  from code_analysis.commands.base_mcp_command import BaseMCPCommand
+  from code_analysis.core.git_integration import is_git_available, is_git_repository
+  from code_analysis.core.git_remote_ops import (
+      GIT_NOT_A_REPO,
+      GIT_NOT_AVAILABLE,
+      GIT_REMOTE_NOT_CONFIGURED,
+      GIT_REMOTE_TIMEOUT,
+      build_full_subprocess_env,
+      git_remote_error_result,
+      load_git_remote_config,
+      run_git_subprocess,
+  )
+  from code_analysis.core.git_ssh_auth import GIT_AUTH_FAILED, classify_ssh_auth_stderr
+  ```
+
+  Pinned signatures you are consuming (defined in files you do not create
+  or read; call them by exactly these signatures):
+  - `is_git_repository(root_dir: Path) -> bool` and
+    `is_git_available() -> bool` from `code_analysis.core.git_integration`.
+  - `load_git_remote_config(config_data: Mapping[str, Any]) -> Dict[str, Any]`
+    from `code_analysis.core.git_remote_ops`: returns a dict with keys
+    `remote_enabled` (bool), `ssh_key_path`, `known_hosts_path`,
+    `protected_branches` (List[str]), `allow_force_push` (bool),
+    `remote_timeout_seconds` (float).
+  - `build_full_subprocess_env(git_config: Mapping[str, Any]) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, Any]]]`
+    from `code_analysis.core.git_remote_ops`: returns `(env, None)` on
+    success or `(None, {"code": "GIT_AUTH_FAILED", "message": <str>})` on
+    failure.
+  - `run_git_subprocess(args: List[str], *, cwd: Path, env: Optional[Dict[str, str]], timeout_seconds: float) -> Tuple[Optional[int], str, str, bool]`
+    from `code_analysis.core.git_remote_ops`: returns
+    `(returncode, stdout, stderr, timed_out)`; when `timed_out` is True,
+    `returncode` is None.
+  - `git_remote_error_result(code: str, message: str, details: Optional[Dict[str, Any]] = None) -> ErrorResult`
+    from `code_analysis.core.git_remote_ops`.
+  - `classify_ssh_auth_stderr(stderr: str) -> Optional[str]` from
+    `code_analysis.core.git_ssh_auth`: returns `"GIT_AUTH_FAILED"` when
+    stderr indicates an SSH authentication/host-key failure, else None.
+    `GIT_AUTH_FAILED` is the string constant `"GIT_AUTH_FAILED"` also
+    imported from `code_analysis.core.git_ssh_auth`.
+  - `BaseMCPCommand._resolve_project_root(project_id: str) -> Path`
+    (inherited static method): resolves and validates the project's
+    repository root; raises `ValidationError` on failure — do not catch it,
+    let it propagate (the adapter converts any raised exception into an
+    ErrorResult automatically).
+  - `BaseMCPCommand._get_raw_config() -> Dict[str, Any]` (inherited static
+    method): returns the full raw server config dict.
+
+  Class definition, exactly:
+  ```python
+  class GitFetchCommand(BaseMCPCommand):
+      """MCP command fetching remote refs and objects for a project's git repository (C-014).
+
+      Fetch only updates remote-tracking refs; it never mutates the working
+      tree. Requires remote operations to be enabled in configuration
+      (``code_analysis.git.remote_enabled``); when absent, fails fast with
+      ``GIT_REMOTE_NOT_CONFIGURED`` while local and read operations remain
+      unaffected.
+      """
+
+      name = "git_fetch"
+
+      version = "1.0.0"
+
+      descr = "Fetch remote refs and objects for a project's git repository without changing the working tree."
+
+      category = "git"
+
+      author = "Vasiliy Zdanovskiy"
+
+      email = "vasilyvz@gmail.com"
+
+      use_queue = True
+
+      @staticmethod
+      def get_name() -> str:
+          """Return the MCP command name.
+
+          Returns:
+              MCP command name string.
+          """
+          return "git_fetch"
+
+      @classmethod
+      def get_schema(cls) -> Dict[str, Any]:
+          """Return the JSON schema for command parameters.
+
+          Returns:
+              JSON schema dict describing project_id, remote, and refs.
+          """
+          return {
+              "type": "object",
+              "properties": {
+                  "project_id": {"type": "string"},
+                  "remote": {"type": "string"},
+                  "refs": {"type": "array", "items": {"type": "string"}},
+              },
+              "required": ["project_id"],
+              "additionalProperties": False,
+          }
+
+      @classmethod
+      def metadata(cls: Type["GitFetchCommand"]) -> Dict[str, Any]:
+          """Return extended AI/docs metadata for git_fetch.
+
+          Returns:
+              Metadata dict with description, parameters, and examples.
+          """
+          return {
+              "name": "git_fetch",
+              "description": (
+                  "Fetch remote refs and objects for a project's git "
+                  "repository. Updates remote-tracking refs only; never "
+                  "changes the working tree."
+              ),
+              "parameters": {
+                  "project_id": {"type": "string", "required": True},
+                  "remote": {"type": "string", "required": False},
+                  "refs": {"type": "array", "required": False},
+              },
+              "examples": [{"command": {"project_id": "<uuid>", "remote": "origin"}}],
+          }
+
+      async def execute(  # type: ignore[override]
+          self,
+          project_id: str,
+          remote: str = "origin",
+          refs: Optional[List[str]] = None,
+          **kwargs: Any,
+      ) -> SuccessResult | ErrorResult:
+          """Execute the git_fetch command.
+
+          Args:
+              project_id: Project UUID whose repository root is resolved
+                  via ``BaseMCPCommand._resolve_project_root``.
+              remote: Name of the configured git remote to fetch from.
+                  Defaults to ``"origin"``.
+              refs: Optional list of ref names to fetch; when omitted,
+                  git's default fetch refspec applies.
+              **kwargs: Unused; accepted for adapter compatibility.
+
+          Returns:
+              SuccessResult with the fetch outcome, or ErrorResult naming a
+              distinct outcome code (GIT_NOT_AVAILABLE, GIT_NOT_A_REPO,
+              GIT_REMOTE_NOT_CONFIGURED, GIT_AUTH_FAILED,
+              GIT_REMOTE_TIMEOUT, or GIT_FETCH_FAILED).
+          """
+          _ = kwargs
+          root = self._resolve_project_root(project_id)
+          if not is_git_available():
+              return git_remote_error_result(
+                  GIT_NOT_AVAILABLE, "git executable is not available", {}
+              )
+          if not is_git_repository(root):
+              return git_remote_error_result(
+                  GIT_NOT_A_REPO,
+                  f"{root} is not a git repository",
+                  {"root": str(root)},
+              )
+          config_data = self._get_raw_config()
+          git_config = load_git_remote_config(config_data)
+          if not git_config["remote_enabled"]:
+              return git_remote_error_result(
+                  GIT_REMOTE_NOT_CONFIGURED,
+                  "Remote git operations are not enabled in configuration",
+                  {},
+              )
+          env, auth_error = build_full_subprocess_env(git_config)
+          if auth_error is not None:
+              return git_remote_error_result(
+                  GIT_AUTH_FAILED,
+                  str(
+                      auth_error.get(
+                          "message", "SSH authentication is not configured correctly"
+                      )
+                  ),
+                  {},
+              )
+          ref_list = refs or []
+          args = ["git", "fetch", remote] + ref_list
+          returncode, stdout, stderr, timed_out = run_git_subprocess(
+              args,
+              cwd=root,
+              env=env,
+              timeout_seconds=git_config["remote_timeout_seconds"],
+          )
+          if timed_out:
+              return git_remote_error_result(
+                  GIT_REMOTE_TIMEOUT,
+                  f"git fetch exceeded timeout of {git_config['remote_timeout_seconds']} seconds",
+                  {"remote": remote, "refs": ref_list},
+              )
+          if returncode != 0:
+              auth_code = classify_ssh_auth_stderr(stderr)
+              if auth_code == GIT_AUTH_FAILED:
+                  return git_remote_error_result(
+                      GIT_AUTH_FAILED,
+                      "SSH authentication failed during git fetch",
+                      {"remote": remote},
+                  )
+              return git_remote_error_result(
+                  "GIT_FETCH_FAILED",
+                  f"git fetch failed with exit code {returncode}",
+                  {"remote": remote, "refs": ref_list, "stderr": stderr.strip()},
+              )
+          payload: Dict[str, Any] = {
+              "success": True,
+              "remote": remote,
+              "refs": ref_list,
+              "outcome": "OK",
+              "updated_tracking_refs": True,
+              "output": stdout.strip(),
+          }
+          return SuccessResult(data=cast(Dict[str, Any], payload))
+  ```
+
+  ## Constraints (all explicit)
+
+  1. Use the class body and `execute` body exactly as given above; do not
+     add, remove, or rename methods or fields; do not add a `main` block,
+     CLI, or tests.
+  2. Do not create, modify, or read any file other than
+     `code_analysis/commands/git_fetch_command.py`.
+  3. Every non-outcome constant used (`GIT_NOT_A_REPO`, `GIT_NOT_AVAILABLE`,
+     `GIT_REMOTE_NOT_CONFIGURED`, `GIT_REMOTE_TIMEOUT`, `GIT_AUTH_FAILED`)
+     must come from the imports shown above, not be redefined locally.
+  4. The literal string `"GIT_FETCH_FAILED"` is the one exception: it is a
+     fetch-specific fallback outcome code not defined in
+     `git_remote_ops.py`; use it as a bare string literal exactly as shown.
+  5. All typing annotations shown must be preserved exactly (parameter
+     types and return types).
+verification:
+  type: import
+  target: code_analysis.commands.git_fetch_command.GitFetchCommand
+  expected: The module imports without error; GitFetchCommand.get_name()
+    returns "git_fetch"; GitFetchCommand.use_queue is True;
+    GitFetchCommand.get_schema() requires project_id and marks remote and
+    refs optional with additionalProperties false.
+status: frozen

@@ -35,5 +35,7 @@ outputs:
   type: outcome
   description: A rejection outcome emitted when a write targets a virtual-environment
     or installed-package directory.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

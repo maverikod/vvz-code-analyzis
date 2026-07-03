@@ -28,5 +28,7 @@ outputs:
   type: outcome
   description: A distinct outcome for a missing, rejected, or under-scoped token,
     carrying no secret material and issuing no prompt.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

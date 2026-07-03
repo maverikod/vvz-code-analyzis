@@ -1,0 +1,149 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create reset_op.py with the would-lose dry-run report helper
+target_file: code_analysis/core/git_ops/reset_op.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-011
+object_id: hard_reset_guard
+source_labels:
+- '{a7b8}'
+prompt: |
+  Create a new Python source file at the exact path
+  `code_analysis/core/git_ops/reset_op.py`. The file does not exist yet
+  (operation: create_file). Do not create, read, or modify any other file,
+  including `code_analysis/core/git_ops/__init__.py` and
+  `code_analysis/core/git_ops/common.py` (both belong to a different task and
+  already exist by the time this file is used).
+
+  Write EXACTLY the following content to the file, verbatim, with no
+  additions, omissions, or reordering:
+
+  ```python
+  """Guarded git reset operation for the project-scoped git block (T-002 hard-reset-guard).
+
+  Implements C-011 HardResetGuard for the discarding (hard) reset mode: a hard
+  reset requires an explicit mode selection of "hard" together with an explicit
+  confirm=True. Without confirmation, the operation performs a dry-run only: it
+  reports what would be lost (uncommitted changes via `git status --porcelain`
+  and commits that would be dropped via `git rev-list <target>..HEAD`) and moves
+  nothing. The preserving modes ("soft", "mixed") are never guarded. This module
+  never contacts a remote and treats `target` as an opaque ref (not path-confined).
+  """
+  from __future__ import annotations
+
+  from code_analysis.core.git_ops.common import run_git
+
+  MODE_SOFT = "soft"
+  MODE_MIXED = "mixed"
+  MODE_HARD = "hard"
+  VALID_MODES = (MODE_SOFT, MODE_MIXED, MODE_HARD)
+
+
+  def _build_would_lose_report(root_dir: str, target: str) -> dict:
+      """Build a report of what a hard reset to `target` would discard.
+
+      Runs two read-only git inspections against the repository at `root_dir`:
+      - `git status --porcelain` to list uncommitted working-tree/staged changes.
+      - `git rev-list <target>..HEAD` to list commits on HEAD that are not
+        reachable from `target` (i.e. commits that would be dropped by moving
+        the current branch to `target`).
+
+      :param root_dir: str - absolute path to the project's resolved repository root.
+      :param target: str - opaque ref or revision the reset would move the current
+          branch to. Not validated or path-confined; passed to git as-is.
+      :return: dict - {"uncommitted_changes": list[str], "commits_to_drop": list[str]}.
+          "uncommitted_changes" is the list of non-empty lines from the stdout of
+          `git status --porcelain` (each line exactly as returned by git, with
+          surrounding whitespace preserved, empty lines dropped).
+          "commits_to_drop" is the list of non-empty lines from the stdout of
+          `git rev-list <target>..HEAD` (each line is one commit hash, empty
+          lines dropped).
+          If a git command fails (non-zero return code), the corresponding list
+          is an empty list.
+      """
+      would_lose: dict = {"uncommitted_changes": [], "commits_to_drop": []}
+
+      status_code, status_out, _status_err = run_git(root_dir, ["status", "--porcelain"])
+      if status_code == 0:
+          would_lose["uncommitted_changes"] = [
+              line for line in status_out.splitlines() if line.strip()
+          ]
+
+      revlist_code, revlist_out, _revlist_err = run_git(
+          root_dir, ["rev-list", f"{target}..HEAD"]
+      )
+      if revlist_code == 0:
+          would_lose["commits_to_drop"] = [
+              line for line in revlist_out.splitlines() if line.strip()
+          ]
+
+      return would_lose
+  ```
+
+  End of exact content (59 lines). Nothing else is written to the file: no
+  `__main__` guard, no extra functions, no extra imports, no comments beyond
+  the ones shown, no trailing blank lines beyond the single newline that ends
+  the last line.
+
+  Context for traceability (do not add anything from this section to the file
+  beyond what is already in the exact content block above):
+
+  The import `from code_analysis.core.git_ops.common import run_git` refers to
+  a function in a sibling module created by a different task, with this exact
+  signature and contract (already correctly used in the exact content above):
+  `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:`
+  — runs `git -C <root_dir> <args>` via subprocess (no shell), returns
+  `(returncode, stdout, stderr)`.
+
+  Machine-readable specification excerpt (MRS), concept C-011, the only
+  concept this file implements, quoted verbatim from docs/plans/git-spec/spec.yaml:
+  ```
+  concept_id: C-011
+  name: HardResetGuard
+  definition: The guard that makes a hard reset require explicit destructive mode
+    and explicit confirmation, otherwise reporting only.
+  properties:
+    destructive: true
+    requires:
+    - explicit_mode_hard
+    - explicit_confirm
+    without_confirm: dry_run_report_only
+  source_labels:
+  - '{a7b8}'
+  ```
+  Source spec text for label {a7b8} (docs/plans/git-spec/source_spec.md): "A
+  hard reset is destructive and is gated: it requires an explicit
+  destructive-mode selection together with an explicit confirmation. Absent
+  the confirmation, the operation only reports what it would change without
+  moving the repository state."
+
+  This atomic step implements only the read-only "what would be lost"
+  reporting helper. It does not implement the guarded reset entry point
+  itself; that function is added to this same file by a separate, later step
+  that is not part of this task. Do not write it now, do not anticipate its
+  name or signature, do not add a placeholder for it.
+
+  Constraints (all mandatory):
+  - Target file: exactly `code_analysis/core/git_ops/reset_op.py`. Do not
+    create, read, or modify any other file.
+  - Use only the standard library plus the one import shown in the exact
+    content block. No other imports.
+  - Do not catch exceptions from `run_git`; call it directly as shown.
+  - Do not add logging, type-checking guards, or any error handling beyond
+    what is shown in the exact content block.
+  - The file must be valid Python 3 source, syntactically complete, with no
+    placeholder text such as `TODO` or `pass  # implement`.
+  - Final file line count is 59 lines, well under the 400-line limit.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.reset_op
+  expected: >
+    The module imports without error once code_analysis/core/git_ops/common.py
+    exists (created by a sibling task), and exposes the module-level names
+    MODE_SOFT, MODE_MIXED, MODE_HARD, VALID_MODES, and a callable
+    _build_would_lose_report accepting root_dir and target and returning a
+    dict with keys uncommitted_changes and commits_to_drop.
+status: frozen

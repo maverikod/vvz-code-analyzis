@@ -1,0 +1,139 @@
+meta:
+  plan: git-spec
+  artifact: t_concept_matrix
+  purpose: >
+    Coverage-contract matrix mapping every tactical step to the concept_ids
+    it references, plus a per-global-step summary proving that the union of
+    its tactical steps' concepts equals that global step's own concepts list
+    exactly (tactical_step_creation_standard.yaml check t12). Binding on
+    Phase B: atomic-step authoring for a given tactical step must stay within
+    that step's concepts list.
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+tactical_steps:
+- step_id: G-002/T-001
+  concepts:
+  - C-009
+- step_id: G-002/T-002
+  concepts:
+  - C-009
+- step_id: G-003/T-001
+  concepts:
+  - C-010
+- step_id: G-003/T-002
+  concepts:
+  - C-011
+- step_id: G-003/T-003
+  concepts:
+  - C-012
+  - C-013
+- step_id: G-004/T-001
+  concepts:
+  - C-014
+  - C-015
+  - C-016
+- step_id: G-004/T-002
+  concepts:
+  - C-017
+- step_id: G-005/T-001
+  concepts:
+  - C-018
+  - C-019
+- step_id: G-005/T-002
+  concepts:
+  - C-020
+- step_id: G-006/T-001
+  concepts:
+  - C-026
+- step_id: G-006/T-002
+  concepts:
+  - C-022
+  - C-027
+- step_id: G-006/T-003
+  concepts:
+  - C-021
+  - C-023
+- step_id: G-006/T-004
+  concepts:
+  - C-001
+  - C-002
+  - C-028
+  - C-029
+per_gs_summary:
+  G-002:
+    gs_concepts:
+    - C-009
+    union_ts_concepts:
+    - C-009
+    equals_gs_concepts: true
+  G-003:
+    gs_concepts:
+    - C-010
+    - C-011
+    - C-012
+    - C-013
+    union_ts_concepts:
+    - C-010
+    - C-011
+    - C-012
+    - C-013
+    equals_gs_concepts: true
+  G-004:
+    gs_concepts:
+    - C-014
+    - C-015
+    - C-016
+    - C-017
+    union_ts_concepts:
+    - C-014
+    - C-015
+    - C-016
+    - C-017
+    equals_gs_concepts: true
+  G-005:
+    gs_concepts:
+    - C-018
+    - C-019
+    - C-020
+    union_ts_concepts:
+    - C-018
+    - C-019
+    - C-020
+    equals_gs_concepts: true
+  G-006:
+    gs_concepts:
+    - C-001
+    - C-002
+    - C-021
+    - C-022
+    - C-023
+    - C-026
+    - C-027
+    - C-028
+    - C-029
+    union_ts_concepts:
+    - C-001
+    - C-002
+    - C-021
+    - C-022
+    - C-023
+    - C-026
+    - C-027
+    - C-028
+    - C-029
+    equals_gs_concepts: true
+notes: >
+  G-002/T-001 and G-002/T-002 both legitimately reference C-009: this is not
+  an independence (t13) violation because the two steps do different work on
+  different entities. T-001 defines the repository-resolution and
+  availability-outcome protocol shared by the whole read-operation group
+  (entity: read_repo_availability_protocol); T-002 defines the concrete
+  seven-operation read set and its per-operation structured result shape
+  (entity: git_read_operation_set). Neither creates or modifies the other's
+  entity, satisfying the independence_criterion in
+  tactical_step_creation_standard.yaml (shared concept_id reference is not
+  overlap). G-001-commit-on-write and its three tactical steps (T-001, T-002,
+  T-003) were excised from plan scope by explicit user decision on
+  2026-07-03; archived at
+  docs/plans/git-spec/_archive/G-001-commit-on-write/. Remaining
+  per_gs_summary covers G-002..G-006 (5 global steps, 13 tactical steps).

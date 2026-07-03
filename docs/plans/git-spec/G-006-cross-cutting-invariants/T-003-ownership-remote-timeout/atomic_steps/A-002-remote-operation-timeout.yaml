@@ -1,0 +1,191 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: Remote operation timeout bound
+target_file: code_analysis/core/project_git/remote_timeout.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-023
+prompt: |
+  Create a new Python source file at the exact project-relative path
+  code_analysis/core/project_git/remote_timeout.py using operation
+  create_file. The file does not exist yet. Do not assume any pre-existing
+  content. Do not read, create, or modify any other file. Do not import
+  anything from code_analysis.core.project_git or any other project_git
+  module; this file has no internal project dependencies.
+
+  MRS excerpt (machine_spec concept C-023, quoted verbatim):
+  concept_id: C-023
+  name: RemoteTimeout
+  definition: "The invariant bounding remote git and github operations by a
+  configured timeout with no in-operation retry."
+  properties:
+    bounded_by: configured_timeout
+    on_exceed: distinct_timeout_outcome
+    in_operation_retry: false
+  source_labels: ['{a3b4}']
+  Source label {a3b4} text, quoted verbatim: "Remote git and GitHub
+  operations are bounded by a configured timeout; exceeding it yields a
+  distinct timeout outcome with no in-operation retry."
+
+  Configuration access background (do not deviate from this): the project
+  reads its JSON configuration as a plain dict via
+  code_analysis.core.storage_paths.load_raw_config(config_path) or via the
+  static method
+  code_analysis.commands.base_mcp_command.BaseMCPCommand._get_raw_config()
+  (no arguments, returns Dict[str, Any]), and both return the same full
+  config dict shape: a top-level key "code_analysis" whose value is a
+  mapping of section names to section content. This file does not call
+  either of those functions itself; it only reads values out of a
+  config_data mapping that its caller already obtained and passes in as a
+  parameter.
+
+  Write the file with exactly the following five parts, in this order, and
+  nothing else:
+
+  PART 1 — module docstring (first statement in the file, non-empty), exactly:
+  """
+  Remote operation timeout bound for git and GitHub remote-contacting operations.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  PART 2 — imports, exactly these two lines and no others:
+  import subprocess
+  from typing import Any, List, Mapping, Optional, Tuple
+
+  PART 3 — module-level constants, exactly these four lines and no others:
+  DEFAULT_REMOTE_TIMEOUT_SECONDS = 30
+  REMOTE_TIMEOUT_OUTCOME = "GIT_REMOTE_TIMEOUT"
+  CONFIG_SECTION_GIT = "git"
+  CONFIG_KEY_REMOTE_TIMEOUT_SECONDS = "remote_timeout_seconds"
+
+  PART 4 — exactly one module-level function with this exact signature:
+  def get_remote_timeout_seconds_from_config(
+      config_data: Optional[Mapping[str, Any]] = None,
+  ) -> int:
+
+  Function body requirements (implement exactly this logic, no more, no less):
+  - If config_data is falsy (None or empty mapping): return
+    DEFAULT_REMOTE_TIMEOUT_SECONDS immediately.
+  - Look up config_data.get("code_analysis"). If the result is not a
+    Mapping instance (use isinstance check against
+    typing.Mapping — i.e. collections.abc.Mapping via typing.Mapping):
+    return DEFAULT_REMOTE_TIMEOUT_SECONDS immediately.
+  - From that code_analysis mapping, look up
+    .get(CONFIG_SECTION_GIT) (i.e. the "git" key). If the result is not a
+    Mapping instance: return DEFAULT_REMOTE_TIMEOUT_SECONDS immediately.
+  - From that git section mapping, look up
+    .get(CONFIG_KEY_REMOTE_TIMEOUT_SECONDS) (i.e. the
+    "remote_timeout_seconds" key) and store it in a local variable named
+    value.
+  - If value is not an instance of (int, float), or value is an instance of
+    bool, or value <= 0: return DEFAULT_REMOTE_TIMEOUT_SECONDS.
+  - Otherwise return int(value).
+
+  The function's docstring must be exactly this Google-style docstring:
+  """
+  Read the configured remote operation timeout, in seconds, from config.
+
+  Looks at code_analysis.git.remote_timeout_seconds. This bound applies to
+  every remote-contacting git operation (fetch, pull, push) and every
+  GitHub HTTP API operation. If config_data is None, the code_analysis key
+  is missing or not a mapping, the git key is missing or not a mapping, or
+  remote_timeout_seconds is missing, not a positive number, or a bool, the
+  function falls back to DEFAULT_REMOTE_TIMEOUT_SECONDS.
+
+  Args:
+      config_data: Full config dict as returned by
+          code_analysis.core.storage_paths.load_raw_config or by
+          code_analysis.commands.base_mcp_command.BaseMCPCommand._get_raw_config().
+          If None, returns DEFAULT_REMOTE_TIMEOUT_SECONDS.
+
+  Returns:
+      The configured timeout in seconds as a positive int, or
+      DEFAULT_REMOTE_TIMEOUT_SECONDS when unset or invalid.
+  """
+
+  PART 5 — exactly one more module-level function with this exact signature:
+  def run_remote_git_subprocess(
+      args: List[str],
+      cwd: str,
+      timeout_seconds: int,
+  ) -> Tuple[bool, Optional[str], Optional[str]]:
+
+  Function body requirements (implement exactly this logic, no more, no less):
+  - Perform exactly one subprocess invocation: call
+    subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+    timeout=timeout_seconds) inside a try block.
+  - This function must never call subprocess.run, or any other invocation,
+    more than once. It must never retry the command within this function
+    under any outcome (success, non-zero exit, or timeout).
+  - Catch subprocess.TimeoutExpired specifically: on that exception, return
+    the tuple (False, None, REMOTE_TIMEOUT_OUTCOME) immediately, and do not
+    attempt the subprocess call again.
+  - If the call completes without raising and result.returncode != 0:
+    return the tuple (False, None, result.stderr).
+  - If the call completes without raising and result.returncode == 0:
+    return the tuple (True, result.stdout, None).
+
+  The function's docstring must be exactly this Google-style docstring:
+  """
+  Run one remote-contacting git subprocess invocation bounded by a timeout.
+
+  Executes args as a single subprocess.run call with timeout_seconds as the
+  upper bound applied to that one invocation. Performs exactly one
+  invocation; it never retries the command within this call regardless of
+  outcome (success, non-zero exit, or timeout). When the invocation exceeds
+  timeout_seconds, subprocess.TimeoutExpired is caught and mapped to the
+  distinct timeout outcome held in REMOTE_TIMEOUT_OUTCOME
+  ("GIT_REMOTE_TIMEOUT"). When the process exits with a non-zero return
+  code but did not time out, the captured stderr text is returned as the
+  error. On success, the captured stdout text is returned.
+
+  Args:
+      args: Full command argument list to execute, e.g.
+          ["git", "fetch", "origin"]. The first element is expected to be
+          "git", but this function does not validate that; it passes args
+          through to subprocess.run unchanged.
+      cwd: Working directory (the repository root) the command runs in.
+      timeout_seconds: The upper bound, in seconds, applied to this single
+          invocation. Expected to be a positive int, typically obtained
+          from get_remote_timeout_seconds_from_config.
+
+  Returns:
+      A tuple (success, output, outcome). On success:
+      (True, stdout_text, None). On non-timeout failure:
+      (False, None, stderr_text). On timeout:
+      (False, None, "GIT_REMOTE_TIMEOUT").
+  """
+
+  Additional constraints, all mandatory:
+  - The file contains exactly the four constants listed in PART 3 and
+    exactly the two functions listed in PART 4 and PART 5. Do not add any
+    other function, class, constant, or import beyond what is listed above.
+  - Do not add a class. Do not add a __main__ block. Do not add logging.
+  - Leave exactly two blank lines between top-level statements (after the
+    constants block, and between the two functions), per standard
+    module-level spacing.
+  - The file must be valid Python 3 source, parse without syntax errors,
+    and stay well under 400 lines (the specified content is well under 100
+    lines).
+  - Every parameter and the return type of both functions must carry the
+    exact type annotations shown in the signatures above.
+  - run_remote_git_subprocess must not call
+    get_remote_timeout_seconds_from_config itself; timeout_seconds is
+    supplied by its caller as a plain int parameter.
+verification:
+  type: import
+  target: code_analysis.core.project_git.remote_timeout
+  expected: Importing the module succeeds with no import or syntax errors.
+    Calling the config-reading function with no configuration supplied
+    returns the default timeout value of thirty seconds. Calling it with a
+    configuration that sets the git section's remote-timeout key to a
+    specific positive number returns that same number as the timeout in
+    seconds. Calling the subprocess-running function with a command that
+    exceeds the given timeout returns a failure result whose outcome equals
+    the distinct remote-timeout outcome code, with the underlying command
+    invoked exactly once and never retried.
+status: frozen

@@ -1,0 +1,55 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Create git_ops package marker
+target_file: code_analysis/commands/git_ops/__init__.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+  - C-009
+prompt: |
+  Create a new file at the exact project-relative path
+  code_analysis/commands/git_ops/__init__.py
+
+  Operation: create_file. The file and its parent directory
+  code_analysis/commands/git_ops/ do not exist yet; create the directory and
+  the file.
+
+  Write EXACTLY the following content into the file, byte for byte, and
+  nothing else:
+
+  """
+  git_ops: project-scoped git command block; distinct from the edit-session
+  git facility.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  Constraints (all mandatory, no exceptions):
+  - The file contains only a single module-level triple-quoted docstring
+    with the exact text shown above (two sentences on the first paragraph,
+    a blank line, then the Author line, then the email line), followed by a
+    trailing newline.
+  - Do not add any import statements.
+  - Do not add any code, classes, functions, constants, or `__all__`.
+  - Do not add any comments, blank files headers, or content beyond the
+    docstring shown above.
+  - The resulting file must be at most 15 lines long.
+  - Do not create or modify any file other than
+    code_analysis/commands/git_ops/__init__.py.
+
+  Context (why this file exists, no action required beyond what is
+  specified above): this package will hold project-scoped git commands
+  (concept C-009, GitReadOps, from the git-spec machine-readable
+  specification: "The read-only git inspection operations that resolve and
+  confirm the repository before reporting structured results."). This
+  package is intentionally separate from the pre-existing edit-session git
+  facility elsewhere in the codebase.
+verification:
+  type: import
+  target: code_analysis.commands.git_ops
+  expected: >-
+    The package imports cleanly with no errors and exposes no public
+    symbols beyond the module docstring.
+status: frozen

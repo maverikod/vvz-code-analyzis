@@ -1,0 +1,310 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Add guarded reset_repo entry function to reset_op.py
+target_file: code_analysis/core/git_ops/reset_op.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-011
+object_id: hard_reset_guard
+source_labels:
+- '{a7b8}'
+prompt: |
+  Modify the existing Python source file at the exact path
+  `code_analysis/core/git_ops/reset_op.py` (operation: modify_file). Do not
+  create, read, or modify any other file, including
+  `code_analysis/core/git_ops/__init__.py` and
+  `code_analysis/core/git_ops/common.py` (both belong to a different task and
+  already exist).
+
+  The file currently contains EXACTLY the following content (this is the full
+  current content, 59 lines):
+
+  ```python
+  """Guarded git reset operation for the project-scoped git block (T-002 hard-reset-guard).
+
+  Implements C-011 HardResetGuard for the discarding (hard) reset mode: a hard
+  reset requires an explicit mode selection of "hard" together with an explicit
+  confirm=True. Without confirmation, the operation performs a dry-run only: it
+  reports what would be lost (uncommitted changes via `git status --porcelain`
+  and commits that would be dropped via `git rev-list <target>..HEAD`) and moves
+  nothing. The preserving modes ("soft", "mixed") are never guarded. This module
+  never contacts a remote and treats `target` as an opaque ref (not path-confined).
+  """
+  from __future__ import annotations
+
+  from code_analysis.core.git_ops.common import run_git
+
+  MODE_SOFT = "soft"
+  MODE_MIXED = "mixed"
+  MODE_HARD = "hard"
+  VALID_MODES = (MODE_SOFT, MODE_MIXED, MODE_HARD)
+
+
+  def _build_would_lose_report(root_dir: str, target: str) -> dict:
+      """Build a report of what a hard reset to `target` would discard.
+
+      Runs two read-only git inspections against the repository at `root_dir`:
+      - `git status --porcelain` to list uncommitted working-tree/staged changes.
+      - `git rev-list <target>..HEAD` to list commits on HEAD that are not
+        reachable from `target` (i.e. commits that would be dropped by moving
+        the current branch to `target`).
+
+      :param root_dir: str - absolute path to the project's resolved repository root.
+      :param target: str - opaque ref or revision the reset would move the current
+          branch to. Not validated or path-confined; passed to git as-is.
+      :return: dict - {"uncommitted_changes": list[str], "commits_to_drop": list[str]}.
+          "uncommitted_changes" is the list of non-empty lines from the stdout of
+          `git status --porcelain` (each line exactly as returned by git, with
+          surrounding whitespace preserved, empty lines dropped).
+          "commits_to_drop" is the list of non-empty lines from the stdout of
+          `git rev-list <target>..HEAD` (each line is one commit hash, empty
+          lines dropped).
+          If a git command fails (non-zero return code), the corresponding list
+          is an empty list.
+      """
+      would_lose: dict = {"uncommitted_changes": [], "commits_to_drop": []}
+
+      status_code, status_out, _status_err = run_git(root_dir, ["status", "--porcelain"])
+      if status_code == 0:
+          would_lose["uncommitted_changes"] = [
+              line for line in status_out.splitlines() if line.strip()
+          ]
+
+      revlist_code, revlist_out, _revlist_err = run_git(
+          root_dir, ["rev-list", f"{target}..HEAD"]
+      )
+      if revlist_code == 0:
+          would_lose["commits_to_drop"] = [
+              line for line in revlist_out.splitlines() if line.strip()
+          ]
+
+      return would_lose
+  ```
+
+  Replace the ENTIRE file content with the following new content, verbatim
+  (this is the complete target file after this step, 150 lines — it consists
+  of the current content shown above with exactly two changes: the import
+  line now also imports `ensure_local_repo`, and one new function
+  `reset_repo` is appended at the end):
+
+  ```python
+  """Guarded git reset operation for the project-scoped git block (T-002 hard-reset-guard).
+
+  Implements C-011 HardResetGuard for the discarding (hard) reset mode: a hard
+  reset requires an explicit mode selection of "hard" together with an explicit
+  confirm=True. Without confirmation, the operation performs a dry-run only: it
+  reports what would be lost (uncommitted changes via `git status --porcelain`
+  and commits that would be dropped via `git rev-list <target>..HEAD`) and moves
+  nothing. The preserving modes ("soft", "mixed") are never guarded. This module
+  never contacts a remote and treats `target` as an opaque ref (not path-confined).
+  """
+  from __future__ import annotations
+
+  from code_analysis.core.git_ops.common import ensure_local_repo, run_git
+
+  MODE_SOFT = "soft"
+  MODE_MIXED = "mixed"
+  MODE_HARD = "hard"
+  VALID_MODES = (MODE_SOFT, MODE_MIXED, MODE_HARD)
+
+
+  def _build_would_lose_report(root_dir: str, target: str) -> dict:
+      """Build a report of what a hard reset to `target` would discard.
+
+      Runs two read-only git inspections against the repository at `root_dir`:
+      - `git status --porcelain` to list uncommitted working-tree/staged changes.
+      - `git rev-list <target>..HEAD` to list commits on HEAD that are not
+        reachable from `target` (i.e. commits that would be dropped by moving
+        the current branch to `target`).
+
+      :param root_dir: str - absolute path to the project's resolved repository root.
+      :param target: str - opaque ref or revision the reset would move the current
+          branch to. Not validated or path-confined; passed to git as-is.
+      :return: dict - {"uncommitted_changes": list[str], "commits_to_drop": list[str]}.
+          "uncommitted_changes" is the list of non-empty lines from the stdout of
+          `git status --porcelain` (each line exactly as returned by git, with
+          surrounding whitespace preserved, empty lines dropped).
+          "commits_to_drop" is the list of non-empty lines from the stdout of
+          `git rev-list <target>..HEAD` (each line is one commit hash, empty
+          lines dropped).
+          If a git command fails (non-zero return code), the corresponding list
+          is an empty list.
+      """
+      would_lose: dict = {"uncommitted_changes": [], "commits_to_drop": []}
+
+      status_code, status_out, _status_err = run_git(root_dir, ["status", "--porcelain"])
+      if status_code == 0:
+          would_lose["uncommitted_changes"] = [
+              line for line in status_out.splitlines() if line.strip()
+          ]
+
+      revlist_code, revlist_out, _revlist_err = run_git(
+          root_dir, ["rev-list", f"{target}..HEAD"]
+      )
+      if revlist_code == 0:
+          would_lose["commits_to_drop"] = [
+              line for line in revlist_out.splitlines() if line.strip()
+          ]
+
+      return would_lose
+
+
+  def reset_repo(root_dir: str, target: str, mode: str, confirm: bool = False) -> dict:
+      """Reset the current branch of the repository at `root_dir` to `target`.
+
+      Implements the C-011 HardResetGuard: only `mode == MODE_HARD` is guarded.
+      A hard reset without `confirm=True` performs no mutation: it returns a
+      dry-run refusal naming what would be lost, built by
+      `_build_would_lose_report`. A hard reset with `confirm=True` proceeds and
+      returns the new repository state. The preserving modes (`MODE_SOFT`,
+      `MODE_MIXED`) are never guarded and always proceed directly regardless of
+      `confirm`. `target` is treated as an opaque ref: it is never path-confined
+      or validated as a filesystem path. This function never contacts a remote.
+
+      :param root_dir: str - absolute path to the project's resolved repository root.
+      :param target: str - opaque ref or revision the reset moves the current
+          branch to.
+      :param mode: str - one of MODE_SOFT ("soft"), MODE_MIXED ("mixed"),
+          MODE_HARD ("hard"). Any other value is rejected with a failure outcome.
+      :param confirm: bool - explicit confirmation required for mode == MODE_HARD;
+          defaults to False. Ignored for MODE_SOFT and MODE_MIXED.
+      :return: dict - exactly one of the following shapes:
+          Not a repo / git unavailable: the dict returned by `ensure_local_repo`
+              when it is not None, e.g.
+              {"success": False, "code": "GIT_NOT_A_REPO", "message": str} or
+              {"success": False, "code": "GIT_NOT_AVAILABLE", "message": str}.
+          Invalid mode:
+              {"success": False, "code": "GIT_RESET_INVALID_MODE", "message": str}
+              where message names the invalid mode value received.
+          Hard reset without confirmation (guarded refusal, repository unchanged):
+              {"success": True, "performed": False,
+               "code": "GIT_RESET_CONFIRMATION_REQUIRED",
+               "would_lose": {"uncommitted_changes": list[str], "commits_to_drop": list[str]}}
+              where "would_lose" is exactly the dict returned by
+              `_build_would_lose_report(root_dir, target)`.
+          Reset command failure:
+              {"success": False, "code": "GIT_RESET_FAILED", "message": str}
+              where message is the stderr text produced by the failed `git reset`
+              invocation.
+          Successful reset:
+              {"success": True, "performed": True, "mode": str, "target": str,
+               "new_head": str, "branch": str}
+              where "mode" and "target" echo the input parameters, "new_head" is
+              the stripped stdout of `git rev-parse HEAD` run after the reset
+              (empty string if that command fails), and "branch" is the stripped
+              stdout of `git rev-parse --abbrev-ref HEAD` run after the reset
+              (empty string if that command fails).
+      """
+      not_repo = ensure_local_repo(root_dir)
+      if not_repo is not None:
+          return not_repo
+
+      if mode not in VALID_MODES:
+          return {
+              "success": False,
+              "code": "GIT_RESET_INVALID_MODE",
+              "message": f"Invalid reset mode: {mode!r}. Must be one of {VALID_MODES!r}.",
+          }
+
+      if mode == MODE_HARD and not confirm:
+          return {
+              "success": True,
+              "performed": False,
+              "code": "GIT_RESET_CONFIRMATION_REQUIRED",
+              "would_lose": _build_would_lose_report(root_dir, target),
+          }
+
+      reset_code, _reset_out, reset_err = run_git(root_dir, ["reset", f"--{mode}", target])
+      if reset_code != 0:
+          return {
+              "success": False,
+              "code": "GIT_RESET_FAILED",
+              "message": reset_err,
+          }
+
+      head_code, head_out, _head_err = run_git(root_dir, ["rev-parse", "HEAD"])
+      new_head = head_out.strip() if head_code == 0 else ""
+
+      branch_code, branch_out, _branch_err = run_git(
+          root_dir, ["rev-parse", "--abbrev-ref", "HEAD"]
+      )
+      branch = branch_out.strip() if branch_code == 0 else ""
+
+      return {
+          "success": True,
+          "performed": True,
+          "mode": mode,
+          "target": target,
+          "new_head": new_head,
+          "branch": branch,
+      }
+  ```
+
+  End of exact target content (150 lines). Write the file so its content is
+  exactly this, nothing more, nothing less: no extra functions, no extra
+  imports, no comments beyond the ones shown, no trailing blank lines beyond
+  the single newline that ends the last line.
+
+  Context for traceability (do not add anything from this section to the file
+  beyond what is already in the exact content block above):
+
+  The two names imported from `code_analysis.core.git_ops.common` refer to
+  functions in a sibling module created by a different task, with these exact
+  signatures and contracts (already correctly used in the exact content
+  above):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:`
+    — runs `git -C <root_dir> <args>` via subprocess (no shell), returns
+    `(returncode, stdout, stderr)`.
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns `None`
+    when git is available and `root_dir` is a work tree; otherwise returns
+    `{"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}`.
+
+  Machine-readable specification excerpt (MRS), concept C-011, the only
+  concept this file implements, quoted verbatim from docs/plans/git-spec/spec.yaml:
+  ```
+  concept_id: C-011
+  name: HardResetGuard
+  definition: The guard that makes a hard reset require explicit destructive mode
+    and explicit confirmation, otherwise reporting only.
+  properties:
+    destructive: true
+    requires:
+    - explicit_mode_hard
+    - explicit_confirm
+    without_confirm: dry_run_report_only
+  source_labels:
+  - '{a7b8}'
+  ```
+  Source spec text for label {a7b8} (docs/plans/git-spec/source_spec.md): "A
+  hard reset is destructive and is gated: it requires an explicit
+  destructive-mode selection together with an explicit confirmation. Absent
+  the confirmation, the operation only reports what it would change without
+  moving the repository state."
+
+  Constraints (all mandatory):
+  - Target file: exactly `code_analysis/core/git_ops/reset_op.py`. Do not
+    create, read, or modify any other file.
+  - Use only the standard library plus the two imports shown in the exact
+    content block. No other imports.
+  - Do not catch exceptions from `run_git` or `ensure_local_repo`; call them
+    directly as shown.
+  - Do not add logging, type-checking guards, or any error handling beyond
+    what is shown in the exact content block.
+  - Do not rename, remove, or change the behaviour of `_build_would_lose_report`;
+    reproduce it unchanged as shown.
+  - The file must be valid Python 3 source, syntactically complete, with no
+    placeholder text such as `TODO` or `pass  # implement`.
+  - Final file line count is 150 lines, well under the 400-line limit.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.reset_op.reset_repo
+  expected: >
+    The module imports without error once code_analysis/core/git_ops/common.py
+    exists (created by a sibling task), and exposes a callable reset_repo with
+    parameters root_dir, target, mode, and confirm (confirm defaulting to
+    False), alongside the previously existing MODE_SOFT, MODE_MIXED,
+    MODE_HARD, VALID_MODES, and _build_would_lose_report.
+status: frozen

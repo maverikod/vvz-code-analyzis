@@ -1,0 +1,56 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Create git_ops package marker
+target_file: code_analysis/core/git_ops/__init__.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/__init__.py` with EXACTLY the
+  following content (a single module docstring, nothing else):
+
+  """git_ops package: local git working-tree and history mutation operations
+  for a registered project's repository. Provides staging, committing, branch
+  switch/create/delete, path restore, stash, merge, cherry-pick, and tag
+  operations that act only on the resolved local repository and never
+  contact a remote.
+  """
+
+  Constraints:
+  - The file must contain exactly this triple-quoted module docstring and
+    nothing else: no imports, no code, no blank line before the opening
+    triple-quote, no trailing content after the closing triple-quote other
+    than a single trailing newline.
+  - Do not add any import statement.
+  - Do not add any function, class, or variable.
+  - Do not add any comment beyond the docstring text shown above.
+
+  Context (machine_spec excerpt, concept_id C-010, for traceability only —
+  this file is a package marker and implements no operation itself):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This package (code_analysis/core/git_ops/) implements the C-010
+    operations owned by tactical step G-003/T-001 only: add, commit, switch,
+    restore, branch_create, branch_delete, stash, merge, cherry_pick, tag.
+    reset and revert are owned by sibling tactical steps G-003/T-002 and
+    G-003/T-003 and must never appear in this package.
+verification:
+  type: import
+  target: code_analysis.core.git_ops
+  expected: Importing the code_analysis.core.git_ops package succeeds without
+    raising any exception, confirming it is a valid, importable Python
+    package containing only the specified docstring.
+status: frozen

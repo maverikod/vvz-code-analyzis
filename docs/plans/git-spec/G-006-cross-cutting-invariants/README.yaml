@@ -33,5 +33,9 @@ source_labels:
 - '{f9g0}'
 - '{h1i2}'
 depends_on: []
-tactical_steps: []
-status: draft
+tactical_steps:
+- T-001
+- T-002
+- T-003
+- T-004
+status: frozen

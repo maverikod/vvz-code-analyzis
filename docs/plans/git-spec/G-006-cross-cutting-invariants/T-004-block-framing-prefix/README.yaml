@@ -36,5 +36,10 @@ outputs:
   type: namespace
   description: A command namespace under the reserved prefix, disjoint from edit-session
     git commands.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+status: frozen

@@ -1,0 +1,113 @@
+step_id: A-001
+parent_tactical_step: T-004
+name: Project-git package boundary module and edit-session distinction
+target_file: code_analysis/core/project_git/__init__.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-028
+prompt: |
+  Create the new file at the exact project-relative path
+  code_analysis/core/project_git/__init__.py with operation create_file (the
+  file and its parent directory code_analysis/core/project_git/ do not exist
+  yet; create the directory as part of creating the file).
+
+  CONTEXT (background only, do not restate it in the file). This file is the
+  package boundary module for a new package that will hold the project-scoped
+  git capability block: commands that operate on the filesystem working tree
+  of a registered project via subprocess git. A separate, pre-existing
+  facility called the edit-session git facility already exists in this code
+  base under code_analysis/commands/universal_file_edit/, with commands named
+  exactly: session_git_status, session_git_log, session_git_diff,
+  session_git_show, session_git_revert. That pre-existing facility operates on
+  a temporary per-edit-session repository identified by an edit session — a
+  different repository than the project's own working tree. The new package
+  being created here is parallel to and fully independent of that pre-existing
+  facility: it neither replaces nor alters it, and the pre-existing facility is
+  not modified by this file in any way. This file's sole job is to state that
+  boundary/distinction as the package's module docstring and to declare an
+  empty public export list, because the concrete command modules of this new
+  package are authored by other, separate tactical steps and are not yet
+  known.
+
+  MRS EXCERPT (machine_spec concept referenced by this file — quote content,
+  for grounding only, do not copy into the file verbatim):
+  concept_id: C-028
+  name: DistinctFromEditSessionGit
+  definition: "The separation establishing the project-scoped git block as
+    parallel to and independent of the pre-existing edit-session git
+    facility."
+  properties:
+    project_scoped_git_operates_on: registered_project_working_tree
+    edit_session_git_operates_on: temporary_per_edit_session_repository
+    parallel_independent: true
+    neither_replaces_nor_alters_edit_session_facility: true
+  source_label: "{f9g0} The project-scoped git block is distinct from the
+    pre-existing edit-session git facility, which operates on a temporary
+    per-edit-session repository identified by an edit session. The new block
+    operates on the registered project's own working tree. The two are
+    parallel and independent; the new block neither replaces nor alters the
+    edit-session facility."
+
+  REQUIRED FILE CONTENT. Write the file with EXACTLY this content, character
+  for character (the outer fence below is not part of the file; do not
+  include triple-backtick fences in the actual file):
+
+  ```
+  """
+  Project-scoped git capability package boundary.
+
+  This package implements the project-scoped git capability block: commands
+  that operate on the filesystem working tree of a registered project via
+  subprocess git. It is parallel to and independent of the pre-existing
+  edit-session git facility (commands named session_git_status,
+  session_git_log, session_git_diff, session_git_show, session_git_revert),
+  which instead operates on a temporary per-edit-session repository
+  identified by an edit session. The two facilities are independent: this
+  package neither replaces nor alters the edit-session git facility, and the
+  edit-session git facility is untouched by anything in this package.
+
+  This module intentionally exports nothing yet: the concrete command modules
+  of this package are authored by other tactical steps of the git-spec plan
+  and are added to __all__ when they land.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  __all__: list = []
+  ```
+
+  CONSTRAINTS (all mandatory, no exceptions):
+  - The file must start with the module docstring shown above, as the first
+    statement in the file (a plain triple-double-quoted string, not a
+    comment).
+  - The module docstring text must be reproduced exactly as shown, including
+    the blank lines between paragraphs and the trailing "Author:" and
+    "email:" lines.
+  - After the docstring, the file contains exactly two more lines in this
+    order: a blank line is allowed between sections as shown, then
+    `from __future__ import annotations`, then a blank line, then
+    `__all__: list = []`.
+  - Do not add any other imports, classes, functions, constants, or
+    executable code beyond what is shown above.
+  - Do not import or reference any other module (no `from .block import ...`,
+    no `from .prefix import ...`, nothing else) — __all__ stays exactly the
+    empty list `[]`.
+  - Encoding is UTF-8, no BOM. Use LF line endings.
+  - Do not create, modify, or read any file other than
+    code_analysis/core/project_git/__init__.py.
+verification:
+  type: import
+  target: code_analysis.core.project_git
+  expected: Importing the code_analysis.core.project_git package succeeds without
+    raising any exception. The package's module docstring documents the distinction
+    from the pre-existing edit-session git facility, naming both what the new package
+    operates on (a registered project's own working tree) and what the edit-session
+    facility operates on (a temporary per-edit-session repository), and states that
+    neither replaces nor alters the other. The package's __all__ attribute equals
+    an empty list.
+status: frozen

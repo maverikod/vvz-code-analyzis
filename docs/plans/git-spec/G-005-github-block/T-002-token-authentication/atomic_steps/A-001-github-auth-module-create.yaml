@@ -1,0 +1,208 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create github_auth module with token resolution
+target_file: code_analysis/core/github_auth.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-020
+prompt: |
+  Create the new file code_analysis/core/github_auth.py
+  (operation: create_file). The file does not exist yet; do not assume any
+  pre-existing content in it.
+
+  Machine-spec excerpt (the only concept this step realizes):
+    concept_id: C-020
+    name: GithubTokenAuth
+    definition: The GitHub authentication mechanism using a personal access
+      token referenced by path, failing fast when unconfigured.
+    properties:
+      mechanism: personal_access_token
+      token_bytes_in_config: false
+      token_referenced_by: path
+      config_section: code_analysis.github
+      when_unconfigured: GITHUB_NOT_CONFIGURED
+
+  Purpose: this module is the whole token-handling surface of the GitHub
+  command block. It resolves the server's GitHub personal access token from
+  configuration and builds the HTTP headers used by every GitHub API
+  operation. It is separate from the SSH identity used by plain git remote
+  operations.
+
+  Constraints (all mandatory):
+  1. The config section code_analysis.github stores only a filesystem PATH
+     to the token file under the canonical key token_path. Token bytes never
+     appear in configuration.
+  2. The token value must never appear in any log statement, error string,
+     exception message, or returned outcome. It may appear only inside the
+     returned Authorization header value. The module contains no logging at
+     all.
+  3. The token belongs to the server and is never derived from or supplied
+     by the caller of a GitHub operation.
+  4. Never prompt for input and never block waiting for credentials. When
+     the token cannot be resolved (section absent, token_path missing, token
+     file unreadable, or content empty after stripping surrounding
+     whitespace) return (None, "GITHUB_NOT_CONFIGURED").
+  5. Top-of-file imports, exactly: from pathlib import Path; from typing
+     import Any, Dict, Optional, Tuple; from
+     code_analysis.core.storage_paths import load_raw_config. The import of
+     get_config from mcp_proxy_adapter.config is intentionally lazy inside
+     _resolve_config_path and guarded by try/except.
+  6. load_raw_config has signature
+     load_raw_config(config_path: Path) -> dict[str, Any]; it parses the
+     JSON config file on disk and raises on JSON syntax errors, so every
+     call to it is wrapped in try/except that yields None on failure.
+  7. Public function signature, exactly:
+     def resolve_github_auth(
+         config_data: Optional[Dict[str, Any]] = None,
+     ) -> Tuple[Optional[Dict[str, str]], Optional[str]]
+     On success it returns (headers, None) with headers containing
+     Authorization ("Bearer " plus the stripped token), Accept
+     ("application/vnd.github+json"), and X-GitHub-Api-Version
+     ("2022-11-28"). When config_data is provided it is used as-is instead
+     of loading from disk.
+  8. Every function has full type annotations and a docstring documenting
+     every parameter (Args:) and the return value (Returns:). The module
+     docstring is the first statement in the file and ends with the lines
+     "Author: Vasiliy Zdanovskiy" and "email: vasilyvz@gmail.com".
+  9. Write the file with exactly the content below, nothing more and
+     nothing less.
+
+  File content:
+
+  """
+  GitHub token authentication for the GitHub command block.
+
+  Resolves the server's personal access token from configuration and builds
+  the HTTP headers used by every GitHub API operation. The configuration
+  section ``code_analysis.github`` stores only a filesystem path to the
+  token file (key ``token_path``); token bytes never live in configuration.
+  The token value is never logged, echoed, or embedded in any outcome; it
+  appears only in the returned Authorization header. This module is the
+  whole token-handling surface of the GitHub block and is separate from the
+  SSH identity used by plain git remote operations.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from pathlib import Path
+  from typing import Any, Dict, Optional, Tuple
+
+  from code_analysis.core.storage_paths import load_raw_config
+
+  CONFIG_SECTION_CODE_ANALYSIS = "code_analysis"
+  CONFIG_SECTION_GITHUB = "github"
+  CONFIG_KEY_TOKEN_PATH = "token_path"
+
+  GITHUB_NOT_CONFIGURED = "GITHUB_NOT_CONFIGURED"
+
+  GITHUB_API_ACCEPT = "application/vnd.github+json"
+  GITHUB_API_VERSION = "2022-11-28"
+
+
+  def _resolve_config_path() -> Path:
+      """
+      Resolve the active server config path.
+
+      Priority: the mcp_proxy_adapter global config path when available,
+      otherwise config.json in the current working directory.
+
+      Returns:
+          Absolute path to the active server config file.
+      """
+      try:
+          from mcp_proxy_adapter.config import get_config
+
+          cfg = get_config()
+          cfg_path = getattr(cfg, "config_path", None)
+          if isinstance(cfg_path, str) and cfg_path.strip():
+              return Path(cfg_path).expanduser().resolve()
+      except Exception:
+          pass
+      return (Path.cwd() / "config.json").resolve()
+
+
+  def _load_config_data() -> Optional[Dict[str, Any]]:
+      """
+      Load the raw server config dict from the active config path.
+
+      Returns:
+          Parsed config dict, or None when the config cannot be loaded.
+      """
+      try:
+          return load_raw_config(_resolve_config_path())
+      except Exception:
+          return None
+
+
+  def _read_token_file(token_path: str) -> Optional[str]:
+      """
+      Read the token file and return the stripped token value.
+
+      Args:
+          token_path: Filesystem path to the token file from configuration.
+
+      Returns:
+          Token with surrounding whitespace stripped, or None when the file
+          is unreadable or its content is empty after stripping.
+      """
+      try:
+          raw = Path(token_path).expanduser().read_text(encoding="utf-8")
+      except (OSError, ValueError):
+          return None
+      token = raw.strip()
+      return token if token else None
+
+
+  def resolve_github_auth(
+      config_data: Optional[Dict[str, Any]] = None,
+  ) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
+      """
+      Resolve GitHub API authentication headers from server configuration.
+
+      Locates the code_analysis.github config section, reads the token file
+      referenced by its token_path key, and builds the HTTP headers for the
+      GitHub API. The token value appears only in the Authorization header,
+      never in logs, error strings, or outcomes.
+
+      Args:
+          config_data: Full config dict. When None, the active server config
+              is loaded from disk.
+
+      Returns:
+          Tuple of (headers, outcome). On success, headers carries
+          Authorization, Accept, and X-GitHub-Api-Version and outcome is
+          None. When the github section is absent, token_path is missing,
+          the token file is unreadable, or its content is empty after
+          stripping, returns (None, "GITHUB_NOT_CONFIGURED").
+      """
+      data = config_data if config_data is not None else _load_config_data()
+      if not isinstance(data, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      ca = data.get(CONFIG_SECTION_CODE_ANALYSIS)
+      if not isinstance(ca, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      github_cfg = ca.get(CONFIG_SECTION_GITHUB)
+      if not isinstance(github_cfg, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      token_path = github_cfg.get(CONFIG_KEY_TOKEN_PATH)
+      if not isinstance(token_path, str) or not token_path.strip():
+          return (None, GITHUB_NOT_CONFIGURED)
+      token = _read_token_file(token_path)
+      if token is None:
+          return (None, GITHUB_NOT_CONFIGURED)
+      headers = {
+          "Authorization": "Bearer " + token,
+          "Accept": GITHUB_API_ACCEPT,
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      }
+      return (headers, None)
+verification:
+  type: import
+  target: code_analysis.core.github_auth
+  expected: The module imports cleanly. resolve_github_auth is callable; invoked
+    with an empty dict as config_data it returns a pair of no headers and the GITHUB_NOT_CONFIGURED
+    outcome string, and no secret material appears in the outcome.
+status: frozen

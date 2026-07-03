@@ -1,0 +1,194 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Create commit-intent migration guard module
+target_file: code_analysis/core/commit_intent_migration.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-024
+status: draft
+prompt: |
+  Create the new file `code_analysis/core/commit_intent_migration.py`.
+  Operation: create_file. This file does not exist yet; write it from scratch.
+  Do not assume any pre-existing content.
+
+  ## Purpose
+
+  This module implements a breaking migration: it removes the prior implicit
+  behaviour in which supplying a commit message alone (without any explicit
+  commit-intent flag) triggered a commit on write. After this migration, a
+  commit message supplied without commit-intent must be rejected rather than
+  silently producing a commit. The module provides a single reusable pre-write
+  guard function that a write path calls BEFORE any file content is written,
+  so a legacy caller that relied on the old implicit trigger fails loudly
+  (receives an explicit rejection) instead of having its message silently
+  accepted, and no file is written and no commit is produced in that case.
+
+  This module does NOT implement the opposite-direction rule (a commit message
+  being mandatory when the commit-intent flag IS set) — that is out of scope
+  for this file entirely; this file only implements the removal of the
+  message-only implicit trigger.
+
+  ## MRS excerpt (only the concept relevant to this file)
+
+  concept_id: C-024
+  name: ImplicitTriggerRemoval
+  definition: The breaking migration that removes the prior message-only commit
+    trigger so a message without intent is now rejected.
+  properties:
+    removed: message_only_implies_commit
+    after_change: message_without_intent_rejected
+    breaking: true
+    old_caller: fails_loudly
+  source_labels: ['{c5d6}']
+  source_spec text (label {c5d6}): "Introducing the explicit commit-intent flag
+  removes a prior implicit behaviour in which supplying a commit message alone
+  triggered a commit. After the change, a message without the flag is rejected
+  rather than silently committing, so any existing caller that relied on the
+  implicit behaviour fails loudly and must adopt the explicit flag."
+
+  ## Required file content
+
+  ### Module docstring
+
+  The file starts with a module-level docstring (triple double-quotes) whose
+  text states, in your own well-formed prose, that this module is a breaking
+  migration guard: it removes the prior implicit message-only commit trigger,
+  so that after this change a commit message supplied without the explicit
+  commit-intent flag is rejected instead of silently producing a commit, and
+  any caller that relied on the old implicit trigger now fails loudly. End the
+  docstring with exactly these two lines, each on its own line, as the final
+  lines of the docstring, matching this repository's module docstring
+  convention:
+
+  ```
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  ```
+
+  ### Imports
+
+  Exactly one import line, immediately after the module docstring:
+
+  ```python
+  from typing import Any, Dict, Optional
+  ```
+
+  No other imports are used or needed anywhere in this file.
+
+  ### Module-level constant
+
+  Define exactly this module-level constant, after the import line:
+
+  ```python
+  CODE_COMMIT_MESSAGE_WITHOUT_INTENT = "COMMIT_MESSAGE_WITHOUT_INTENT"
+  ```
+
+  ### Function
+
+  Define exactly one function with this exact signature:
+
+  ```python
+  def reject_message_without_intent(
+      commit_on_write: bool, commit_message: Optional[str]
+  ) -> Optional[Dict[str, Any]]:
+  ```
+
+  Parameter typing:
+  - `commit_on_write: bool` — the explicit per-write commit-intent flag as
+    resolved by the caller; True means the flag is set, False means the flag
+    is unset or absent.
+  - `commit_message: Optional[str]` — the caller-supplied commit message
+    value, or None when no message was supplied.
+
+  Return typing: `Optional[Dict[str, Any]]` — returns None when no rejection
+  applies (the write may proceed to its next step); returns a rejection
+  payload dictionary (see exact shape below) when the legacy implicit-trigger
+  condition is detected.
+
+  Docstring for this function (triple double-quotes, placed as the first
+  statement in the function body) must state, in prose:
+  - This function is the pre-write guard for the removed implicit
+    message-only commit trigger (breaking migration; MRS C-024).
+  - It must be called before any file content is written, so that when it
+    returns a rejection payload the caller writes no content and produces no
+    commit.
+  - It documents both parameters (`commit_on_write`, `commit_message`) with
+    their meaning as described above.
+  - It documents the return value: None when no rejection applies; otherwise
+    the exact rejection payload dictionary described below.
+
+  Function body — exact logic, no deviation:
+  1. Determine whether `commit_message` is a rejection-triggering message:
+     `commit_message` is an instance of `str` AND, after stripping leading
+     and trailing whitespace with `.strip()`, the result is non-empty.
+  2. If `commit_on_write` is `False` AND the message is a rejection-triggering
+     message as defined in step 1, return the rejection payload dictionary
+     shown exactly below (construct and return a new dict literal with
+     exactly this structure, keys, and values on every call — do not cache
+     or share a module-level mutable dict instance):
+
+  ```python
+  {
+      "code": "COMMIT_MESSAGE_WITHOUT_INTENT",
+      "message": (
+          "commit_message was supplied without commit_on_write; the "
+          "implicit message-only commit trigger has been removed — set "
+          "commit_on_write=true and supply commit_message to commit on "
+          "write"
+      ),
+      "details": {
+          "breaking_migration": True,
+          "removed_behaviour": "message_only_implies_commit",
+      },
+  }
+  ```
+
+  The `message` value above, once Python string-literal concatenation is
+  applied, must be exactly this single string (verify character-for-character,
+  including the em dash `—`):
+  `commit_message was supplied without commit_on_write; the implicit message-only commit trigger has been removed — set commit_on_write=true and supply commit_message to commit on write`
+
+  The `"code"` value must be exactly the string `"COMMIT_MESSAGE_WITHOUT_INTENT"`
+  — you may reference the module-level constant
+  `CODE_COMMIT_MESSAGE_WITHOUT_INTENT` defined above instead of repeating the
+  string literal, as long as the resulting value is identical.
+
+  3. In every other case (i.e. `commit_on_write` is `True`, or
+     `commit_message` is not a rejection-triggering message), return `None`.
+
+  ## Constraints (all mandatory, no exceptions)
+
+  - The file contains only: the module docstring, the single import line, the
+    module-level constant, and the single function described above. No
+    classes, no additional functions, no `__all__`, no `if __name__ ==
+    "__main__"` block, no logging, no side effects at import time beyond the
+    constant assignment.
+  - The function performs no file I/O, no network I/O, and calls no other
+    function or module — it is pure and self-contained.
+  - The function does not raise exceptions for any input combination; it only
+    returns `None` or the rejection payload dictionary.
+  - Do not implement, reference, or stub the opposite-direction rule (message
+    required when `commit_on_write` is True) — that is entirely out of scope
+    for this file.
+  - Do not implement any wiring, call site, registration, or import of this
+    module into any other file — this file stands alone.
+  - All docstrings and comments are in English.
+  - Keep total file length well under 400 lines (expected size: roughly
+    60-90 lines including docstrings).
+verification:
+  type: import
+  target: code_analysis/core/commit_intent_migration.py
+  expected: >
+    The module imports cleanly with no errors. `CODE_COMMIT_MESSAGE_WITHOUT_INTENT`
+    equals the string "COMMIT_MESSAGE_WITHOUT_INTENT". Calling
+    reject_message_without_intent(False, "a message") returns a dict with
+    "code" == "COMMIT_MESSAGE_WITHOUT_INTENT", a "message" key whose string
+    value starts with "commit_message was supplied without commit_on_write",
+    and "details" == {"breaking_migration": True, "removed_behaviour":
+    "message_only_implies_commit"}. Calling reject_message_without_intent(True,
+    "a message") returns None. Calling reject_message_without_intent(False,
+    None) returns None. Calling reject_message_without_intent(False, "   ")
+    returns None. Calling reject_message_without_intent(False, "") returns
+    None.

@@ -41,5 +41,9 @@ outputs:
   type: outcome
   description: A successful write that produced a local commit authored from project
     git config and never pushed.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+status: ready_for_review

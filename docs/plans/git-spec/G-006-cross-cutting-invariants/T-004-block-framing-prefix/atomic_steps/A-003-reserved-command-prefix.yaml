@@ -1,0 +1,176 @@
+step_id: A-003
+parent_tactical_step: T-004
+name: Reserved git command prefix and edit-session disjointness helpers
+target_file: code_analysis/core/project_git/prefix.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-029
+prompt: |
+  Create the new file at the exact project-relative path
+  code_analysis/core/project_git/prefix.py with operation create_file (the
+  file does not exist yet; the parent directory
+  code_analysis/core/project_git/ already exists or is created as part of
+  this operation).
+
+  CONTEXT (background only, do not restate it in the file). Every command in
+  the new project-scoped git command block must be named under a reserved
+  prefix, so that no command name or routing collision can arise against the
+  pre-existing edit-session git facility. That reserved prefix is the literal
+  string "git_". The pre-existing edit-session git facility already has
+  exactly these five registered command names (verified by reading the
+  command class `name` attributes in this code base under
+  code_analysis/commands/universal_file_edit/): session_git_status,
+  session_git_log, session_git_diff, session_git_show, session_git_revert.
+  None of those five names starts with "git_" (they start with
+  "session_git_"), so the "git_" prefix is disjoint from them by
+  construction. This file fixes the prefix constant, the set of existing
+  edit-session command names, and helper functions to build a prefixed name,
+  to check whether a name carries the reserved prefix, and to check
+  disjointness against the edit-session command names.
+
+  MRS EXCERPT (machine_spec concept referenced by this file — quoted for
+  grounding only, do not copy this YAML into the file verbatim):
+
+  concept_id: C-029
+  name: ReservedCommandPrefix
+  definition: "The naming rule placing every project-scoped git command
+    under a reserved prefix disjoint from the edit-session git commands."
+  properties:
+    prefix: git_
+    disjoint_from: session_git_commands
+    prevents: [name_collision, routing_collision]
+  source_label: "{h1i2} Every command in the project-scoped git block is
+    named under a reserved prefix that keeps it disjoint from the
+    edit-session git commands, so that no name or routing collision arises
+    between the two facilities."
+
+  REQUIRED FILE CONTENT. Write the file with EXACTLY this content, character
+  for character (the outer fence below is not part of the file; do not
+  include triple-backtick fences in the actual file):
+
+  ```
+  """
+  Reserved command-name prefix for the project-scoped git capability block.
+
+  Every command in the project-scoped git block is named under the reserved
+  prefix "git_", disjoint from the command names of the pre-existing
+  edit-session git facility, so that no command name or routing collision
+  can arise between the two facilities.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  from typing import FrozenSet
+
+  RESERVED_GIT_COMMAND_PREFIX: str = "git_"
+
+  EDIT_SESSION_GIT_COMMAND_NAMES: FrozenSet[str] = frozenset(
+      {
+          "session_git_log",
+          "session_git_diff",
+          "session_git_revert",
+          "session_git_show",
+          "session_git_status",
+      }
+  )
+
+
+  def make_prefixed_command_name(base_name: str) -> str:
+      """Build a project-scoped git command name under the reserved prefix.
+
+      Args:
+          base_name: The unprefixed command base name, for example
+              "status". Must be a non-empty string that does not already
+              start with the reserved prefix "git_".
+
+      Returns:
+          base_name prefixed with the reserved prefix "git_".
+
+      Raises:
+          ValueError: If base_name is empty, or if base_name already starts
+              with the reserved prefix "git_".
+      """
+      if not base_name:
+          raise ValueError("base_name must be a non-empty string")
+      if base_name.startswith(RESERVED_GIT_COMMAND_PREFIX):
+          raise ValueError(
+              "base_name {0!r} already carries the reserved prefix {1!r}".format(
+                  base_name, RESERVED_GIT_COMMAND_PREFIX
+              )
+          )
+      return "{0}{1}".format(RESERVED_GIT_COMMAND_PREFIX, base_name)
+
+
+  def is_reserved_git_command_name(command_name: str) -> bool:
+      """Report whether command_name carries the reserved git command prefix.
+
+      Args:
+          command_name: The full command name to check.
+
+      Returns:
+          True if command_name starts with the reserved prefix "git_",
+          False otherwise.
+      """
+      return command_name.startswith(RESERVED_GIT_COMMAND_PREFIX)
+
+
+  def is_disjoint_from_edit_session_git(command_name: str) -> bool:
+      """Report whether command_name is disjoint from edit-session git command names.
+
+      Args:
+          command_name: The full command name to check.
+
+      Returns:
+          True if command_name is not a member of
+          EDIT_SESSION_GIT_COMMAND_NAMES, False if it collides with one of
+          the pre-existing edit-session git command names.
+      """
+      return command_name not in EDIT_SESSION_GIT_COMMAND_NAMES
+  ```
+
+  CONSTRAINTS (all mandatory, no exceptions):
+  - The file must start with the module docstring shown above, as the first
+    statement in the file (a plain triple-double-quoted string, not a
+    comment), reproduced exactly including blank lines and the trailing
+    "Author:"/"email:" lines.
+  - Imports, in this exact order: `from __future__ import annotations`, then
+    a blank line, then `from typing import FrozenSet`.
+  - `RESERVED_GIT_COMMAND_PREFIX` is a module-level `str` constant equal to
+    exactly `"git_"`.
+  - `EDIT_SESSION_GIT_COMMAND_NAMES` is a module-level constant of type
+    `FrozenSet[str]` built as `frozenset({...})` containing exactly these
+    five strings and no others: "session_git_log", "session_git_diff",
+    "session_git_revert", "session_git_show", "session_git_status".
+  - `make_prefixed_command_name(base_name: str) -> str` raises `ValueError`
+    when `base_name` is falsy (empty string) or already starts with
+    `RESERVED_GIT_COMMAND_PREFIX`; otherwise returns
+    `RESERVED_GIT_COMMAND_PREFIX + base_name`.
+  - `is_reserved_git_command_name(command_name: str) -> bool` returns
+    whether `command_name` starts with `RESERVED_GIT_COMMAND_PREFIX`.
+  - `is_disjoint_from_edit_session_git(command_name: str) -> bool` returns
+    whether `command_name` is absent from `EDIT_SESSION_GIT_COMMAND_NAMES`.
+  - Every function has a docstring following Google-style conventions with
+    `Args:` and `Returns:` sections (and `Raises:` for
+    `make_prefixed_command_name`); every parameter and return value is type
+    annotated.
+  - Do not add any other imports, classes, functions, or constants beyond
+    what is shown above.
+  - Do not create, modify, or read any file other than
+    code_analysis/core/project_git/prefix.py.
+  - Encoding is UTF-8, no BOM. Use LF line endings.
+verification:
+  type: import
+  target: code_analysis.core.project_git.prefix
+  expected: Importing code_analysis.core.project_git.prefix succeeds without raising
+    any exception. RESERVED_GIT_COMMAND_PREFIX equals git_. make_prefixed_command_name('status')
+    returns git_status; calling make_prefixed_command_name('') or make_prefixed_command_name('git_status')
+    raises ValueError. is_reserved_git_command_name('git_status') returns True and
+    is_reserved_git_command_name('session_git_status') returns False. is_disjoint_from_edit_session_git('session_git_status')
+    returns False (collision with the pre-existing edit-session command name) and
+    is_disjoint_from_edit_session_git('git_status') returns True.
+status: frozen

@@ -1,0 +1,473 @@
+meta:
+  plan: git-spec
+  artifact: execution_map
+  purpose: >
+    Execution map for implementing the plan by GS/TS/AS branches. The map is
+    operational: pick one branch_id, execute only that atomic step's scope,
+    verify it, then move to the next unblocked branch.
+  source_artifacts:
+    - docs/plans/git-spec/spec.yaml
+    - docs/plans/git-spec/gs_concept_matrix.yaml
+    - docs/plans/git-spec/t_concept_matrix.yaml
+    - docs/plans/git-spec/object_matrix.yaml
+  excludes:
+    - docs/plans/git-spec/_archive/G-001-commit-on-write
+
+execution_rules:
+  branch_id_format: "G-###/T-###/A-###"
+  work_branch_format: "git-spec/G-###-T-###-A-###"
+  scope_rule: "A branch may implement only the object and behaviour owned by its AS file."
+  gs_dependency_rule: "G-002, G-003, G-004, and G-005 consume G-006 foundations."
+  hook_wiring_rule: >
+    Execute G-006/T-004/A-005 only after the command classes it wires exist;
+    keep it as the integration closure for the selected implemented command set.
+  status_rule: "ready_for_review branches are executable; draft branches require promotion or explicit approval before implementation."
+  archive_rule: "Archived G-001 branches are out of scope."
+
+recommended_waves:
+  - wave: W0-foundation-without-hooks
+    goal: "Create shared project-git boundaries, root/path/venv/ownership/timeout helpers, and naming/capability contracts."
+    branches:
+      - G-006/T-004/A-001
+      - G-006/T-004/A-002
+      - G-006/T-004/A-003
+      - G-006/T-001/A-001
+      - G-006/T-002/A-001
+      - G-006/T-002/A-002
+      - G-006/T-003/A-001
+      - G-006/T-003/A-002
+      - G-006/T-004/A-004
+  - wave: W1-read-git
+    goal: "Implement project-scoped read-only git commands."
+    branches:
+      - G-002/T-001/A-001
+      - G-002/T-001/A-002
+      - G-002/T-002/A-001
+      - G-002/T-002/A-002
+      - G-002/T-002/A-003
+      - G-002/T-002/A-004
+      - G-002/T-002/A-005
+      - G-002/T-002/A-006
+      - G-002/T-002/A-007
+  - wave: W2-local-git
+    goal: "Implement local non-remote git mutations, hard-reset guard, merge/cherry-pick policy, and revert."
+    branches:
+      - G-003/T-001/A-001
+      - G-003/T-001/A-002
+      - G-003/T-001/A-003
+      - G-003/T-001/A-004
+      - G-003/T-001/A-005
+      - G-003/T-001/A-006
+      - G-003/T-001/A-007
+      - G-003/T-001/A-008
+      - G-003/T-001/A-009
+      - G-003/T-001/A-010
+      - G-003/T-002/A-001
+      - G-003/T-002/A-002
+      - G-003/T-003/A-001
+      - G-003/T-003/A-002
+  - wave: W3-remote-git-draft
+    goal: "Implement remote git operations only after draft AS files are promoted or explicitly approved."
+    status: draft
+    branches:
+      - G-004/T-002/A-001
+      - G-004/T-001/A-001
+      - G-004/T-001/A-002
+      - G-004/T-001/A-003
+      - G-004/T-001/A-004
+  - wave: W4-github
+    goal: "Implement GitHub HTTP API auth, helper, commands, and PR merge guard."
+    branches:
+      - G-005/T-002/A-001
+      - G-005/T-002/A-002
+      - G-005/T-001/A-001
+      - G-005/T-001/A-002
+      - G-005/T-001/A-003
+      - G-005/T-001/A-004
+      - G-005/T-001/A-005
+      - G-005/T-001/A-006
+      - G-005/T-001/A-007
+      - G-005/T-001/A-008
+      - G-005/T-001/A-009
+      - G-005/T-001/A-010
+      - G-005/T-001/A-011
+      - G-005/T-001/A-012
+  - wave: W5-hook-closure
+    goal: "Wire implemented git/github command registrations into hooks after the selected commands exist."
+    branches:
+      - G-006/T-004/A-005
+
+branches:
+  G-006:
+    title: "Cross-cutting invariants and integration"
+    status: frozen
+    depends_on: []
+    tactical_steps:
+      T-001:
+        title: "Project root resolution"
+        branches:
+          - branch_id: G-006/T-001/A-001
+            work_branch: git-spec/G-006-T-001-A-001
+            title: "Create git-block project root resolver"
+            status: ready_for_review
+            depends_on: []
+      T-002:
+        title: "Path confinement and virtual-environment write guard"
+        branches:
+          - branch_id: G-006/T-002/A-001
+            work_branch: git-spec/G-006-T-002-A-001
+            title: "Git path confinement mechanism"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-002/A-002
+            work_branch: git-spec/G-006-T-002-A-002
+            title: "Git block venv write guard application"
+            status: ready_for_review
+            depends_on: []
+      T-003:
+        title: "Ownership invariant and remote operation timeout"
+        branches:
+          - branch_id: G-006/T-003/A-001
+            work_branch: git-spec/G-006-T-003-A-001
+            title: "Ownership invariant execution-context guard"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-003/A-002
+            work_branch: git-spec/G-006-T-003-A-002
+            title: "Remote operation timeout bound"
+            status: ready_for_review
+            depends_on: []
+      T-004:
+        title: "Git block framing, layer boundary, and reserved command prefix"
+        branches:
+          - branch_id: G-006/T-004/A-001
+            work_branch: git-spec/G-006-T-004-A-001
+            title: "Project-git package boundary module and edit-session distinction"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-004/A-002
+            work_branch: git-spec/G-006-T-004-A-002
+            title: "Capability-block enumeration and layer-boundary constraint"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-004/A-003
+            work_branch: git-spec/G-006-T-004-A-003
+            title: "Reserved git command prefix and edit-session disjointness helpers"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-004/A-004
+            work_branch: git-spec/G-006-T-004-A-004
+            title: "Git and github command registry wiring module"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-006/T-004/A-005
+            work_branch: git-spec/G-006-T-004-A-005
+            title: "Wire git and github command registration into the server's registration hook"
+            status: ready_for_review
+            depends_on:
+              - G-006/T-004/A-004
+            execution_note: "Run as hook-closure after the target command classes exist."
+
+  G-002:
+    title: "Project-scoped git read operations"
+    status: frozen
+    depends_on:
+      - G-006
+    tactical_steps:
+      T-001:
+        title: "Read operation repository resolution and availability outcomes"
+        branches:
+          - branch_id: G-002/T-001/A-001
+            work_branch: git-spec/G-002-T-001-A-001
+            title: "Create git_ops package marker"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-001/A-002
+            work_branch: git-spec/G-002-T-001-A-002
+            title: "Create read-repo-availability protocol module"
+            status: ready_for_review
+            depends_on:
+              - G-002/T-001/A-001
+      T-002:
+        title: "Read operation set over the resolved repository"
+        branches:
+          - branch_id: G-002/T-002/A-001
+            work_branch: git-spec/G-002-T-002-A-001
+            title: "Git status read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-002
+            work_branch: git-spec/G-002-T-002-A-002
+            title: "Git log read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-003
+            work_branch: git-spec/G-002-T-002-A-003
+            title: "Git diff read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-004
+            work_branch: git-spec/G-002-T-002-A-004
+            title: "Git branch read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-005
+            work_branch: git-spec/G-002-T-002-A-005
+            title: "Git show read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-006
+            work_branch: git-spec/G-002-T-002-A-006
+            title: "Git remote read command"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-002/T-002/A-007
+            work_branch: git-spec/G-002-T-002-A-007
+            title: "Git blame read command"
+            status: ready_for_review
+            depends_on: []
+
+  G-003:
+    title: "Project-scoped git local mutating operations"
+    status: frozen
+    depends_on:
+      - G-006
+    tactical_steps:
+      T-001:
+        title: "Core local working-tree and history mutations"
+        branches:
+          - branch_id: G-003/T-001/A-001
+            work_branch: git-spec/G-003-T-001-A-001
+            title: "Create git_ops package marker"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-003/T-001/A-002
+            work_branch: git-spec/G-003-T-001-A-002
+            title: "Create git_ops shared helpers module"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-003/T-001/A-003
+            work_branch: git-spec/G-003-T-001-A-003
+            title: "Create git_ops staging module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-004
+            work_branch: git-spec/G-003-T-001-A-004
+            title: "Create git_ops commit-from-staged module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-005
+            work_branch: git-spec/G-003-T-001-A-005
+            title: "Create git_ops branch operations module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-006
+            work_branch: git-spec/G-003-T-001-A-006
+            title: "Create git_ops working-tree restore module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-007
+            work_branch: git-spec/G-003-T-001-A-007
+            title: "Create git_ops stash module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-008
+            work_branch: git-spec/G-003-T-001-A-008
+            title: "Create git_ops merge module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-009
+            work_branch: git-spec/G-003-T-001-A-009
+            title: "Create git_ops cherry-pick module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+          - branch_id: G-003/T-001/A-010
+            work_branch: git-spec/G-003-T-001-A-010
+            title: "Create git_ops tag module"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-001/A-002
+      T-002:
+        title: "Destructive reset guard"
+        branches:
+          - branch_id: G-003/T-002/A-001
+            work_branch: git-spec/G-003-T-002-A-001
+            title: "Create reset_op.py with the would-lose dry-run report helper"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-003/T-002/A-002
+            work_branch: git-spec/G-003-T-002-A-002
+            title: "Add guarded reset_repo entry function to reset_op.py"
+            status: ready_for_review
+            depends_on:
+              - G-003/T-002/A-001
+      T-003:
+        title: "Protected-location gate scope and revert as inverse commit"
+        branches:
+          - branch_id: G-003/T-003/A-001
+            work_branch: git-spec/G-003-T-003-A-001
+            title: "Protected-branch gate scope policy for local merge and cherry-pick"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-003/T-003/A-002
+            work_branch: git-spec/G-003-T-003-A-002
+            title: "Revert operation as inverse commit"
+            status: ready_for_review
+            depends_on: []
+
+  G-004:
+    title: "Project-scoped git remote operations and SSH authentication"
+    status: frozen
+    depends_on:
+      - G-006
+    execution_note: "All AS files are currently draft."
+    tactical_steps:
+      T-001:
+        title: "Remote-contacting operations and their guards"
+        branches:
+          - branch_id: G-004/T-001/A-001
+            work_branch: git-spec/G-004-T-001-A-001
+            title: "Shared remote-ops config loader, push guards, subprocess runner"
+            status: draft
+            depends_on: []
+          - branch_id: G-004/T-001/A-002
+            work_branch: git-spec/G-004-T-001-A-002
+            title: "git_fetch MCP command"
+            status: draft
+            depends_on:
+              - G-004/T-001/A-001
+          - branch_id: G-004/T-001/A-003
+            work_branch: git-spec/G-004-T-001-A-003
+            title: "git_pull MCP command"
+            status: draft
+            depends_on:
+              - G-004/T-001/A-001
+          - branch_id: G-004/T-001/A-004
+            work_branch: git-spec/G-004-T-001-A-004
+            title: "git_push MCP command"
+            status: draft
+            depends_on:
+              - G-004/T-001/A-001
+      T-002:
+        title: "SSH authentication for remote operations"
+        branches:
+          - branch_id: G-004/T-002/A-001
+            work_branch: git-spec/G-004-T-002-A-001
+            title: "Create git_ssh_auth module with SSH environment builder and stderr classifier"
+            status: draft
+            depends_on: []
+
+  G-005:
+    title: "GitHub command block and token authentication"
+    status: frozen
+    depends_on:
+      - G-006
+    tactical_steps:
+      T-001:
+        title: "GitHub operation set and pull-request merge guard"
+        branches:
+          - branch_id: G-005/T-001/A-001
+            work_branch: git-spec/G-005-T-001-A-001
+            title: "GitHub HTTP request helper module"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-005/T-001/A-002
+            work_branch: git-spec/G-005-T-001-A-002
+            title: "github_repo_get command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-001
+          - branch_id: G-005/T-001/A-003
+            work_branch: git-spec/G-005-T-001-A-003
+            title: "github_repo_list command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-002
+          - branch_id: G-005/T-001/A-004
+            work_branch: git-spec/G-005-T-001-A-004
+            title: "github_pr_list command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-003
+          - branch_id: G-005/T-001/A-005
+            work_branch: git-spec/G-005-T-001-A-005
+            title: "github_pr_get command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-004
+          - branch_id: G-005/T-001/A-006
+            work_branch: git-spec/G-005-T-001-A-006
+            title: "github_issue_list command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-005
+          - branch_id: G-005/T-001/A-007
+            work_branch: git-spec/G-005-T-001-A-007
+            title: "github_pr_create command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-001
+          - branch_id: G-005/T-001/A-008
+            work_branch: git-spec/G-005-T-001-A-008
+            title: "github_issue_create command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-007
+          - branch_id: G-005/T-001/A-009
+            work_branch: git-spec/G-005-T-001-A-009
+            title: "github_issue_comment command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-008
+          - branch_id: G-005/T-001/A-010
+            work_branch: git-spec/G-005-T-001-A-010
+            title: "github_release_create command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-009
+          - branch_id: G-005/T-001/A-011
+            work_branch: git-spec/G-005-T-001-A-011
+            title: "GitHub pull-request merge guard evaluation function"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-001
+          - branch_id: G-005/T-001/A-012
+            work_branch: git-spec/G-005-T-001-A-012
+            title: "github_pr_merge command"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-001/A-011
+      T-002:
+        title: "Token authentication for GitHub operations"
+        branches:
+          - branch_id: G-005/T-002/A-001
+            work_branch: git-spec/G-005-T-002-A-001
+            title: "Create github_auth module with token resolution"
+            status: ready_for_review
+            depends_on: []
+          - branch_id: G-005/T-002/A-002
+            work_branch: git-spec/G-005-T-002-A-002
+            title: "Add auth-error classifier to github_auth module"
+            status: ready_for_review
+            depends_on:
+              - G-005/T-002/A-001
+
+verification_summary:
+  active_global_steps: 5
+  active_tactical_steps: 13
+  active_atomic_steps: 52
+  ready_for_review_atomic_steps: 47
+  draft_atomic_steps: 5
+  draft_branches:
+    - G-004/T-001/A-001
+    - G-004/T-001/A-002
+    - G-004/T-001/A-003
+    - G-004/T-001/A-004
+    - G-004/T-002/A-001

@@ -1,0 +1,42 @@
+# code_analysis — TOOLING mechanics. Read ONLY by tool-using roles (researcher, context_former, coder, tester).
+# Orchestrator and conscience do NOT use tools and do NOT read this file.
+# Keys of `manuals:` are referenced by the roles' `standards:` lists — keep them in sync.
+#
+# Access-mode note: these manuals govern LOCAL Claude Code sessions (native tools).
+# Agents that reach this repo REMOTELY through the code-analysis server follow the
+# server-mode standards instead: docs/standards/SEARCH_WORKFLOW.yaml,
+# FILE_EDIT_WORKFLOW.yaml, FILE_VIEW_WORKFLOW.yaml, TERMINAL_WORKFLOW.yaml.
+
+meta:
+  path: project-relative POSIX preferred; stay inside the repository; no ".."
+
+# Source of truth. Read on trigger; do not paraphrase from memory.
+manuals:
+  search:     docs/standards/LOCAL_CODE_SEARCH_STANDARD.yaml   # how to search / analyze code locally
+  edit:       docs/standards/LOCAL_EDITING_STANDARD.yaml       # editing conventions and constraints
+  terminal:   docs/standards/LOCAL_TERMINAL_STANDARD.yaml      # venv, quality gate, tests, pip rules
+  docstrings: docs/standards/PYTHON_DOCSTRING_STANDARD.md      # docstring format for Python code
+  planning:   docs/standards/planning/README.md                # multi-level plan stack (G/T/A)
+  cmd_help:   "the failing tool's own help or schema (--help, tool docs)"
+
+# condition -> MUST read manual(s) BEFORE the first matching action
+triggers:
+  - when: before first edit/write of a project file
+    read: [edit]
+  - when: before first edit that adds or changes Python docstrings / public API
+    read: [docstrings]
+  - when: code analysis or code search
+    read: [search]
+    order: {1_structured_code_analysis: first, 2_plain_text_search: only_if_step1_missed}
+  - when: before first terminal command (python, pip, tests, linters)
+    read: [terminal]
+  - when: authoring or editing a development plan
+    read: [planning]
+
+# error taxonomy — exactly one branch per failure
+errors:
+  unknown:   'command/tool does not exist -> do NOT guess; consult the tool''s help/catalog, pick an existing command; check its schema via cmd_help.'
+  misuse:    'wrong/unknown params or bad usage -> MANDATORY cmd_help for the failing command; fix to schema; retry once; still bad -> escalate.'
+  tool_fail: 'internal tool failure (crash, 5xx-style error) = the TOOL failed -> STOP; escalate; no retry, no workaround.'
+  infra:     'environment down, timeout, connection refused, permission wall -> STOP on first occurrence; escalate {exact_call, verbatim_error, question}.'
+  law:       'Any tool error -> stop + escalate. Only "misuse" is self-fixable, only via cmd_help.'

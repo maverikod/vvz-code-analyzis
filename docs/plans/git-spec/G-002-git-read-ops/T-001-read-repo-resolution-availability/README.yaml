@@ -32,5 +32,7 @@ outputs:
   type: outcome
   description: A distinct non-error outcome naming not-a-repository or no-commits-yet,
     uniform across all read operations.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

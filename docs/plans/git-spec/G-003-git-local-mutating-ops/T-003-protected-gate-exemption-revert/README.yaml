@@ -34,5 +34,7 @@ outputs:
   type: structure
   description: A new commit recording the inverse of the target commit, authored from
     project git config, with prior history left intact.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

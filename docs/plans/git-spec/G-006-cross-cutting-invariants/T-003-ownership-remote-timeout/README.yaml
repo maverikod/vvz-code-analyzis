@@ -31,5 +31,7 @@ outputs:
   type: outcome
   description: A distinct timeout outcome emitted when a remote operation exceeds
     the configured bound, with no in-operation retry.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+status: frozen

@@ -1,0 +1,146 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Create git_ssh_auth module with SSH environment builder and stderr classifier
+target_file: code_analysis/core/git_ssh_auth.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts: [C-017]
+prompt: |
+  Create the new Python module at code_analysis/core/git_ssh_auth.py. Operation: create_file (the file does not currently exist; do not assume any pre-existing content).
+
+  MODULE HEADER REQUIREMENTS:
+  Write a Google-style module docstring at the top of the file that describes the module's purpose: it builds a per-operation SSH authentication environment for git remote operations (fetch, pull, push) using a single configured private key with pinned known-hosts and strict host-key checking, and classifies git remote-operation stderr text as an SSH authentication failure or not. The module docstring must end with these two lines exactly:
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+
+  IMPORTS (exactly these two lines, nothing else):
+  from pathlib import Path
+  from typing import Any, Dict, Mapping, Optional, Tuple
+
+  MODULE-LEVEL CONSTANT:
+  Define exactly:
+  GIT_AUTH_FAILED = "GIT_AUTH_FAILED"
+  This is the single distinct authentication-failure outcome code. It covers both a missing/unusable SSH key and an unrecognised host; the message field (not the code) distinguishes the cause. Add a one-line comment above it explaining this.
+
+  FUNCTION 1 — exact signature:
+  def build_git_ssh_environment(git_config: Mapping[str, Any]) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, Any]]]:
+
+  Google-style docstring required, with Args section documenting git_config as the already-extracted code_analysis.git configuration section (a mapping) containing ssh_key_path (path to exactly one private key; the configuration never stores key bytes, only a path) and known_hosts_path (path to the pinned known-hosts file); and a Returns section documenting the two-tuple: on success (ssh_environment_dict, None); on failure (None, error_dict) where error_dict has keys "code" and "message".
+
+  Full typing annotations on the parameter and return value exactly as shown in the signature above.
+
+  Behaviour, to be implemented in this exact order:
+
+  1. Read ssh_key_path = git_config.get("ssh_key_path"). If ssh_key_path is falsy (absent, None, or empty string), return (None, {"code": GIT_AUTH_FAILED, "message": "Git SSH authentication failed: 'ssh_key_path' is missing or empty in git configuration."}).
+
+  2. Check whether the path at ssh_key_path exists and is a regular file, using Path(ssh_key_path).is_file(). If this is False, return (None, {"code": GIT_AUTH_FAILED, "message": f"Git SSH authentication failed: ssh_key_path '{ssh_key_path}' does not exist or is not a regular file."}).
+
+  3. Read known_hosts_path = git_config.get("known_hosts_path"). If known_hosts_path is falsy (absent, None, or empty string), return (None, {"code": GIT_AUTH_FAILED, "message": "Git SSH authentication failed: 'known_hosts_path' is missing or empty in git configuration."}).
+
+  4. Check whether the path at known_hosts_path exists, using Path(known_hosts_path).exists(). If this is False, return (None, {"code": GIT_AUTH_FAILED, "message": f"Git SSH authentication failed: known_hosts_path '{known_hosts_path}' does not exist."}).
+
+  5. On success (all four checks above passed), build the SSH command string exactly as:
+  f"ssh -i {ssh_key_path} -o IdentitiesOnly=yes -o UserKnownHostsFile={known_hosts_path} -o StrictHostKeyChecking=yes -o BatchMode=yes"
+  and return ({"GIT_SSH_COMMAND": <that command string>}, None).
+
+  Constraints for this function (all mandatory, no exceptions):
+  - The env dict is built fresh on every call; the function must never mutate or read any global git configuration file, any global SSH configuration file (e.g. ~/.ssh/config), or any process-wide environment variable. It only constructs and returns a new dict.
+  - No SSH key agent is required or referenced anywhere in this function.
+  - BatchMode=yes must always be present in the command so that no interactive credential prompt is ever issued by SSH.
+  - IdentitiesOnly=yes must always be present so that only the exactly-one configured key is offered, never any other key the ssh client might discover.
+  - StrictHostKeyChecking=yes must always be present so an unrecognised host is never silently trusted.
+  - The failure-path message strings must never include key material, key file contents, or known-hosts file contents. They may include the configuration key name (ssh_key_path or known_hosts_path) and the configured path string itself, exactly as specified in the four message templates above — nothing else.
+  - Do not catch or suppress unexpected exceptions from Path.is_file() or Path.exists(); let them propagate.
+
+  FUNCTION 2 — exact signature:
+  def classify_ssh_auth_stderr(stderr: str) -> Optional[str]:
+
+  Google-style docstring required, with an Args section documenting stderr as the stderr text captured from a git remote operation (fetch, pull, or push), and a Returns section documenting that it returns the string GIT_AUTH_FAILED when the stderr text indicates an SSH authentication or host-key failure, otherwise returns None.
+
+  Full typing annotations on the parameter and return value exactly as shown in the signature above.
+
+  Behaviour, to be implemented in this exact order:
+
+  1. If stderr is falsy (None or empty string), return None immediately.
+  2. Compute lowered = stderr.lower().
+  3. Define a list of these four substrings, matched case-insensitively (i.e. checked against `lowered`, each substring itself already lowercase):
+     - "permission denied (publickey"
+     - "host key verification failed"
+     - "no matching host key type"
+     - "authentication failed"
+     If any of these four substrings is found in `lowered` (using the `in` operator), return GIT_AUTH_FAILED.
+  4. Separately, if the substring "could not read from remote repository" is found in `lowered` AND the substring "publickey" is also found in `lowered`, return GIT_AUTH_FAILED.
+  5. If none of the above matched, return None.
+
+  Constraints for this function (all mandatory, no exceptions):
+  - The function must never raise an exception for any string input; the only operations performed are `.lower()` and `in` substring checks, which cannot raise for a str input.
+  - The function must never log, print, or otherwise emit the stderr content or any part of it; it only returns a code string or None.
+  - An unrecognised host (the "host key verification failed" case) is classified as an authentication failure (GIT_AUTH_FAILED), never treated as a case to silently trust.
+  - The function only classifies; it performs no git invocation, no I/O, and no side effects of any kind.
+
+  OVERALL FILE CONSTRAINTS:
+  - Full typing annotations on every parameter and return value of every public function, exactly as specified above.
+  - Google-style docstrings on the module and on both public functions.
+  - No other public functions, classes, or module-level names besides GIT_AUTH_FAILED, build_git_ssh_environment, and classify_ssh_auth_stderr.
+  - No imports beyond the two lines specified above.
+  - Estimated final size is well under 400 lines.
+
+  MACHINE-SPEC (MRS) EXCERPT — concept C-017, quoted verbatim from docs/plans/git-spec/spec.yaml, the only concept this step implements:
+
+  concept_id: C-017
+  name: GitSshAuth
+  definition: The SSH authentication mechanism using a per-operation invocation of exactly one configured key with pinned known hosts and strict checking.
+  properties:
+    mechanism: per_operation_ssh_command
+    key_count: exactly_one_configured
+    identities_only: true
+    known_hosts: pinned
+    strict_host_key_checking: true
+    mutates_global_config: false
+    requires_agent: false
+    key_bytes_in_config: false
+    key_referenced_by: path
+    config_section: code_analysis.git
+  source_labels:
+  - '{m9n0}'
+  - '{o1p2}'
+
+  SOURCE SPECIFICATION EXCERPT, quoted verbatim from docs/plans/git-spec/source_spec.md, the two labelled paragraphs C-017 is bound to:
+
+  {m9n0} Remote git operations authenticate over SSH using a per-operation SSH invocation that names exactly one configured private key, pins the set of known hosts, and enforces strict host-key checking. No global git or SSH configuration is mutated and no key agent is required.
+
+  {o1p2} The private key material lives in a protected secrets location referenced only by path in configuration; the configuration never stores key bytes. The key path, the known-hosts path, the commit identity, the set of protected branches, and the remote permissions are all configuration of the git block.
+
+  PARENT GLOBAL STEP (G-004) CONTEXT, quoted verbatim from docs/plans/git-spec/G-004-git-remote-ops/README.yaml description field:
+
+  "The remote-contacting git operations on a registered project repository and the SSH mechanism that authenticates them. Fetching retrieves remote refs and objects; pulling integrates remote changes into the current branch with a defined integration policy; pushing publishes local commits to a remote. Push is the only route by which local history reaches a remote, and it is gated: pushes to protected branches and force pushes are rejected unless explicitly permitted. Every remote operation requires resolved remote configuration and authenticates over SSH using a single configured key with pinned known-hosts and strict host-key checking. Remote operations are bounded by a timeout so a stuck remote cannot hang the server."
+
+  PARENT TACTICAL STEP (T-002) CONTEXT, quoted verbatim from docs/plans/git-spec/G-004-git-remote-ops/T-002-ssh-authentication/README.yaml description field:
+
+  "Define how remote-contacting operations authenticate to a remote over SSH. The identity used is a configured SSH key belonging to the server user; no interactive credential prompt is ever issued, and a missing or unusable key yields a distinct authentication outcome rather than blocking on input. Host key verification is honoured against the server user's known-hosts so that an unrecognised host is reported as an authentication failure rather than silently trusted. The SSH identity is supplied to fetch, pull, and push uniformly and is never derived from the caller. Authentication failures are reported as a distinct named outcome carrying no secret material."
+
+  T-002 inputs (quoted verbatim): configured_ssh_identity — the server user's configured SSH key used for all remote authentication, never supplied by the caller; known_hosts_reference — the server user's known-hosts used to verify the remote host key before contact.
+
+  T-002 outputs (quoted verbatim): authenticated_remote_channel — an established SSH-authenticated channel to the remote for a fetch, pull, or push, with the host key verified; authentication_failure_outcome — a distinct outcome for a missing or unusable key or an unrecognised host, carrying no secret material and issuing no prompt.
+
+  This single file realizes both T-002 outputs: build_git_ssh_environment produces authenticated_remote_channel (the ssh_environment_dict) on success and authentication_failure_outcome (the error_dict carrying GIT_AUTH_FAILED) on failure; classify_ssh_auth_stderr produces authentication_failure_outcome (GIT_AUTH_FAILED) when a remote operation's stderr indicates an SSH authentication or host-key problem, or None otherwise. The SSH identity in this file is read only from git_config (configuration), never from any caller-supplied parameter, matching T-002's constraint that the SSH identity is never derived from the caller.
+verification:
+  type: import
+  target: code_analysis.core.git_ssh_auth
+  expected: >
+    Importing the module code_analysis.core.git_ssh_auth succeeds with no errors.
+    The module exposes the string constant GIT_AUTH_FAILED equal to "GIT_AUTH_FAILED",
+    the function build_git_ssh_environment(git_config) which returns a tuple: on a
+    git_config mapping with a valid existing ssh_key_path regular file and a valid
+    existing known_hosts_path file it returns a dict containing key GIT_SSH_COMMAND
+    as the first tuple element and None as the second; on a git_config missing or
+    with an invalid ssh_key_path or known_hosts_path it returns None as the first
+    tuple element and a dict with keys code equal to GIT_AUTH_FAILED and message as
+    the second tuple element, the message containing no secret material. The module
+    also exposes the function classify_ssh_auth_stderr(stderr) which returns the
+    string GIT_AUTH_FAILED for stderr text containing any of the five documented
+    authentication-failure indicators (case-insensitively) and returns None for
+    stderr text with no such indicator and for empty or falsy stderr input.
+status: frozen

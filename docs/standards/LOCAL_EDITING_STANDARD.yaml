@@ -1,0 +1,42 @@
+meta:
+  title: Local Editing Standard
+  version: '1.0'
+  locale: en
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  description: >
+    Editing conventions for LOCAL Claude Code sessions on this repository
+    (native Read/Edit/Write tools). Remote agents editing through the
+    code-analysis server follow docs/standards/FILE_EDIT_WORKFLOW.yaml instead.
+  scope:
+    covers:
+      - what may and may not be edited locally
+      - file headers, module size, docstrings, locale
+      - post-edit obligations
+    excludes:
+      - server-mode editing (FILE_EDIT_WORKFLOW.yaml)
+      - terminal / quality-gate commands (LOCAL_TERMINAL_STANDARD.yaml)
+
+never_hand_edit:                      # generated or archival — regenerate or leave alone
+  - '*.tree sidecars (produced by this project''s own indexer; regenerated on save/watch)'
+  - build/ / code_analysis.egg-info/ / htmlcov/
+  - old_code/ / backups/
+  - logs/ / logs-prod-test/ / data/
+
+restricted:
+  test_data: 'fixture projects watched by the server; edits there change test inputs and trigger indexing — only when the task explicitly targets fixtures'
+  config_json: 'root config.json is live runtime config of the local server — do not edit casually'
+  outside_repo: 'never (PROJECT_RULES CR-002)'
+
+conventions:                          # ids refer to docs/PROJECT_RULES.md
+  headers: 'new files carry the project header (HEADER_AUTHOR / HEADER_EMAIL from §Profile) — CR-012'
+  module_size: '~350 lines -> prefer split; <=~400 acceptable; >=~450 must split — CR-008'
+  docstrings: 'public API documented per docs/standards/PYTHON_DOCSTRING_STANDARD.md — CR-009'
+  imports: 'top of file unless lazy-loading is intentional — CR-013'
+  locale: 'code, comments, docs in en (ARTIFACT_LOCALE) — CR-010'
+  naming: 'NAME-* table in docs/PROJECT_RULES.md §4'
+
+after_edit:
+  - 'quality gate on touched paths per LOCAL_TERMINAL_STANDARD.yaml — CR-007'
+  - 'commit after a logical batch; push only when the user asks — CR-011'
+  - '.tree sidecars of edited files refresh via the project watcher; do not update them by hand'

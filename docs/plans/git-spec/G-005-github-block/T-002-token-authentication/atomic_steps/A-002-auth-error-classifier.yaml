@@ -1,0 +1,217 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Add auth-error classifier to github_auth module
+target_file: code_analysis/core/github_auth.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-020
+prompt: |
+  Modify the file code_analysis/core/github_auth.py
+  (operation: modify_file). The current full content of the file, after all
+  prior work on this file, is given below. Append the two outcome constants
+  and the one function shown under "Content to append" to the end of the
+  file, separated from the last existing line by two blank lines. Do not
+  change, remove, or reorder any existing line.
+
+  Machine-spec excerpt (the only concept this step realizes):
+    concept_id: C-020
+    name: GithubTokenAuth
+    definition: The GitHub authentication mechanism using a personal access
+      token referenced by path, failing fast when unconfigured.
+    properties:
+      mechanism: personal_access_token
+      token_bytes_in_config: false
+      token_referenced_by: path
+      config_section: code_analysis.github
+      when_unconfigured: GITHUB_NOT_CONFIGURED
+
+  Purpose: give the GitHub command block a distinct authentication outcome
+  for a rejected or under-scoped token, carrying no secret material.
+
+  Constraints (all mandatory):
+  1. classify_github_auth_error is a pure function: no I/O, no logging, no
+     secret material, no network access. It needs no imports beyond those
+     already present in the file (Optional comes from the existing typing
+     import).
+  2. Exact signature:
+     def classify_github_auth_error(status_code: int) -> Optional[str]
+  3. Mapping: HTTP status 401 (rejected token) returns the string
+     "GITHUB_AUTH_FAILED"; HTTP status 403 (under-scoped token) returns the
+     string "GITHUB_INSUFFICIENT_SCOPE"; any other status code returns None.
+  4. The function has full type annotations and a docstring documenting the
+     parameter (Args:) and the return value (Returns:).
+  5. Do not modify resolve_github_auth, the private helpers, or the
+     existing constants. The token value never appears in this function or
+     its outcomes.
+  6. The appended text is exactly the content below, nothing more and
+     nothing less.
+
+  Current full file content (after all prior work on this file):
+
+  """
+  GitHub token authentication for the GitHub command block.
+
+  Resolves the server's personal access token from configuration and builds
+  the HTTP headers used by every GitHub API operation. The configuration
+  section ``code_analysis.github`` stores only a filesystem path to the
+  token file (key ``token_path``); token bytes never live in configuration.
+  The token value is never logged, echoed, or embedded in any outcome; it
+  appears only in the returned Authorization header. This module is the
+  whole token-handling surface of the GitHub block and is separate from the
+  SSH identity used by plain git remote operations.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from pathlib import Path
+  from typing import Any, Dict, Optional, Tuple
+
+  from code_analysis.core.storage_paths import load_raw_config
+
+  CONFIG_SECTION_CODE_ANALYSIS = "code_analysis"
+  CONFIG_SECTION_GITHUB = "github"
+  CONFIG_KEY_TOKEN_PATH = "token_path"
+
+  GITHUB_NOT_CONFIGURED = "GITHUB_NOT_CONFIGURED"
+
+  GITHUB_API_ACCEPT = "application/vnd.github+json"
+  GITHUB_API_VERSION = "2022-11-28"
+
+
+  def _resolve_config_path() -> Path:
+      """
+      Resolve the active server config path.
+
+      Priority: the mcp_proxy_adapter global config path when available,
+      otherwise config.json in the current working directory.
+
+      Returns:
+          Absolute path to the active server config file.
+      """
+      try:
+          from mcp_proxy_adapter.config import get_config
+
+          cfg = get_config()
+          cfg_path = getattr(cfg, "config_path", None)
+          if isinstance(cfg_path, str) and cfg_path.strip():
+              return Path(cfg_path).expanduser().resolve()
+      except Exception:
+          pass
+      return (Path.cwd() / "config.json").resolve()
+
+
+  def _load_config_data() -> Optional[Dict[str, Any]]:
+      """
+      Load the raw server config dict from the active config path.
+
+      Returns:
+          Parsed config dict, or None when the config cannot be loaded.
+      """
+      try:
+          return load_raw_config(_resolve_config_path())
+      except Exception:
+          return None
+
+
+  def _read_token_file(token_path: str) -> Optional[str]:
+      """
+      Read the token file and return the stripped token value.
+
+      Args:
+          token_path: Filesystem path to the token file from configuration.
+
+      Returns:
+          Token with surrounding whitespace stripped, or None when the file
+          is unreadable or its content is empty after stripping.
+      """
+      try:
+          raw = Path(token_path).expanduser().read_text(encoding="utf-8")
+      except (OSError, ValueError):
+          return None
+      token = raw.strip()
+      return token if token else None
+
+
+  def resolve_github_auth(
+      config_data: Optional[Dict[str, Any]] = None,
+  ) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
+      """
+      Resolve GitHub API authentication headers from server configuration.
+
+      Locates the code_analysis.github config section, reads the token file
+      referenced by its token_path key, and builds the HTTP headers for the
+      GitHub API. The token value appears only in the Authorization header,
+      never in logs, error strings, or outcomes.
+
+      Args:
+          config_data: Full config dict. When None, the active server config
+              is loaded from disk.
+
+      Returns:
+          Tuple of (headers, outcome). On success, headers carries
+          Authorization, Accept, and X-GitHub-Api-Version and outcome is
+          None. When the github section is absent, token_path is missing,
+          the token file is unreadable, or its content is empty after
+          stripping, returns (None, "GITHUB_NOT_CONFIGURED").
+      """
+      data = config_data if config_data is not None else _load_config_data()
+      if not isinstance(data, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      ca = data.get(CONFIG_SECTION_CODE_ANALYSIS)
+      if not isinstance(ca, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      github_cfg = ca.get(CONFIG_SECTION_GITHUB)
+      if not isinstance(github_cfg, dict):
+          return (None, GITHUB_NOT_CONFIGURED)
+      token_path = github_cfg.get(CONFIG_KEY_TOKEN_PATH)
+      if not isinstance(token_path, str) or not token_path.strip():
+          return (None, GITHUB_NOT_CONFIGURED)
+      token = _read_token_file(token_path)
+      if token is None:
+          return (None, GITHUB_NOT_CONFIGURED)
+      headers = {
+          "Authorization": "Bearer " + token,
+          "Accept": GITHUB_API_ACCEPT,
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      }
+      return (headers, None)
+
+
+  Content to append at the end of the file (after two blank lines):
+
+  GITHUB_AUTH_FAILED = "GITHUB_AUTH_FAILED"
+  GITHUB_INSUFFICIENT_SCOPE = "GITHUB_INSUFFICIENT_SCOPE"
+
+
+  def classify_github_auth_error(status_code: int) -> Optional[str]:
+      """
+      Classify a GitHub API HTTP status code as an authentication outcome.
+
+      Pure function: performs no I/O, emits no log, and carries no secret
+      material.
+
+      Args:
+          status_code: HTTP status code returned by the GitHub API.
+
+      Returns:
+          "GITHUB_AUTH_FAILED" for status 401 (rejected token),
+          "GITHUB_INSUFFICIENT_SCOPE" for status 403 (under-scoped token),
+          None for any other status code.
+      """
+      if status_code == 401:
+          return GITHUB_AUTH_FAILED
+      if status_code == 403:
+          return GITHUB_INSUFFICIENT_SCOPE
+      return None
+verification:
+  type: manual
+  target: classify_github_auth_error in code_analysis/core/github_auth.py
+  expected: Status 401 yields the rejected-token outcome GITHUB_AUTH_FAILED, status
+    403 yields the under-scoped-token outcome GITHUB_INSUFFICIENT_SCOPE, and any
+    other status yields no outcome. The function performs no I/O and carries no secret
+    material.
+status: frozen

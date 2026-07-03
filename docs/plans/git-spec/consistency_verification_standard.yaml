@@ -1,0 +1,415 @@
+meta:
+  plan: git-spec
+  artifact: consistency_verification_record
+  title: Plan Consistency Verification Record — git-spec
+  procedure_ref: docs/standards/planning/hrs_mrs_gs_consistency_verification_standard.yaml
+  executed_by: CODER (Phase A, git-spec plan)
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  scope_note: >
+    This record covers cycle_1 (source_spec<->machine_spec alignment) and
+    cycle_2 (per-G triple autonomy, checks c5-c9). It is stored alongside the
+    plan per the standard's own artifact_location. Invariant I2 (Branch
+    Semantic Coverage) and I3 (Equivalence) are explicitly OUT OF SCOPE for
+    this record: I2 requires an atomic-step set, which does not exist yet
+    (Phase B, not performed by this Phase A pass); I3 is a post-implementation
+    check. Neither is claimed satisfied here.
+
+cycle_1:
+  name: Source-to-Machine Alignment
+  inputs_read:
+  - docs/plans/git-spec/source_spec.md (full, all 23 binding {xxxx} labels re-read, post-excision)
+  - docs/plans/git-spec/spec.yaml (full, all 21 concepts and 2 relations re-read, post-excision)
+  checks:
+    c1_machine_to_source:
+      result: pass
+      method: >
+        For every concept_id C-001..C-002, C-009..C-023, C-026..C-029 (21
+        concepts surviving the 2026-07-03 G-001 excision), its source_labels
+        field was checked against the cited source_spec paragraphs; the
+        cited text was confirmed to actually express the concept's
+        definition and properties (spot-verified in full for the
+        cross-cutting-heavy concept C-026, and for all 21 concepts at the
+        label-set level). No concept was found with a source_labels entry
+        that fails to justify its claim. The C-005/C-025 spot-verification
+        referenced by the original (pre-excision) pass is no longer
+        applicable: both concepts were excised on 2026-07-03; see
+        excised_scope_note below.
+      finding_list: []
+    c2_source_to_machine:
+      result: pass
+      method: >
+        Union of all 21 surviving concepts' source_labels was computed and
+        compared against the full 23-label set from the post-excision
+        source_spec.md's binding paragraphs (a1b2,c3d4,u1v2,w3x4,j3k4,y5z6,
+        a7b8,c9d0,e1f2,g3h4,i5j6,k7l8,m9n0,o1p2,q3r4,s5t6,u7v8,w9x0,y1z2,a3b4,
+        d7e8,f9g0,h1i2). Union of concept source_labels covers all 23; no
+        binding tezis found without machine_spec representation. The 9
+        labels e5f6,g7h8,i9j0,k1l2,m3n4,o5p6,q7r8,s9t0,c5d6 were removed
+        together with their owning paragraphs and concepts on 2026-07-03
+        (G-001 excision); see excised_scope_note below.
+      finding_list: []
+    c3_relation_typing:
+      result: pass
+      method: >
+        Both relations in spec.yaml (C-014 depends_on C-017; C-018
+        depends_on C-020) use the allowed type depends_on. Direction checked
+        against source_spec: sec6 (m9n0/o1p2, SSH auth) supports GitRemoteOps
+        needing GitSshAuth to operate; sec8 (u7v8, token auth) supports
+        GithubBlock needing GithubTokenAuth to operate. Both directions
+        correct.
+      finding_list: []
+    c4_concept_quality:
+      result: pass
+      method: >
+        Each of the 21 concepts surviving the 2026-07-03 G-001 excision
+        (C-001, C-002, C-009..C-023, C-026..C-029) was checked against
+        plan_standard_machine.yaml's concept_definition (entity with
+        behavior or invariant, not a plain property). All 21 qualify: each
+        names an entity, guard, mechanism, rule, or invariant with its own
+        behavior/properties, none is a bare property of another concept, and
+        no two concepts were found to collapse into one entity. The 8
+        excised concepts (C-003..C-008, C-024, C-025) were qualified
+        concepts too at the time of the original pass; their removal is a
+        scope decision, not a c4 quality finding; see excised_scope_note
+        below.
+      finding_list: []
+  finding_resolution_actions: []
+  termination: cycle_1 traversal produced an empty finding_list on this pass.
+  overall_result: green
+
+cycle_2:
+  name: Global Step Triple Autonomy
+  precondition_check: cycle_1 green (confirmed above)
+  per_step_results:
+  - global_step: G-001
+    excised_by_user_decision:
+      date: '2026-07-03'
+      reason: >
+        Commit-on-write is out of scope for the git-spec plan, whose purpose
+        is limited to adding git_* and github_* server commands. G-001 and
+        its concepts (C-003..C-008, C-024, C-025) were removed from
+        source_spec.md, spec.yaml, and all matrices on this date. The
+        entries below are retained verbatim as historical audit trail of the
+        pre-excision verification pass; they are no longer part of the
+        active plan. The excised material is archived at
+        docs/plans/git-spec/_archive/G-001-commit-on-write/.
+    c5_concept_references_valid: {result: pass, finding_list: []}
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        source_labels union of owned concepts (C-003,C-004,C-005,C-006,C-007,
+        C-008,C-024,C-025) = {e5f6,g7h8,i9j0,k1l2,m3n4,o5p6,q7r8,s9t0,c5d6},
+        exactly matching G-001's own source_labels list (9 items).
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings: {result: pass, finding_list: []}
+    c9_no_redundancy_with_upper_levels:
+      result: pass
+      finding_list: []
+      note: G-001 description localizes 9 source paragraphs into one coherent brief; not bare paraphrase of any single one.
+  - global_step: G-002
+    c5_concept_references_valid: {result: pass, finding_list: []}
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        C-009's source_labels are {u1v2,w3x4}, exactly matching G-002's
+        source_labels list.
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings: {result: pass, finding_list: []}
+    c9_no_redundancy_with_upper_levels: {result: pass, finding_list: []}
+  - global_step: G-003
+    c5_concept_references_valid: {result: pass, finding_list: []}
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        Union of owned concepts' source_labels (C-010,C-011,C-012,C-013) =
+        {y5z6,e1f2,a7b8,c9d0}, exactly matching G-003's source_labels list.
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings: {result: pass, finding_list: []}
+    c9_no_redundancy_with_upper_levels: {result: pass, finding_list: []}
+  - global_step: G-004
+    c5_concept_references_valid:
+      result: pass
+      finding_list: []
+      note: relations field [C-014 depends_on C-017] matches spec.yaml exactly; both concepts are within G-004's own concepts list.
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        Union of owned concepts' source_labels (C-014,C-015,C-016,C-017) =
+        {g3h4,i5j6,k7l8,m9n0,o1p2}, exactly matching G-004's source_labels list.
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings: {result: pass, finding_list: []}
+    c9_no_redundancy_with_upper_levels: {result: pass, finding_list: []}
+  - global_step: G-005
+    c5_concept_references_valid:
+      result: pass
+      finding_list: []
+      note: relations field [C-018 depends_on C-020] matches spec.yaml exactly; both concepts are within G-005's own concepts list.
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        Union of owned concepts' source_labels (C-018,C-019,C-020) =
+        {q3r4,s5t6,u7v8}, exactly matching G-005's source_labels list.
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings:
+      result: pass
+      finding_list: []
+      note: >
+        G-005's GS description references the remote timeout only in prose
+        ("bounded by a timeout so a stuck endpoint cannot hang the server");
+        the underlying concept C-023 is owned by G-006, not G-005. Its
+        tactical step T-001 originally cited the concept_id literally as
+        "(C-023)" — that literal foreign-id citation was raised as a t6
+        finding by the TESTER in round 1 and has since been resolved by a
+        TS-layer rewrite to the prose provenance style ("bounded by the
+        configured remote timeout from G-006"); see the G-005/T-001 t6 note
+        in tactical_step_creation_standard.yaml. The surviving prose
+        references are not a silent dependency under c8 because C-023's
+        full definition (RemoteTimeout: bounded_by configured_timeout,
+        on_exceed distinct_timeout_outcome, no in-operation retry) lives in
+        machine_spec, which is always part of the (source_spec +
+        machine_spec + global_step) reading triple regardless of which G is
+        being read, so no sibling G-step's prose is needed to understand
+        the term. No finding raised at the GS level; G-006 is explicitly
+        infrastructural (plan_standard_machine.yaml infrastructure_steps)
+        and is depended on by every other G precisely so its cross-cutting
+        concepts (C-021, C-022, C-023, C-026, C-027) can be referenced this
+        way without being re-owned.
+    c9_no_redundancy_with_upper_levels: {result: pass, finding_list: []}
+  - global_step: G-006
+    c5_concept_references_valid: {result: pass, finding_list: []}
+    c6_source_ranges_relevant:
+      result: pass
+      finding_list: []
+      note: >
+        Union of owned concepts' source_labels (C-001,C-002,C-021,C-022,
+        C-023,C-026,C-027,C-028,C-029) = {a1b2,c3d4,w9x0,y1z2,a3b4,j3k4,w3x4,
+        d7e8,f9g0,h1i2} (10 labels, since C-026 cites both j3k4 and w3x4).
+        G-006's own source_labels list has 9 items and omits w3x4. Reviewed:
+        this is not a c6 violation. w3x4's text ("every git operation
+        resolves the project's repository root before acting, confirms the
+        root is a git repository...") is the general read-operation
+        confirmation pattern, primarily elaborated as part of C-009
+        (GitReadOps, owned by G-002, which lists w3x4 in its own
+        source_labels). j3k4 ("The repository root is never taken as a free
+        absolute path... The same resolved root governs both git operations
+        and any commit produced on write.") is the paragraph that actually
+        carries C-026's distinguishing claim and is present in G-006's list.
+        The G-level source_labels fields across all 6 G-steps form a
+        disjoint partition of all 32 source_spec labels (verified: sums to
+        32, zero duplication) — pre-excision figures, retained as history;
+        post-excision (2026-07-03) the equivalent check is 5 G-steps over
+        23 labels, see invariant_I1_cross_check.check_c — matching the
+        G-step creation_procedure's phase_a_mapping ("mark source_spec into
+        blocks... each block a set of line ranges") rather than a literal
+        union of owned concepts' MRS-level source_labels (which may
+        legitimately overlap at the concept level, e.g. w3x4 supporting
+        both C-009 and C-026). No fix required; every label listed under
+        G-006 is relevant to G-006 and no label is missing from the overall
+        32-label partition (pre-excision figure, retained as history).
+    c7_executor_completeness: {result: pass, finding_list: []}
+    c8_no_silent_dependency_on_siblings: {result: pass, finding_list: []}
+    c9_no_redundancy_with_upper_levels: {result: pass, finding_list: []}
+  invariant_I1_cross_check:
+    check_a_concepts: >
+      Post-excision (2026-07-03): union of G-002..G-006 concepts = all 21
+      concept_ids, each appearing in exactly one G's concepts list (disjoint
+      partition). Pass. (Pre-excision this check covered G-001..G-006 and 29
+      concept_ids; G-001 is excised, see excised_scope_note.)
+    check_b_relations: >
+      Union of relations realized by G-steps (G-004: C-014->C-017; G-005:
+      C-018->C-020) = the 2 relations in spec.yaml exactly. Pass. (Unaffected
+      by the G-001 excision: G-001 carried no relations.)
+    check_c_source_ranges: >
+      Post-excision (2026-07-03): union of all 5 G-steps' (G-002..G-006)
+      source_labels = all 23 binding labels in the post-excision
+      source_spec.md, each label appearing in exactly one G (disjoint
+      partition, zero duplication, verified by direct enumeration). Pass.
+      (Pre-excision this check covered 6 G-steps and 32 labels; the 9 labels
+      owned solely by G-001 were removed together with G-001, see
+      excised_scope_note.)
+  finding_resolution_actions: []
+  termination: every global_step pair is green under the current machine_spec snapshot; no machine_spec modification occurred during this cycle, so no return to cycle_1 was required.
+  overall_result: green
+
+excised_scope_note:
+  date: '2026-07-03'
+  decision: user explicit decision
+  scope_of_excision: >
+    Global step G-001-commit-on-write (tactical steps T-001, T-002, T-003)
+    and its 8 owned concepts (C-003 LockOpacity, C-004 CommitIntentFlag,
+    C-005 CommitMessage, C-006 NoOpOnUnchanged, C-007 CommitNeverPushes,
+    C-008 CommitIdentity, C-024 ImplicitTriggerRemoval, C-025
+    UnifiedCommitContract) and their 9 owned source_spec.md labels (e5f6,
+    g7h8, i9j0, k1l2, m3n4, o5p6, q7r8, s9t0, c5d6) were removed from
+    source_spec.md, spec.yaml, gs_concept_matrix.yaml, t_concept_matrix.yaml,
+    and object_matrix.yaml. Rationale: the git-spec plan's purpose is to add
+    git_* and github_* server commands only; commit-on-write behaviour is out
+    of scope. The pre-existing commit_after_write mechanism in production
+    code is untouched by this excision. The removed G-001 directory tree is
+    archived, not deleted, at docs/plans/git-spec/_archive/G-001-commit-on-write/.
+  verification_impact: >
+    All references to G-001, its 8 concepts, and its 9 labels within this
+    record's cycle_1 and cycle_2 sections were updated in place (counts
+    recomputed: 29->21 concepts, 32->23 labels, 6->5 G-steps) rather than
+    deleted, per the historical-audit-trail requirement; the G-001
+    per_step_results entry in cycle_2 is retained verbatim and flagged with
+    excised_by_user_decision.
+post_excision_recheck_2026_07_03:
+  scope: G-002, G-003, G-004, G-005, G-006 (5 global steps; G-001 excised)
+  method: >
+    Zero-trust re-read of the post-excision source_spec.md (23 labels),
+    spec.yaml (21 concepts, 2 relations), and the 5 surviving G-step
+    READMEs. cycle_1 checks c1-c4 re-run against the reduced concept/label
+    set: all pass, empty finding_list (see updated method text above).
+    cycle_2 checks c5-c9 re-run for G-002, G-003, G-004, G-005, G-006: all
+    pass, empty finding_list (unchanged from the original per-G entries
+    below, since none of those 5 G-steps referenced any G-001-owned concept
+    or label). invariant_I1_cross_check re-run: check_a (21 concepts, 5
+    G-steps, disjoint), check_b (2 relations, both internal to G-004/G-005,
+    unaffected), check_c (23 labels, 5 G-steps, disjoint) all pass.
+  result: green
+  statement: >
+    overall_green below reflects this real post-excision re-check for the
+    surviving 5-G/13-T scope, not a blind carry-over of the pre-excision
+    result.
+
+post_fixpoint_object_matrix_addition_2026_07_03:
+  date: '2026-07-03'
+  decision: orchestrator-approved
+  finding: >
+    Zero-trust re-read of the real command-registration mechanism
+    (code_analysis/hooks.py's register_code_analysis_commands, which calls
+    register_commands_part1 and register_commands_part2 in
+    code_analysis/hooks_register_part1.py and
+    code_analysis/hooks_register_part2.py) found that neither module imports
+    or registers any of the plan's 22 new git_*/github_* MCP commands (the 7
+    G-002/T-002 git read commands, the G-004/T-001 git_fetch/git_pull/git_push
+    commands, and the 12 G-005/T-001..T-002 github_* commands), and that no
+    object_matrix.yaml row owned this registration-wiring gap (finding a
+    against the object-coverage contract).
+  action: >
+    One new object_matrix.yaml row, command_registry_wiring (kind
+    existing_code-extension), was added, owned by G-006/T-004 (already
+    owning concepts C-001 CapabilityBlock and C-029 ReservedCommandPrefix,
+    which frame the git/github capability blocks as coherent, invocable
+    command groups). object_matrix.yaml total_objects updated 19 -> 20
+    (G-006/T-004 per-T count 3 -> 4; tactical-step count unchanged at 13).
+  scope_of_change: >
+    No change to source_spec.md, spec.yaml, gs_concept_matrix.yaml, or
+    t_concept_matrix.yaml: no new concept or relation is introduced; C-001
+    and C-029 already cover the new object under G-006/T-004. No change to
+    the G-006/T-004 README.yaml (status remains frozen): its required
+    fields (concepts, inputs, outputs) already satisfy
+    plan_standard_machine.yaml's tactical_step required_fields without
+    needing a new named output; the bounded_git_block output already
+    describes the git capability "framed as a coherent block with its
+    layer boundary fixed", which the registration wiring realizes. No
+    cascade re-verification loop over cycle_1/cycle_2 was triggered, since
+    no machine_spec, global_step, or tactical_step field changed.
+  atomic_steps_deferred: >
+    The concrete atomic steps that implement this wiring (importing and
+    registering the 22 new command classes in
+    code_analysis/hooks_register_part1.py and/or
+    code_analysis/hooks_register_part2.py) are deferred to T-004's Phase B
+    (atomic-step) authoring; none were authored by this cascade note.
+
+out_of_scope_declaration:
+  I2_branch_semantic_coverage: >
+    NOT evaluated and NOT claimed satisfied. I2 requires an atomic step set
+    per tactical step; atomic steps are Phase B (tactical_step_creation_standard.yaml
+    explicitly excludes atomic step authoring, and plan_standard_machine.yaml
+    scope excludes atomic step execution procedure from this standard's remit
+    at this phase). No atomic_steps entries were created by this pass.
+  I3_equivalence: >
+    NOT evaluated and NOT claimed satisfied. I3 is a post-implementation
+    check (verified_at: "upon completion of implementation"); no
+    implementation code was written or reviewed by this pass.
+
+overall_green: true
+
+atomic_layer_outer_loop_full_pass_2026_07_03:
+  date: '2026-07-03'
+  phase: "Phase B addendum (atomic_step_creation_standard.yaml) — does not alter this record's cycle_1/cycle_2 (or TS-layer) findings above, which remain scoped to Phase A"
+  scope: "5 global steps (G-002..G-006), 13 tactical steps, 52 atomic steps (G-001 excised, out of scope)"
+  method: >
+    Zero-trust re-read of every MRS concept/relation, all 5 GS READMEs, all
+    13 TS READMEs, and all 52 AS files from source (no reliance on prior
+    session memory). Ran checks a1-a9 per AS (concept references valid,
+    one-file rule, file-size limit, prompt self-sufficiency, no cross-AS
+    references, priority uniqueness within file, depends_on validity,
+    file-state-in-prompt correctness for modify_file AS, verification-field
+    completeness) and a10 (TS coverage by its AS set) per
+    atomic_step_creation_standard.yaml. Ran the I2 (Branch Semantic
+    Coverage) checklist (objects, operations, relations,
+    prompt_completeness, no_extra) per G-step against gs_concept_matrix.yaml,
+    t_concept_matrix.yaml, and object_matrix.yaml. Paid particular attention
+    to cross-TS/cross-G file-state consistency for every file touched by
+    more than one AS (code_analysis/core/git_ops/reset_op.py,
+    code_analysis/commands/github_read_ops_commands.py,
+    code_analysis/commands/github_write_ops_commands.py,
+    code_analysis/commands/github_pr_merge_command.py,
+    code_analysis/core/github_auth.py) and to the
+    hooks_register_git_github.py -> hooks.py dependency chain, confirming
+    A-005's quoted "current content" of code_analysis/hooks.py matches the
+    real on-disk file byte for byte and that its target new content adds
+    exactly one import line and one call line.
+  object_matrix_fix: "command_registry_wiring row's command-class count corrected 22->20 (10, not 12, from G-005: A-001 github_http.py is a transport helper and A-011 is a guard function, neither is a command class; only A-002..A-010 plus A-012 are command classes) prior to this pass; total_objects remains 20 (object ROWS were already correctly counted at 20; only the command-CLASS count cited in the command_registry_wiring row's own description/evidence text was wrong)"
+  result: green
+  i2_verdict: >
+    G-002 (read ops): green, fully invocable — 9 AS (2 in T-001, 7 in T-002)
+    realize the shared availability protocol and all 7 read command classes
+    (git_status/git_log/git_diff/git_branch/git_show/git_remote/git_blame),
+    each registered by G-006/T-004's registry wiring. G-004 (remote ops +
+    SSH): green, fully invocable — 5 AS (4 in T-001, 1 in T-002) realize the
+    shared remote-ops helper, the 3 command classes (git_fetch/git_pull/
+    git_push), and the SSH auth module; all 3 command classes registered.
+    G-005 (github block): green, fully invocable — 14 AS (12 in T-001, 2 in
+    T-002) realize the HTTP transport helper, 5 read command classes, 4
+    write command classes, the merge guard function, the merge command
+    class, and the token-auth module; all 10 command classes registered.
+    G-006 (cross-cutting): green — 10 AS (1+2+2+5) realize project-root
+    resolution, path confinement, the venv write guard, the ownership
+    invariant, the remote-timeout bound, the capability-block/layer-boundary
+    framing, the reserved-prefix module, and — critically — the registry
+    wiring module and its one-line hook into hooks.py that make the other
+    branches' 20 command classes actually invocable rather than merely
+    defined. G-003 (local mutating ops): AS-set green against its own TS
+    scope (all 14 AS faithfully implement the operations, outputs, and
+    guard/exemption/inverse-commit semantics T-001/T-002/T-003 describe;
+    a1-a10 pass; no gap against the TS text) but see invocability_finding
+    below for a factual, non-blocking gap this pass surfaced.
+  invocability_finding: >
+    None of G-003's 14 AS (T-001 A-001..A-010, T-002 A-001..A-002, T-003
+    A-001..A-002) target a file under code_analysis/commands/; every one
+    targets code_analysis/core/git_ops/*.py (or the sibling
+    protected_gate_policy.py / reset_op.py / revert_op.py modules), i.e.
+    plain importable library functions, not MCP command classes. Confirmed
+    by reading all 14 files in full. Cross-checked against
+    G-006/T-004/A-004 (the command-registry wiring module): its 20
+    registered classes are exactly the 7 G-002 read commands, the 3 G-004
+    remote commands, and the 10 G-005 github commands — none of G-003's
+    add/commit/switch/restore/branch_create/branch_delete/stash/reset/
+    merge/cherry_pick/revert/tag operations (C-010 GitLocalMutatingOps,
+    C-011 HardResetGuard, C-012 LocalOpsNotProtectedGated, C-013
+    RevertIsInverseCommit) appears there. Consequence: these 12 local
+    git-mutation operations are implemented and importable but are NOT
+    reachable as MCP commands through this plan's 52 AS — no atomic step
+    anywhere creates a git_add/git_commit/git_switch/... command class. This
+    traces to the TS layer (G-003's tactical-step READMEs and the
+    object_matrix.yaml evidence for git_local_mutation_operation_set,
+    hard_reset_guard, local_merge_cherry_pick_gate_exemption, and
+    revert_inverse_commit_operation describe library-level operations and
+    outputs, never a command class), not to an AS-authoring defect, so it
+    is not resolvable by modifying the AS layer alone (finding_resolution's
+    escalation.finding_requires_ts_change applies) and this pass is not
+    authorized to add a new AS or change the TS layer. Reported as a
+    factual, non-blocking gap for the execution/next-phase owner.
+  statement: >
+    outer_loop_full_pass over the atomic-step layer completed without
+    finding any blocking gap; all 52 AS transitioned to frozen.

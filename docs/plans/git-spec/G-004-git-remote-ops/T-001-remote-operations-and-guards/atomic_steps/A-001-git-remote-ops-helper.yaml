@@ -1,0 +1,317 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Shared remote-ops config loader, push guards, subprocess runner
+target_file: code_analysis/core/git_remote_ops.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-014
+- C-016
+prompt: |
+  Create a new Python file at the exact project-relative path
+  `code_analysis/core/git_remote_ops.py`. This is a `create_file` operation:
+  the file does not exist yet and must not assume any pre-existing content.
+
+  ## Purpose
+
+  This module provides helpers shared by three MCP command files
+  (`git_fetch`, `git_pull`, `git_push`, created separately, not by you):
+  remote-configuration loading from the `code_analysis.git` config section,
+  push-guard evaluation (protected-branch and force-push rejection), a
+  timeout-bounded git subprocess runner, SSH-environment construction for
+  authenticated git subprocess calls, and a string-error-code `ErrorResult`
+  builder. Remote-timeout resolution (the configured value and its default)
+  is delegated entirely to a canonical, cross-cutting remote-timeout module;
+  this module defines no timeout default and no config-parsing logic of its
+  own for the timeout value.
+
+  ## MRS concept excerpts (spec.yaml, quoted verbatim)
+
+  C-014 GitRemoteOps:
+  ```
+  definition: The remote git operations that require remote configuration and
+    fail fast when it is absent while local and read operations still work.
+  properties:
+    operations: [fetch, pull, push]
+    queue: true
+    requires_remote_config: true
+    when_unconfigured: GIT_REMOTE_NOT_CONFIGURED
+    local_and_read_still_work: true
+  source_labels: ['{g3h4}']
+  ```
+
+  C-016 PushGuards:
+  ```
+  definition: The push guards that reject protected-branch and force pushes
+    unless explicit override and policy permit, with dry-run performing no
+    remote write.
+  properties:
+    protected_branch: reject_unless_override_and_policy
+    protected_outcome: GIT_PROTECTED_BRANCH
+    force_push: reject_unless_config_allows_and_explicit
+    force_outcome: GIT_FORCE_PUSH_DISABLED
+    dry_run: no_remote_write
+  source_labels: ['{k7l8}']
+  ```
+
+  Config section (verified_code_facts.yaml#config_validation): the section
+  `code_analysis.git` is read via the existing `load_raw_config` /
+  `BaseMCPCommand._get_raw_config` path; do not invent parallel validation.
+  Recognised keys: `remote_enabled` (bool), `ssh_key_path` (str),
+  `known_hosts_path` (str), `protected_branches` (list of str),
+  `allow_force_push` (bool), `remote_timeout_seconds` (number).
+
+  Pinned SSH interface you must call by exact name (defined in a sibling
+  file you do not create or read; consume this exact signature only):
+  `from code_analysis.core.git_ssh_auth import build_git_ssh_environment`
+  where
+  `build_git_ssh_environment(git_config: Mapping[str, Any]) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, Any]]]`
+  returns `({"GIT_SSH_COMMAND": ...}, None)` on success or
+  `(None, {"code": "GIT_AUTH_FAILED", "message": <no secret material>})` when
+  the configured key or known-hosts is missing/unusable.
+
+  Pinned remote-timeout interface you must call by exact name (defined in a
+  sibling module you do not create or read; consume this exact signature
+  only, do not reimplement any part of its logic):
+  `from code_analysis.core.project_git.remote_timeout import get_remote_timeout_seconds_from_config`
+  where
+  `get_remote_timeout_seconds_from_config(config_data: Optional[Mapping[str, Any]] = None) -> int`
+  reads the same full raw config dict shape (`code_analysis` -> `git` ->
+  `remote_timeout_seconds`) and returns a positive int: it falls back to a
+  default of 30 seconds when `config_data` is `None`/empty, the
+  `code_analysis` key is missing or not a mapping, the `git` key is missing
+  or not a mapping, or `remote_timeout_seconds` is missing, not a positive
+  number, or a bool. This is the sole source of the default timeout value;
+  this module (`git_remote_ops.py`) must not declare its own default-timeout
+  constant.
+
+  ## Constraints (all explicit; implement exactly this, nothing more, nothing less)
+
+  1. Module docstring at the top of the file, then `from __future__ import annotations`.
+  2. Imports, exactly:
+     ```python
+     from __future__ import annotations
+
+     import os
+     import subprocess
+     from pathlib import Path
+     from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
+
+     from mcp_proxy_adapter.commands.result import ErrorResult
+
+     from code_analysis.core.project_git.remote_timeout import (
+         get_remote_timeout_seconds_from_config,
+     )
+     ```
+  3. Module-level string constants, exactly these seven, each a plain string
+     literal equal to its own name:
+     ```python
+     GIT_REMOTE_NOT_CONFIGURED = "GIT_REMOTE_NOT_CONFIGURED"
+     GIT_CONFLICT = "GIT_CONFLICT"
+     GIT_PROTECTED_BRANCH = "GIT_PROTECTED_BRANCH"
+     GIT_FORCE_PUSH_DISABLED = "GIT_FORCE_PUSH_DISABLED"
+     GIT_REMOTE_TIMEOUT = "GIT_REMOTE_TIMEOUT"
+     GIT_NOT_A_REPO = "GIT_NOT_A_REPO"
+     GIT_NOT_AVAILABLE = "GIT_NOT_AVAILABLE"
+     ```
+     Do not add a `DEFAULT_REMOTE_TIMEOUT_SECONDS` constant, or any other
+     default-timeout constant, in this file. The default timeout value lives
+     solely in the imported `get_remote_timeout_seconds_from_config`.
+  4. Function `git_remote_error_result`:
+     ```python
+     def git_remote_error_result(
+         code: str,
+         message: str,
+         details: Optional[Dict[str, Any]] = None,
+     ) -> ErrorResult:
+     ```
+     Docstring (Google style, Args/Returns sections) stating: builds an
+     `ErrorResult` with a string application error code; `mcp_proxy_adapter`
+     types `ErrorResult.code` as int (JSON-RPC numeric codes) but the
+     project-scoped git block uses string outcome codes. Body: `return
+     ErrorResult(message=message, code=cast(Any, code), details=details or
+     {})`.
+  5. Function `load_git_remote_config`:
+     ```python
+     def load_git_remote_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+     ```
+     Docstring (Google style) documenting Args (`config_data`: full raw
+     config dict as returned by `load_raw_config` /
+     `BaseMCPCommand._get_raw_config`) and Returns (a dict with keys
+     `remote_enabled` (bool), `ssh_key_path` (Optional[str]),
+     `known_hosts_path` (Optional[str]), `protected_branches` (List[str]),
+     `allow_force_push` (bool), `remote_timeout_seconds` (float)); the
+     docstring must state that `remote_timeout_seconds` is resolved
+     exclusively by delegating `config_data` unchanged to
+     `get_remote_timeout_seconds_from_config`, which applies the canonical
+     default of 30 seconds when the value is unset or invalid.
+     Body, exactly this logic:
+     ```python
+     git_section: Mapping[str, Any] = {}
+     section = config_data.get("code_analysis") if isinstance(config_data, Mapping) else None
+     if isinstance(section, Mapping):
+         candidate = section.get("git")
+         if isinstance(candidate, Mapping):
+             git_section = candidate
+     protected = git_section.get("protected_branches")
+     protected_branches = [str(b) for b in protected] if isinstance(protected, list) else []
+     remote_timeout_seconds = float(get_remote_timeout_seconds_from_config(config_data))
+     return {
+         "remote_enabled": bool(git_section.get("remote_enabled")),
+         "ssh_key_path": git_section.get("ssh_key_path"),
+         "known_hosts_path": git_section.get("known_hosts_path"),
+         "protected_branches": protected_branches,
+         "allow_force_push": bool(git_section.get("allow_force_push")),
+         "remote_timeout_seconds": remote_timeout_seconds,
+     }
+     ```
+     Note `get_remote_timeout_seconds_from_config` is called with the
+     original `config_data` parameter (the full raw config dict), not with
+     `git_section`; the imported function does its own
+     `code_analysis` -> `git` -> `remote_timeout_seconds` lookup internally.
+  6. Function `evaluate_push_guards`:
+     ```python
+     def evaluate_push_guards(
+         target_branch: str,
+         *,
+         protected_branches: List[str],
+         protected_override: bool,
+         force: bool,
+         allow_force_push_config: bool,
+     ) -> Optional[Tuple[str, str]]:
+     ```
+     Docstring (Google style) stating: evaluates protected-branch and
+     force-push guards for a push (C-016); protected-branch is checked
+     before force-push so a push that both targets a protected branch and
+     requests force reports the protected-branch rejection first; Args for
+     each parameter; Returns: None when the push may proceed, otherwise a
+     tuple `(outcome_code, message)` for the first guard that rejects it.
+     Body, exactly this logic:
+     ```python
+     if target_branch in protected_branches and not protected_override:
+         return (
+             GIT_PROTECTED_BRANCH,
+             f"Push to protected branch {target_branch!r} rejected: "
+             "no protected_override supplied",
+         )
+     if force and not allow_force_push_config:
+         return (
+             GIT_FORCE_PUSH_DISABLED,
+             "Force push rejected: allow_force_push is not enabled in configuration",
+         )
+     return None
+     ```
+  7. Function `build_full_subprocess_env`:
+     ```python
+     def build_full_subprocess_env(
+         git_config: Mapping[str, Any],
+     ) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, Any]]]:
+     ```
+     Docstring (Google style) stating: builds the full subprocess
+     environment for an authenticated git call; wraps
+     `build_git_ssh_environment` from `code_analysis.core.git_ssh_auth`
+     (quote the pinned signature given above), merging its
+     `GIT_SSH_COMMAND` overlay (if any) into a copy of the current process
+     environment so `PATH` and other variables git needs remain present;
+     Args: `git_config` (the `code_analysis.git` configuration mapping as
+     returned by `load_git_remote_config`); Returns: tuple `(env, error)` —
+     on success `env` is a full environment dict ready to pass to
+     `subprocess.run` and `error` is None; on failure `env` is None and
+     `error` is the dict returned by `build_git_ssh_environment`.
+     Body, exactly this logic (the import is local to the function body):
+     ```python
+     from code_analysis.core.git_ssh_auth import build_git_ssh_environment
+
+     overlay, error = build_git_ssh_environment(git_config)
+     if error is not None:
+         return None, error
+     full_env = dict(os.environ)
+     if overlay:
+         full_env.update(overlay)
+     return full_env, None
+     ```
+  8. Function `run_git_subprocess`:
+     ```python
+     def run_git_subprocess(
+         args: List[str],
+         *,
+         cwd: Path,
+         env: Optional[Dict[str, str]],
+         timeout_seconds: float,
+     ) -> Tuple[Optional[int], str, str, bool]:
+     ```
+     Docstring (Google style) stating: runs a git subprocess bounded by
+     `timeout_seconds`; no in-operation retry is performed, a timeout is
+     reported to the caller rather than retried; this function performs its
+     own single `subprocess.run` call (rather than delegating to the
+     canonical cross-cutting subprocess runner) because it must accept a
+     caller-supplied `env` for SSH authentication, which the canonical
+     runner's fixed signature does not accept; Args for each parameter
+     (`args`: full argv e.g. `["git", "fetch", "origin"]`; `cwd`: working
+     directory, the resolved project root; `env`: environment mapping to
+     use for the subprocess, or None to inherit the current process
+     environment unchanged; `timeout_seconds`: maximum seconds to wait
+     before treating the operation as timed out); Returns: tuple
+     `(returncode, stdout, stderr, timed_out)` — when `timed_out` is True,
+     `returncode` is None and `stdout`/`stderr` contain any output captured
+     before the timeout fired.
+     Body, exactly this logic:
+     ```python
+     try:
+         completed = subprocess.run(
+             args,
+             cwd=str(cwd),
+             env=env,
+             capture_output=True,
+             text=True,
+             timeout=timeout_seconds,
+             check=False,
+         )
+         return completed.returncode, completed.stdout, completed.stderr, False
+     except subprocess.TimeoutExpired as exc:
+         raw_stdout = exc.stdout
+         raw_stderr = exc.stderr
+         stdout = raw_stdout.decode() if isinstance(raw_stdout, bytes) else (raw_stdout or "")
+         stderr = raw_stderr.decode() if isinstance(raw_stderr, bytes) else (raw_stderr or "")
+         return None, stdout, stderr, True
+     ```
+  9. Do not add a `main` block, CLI, tests, or any function/class beyond the
+     five listed above. Do not add any other module-level constant beyond
+     the seven outcome-code constants. Do not add a
+     `DEFAULT_REMOTE_TIMEOUT_SECONDS` constant or any other independent
+     default-timeout value anywhere in this file.
+  10. Do not create, modify, or read any file other than
+      `code_analysis/core/git_remote_ops.py`.
+  11. File header comment: the first line of the file must be
+      `"""Shared helpers for project-scoped git remote operations (C-014, C-015, C-016).`
+      opening a module docstring that also states this module is used by
+      `git_fetch`, `git_pull`, and `git_push`, and that remote-timeout
+      resolution is delegated entirely to
+      `code_analysis.core.project_git.remote_timeout.get_remote_timeout_seconds_from_config`
+      (this module defines no timeout default of its own), and ends with an
+      author block:
+      ```
+      Author: Vasiliy Zdanovskiy
+      email: vasilyvz@gmail.com
+      """
+      ```
+verification:
+  type: import
+  target: code_analysis.core.git_remote_ops
+  expected: The module imports without error and exposes the seven string
+    constants (GIT_REMOTE_NOT_CONFIGURED, GIT_CONFLICT, GIT_PROTECTED_BRANCH,
+    GIT_FORCE_PUSH_DISABLED, GIT_REMOTE_TIMEOUT, GIT_NOT_A_REPO,
+    GIT_NOT_AVAILABLE) and the five functions git_remote_error_result,
+    load_git_remote_config, evaluate_push_guards, build_full_subprocess_env,
+    run_git_subprocess with the exact signatures specified in the prompt. The
+    module does not define a DEFAULT_REMOTE_TIMEOUT_SECONDS constant or any
+    other default-timeout constant. Calling load_git_remote_config with
+    config_data omitting code_analysis.git.remote_timeout_seconds (or with
+    config_data=None-shaped input via an empty/absent git section) returns
+    remote_timeout_seconds equal to 30.0 (the canonical default sourced from
+    code_analysis.core.project_git.remote_timeout.get_remote_timeout_seconds_from_config);
+    calling it with code_analysis.git.remote_timeout_seconds set to a
+    specific positive number returns that same number as
+    remote_timeout_seconds (as a float).
+status: frozen

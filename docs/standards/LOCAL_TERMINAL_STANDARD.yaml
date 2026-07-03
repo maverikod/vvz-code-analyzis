@@ -1,0 +1,42 @@
+meta:
+  title: Local Terminal Standard
+  version: '1.0'
+  locale: en
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  description: >
+    Terminal usage in LOCAL Claude Code sessions on this repository: venv
+    discipline, quality gate, tests. Remote agents using the mcp-terminal
+    server follow docs/standards/TERMINAL_WORKFLOW.yaml instead.
+  scope:
+    covers:
+      - venv activation and failure diagnosis
+      - pip restrictions
+      - quality gate commands (format, lint, typecheck)
+      - running the test suite
+    excludes:
+      - server-mode terminal (TERMINAL_WORKFLOW.yaml)
+      - deployment/packaging (build.sh, debian/ — separate task scope)
+
+venv:                                 # PROJECT_RULES CR-005
+  dir: .venv                          # at repo root; must be active for python/pip/tests/linters
+  activate: 'source .venv/bin/activate'
+  on_import_or_pip_error: 'FIRST verify the interpreter (which python, $VIRTUAL_ENV); activate and retry before concluding a package is missing'
+
+pip:                                  # PROJECT_RULES CR-015
+  forbidden: '--break-system-packages and any PEP 668 override, unless the user explicitly approves that exact command in chat'
+
+quality_gate:                         # PROJECT_RULES CR-007; run on touched paths, in the venv
+  format: 'python -m black <paths>'
+  lint: 'python -m flake8 <paths>'
+  typecheck: 'python -m mypy <paths>'   # config: mypy.ini
+  pass_condition: 'all three exit 0 after fixes'
+
+tests:
+  run: 'python -m pytest'             # config: pytest.ini (testpaths=tests, pythonpath=client)
+  timeout: 'per-test 15s (signal) — a hanging test fails fast; do not raise the limit to "fix" a hang'
+  never: 'point pytest at test_data/ (fixture projects, excluded by design)'
+
+caution:
+  server_processes: 'do not start/stop the local server or workers casually; that is an explicit task, not a side effect'
+  logs: 'runtime logs under logs/; do not commit them'

@@ -5,7 +5,7 @@ description: 'Provide the GitHub operation set as a block distinct from the plai
   git remote operations: listing and inspecting repositories, issues, and pull requests,
   creating an issue or a pull request, commenting, and merging a pull request. Each
   operation targets a repository identified to the GitHub API and is bounded by the
-  configured remote timeout (C-023). These operations act through the GitHub API rather
+  configured remote timeout from G-006. These operations act through the GitHub API rather
   than through the local working tree, and read operations never mutate remote state.
   Merging a pull request is a remote mutation that bypasses the local protected-branch
   gate and is therefore independently guarded: a merge proceeds only when the GitHub
@@ -50,5 +50,17 @@ outputs:
   description: A distinct named outcome for a refused merge - merging not permitted
     by configuration, or a protected-base merge without a permitted override - and
     for an API error or not-found target, each emitted without partially merging.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+- A-005
+- A-006
+- A-007
+- A-008
+- A-009
+- A-010
+- A-011
+- A-012
+status: frozen

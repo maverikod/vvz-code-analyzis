@@ -32,5 +32,6 @@ outputs:
   type: outcome
   description: A distinct outcome for a missing or unusable key or an unrecognised
     host, carrying no secret material and issuing no prompt.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+status: frozen

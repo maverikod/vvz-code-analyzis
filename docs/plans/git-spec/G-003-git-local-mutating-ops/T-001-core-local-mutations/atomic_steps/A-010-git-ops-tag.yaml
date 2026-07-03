@@ -1,0 +1,122 @@
+step_id: A-010
+parent_tactical_step: T-001
+name: Create git_ops tag module
+target_file: code_analysis/core/git_ops/tag_op.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/tag_op.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Local git tag creation operation: creates a lightweight or annotated tag
+  in the resolved project repository. Acts only on the resolved project
+  repository and never contacts a remote.
+  """
+
+  from code_analysis.core.git_ops.common import ensure_local_repo, run_git
+
+
+  def git_create_tag(root_dir: str, tag_name: str, target: str | None = None, message: str | None = None) -> dict:
+      """Create a tag, optionally annotated and optionally at a specific target.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          tag_name: The name of the tag to create.
+          target: An opaque ref/revision the tag points at, or None to tag
+              the current HEAD.
+          message: When provided, creates an annotated tag with this message.
+              When None, creates a lightweight tag.
+
+      Returns:
+          On success: {"success": True, "tag_name": str, "commit_hash": str}
+          where commit_hash is the hash the tag resolves to.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_REF_ALREADY_EXISTS", "GIT_REF_NOT_FOUND", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      args = ["tag"]
+      if message is not None:
+          args.extend(["-a", tag_name, "-m", message])
+      else:
+          args.append(tag_name)
+      if target is not None:
+          args.append(target)
+
+      returncode, _stdout, stderr = run_git(root_dir, args)
+      if returncode != 0:
+          lowered = stderr.lower()
+          if "already exists" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_ALREADY_EXISTS",
+                  "message": stderr.strip() or f"Tag '{tag_name}' already exists.",
+              }
+          if "not a valid" in lowered or "unknown revision" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_NOT_FOUND",
+                  "message": stderr.strip() or f"Target '{target}' was not found.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git tag failed.",
+          }
+
+      _rc, hash_stdout, _stderr = run_git(root_dir, ["rev-list", "-n", "1", tag_name])
+      return {
+          "success": True,
+          "tag_name": tag_name,
+          "commit_hash": hash_stdout.strip(),
+      }
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import ensure_local_repo, run_git`.
+  - Must call ensure_local_repo(root_dir) first and return its failure dict
+    immediately if not None.
+  - When message is not None, build args as ["tag", "-a", tag_name, "-m", message]
+    then append target if not None (annotated tag). When message is None,
+    build args as ["tag", tag_name] then append target if not None
+    (lightweight tag). Follow this exact branching, do not merge or reorder.
+  - tag_name and target are opaque strings passed to git as-is; never pass
+    them through path confinement.
+  - This is a local-only operation: never call git push, git fetch, or
+    contact any remote.
+  - Do not add any other function, class, or module-level variable.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "tag" operation owned by tactical step
+    G-003/T-001 ("managing tags"). reset and revert are owned by sibling
+    tactical steps and are out of scope for this file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.tag_op
+  expected: Importing code_analysis.core.git_ops.tag_op succeeds and exposes
+    a callable named git_create_tag with the specified signature.
+status: frozen

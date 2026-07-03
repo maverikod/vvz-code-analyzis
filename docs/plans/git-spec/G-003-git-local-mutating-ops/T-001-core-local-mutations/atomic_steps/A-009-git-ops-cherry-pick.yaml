@@ -1,0 +1,125 @@
+step_id: A-009
+parent_tactical_step: T-001
+name: Create git_ops cherry-pick module
+target_file: code_analysis/core/git_ops/cherry_pick_op.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/cherry_pick_op.py` with EXACTLY
+  the following content, byte for byte:
+
+  """Local git cherry-pick operation: applies a single named commit onto the
+  current branch. Acts only on the resolved project repository and never
+  contacts a remote. A conflicting cherry-pick is aborted before returning so
+  the working tree is never left partially mutated.
+  """
+
+  from code_analysis.core.git_ops.common import ensure_local_repo, run_git
+
+
+  def git_cherry_pick(root_dir: str, commit_ref: str) -> dict:
+      """Apply a single commit onto the current branch.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          commit_ref: The opaque commit identifier to cherry-pick.
+
+      Returns:
+          On success: {"success": True, "commit_hash": str, "branch": str}
+          where commit_hash is the hash of the newly created commit and
+          branch is the current branch name.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_REF_NOT_FOUND", "GIT_CONFLICT", "GIT_COMMAND_FAILED". On
+          GIT_CONFLICT, `git cherry-pick --abort` has already been run so the
+          working tree is left exactly as it was before the cherry-pick
+          attempt.
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      returncode, stdout, stderr = run_git(root_dir, ["cherry-pick", commit_ref])
+      if returncode != 0:
+          combined_out = stdout + stderr
+          if "CONFLICT" in combined_out or "could not apply" in combined_out.lower():
+              run_git(root_dir, ["cherry-pick", "--abort"])
+              return {
+                  "success": False,
+                  "code": "GIT_CONFLICT",
+                  "message": "Cherry-pick produced a conflict; the cherry-pick was aborted.",
+              }
+          lowered = combined_out.lower()
+          if "bad revision" in lowered or "bad object" in lowered or "unknown revision" in lowered:
+              return {
+                  "success": False,
+                  "code": "GIT_REF_NOT_FOUND",
+                  "message": stderr.strip() or f"Commit '{commit_ref}' was not found.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git cherry-pick failed.",
+          }
+
+      _rc_hash, hash_stdout, _hash_stderr = run_git(root_dir, ["rev-parse", "HEAD"])
+      _rc_branch, branch_stdout, _branch_stderr = run_git(root_dir, ["rev-parse", "--abbrev-ref", "HEAD"])
+      return {
+          "success": True,
+          "commit_hash": hash_stdout.strip(),
+          "branch": branch_stdout.strip(),
+      }
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import ensure_local_repo, run_git`.
+  - Must call ensure_local_repo(root_dir) first and return its failure dict
+    immediately if not None.
+  - On any conflict (detected by "CONFLICT" or "could not apply" appearing in
+    the combined stdout+stderr, case-insensitively for "could not apply"),
+    MUST run `git cherry-pick --abort` via run_git before returning the
+    GIT_CONFLICT dict.
+  - commit_ref is an opaque string passed to git as-is; never pass it through
+    path confinement.
+  - This is a local-only operation: never call git push, git fetch, or
+    contact any remote.
+  - Do not add any other function, class, or module-level variable.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+
+  Context (machine_spec excerpt, concept_id C-010; consumed cross-step
+  invariant C-012 noted for traceability only — cherry-pick's exemption from
+  the protected-branch gate is owned by sibling tactical step G-003/T-003 and
+  is not implemented in this file):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "cherry_pick" operation owned by tactical
+    step G-003/T-001 ("applying individual commits from elsewhere" /
+    "applying a commit onto the current branch"). The protected-branch gate
+    exemption for cherry-pick (C-012) is a policy decision owned by sibling
+    tactical step G-003/T-003 and must not be implemented here. reset and
+    revert are owned by sibling tactical steps and are out of scope for this
+    file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.cherry_pick_op
+  expected: Importing code_analysis.core.git_ops.cherry_pick_op succeeds and
+    exposes a callable named git_cherry_pick with the specified signature.
+status: frozen

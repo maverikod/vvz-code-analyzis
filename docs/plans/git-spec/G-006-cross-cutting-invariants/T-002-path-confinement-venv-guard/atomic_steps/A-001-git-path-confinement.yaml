@@ -1,0 +1,124 @@
+step_id: A-001
+parent_tactical_step: T-002
+name: Git path confinement mechanism
+target_file: code_analysis/core/project_git/path_confinement.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-022
+prompt: |
+  Create the new Python file at the exact path
+  code_analysis/core/project_git/path_confinement.py (operation: create_file).
+  Do not modify, create, or read any other file. Do not assume any pre-existing
+  content in this file — the parent package code_analysis/core/project_git/
+  already exists or is created as part of this operation (its __init__.py is
+  authored by a separate tactical step, with no ordering guarantee relative
+  to this step); you are only creating this one module, creating the parent
+  directory first if it does not yet exist.
+
+  Write the file with exactly this structure and content:
+
+  1. A module docstring as the first statement in the file, non-empty, in
+  this exact shape:
+
+  """
+  Path confinement guard for the project-scoped git command block.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  2. Then this exact import block, and no other imports:
+
+  from __future__ import annotations
+
+  from pathlib import Path
+  from typing import Optional, Tuple
+
+  from mcp_proxy_adapter.commands.result import ErrorResult
+
+  3. Then exactly one function, with this exact signature:
+
+  def confine_project_git_path(
+      project_root: Path,
+      relative_path: str,
+  ) -> Tuple[Optional[Path], Optional[ErrorResult]]:
+
+  The function's docstring must document both parameters and the return
+  value using Google-style "Args:" and "Returns:" sections (per the
+  project's PYTHON_DOCSTRING_STANDARD.md conventions: every parameter
+  except self/cls is documented under "Args:", and a "Returns:" section is
+  required because the function has a return annotation). State in the
+  docstring that this function confines a project-relative path parameter
+  of a git operation to the resolved project root, and that revision
+  identifiers (branch names, tag names, commit hashes, ref expressions)
+  must never be passed to it because they are exempt from path
+  confinement.
+
+  Implement the function body with exactly this behaviour, in this order:
+
+  a. Compute raw = (relative_path or "").strip().
+  b. If raw is empty (not raw): return (None, ErrorResult(message="Path
+     parameter is empty; cannot be confined to the project root.",
+     code="GIT_PATH_OUTSIDE_PROJECT", details={"relative_path":
+     relative_path})).
+  c. Build rel = Path(raw).
+  d. If rel.is_absolute() is True: return (None, ErrorResult(message=
+     "Absolute path is not allowed for a git operation path parameter;
+     use a project-relative path.", code="GIT_PATH_OUTSIDE_PROJECT",
+     details={"relative_path": relative_path})).
+  e. If any(part == ".." for part in rel.parts): return (None,
+     ErrorResult(message="Path traversal ('..') is not allowed in a git
+     operation path parameter.", code="GIT_PATH_OUTSIDE_PROJECT",
+     details={"relative_path": relative_path})).
+  f. Compute root = project_root.resolve() and candidate = (root /
+     rel).resolve().
+  g. Try candidate.relative_to(root); on ValueError, return (None,
+     ErrorResult(message="Resolved path escapes the project root.",
+     code="GIT_PATH_OUTSIDE_PROJECT", details={"relative_path":
+     relative_path, "resolved_path": str(candidate), "project_root":
+     str(root)})).
+  h. Otherwise return (candidate, None).
+
+  Constraints, all explicit and mandatory:
+  - The function returns a tuple (resolved_path, error): on success
+    resolved_path is the confined absolute Path and error is None; on
+    rejection resolved_path is None and error is an ErrorResult with
+    code="GIT_PATH_OUTSIDE_PROJECT" — this is the only outcome code this
+    function ever produces.
+  - Every branch above returns exactly the tuple shown; no branch raises
+    an exception.
+  - This function must only ever be called on project-relative path
+    parameters; it must never be called on a revision identifier.
+  - Do not add any additional function, class, or constant to this file
+    beyond confine_project_git_path.
+  - Every parameter and the return value carry full type annotations
+    exactly as shown in the signature; no untyped parameters.
+  - The finished file must be well under 400 lines (a correct
+    implementation is roughly 60-90 lines); do not pad with unrelated
+    content.
+  - Use only the imports listed above; do not add any other import.
+
+  Concept excerpt from the machine-readable specification (quote verbatim
+  as ground truth for this step; do not deviate from it):
+
+  concept_id: C-022
+  name: PathConfinement
+  definition: The invariant confining every path parameter to the project
+    root and rejecting outside paths, while revision identifiers are
+    exempt.
+  properties:
+    path_params: confined_to_project_root
+    outside_root: GIT_PATH_OUTSIDE_PROJECT
+    refs_confined: false
+  source_labels: ['{y1z2}']
+verification:
+  type: import
+  target: code_analysis.core.project_git.path_confinement
+  expected: The module imports without error and exposes a function named
+    confine_project_git_path accepting a project_root Path and a
+    relative_path string, returning a tuple of an optional resolved Path
+    and an optional ErrorResult whose code is GIT_PATH_OUTSIDE_PROJECT on
+    rejection.
+status: frozen

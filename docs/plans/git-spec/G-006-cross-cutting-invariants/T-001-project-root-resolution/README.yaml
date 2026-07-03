@@ -35,5 +35,6 @@ outputs:
   type: outcome
   description: A refusal outcome emitted when resolution is empty or ambiguous, with
     no operation performed.
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+status: frozen

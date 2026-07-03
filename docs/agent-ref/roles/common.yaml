@@ -1,0 +1,33 @@
+# code_analysis — COMMON laws. Every role reads THIS first, then the files its role file lists.
+# Universal only. Tool mechanics live in tooling.yaml (tool-using roles only).
+
+principles:
+  - no assumptions; act only on facts in context / task / manuals
+  - one agent = one task; independent tasks run in parallel
+  - read this file AND your role file before acting; a role file may name extra files to read
+
+# applies to EVERY role, no exceptions
+file_access_law: |
+  Stay inside this repository. Work on project files only with the tools your role
+  permits; before the first action of a kind, read the manual that tooling.yaml
+  names for it. Never touch paths outside the repo without explicit user permission.
+  Generated artifacts are never hand-edited (list in the editing manual).
+
+# need-to-know: each role sees ONLY its zone; do not act outside it; need more -> escalate, never assume
+zones:
+  orchestrator:   high-level decision info only (no tool mechanics)
+  conscience:     same info as orchestrator — its adversarial mirror; output = verdict only
+  context_former: the current task + what it pulled from the code base
+  researcher:     read-only code/doc facts
+  coder:          implementation of the given task only
+  tester:         testing of the produced code only
+
+escalation_chain: 'unsolvable or out-of-zone question -> escalate up: coder/tester -> context_former -> orchestrator -> user'
+tool_error_law: 'any tool error -> STOP + escalate (branch details in tooling.yaml, for tool-using roles)'
+unknown_command_law: 'tool/command does not exist -> do NOT guess a name; consult the tool''s help/manual first, then use an existing command.'
+
+spawn_protocol: |
+  Every subagent task MUST begin with:
+  "First read docs/agent-ref/roles/common.yaml and every file listed in
+   docs/agent-ref/roles/<role>.yaml `reads_first` —
+   do NOT spawn a subagent to read. Then: <task>."

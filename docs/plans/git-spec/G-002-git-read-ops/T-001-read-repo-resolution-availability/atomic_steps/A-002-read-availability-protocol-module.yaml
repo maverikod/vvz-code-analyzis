@@ -1,0 +1,226 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: Create read-repo-availability protocol module
+target_file: code_analysis/commands/git_ops/read_availability.py
+operation: create_file
+priority: 1
+depends_on:
+  - A-001
+concepts:
+  - C-009
+prompt: |
+  Create a new file at the exact project-relative path
+  code_analysis/commands/git_ops/read_availability.py
+
+  Operation: create_file. The file does not exist yet; the parent directory
+  code_analysis/commands/git_ops/ already exists and contains only an
+  __init__.py package marker (do not read or modify that file).
+
+  MRS excerpt this file implements (concept C-009, GitReadOps, quoted
+  verbatim from docs/plans/git-spec/spec.yaml):
+
+    concept_id: C-009
+    name: GitReadOps
+    definition: The read-only git inspection operations that resolve and
+      confirm the repository before reporting structured results.
+    properties:
+      operations: [status, log, diff, branch, show, remote, blame]
+      queue: false
+      confirms_repo_is_git: true
+      distinct_outcomes: [GIT_NOT_A_REPO, GIT_NOT_AVAILABLE]
+      paths: project_relative
+    source_labels: ['{u1v2}', '{w3x4}']
+
+  Rationale this module encodes: every read-only git operation resolves its
+  target repository root and confirms the root is usable for git reads
+  before acting. When the resolved root is not a git repository, or is a
+  git repository with no commits yet, the read operation must return a
+  distinct, NON-ERROR availability outcome that names the condition,
+  rather than raising as though the call were malformed. Read operations
+  never modify the working tree, the index, or any ref. This outcome must
+  be uniform across the whole read set, so this module is the single
+  shared implementation every read-only git command in this package will
+  call.
+
+  Write EXACTLY the following content into the file, byte for byte, and
+  nothing else:
+
+  """
+  Uniform repository-resolution and availability-outcome protocol shared by
+  every read-only git operation (C-009, GitReadOps).
+
+  Before any read-only git operation reports its result, it resolves the
+  project's repository root and confirms the root is usable for git reads.
+  When the root is not a git repository, or is a git repository with no
+  commits yet, the operation returns a distinct, non-error availability
+  outcome that names the condition rather than raising as though the call
+  were malformed. This module defines that shared outcome and the
+  read-only subprocess runner used to detect it, so every read operation
+  in the read set applies the identical uniform outcome.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from __future__ import annotations
+
+  import subprocess
+  from pathlib import Path
+  from typing import Any, Dict, List, Optional, Tuple
+
+  from mcp_proxy_adapter.commands.result import SuccessResult
+
+  from code_analysis.core.git_integration import is_git_available, is_git_repository
+
+  GIT_NOT_AVAILABLE = "GIT_NOT_AVAILABLE"
+  GIT_NOT_A_REPO = "GIT_NOT_A_REPO"
+  GIT_NO_COMMITS = "GIT_NO_COMMITS"
+
+
+  def run_git_read(
+      resolved_root: Path, args: List[str], timeout: int = 30
+  ) -> Tuple[int, str, str]:
+      """Run a read-only git subcommand against the resolved repository root.
+
+      Args:
+          resolved_root: The project root resolved per G-006, treated as
+              the single repository under inspection.
+          args: The git subcommand and its arguments, e.g.
+              ["status", "--porcelain"]. Callers must pass only read-only
+              git subcommands; this function does not enforce
+              read-only-ness itself, it is the callers' contract.
+          timeout: Seconds to wait for the git subprocess before treating
+              the call as timed out. Defaults to 30.
+
+      Returns:
+          A tuple (returncode, stdout, stderr) from the git invocation.
+          When the subprocess exceeds timeout, returns
+          (124, "", "git operation timed out") instead of raising.
+      """
+      try:
+          result = subprocess.run(
+              ["git", *args],
+              cwd=str(resolved_root),
+              capture_output=True,
+              text=True,
+              timeout=timeout,
+          )
+          return (result.returncode, result.stdout, result.stderr)
+      except subprocess.TimeoutExpired:
+          return (124, "", "git operation timed out")
+
+
+  def check_read_availability(resolved_root: Path) -> Optional[Dict[str, Any]]:
+      """Check whether the resolved repository is usable for git reads.
+
+      Args:
+          resolved_root: The project root resolved per G-006, treated as
+              the single repository under inspection.
+
+      Returns:
+          None when the repository is usable for reads. Otherwise a
+          non-error availability outcome dict with keys "success" (True),
+          "available" (False), "reason" (one of GIT_NOT_AVAILABLE,
+          GIT_NOT_A_REPO, GIT_NO_COMMITS), and "message" (a human-readable
+          sentence naming the condition).
+      """
+      if not is_git_available():
+          return {
+              "success": True,
+              "available": False,
+              "reason": GIT_NOT_AVAILABLE,
+              "message": "Git is not available on this system.",
+          }
+      if not is_git_repository(resolved_root):
+          return {
+              "success": True,
+              "available": False,
+              "reason": GIT_NOT_A_REPO,
+              "message": "The resolved project root is not a git repository.",
+          }
+      returncode, _stdout, _stderr = run_git_read(
+          resolved_root, ["rev-parse", "--verify", "HEAD"]
+      )
+      if returncode != 0:
+          return {
+              "success": True,
+              "available": False,
+              "reason": GIT_NO_COMMITS,
+              "message": "The git repository has no commits yet.",
+          }
+      return None
+
+
+  def availability_success_result(outcome: Dict[str, Any]) -> SuccessResult:
+      """Wrap a non-error availability outcome as a SuccessResult.
+
+      Args:
+          outcome: The availability outcome dict produced by
+              check_read_availability.
+
+      Returns:
+          A SuccessResult wrapping the outcome dict as its data payload.
+      """
+      return SuccessResult(data=outcome)
+
+  Constraints (all mandatory, no exceptions):
+  - The imports must be exactly, in this order: `from __future__ import
+    annotations`; `import subprocess`; `from pathlib import Path`; `from
+    typing import Any, Dict, List, Optional, Tuple`; `from
+    mcp_proxy_adapter.commands.result import SuccessResult`; `from
+    code_analysis.core.git_integration import is_git_available,
+    is_git_repository`. No other imports.
+  - Define exactly three module-level constants with these exact names and
+    string values: GIT_NOT_AVAILABLE = "GIT_NOT_AVAILABLE",
+    GIT_NOT_A_REPO = "GIT_NOT_A_REPO", GIT_NO_COMMITS = "GIT_NO_COMMITS".
+  - Define exactly three functions with these exact names, signatures, and
+    return types: `run_git_read(resolved_root: Path, args: List[str],
+    timeout: int = 30) -> Tuple[int, str, str]`;
+    `check_read_availability(resolved_root: Path) -> Optional[Dict[str,
+    Any]]`; `availability_success_result(outcome: Dict[str, Any]) ->
+    SuccessResult`.
+  - Every function must have a Google-style docstring with an Args section
+    and a Returns section, exactly as shown in the content above.
+  - Full type annotations on every parameter and return value, exactly as
+    shown above.
+  - `run_git_read` must call `subprocess.run(["git", *args],
+    cwd=str(resolved_root), capture_output=True, text=True,
+    timeout=timeout)` inside a try block, return
+    `(result.returncode, result.stdout, result.stderr)` on success, and
+    catch `subprocess.TimeoutExpired` to return
+    `(124, "", "git operation timed out")`.
+  - `run_git_read` is read-only by contract: it must never itself select
+    or hardcode a mutating git subcommand; it only forwards whatever
+    `args` the caller supplies.
+  - `check_read_availability` must check conditions in exactly this order
+    and return immediately on the first failing check: (1) call
+    `is_git_available()` from code_analysis.core.git_integration; if it
+    returns False, return the dict with reason GIT_NOT_AVAILABLE; (2) call
+    `is_git_repository(resolved_root)` from the same module; if it returns
+    False, return the dict with reason GIT_NOT_A_REPO; (3) call
+    `run_git_read(resolved_root, ["rev-parse", "--verify", "HEAD"])`; if
+    the returned returncode is not 0, return the dict with reason
+    GIT_NO_COMMITS. If all three checks pass, return None.
+  - Every returned availability outcome dict must have exactly the four
+    keys "success" (always True), "available" (always False), "reason"
+    (the matching constant), and "message" (the matching human-readable
+    sentence), exactly as shown in the content above. This dict is a
+    non-error outcome: "success" is True even though "available" is
+    False, because a non-git or commit-less repository is a normal,
+    expected, reportable condition rather than a malformed-call error.
+  - `availability_success_result` must return
+    `SuccessResult(data=outcome)` and nothing else.
+  - Do not create or modify any file other than
+    code_analysis/commands/git_ops/read_availability.py.
+  - Do not add any additional functions, classes, constants, or helper
+    code beyond what is specified above.
+  - The resulting file must be at most 170 lines long.
+verification:
+  type: import
+  target: code_analysis.commands.git_ops.read_availability
+  expected: >-
+    The module imports cleanly with no errors and exposes the three
+    constants GIT_NOT_AVAILABLE, GIT_NOT_A_REPO, GIT_NO_COMMITS and the
+    three functions run_git_read, check_read_availability,
+    availability_success_result with the documented signatures.
+status: frozen

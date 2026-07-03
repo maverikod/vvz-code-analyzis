@@ -1,0 +1,115 @@
+step_id: A-001
+parent_tactical_step: T-003
+name: Ownership invariant execution-context guard
+target_file: code_analysis/core/project_git/execution_context.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-021
+prompt: |
+  Create a new Python source file at the exact project-relative path
+  code_analysis/core/project_git/execution_context.py using operation
+  create_file. The file does not exist yet. Do not assume any pre-existing
+  content. Do not read, create, or modify any other file. Do not import
+  anything from code_analysis.core.project_git or any other project_git
+  module; this file has no internal project dependencies.
+
+  MRS excerpt (machine_spec concept C-021, quoted verbatim):
+  concept_id: C-021
+  name: OwnershipInvariant
+  definition: "The invariant that all operations run as the unprivileged
+  server user so created objects retain its ownership without any chown."
+  properties:
+    runs_as: unprivileged_server_user
+    never_as: privileged_user
+    result: server_user_ownership_no_chown
+  source_labels: ['{w9x0}']
+  Source label {w9x0} text, quoted verbatim: "All git and write operations
+  run as the unprivileged server user, never as a privileged user, so that
+  every created or updated file and every repository object retains the
+  server user's ownership without any post-hoc ownership change."
+
+  Write the file with exactly the following four parts, in this order, and
+  nothing else:
+
+  PART 1 — module docstring (first statement in the file, non-empty), exactly:
+  """
+  Ownership invariant enforcement for project-scoped git and write operations.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  PART 2 — imports, exactly these two lines and no others:
+  import os
+  from typing import Optional, Tuple
+
+  PART 3 — one module-level constant, exactly:
+  OWNERSHIP_VIOLATION_OUTCOME = "GIT_PRIVILEGED_USER_REFUSED"
+
+  PART 4 — exactly one module-level function with this exact signature:
+  def check_unprivileged_execution_context() -> Tuple[bool, Optional[str]]:
+
+  Function body requirements (implement exactly this logic, no more, no less):
+  - Call os.geteuid() and store the result in a local variable named
+    effective_user_id (type int).
+  - If effective_user_id == 0: return the tuple (False, OWNERSHIP_VIOLATION_OUTCOME).
+  - Otherwise: return the tuple (True, None).
+  - The function takes no parameters.
+  - The function must never call os.chown, shutil.chown, or any other
+    ownership-changing function or system call, anywhere in this file. It
+    only inspects the current effective user id and reports an outcome.
+  - The function must never perform file I/O, subprocess execution, or
+    network access.
+
+  The function's docstring must be exactly this Google-style docstring
+  (this satisfies the project's Python docstring standard: every parameter
+  annotated, return annotation present, a Returns: section describing the
+  return value; the function has no parameters so no Args: section is
+  required):
+  """
+  Verify that the current process is running as the unprivileged server user.
+
+  Reads the effective user id of the running process via os.geteuid() and
+  refuses when it is 0 (the privileged root user). Intended to be called
+  before every git operation and every write operation executes, so that
+  files and repository objects created or updated by the operation retain
+  the unprivileged server user's ownership. This function never changes
+  ownership of any file (no chown is performed anywhere); it only reports
+  whether the current execution context is already unprivileged.
+
+  Returns:
+      A tuple (allowed, outcome). When the effective user id is not 0,
+      returns (True, None) and the caller may proceed with the git or
+      write operation. When the effective user id is 0, returns
+      (False, "GIT_PRIVILEGED_USER_REFUSED") and the caller must refuse
+      to perform the git or write operation.
+  """
+
+  Additional constraints, all mandatory:
+  - The file contains exactly one module-level constant
+    (OWNERSHIP_VIOLATION_OUTCOME) and exactly one module-level function
+    (check_unprivileged_execution_context). Do not add any other function,
+    class, constant, or import beyond what is listed above.
+  - Do not add a class. Do not add a __main__ block. Do not add logging.
+  - Leave exactly two blank lines between the constant (PART 3) and the
+    function definition (PART 4), per standard module-level spacing.
+  - The file must be valid Python 3 source, parse without syntax errors,
+    and stay well under 400 lines (the specified content is under 40 lines).
+  - Every parameter and the return type of check_unprivileged_execution_context
+    must carry the exact type annotation shown in the signature above.
+verification:
+  type: import
+  target: code_analysis.core.project_git.execution_context
+  expected: Importing the module succeeds with no import or syntax errors.
+    The module exposes a string constant named OWNERSHIP_VIOLATION_OUTCOME
+    whose value is the text GIT_PRIVILEGED_USER_REFUSED, and a zero-argument
+    function named check_unprivileged_execution_context. When invoked in a
+    normal non-root process, the function returns a two-element result
+    indicating the operation is allowed, with no outcome code attached. When
+    the process effective user id is the privileged root id, the function
+    returns a two-element result indicating the operation is refused,
+    together with the GIT_PRIVILEGED_USER_REFUSED outcome code. No file on
+    disk ever changes ownership as a result of calling the function.
+status: frozen

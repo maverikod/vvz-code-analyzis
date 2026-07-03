@@ -34,5 +34,5 @@ outputs:
   type: structure
   description: The structured report for the selected read operation - status, history,
     diff, branches, commit detail, remotes, or blame.
-atomic_steps: []
-status: draft
+atomic_steps: [A-001, A-002, A-003, A-004, A-005, A-006, A-007]
+status: frozen

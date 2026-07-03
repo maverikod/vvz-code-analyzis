@@ -26,5 +26,7 @@ source_labels:
 - '{o1p2}'
 depends_on:
 - G-006
-tactical_steps: []
-status: draft
+tactical_steps:
+- T-001
+- T-002
+status: frozen

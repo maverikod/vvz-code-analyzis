@@ -1,0 +1,196 @@
+step_id: A-002
+parent_tactical_step: T-001
+name: Create git_ops shared helpers module
+target_file: code_analysis/core/git_ops/common.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/common.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Shared helpers for the local git working-tree and history mutation operations
+  in code_analysis/core/git_ops/: a no-shell subprocess runner around git, a
+  local-repository availability check, and project-root path confinement for
+  path-consuming operations (stage, unstage, restore). Path confinement delegates
+  to the canonical project-scoped guard in
+  code_analysis/core/project_git/path_confinement.py. These operations act only
+  on the resolved local repository and never contact a remote.
+  """
+
+  import os
+  import subprocess
+  from pathlib import Path
+
+  from code_analysis.core.project_git.path_confinement import confine_project_git_path
+
+
+  def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:
+      """Run `git -C <root_dir> <args>` as a subprocess with no shell.
+
+      Args:
+          root_dir: Absolute path to the git working tree to operate on.
+          args: The git subcommand and its arguments, e.g. ["add", "--", "file.py"].
+          timeout_seconds: Local subprocess-safety timeout bound in seconds. This
+              is a local safety bound only, not the C-023 remote-operation
+              timeout; these operations never contact a remote.
+
+      Returns:
+          A tuple (returncode, stdout, stderr) with stdout and stderr decoded
+          as text.
+
+      Raises:
+          subprocess.TimeoutExpired: if the git process does not complete
+              within timeout_seconds.
+      """
+      completed = subprocess.run(
+          ["git", "-C", root_dir] + list(args),
+          shell=False,
+          capture_output=True,
+          text=True,
+          timeout=timeout_seconds,
+      )
+      return completed.returncode, completed.stdout, completed.stderr
+
+
+  def ensure_local_repo(root_dir: str) -> dict | None:
+      """Confirm git is available and root_dir is a git work tree.
+
+      Args:
+          root_dir: Absolute path to the candidate git working tree.
+
+      Returns:
+          None when git is available and root_dir is a git work tree.
+          Otherwise a failure outcome dict:
+          {"success": False, "code": "GIT_NOT_AVAILABLE", "message": str} when
+          the git executable is not available, or
+          {"success": False, "code": "GIT_NOT_A_REPO", "message": str} when
+          root_dir is not a git work tree.
+      """
+      try:
+          availability = subprocess.run(
+              ["git", "--version"],
+              shell=False,
+              capture_output=True,
+              text=True,
+              timeout=10,
+          )
+      except (OSError, subprocess.TimeoutExpired):
+          return {
+              "success": False,
+              "code": "GIT_NOT_AVAILABLE",
+              "message": "git executable is not available on this system.",
+          }
+      if availability.returncode != 0:
+          return {
+              "success": False,
+              "code": "GIT_NOT_AVAILABLE",
+              "message": "git executable is not available on this system.",
+          }
+      returncode, stdout, _stderr = run_git(root_dir, ["rev-parse", "--is-inside-work-tree"])
+      if returncode != 0 or stdout.strip() != "true":
+          return {
+              "success": False,
+              "code": "GIT_NOT_A_REPO",
+              "message": f"{root_dir} is not a git work tree.",
+          }
+      return None
+
+
+  def confine_relative_path(root_dir: str, rel_path: str) -> tuple[str | None, dict | None]:
+      """Resolve a project-relative path under root_dir, rejecting paths outside it.
+
+      Revision identifiers (branch names, commit refs, tag names) must never be
+      passed to this function: refs are opaque and are not subject to path
+      confinement.
+
+      Delegates the confinement decision to the canonical guard
+      confine_project_git_path (code_analysis/core/project_git/path_confinement.py)
+      and adapts its (Path, ErrorResult) result to this module's (str, dict)
+      outcome convention; it does not reimplement any path-escape check itself.
+
+      Args:
+          root_dir: Absolute path to the project root / git working tree.
+          rel_path: A project-relative path supplied by the caller.
+
+      Returns:
+          A tuple (absolute_path_str, None) when the resolved path is inside
+          root_dir. Otherwise (None, failure_outcome) where failure_outcome is
+          {"success": False, "code": "GIT_PATH_OUTSIDE_PROJECT", "message": str}.
+      """
+      resolved_path, error = confine_project_git_path(Path(root_dir), rel_path)
+      if error is not None:
+          return None, {
+              "success": False,
+              "code": "GIT_PATH_OUTSIDE_PROJECT",
+              "message": error.message,
+          }
+      return str(resolved_path), None
+
+  Constraints:
+  - Reproduce run_git and ensure_local_repo exactly as shown above: same
+    imports, same two signatures with the exact typing annotations shown
+    (`run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) ->
+    tuple[int, str, str]`, `ensure_local_repo(root_dir: str) -> dict | None`),
+    same docstrings, same body logic.
+  - `confine_relative_path` keeps EXACTLY this signature —
+    `confine_relative_path(root_dir: str, rel_path: str) -> tuple[str | None, dict | None]`
+    — because git_ops/staging.py and git_ops/restore_op.py already quote it
+    verbatim and unpack its return value positionally; do not rename it, its
+    parameters, or change its return-type shape.
+  - `confine_relative_path`'s body MUST delegate to
+    `code_analysis.core.project_git.path_confinement.confine_project_git_path`
+    for the actual path-escape/absolute/traversal decision; it must NOT
+    reimplement any of that logic (no `os.path.abspath`, no manual
+    `rstrip`/`startswith` prefix check, no local traversal check). The only
+    work this function does is: wrap root_dir in a Path, call the canonical
+    function, and translate its (Optional[Path], Optional[ErrorResult])
+    result into this module's (Optional[str], Optional[dict]) outcome
+    convention (str(resolved_path) on success; {"success": False, "code":
+    "GIT_PATH_OUTSIDE_PROJECT", "message": error.message} on failure — this
+    is the only failure code confine_project_git_path ever produces, per
+    G-006/T-002/A-001).
+  - Do not add any other function, class, or module-level variable.
+  - Do not add a shell=True subprocess call anywhere.
+  - The outcome dict convention for this whole package: success dicts always
+    include "success": True; failure dicts always include "success": False,
+    "code": an UPPER_SNAKE_CASE string, and "message": a human-readable string.
+  - Cross-goal dependency (context only, not a same-tactical-step
+    dependency — depends_on stays [] per this plan's convention): this file
+    imports `code_analysis.core.project_git.path_confinement.confine_project_git_path`,
+    created by goal G-006 / tactical step T-002 / atomic step A-001
+    (`code_analysis/core/project_git/path_confinement.py`). That module and
+    its parent package `code_analysis/core/project_git/` (with its own
+    `__init__.py`, created by G-006/T-004/A-001) are given as fact to
+    already exist on disk when this file is created; do not create, modify,
+    or redefine them here.
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file provides shared helpers consumed by every operation module
+    in code_analysis/core/git_ops/, which together implement only the C-010
+    operations owned by tactical step G-003/T-001: add, commit, switch,
+    restore, branch_create, branch_delete, stash, merge, cherry_pick, tag.
+    reset and revert are owned by sibling tactical steps G-003/T-002 and
+    G-003/T-003.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.common
+  expected: Importing code_analysis.core.git_ops.common succeeds and exposes
+    three callables named run_git, ensure_local_repo, and
+    confine_relative_path with the specified signatures.
+status: frozen

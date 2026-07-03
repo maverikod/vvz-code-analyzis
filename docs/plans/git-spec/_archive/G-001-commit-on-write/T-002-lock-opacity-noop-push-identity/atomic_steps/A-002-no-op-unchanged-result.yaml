@@ -1,0 +1,237 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Add no-op-on-unchanged result builder to commit_on_write_policy
+target_file: code_analysis/core/commit_on_write_policy.py
+operation: modify_file
+priority: 2
+depends_on:
+- A-001
+concepts:
+- C-006
+prompt: |
+  Modify the existing Python module at the exact repo-relative path
+  `code_analysis/core/commit_on_write_policy.py`. Operation: modify_file.
+
+  The file currently contains exactly the following content:
+
+  ```python
+  """
+  Commit-on-write policy rules.
+
+  Authoritative policy layer for commit-on-write behaviour: the decision of
+  whether a write produces a commit, the no-op-on-unchanged result shape, and
+  the invariants governing the git commit argv used for a commit produced on
+  write (never pushes, identity taken from project git configuration). The
+  write path consumes this module rather than embedding these rules inline.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from typing import Optional
+
+
+  def decide_commit_on_write(
+      commit_on_write: bool,
+      commit_message: Optional[str],
+      content_changed: bool,
+  ) -> bool:
+      """
+      Decide whether a write produces a commit.
+
+      Lock opacity rule: the server never interprets why a file is locked, and
+      the commit decision for a write is derived solely from the parameters of
+      the write call plus the write's content-change outcome -- never from
+      lock state, lock reason, or any unlock flag. The commit decision and the
+      unlock decision are independent of each other; neither implies the
+      other, so this function intentionally takes no lock-related parameter.
+
+      Args:
+          commit_on_write: The write call's explicit commit-intent flag. True
+              means the caller requested a commit for this write.
+          commit_message: The write call's caller-supplied commit message.
+              A commit is produced only when this is a non-empty string after
+              stripping leading and trailing whitespace.
+          content_changed: Whether the persisted content differs from the
+              previous content of the target file.
+
+      Returns:
+          True when commit_on_write is True AND commit_message is a string
+          that is non-empty after stripping whitespace AND content_changed is
+          True. False in every other case.
+      """
+      if not commit_on_write:
+          return False
+      if not isinstance(commit_message, str):
+          return False
+      if not commit_message.strip():
+          return False
+      if not content_changed:
+          return False
+      return True
+  ```
+
+  Replace the entire file content with exactly the following text, verbatim,
+  with no additions or omissions beyond what is shown. This change (a) widens
+  the typing import line and (b) appends three new module members after the
+  existing `decide_commit_on_write` function, while leaving
+  `decide_commit_on_write` and its docstring unchanged character-for-character:
+
+  ```python
+  """
+  Commit-on-write policy rules.
+
+  Authoritative policy layer for commit-on-write behaviour: the decision of
+  whether a write produces a commit, the no-op-on-unchanged result shape, and
+  the invariants governing the git commit argv used for a commit produced on
+  write (never pushes, identity taken from project git configuration). The
+  write path consumes this module rather than embedding these rules inline.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from typing import Any, Dict, Optional
+
+
+  def decide_commit_on_write(
+      commit_on_write: bool,
+      commit_message: Optional[str],
+      content_changed: bool,
+  ) -> bool:
+      """
+      Decide whether a write produces a commit.
+
+      Lock opacity rule: the server never interprets why a file is locked, and
+      the commit decision for a write is derived solely from the parameters of
+      the write call plus the write's content-change outcome -- never from
+      lock state, lock reason, or any unlock flag. The commit decision and the
+      unlock decision are independent of each other; neither implies the
+      other, so this function intentionally takes no lock-related parameter.
+
+      Args:
+          commit_on_write: The write call's explicit commit-intent flag. True
+              means the caller requested a commit for this write.
+          commit_message: The write call's caller-supplied commit message.
+              A commit is produced only when this is a non-empty string after
+              stripping leading and trailing whitespace.
+          content_changed: Whether the persisted content differs from the
+              previous content of the target file.
+
+      Returns:
+          True when commit_on_write is True AND commit_message is a string
+          that is non-empty after stripping whitespace AND content_changed is
+          True. False in every other case.
+      """
+      if not commit_on_write:
+          return False
+      if not isinstance(commit_message, str):
+          return False
+      if not commit_message.strip():
+          return False
+      if not content_changed:
+          return False
+      return True
+
+
+  REASON_NO_CHANGES = "no_changes"
+
+
+  def build_commit_on_write_result(
+      committed: bool,
+      changed: bool,
+      reason: Optional[str] = None,
+  ) -> Dict[str, Any]:
+      """
+      Build the structured outcome payload for a commit-on-write write.
+
+      Args:
+          committed: Whether the write produced a commit.
+          changed: Whether the persisted content differed from the previous
+              content of the target file.
+          reason: Optional short machine-readable reason code qualifying the
+              outcome (e.g. REASON_NO_CHANGES). None when no qualifying
+              reason applies.
+
+      Returns:
+          A dict with exactly the keys "committed", "changed", and "reason",
+          set respectively to the committed, changed, and reason arguments.
+      """
+      return {"committed": committed, "changed": changed, "reason": reason}
+
+
+  def no_op_unchanged_result() -> Dict[str, Any]:
+      """
+      Build the result for a commit-intent write whose content is unchanged.
+
+      No-op-on-unchanged rule: when commit-intent is set with a valid message
+      but the written content is identical to the previous content, the write
+      succeeds and produces no commit. This outcome is a SUCCESS payload, not
+      an error -- it is reported as a successful write that committed nothing
+      because nothing changed.
+
+      Returns:
+          A dict {"committed": False, "changed": False, "reason": "no_changes"}.
+      """
+      return {"committed": False, "changed": False, "reason": REASON_NO_CHANGES}
+  ```
+
+  Constraints (all must hold exactly):
+  - The import line changes from `from typing import Optional` to exactly
+    `from typing import Any, Dict, Optional`.
+  - The existing `decide_commit_on_write` function, including its docstring
+    and body, is preserved character-for-character.
+  - A new module-level constant is added after `decide_commit_on_write`,
+    exactly: `REASON_NO_CHANGES = "no_changes"`.
+  - A new function is added with exactly this signature:
+    `def build_commit_on_write_result(committed: bool, changed: bool, reason: Optional[str] = None) -> Dict[str, Any]:`
+    with the exact docstring shown above (Args: committed, changed, reason;
+    Returns: description of the returned dict), and a body that returns
+    exactly `{"committed": committed, "changed": changed, "reason": reason}`.
+  - A new function is added with exactly this signature:
+    `def no_op_unchanged_result() -> Dict[str, Any]:`
+    with the exact docstring shown above, and a body that returns exactly
+    `{"committed": False, "changed": False, "reason": REASON_NO_CHANGES}`
+    (using the REASON_NO_CHANGES constant reference, not a hardcoded string
+    literal, for the reason value).
+  - Do not add any other function, class, constant, or import.
+  - Do not modify the module docstring.
+
+  Machine-spec excerpt (concept C-006, the only concept this step realizes;
+  quoted verbatim from docs/plans/git-spec/spec.yaml):
+
+  concept_id: C-006
+  name: NoOpOnUnchanged
+  definition: The rule that a commit-intent write whose content is unchanged succeeds
+    without a commit and is not an error.
+  properties:
+    condition: intent_set_and_message_valid_and_content_unchanged
+    outcome: write_succeeds_no_commit
+    is_error: false
+    reported_as: committed_false_changed_false_reason_no_changes
+  source_labels:
+  - '{o5p6}'
+
+  Source specification text this concept is derived from (quoted verbatim from
+  docs/plans/git-spec/source_spec.md, section "3. Commit-on-write behaviour",
+  label {o5p6}):
+
+  "{o5p6} When commit-intent is set with a valid message but the written content is identical to the previous content, the write succeeds and no commit is produced. This outcome is not an error; it is reported as a successful write that produced no commit because nothing changed."
+
+  Rationale for the code shape (for your understanding, not additional scope):
+  `no_op_unchanged_result` and `build_commit_on_write_result` are the code
+  realization of the NoOpOnUnchanged rule. `no_op_unchanged_result` returns the
+  exact success payload (committed=False, changed=False, reason='no_changes')
+  for the no-op-on-unchanged case, and this payload is a normal successful
+  return value — never a raised exception and never an error payload — which
+  is the direct realization of C-006's `is_error: false` and `reported_as:
+  committed_false_changed_false_reason_no_changes` properties.
+verification:
+  type: manual
+  target: 'code_analysis/core/commit_on_write_policy.py :: no_op_unchanged_result, build_commit_on_write_result,
+    REASON_NO_CHANGES'
+  expected: 'Importing the module succeeds. REASON_NO_CHANGES equals the string ''no_changes''. no_op_unchanged_result()
+    returns the dict {''committed'': False, ''changed'': False, ''reason'': ''no_changes''} with no exception
+    raised. build_commit_on_write_result(True, True, None) returns {''committed'': True, ''changed'':
+    True, ''reason'': None}.'
+status: draft

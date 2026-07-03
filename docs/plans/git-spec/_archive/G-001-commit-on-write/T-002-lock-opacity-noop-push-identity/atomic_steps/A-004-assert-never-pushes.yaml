@@ -1,0 +1,361 @@
+step_id: A-004
+parent_tactical_step: T-002
+name: Add never-pushes guard to commit_on_write_policy
+target_file: code_analysis/core/commit_on_write_policy.py
+operation: modify_file
+priority: 4
+depends_on:
+- A-003
+concepts:
+- C-007
+prompt: |
+  Modify the existing Python module at the exact repo-relative path
+  `code_analysis/core/commit_on_write_policy.py`. Operation: modify_file.
+
+  The file currently contains exactly the following content:
+
+  ```python
+  """
+  Commit-on-write policy rules.
+
+  Authoritative policy layer for commit-on-write behaviour: the decision of
+  whether a write produces a commit, the no-op-on-unchanged result shape, and
+  the invariants governing the git commit argv used for a commit produced on
+  write (never pushes, identity taken from project git configuration). The
+  write path consumes this module rather than embedding these rules inline.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from typing import Any, Dict, List, Optional
+
+
+  def decide_commit_on_write(
+      commit_on_write: bool,
+      commit_message: Optional[str],
+      content_changed: bool,
+  ) -> bool:
+      """
+      Decide whether a write produces a commit.
+
+      Lock opacity rule: the server never interprets why a file is locked, and
+      the commit decision for a write is derived solely from the parameters of
+      the write call plus the write's content-change outcome -- never from
+      lock state, lock reason, or any unlock flag. The commit decision and the
+      unlock decision are independent of each other; neither implies the
+      other, so this function intentionally takes no lock-related parameter.
+
+      Args:
+          commit_on_write: The write call's explicit commit-intent flag. True
+              means the caller requested a commit for this write.
+          commit_message: The write call's caller-supplied commit message.
+              A commit is produced only when this is a non-empty string after
+              stripping leading and trailing whitespace.
+          content_changed: Whether the persisted content differs from the
+              previous content of the target file.
+
+      Returns:
+          True when commit_on_write is True AND commit_message is a string
+          that is non-empty after stripping whitespace AND content_changed is
+          True. False in every other case.
+      """
+      if not commit_on_write:
+          return False
+      if not isinstance(commit_message, str):
+          return False
+      if not commit_message.strip():
+          return False
+      if not content_changed:
+          return False
+      return True
+
+
+  REASON_NO_CHANGES = "no_changes"
+
+
+  def build_commit_on_write_result(
+      committed: bool,
+      changed: bool,
+      reason: Optional[str] = None,
+  ) -> Dict[str, Any]:
+      """
+      Build the structured outcome payload for a commit-on-write write.
+
+      Args:
+          committed: Whether the write produced a commit.
+          changed: Whether the persisted content differed from the previous
+              content of the target file.
+          reason: Optional short machine-readable reason code qualifying the
+              outcome (e.g. REASON_NO_CHANGES). None when no qualifying
+              reason applies.
+
+      Returns:
+          A dict with exactly the keys "committed", "changed", and "reason",
+          set respectively to the committed, changed, and reason arguments.
+      """
+      return {"committed": committed, "changed": changed, "reason": reason}
+
+
+  def no_op_unchanged_result() -> Dict[str, Any]:
+      """
+      Build the result for a commit-intent write whose content is unchanged.
+
+      No-op-on-unchanged rule: when commit-intent is set with a valid message
+      but the written content is identical to the previous content, the write
+      succeeds and produces no commit. This outcome is a SUCCESS payload, not
+      an error -- it is reported as a successful write that committed nothing
+      because nothing changed.
+
+      Returns:
+          A dict {"committed": False, "changed": False, "reason": "no_changes"}.
+      """
+      return {"committed": False, "changed": False, "reason": REASON_NO_CHANGES}
+
+
+  def build_commit_argv(commit_message: str) -> List[str]:
+      """
+      Build the git commit argv for a commit produced on write.
+
+      Commit identity binding rule: the author identity recorded for a
+      commit-on-write commit comes from the project's effective git
+      configuration at the repository root, never from the writer or the lock
+      holder. Accordingly this argv carries no --author flag, no -c
+      user.name/user.email override, and injects no identity via environment
+      -- git resolves the committer/author identity itself from the
+      repository's configuration when this argv is executed.
+
+      Commit-never-pushes invariant: this argv is exclusively a local commit
+      invocation. It never contains "push" or any other remote-propagating
+      argument; propagation to a remote remains a separate manual operation.
+
+      Args:
+          commit_message: The non-empty commit message text to pass to git.
+
+      Returns:
+          The list ["git", "commit", "-m", commit_message].
+      """
+      return ["git", "commit", "-m", commit_message]
+  ```
+
+  Replace the entire file content with exactly the following text, verbatim,
+  with no additions or omissions beyond what is shown. This change appends one
+  new module-level constant and one new function after `build_commit_argv`,
+  while leaving all existing content unchanged character-for-character. No
+  import line changes (List, Dict, Any, Optional are already imported):
+
+  ```python
+  """
+  Commit-on-write policy rules.
+
+  Authoritative policy layer for commit-on-write behaviour: the decision of
+  whether a write produces a commit, the no-op-on-unchanged result shape, and
+  the invariants governing the git commit argv used for a commit produced on
+  write (never pushes, identity taken from project git configuration). The
+  write path consumes this module rather than embedding these rules inline.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  from typing import Any, Dict, List, Optional
+
+
+  def decide_commit_on_write(
+      commit_on_write: bool,
+      commit_message: Optional[str],
+      content_changed: bool,
+  ) -> bool:
+      """
+      Decide whether a write produces a commit.
+
+      Lock opacity rule: the server never interprets why a file is locked, and
+      the commit decision for a write is derived solely from the parameters of
+      the write call plus the write's content-change outcome -- never from
+      lock state, lock reason, or any unlock flag. The commit decision and the
+      unlock decision are independent of each other; neither implies the
+      other, so this function intentionally takes no lock-related parameter.
+
+      Args:
+          commit_on_write: The write call's explicit commit-intent flag. True
+              means the caller requested a commit for this write.
+          commit_message: The write call's caller-supplied commit message.
+              A commit is produced only when this is a non-empty string after
+              stripping leading and trailing whitespace.
+          content_changed: Whether the persisted content differs from the
+              previous content of the target file.
+
+      Returns:
+          True when commit_on_write is True AND commit_message is a string
+          that is non-empty after stripping whitespace AND content_changed is
+          True. False in every other case.
+      """
+      if not commit_on_write:
+          return False
+      if not isinstance(commit_message, str):
+          return False
+      if not commit_message.strip():
+          return False
+      if not content_changed:
+          return False
+      return True
+
+
+  REASON_NO_CHANGES = "no_changes"
+
+
+  def build_commit_on_write_result(
+      committed: bool,
+      changed: bool,
+      reason: Optional[str] = None,
+  ) -> Dict[str, Any]:
+      """
+      Build the structured outcome payload for a commit-on-write write.
+
+      Args:
+          committed: Whether the write produced a commit.
+          changed: Whether the persisted content differed from the previous
+              content of the target file.
+          reason: Optional short machine-readable reason code qualifying the
+              outcome (e.g. REASON_NO_CHANGES). None when no qualifying
+              reason applies.
+
+      Returns:
+          A dict with exactly the keys "committed", "changed", and "reason",
+          set respectively to the committed, changed, and reason arguments.
+      """
+      return {"committed": committed, "changed": changed, "reason": reason}
+
+
+  def no_op_unchanged_result() -> Dict[str, Any]:
+      """
+      Build the result for a commit-intent write whose content is unchanged.
+
+      No-op-on-unchanged rule: when commit-intent is set with a valid message
+      but the written content is identical to the previous content, the write
+      succeeds and produces no commit. This outcome is a SUCCESS payload, not
+      an error -- it is reported as a successful write that committed nothing
+      because nothing changed.
+
+      Returns:
+          A dict {"committed": False, "changed": False, "reason": "no_changes"}.
+      """
+      return {"committed": False, "changed": False, "reason": REASON_NO_CHANGES}
+
+
+  def build_commit_argv(commit_message: str) -> List[str]:
+      """
+      Build the git commit argv for a commit produced on write.
+
+      Commit identity binding rule: the author identity recorded for a
+      commit-on-write commit comes from the project's effective git
+      configuration at the repository root, never from the writer or the lock
+      holder. Accordingly this argv carries no --author flag, no -c
+      user.name/user.email override, and injects no identity via environment
+      -- git resolves the committer/author identity itself from the
+      repository's configuration when this argv is executed.
+
+      Commit-never-pushes invariant: this argv is exclusively a local commit
+      invocation. It never contains "push" or any other remote-propagating
+      argument; propagation to a remote remains a separate manual operation.
+
+      Args:
+          commit_message: The non-empty commit message text to pass to git.
+
+      Returns:
+          The list ["git", "commit", "-m", commit_message].
+      """
+      return ["git", "commit", "-m", commit_message]
+
+
+  FORBIDDEN_ON_COMMIT_ON_WRITE: frozenset = frozenset({"push"})
+
+
+  def assert_never_pushes(argv: List[str]) -> None:
+      """
+      Assert that a commit-on-write argv never performs a remote push.
+
+      Commit-never-pushes invariant: a commit produced on write never pushes
+      to a remote; propagation of commits to a remote remains a separate
+      manual operation requested independently of the write. This guard
+      raises when any element of argv matches a forbidden remote-propagating
+      token, so callers can verify a commit argv before executing it.
+
+      Args:
+          argv: The argv list to check, e.g. the list built by
+              build_commit_argv.
+
+      Returns:
+          None when no element of argv appears in
+          FORBIDDEN_ON_COMMIT_ON_WRITE.
+
+      Raises:
+          ValueError: If any element of argv appears in
+              FORBIDDEN_ON_COMMIT_ON_WRITE.
+      """
+      for token in argv:
+          if token in FORBIDDEN_ON_COMMIT_ON_WRITE:
+              raise ValueError(
+                  "commit-on-write argv must never push: forbidden token "
+                  f"'{token}' found in argv"
+              )
+  ```
+
+  Constraints (all must hold exactly):
+  - The import line remains exactly
+    `from typing import Any, Dict, List, Optional` (unchanged from the current
+    state).
+  - All existing content (`decide_commit_on_write`, `REASON_NO_CHANGES`,
+    `build_commit_on_write_result`, `no_op_unchanged_result`,
+    `build_commit_argv`, including their docstrings and bodies) is preserved
+    character-for-character.
+  - A new module-level constant is added after `build_commit_argv`, exactly:
+    `FORBIDDEN_ON_COMMIT_ON_WRITE: frozenset = frozenset({"push"})`.
+  - A new function is added with exactly this signature:
+    `def assert_never_pushes(argv: List[str]) -> None:`
+    with the exact docstring shown above (Args: argv; Returns: description;
+    Raises: ValueError condition), and a body that iterates over `argv` and,
+    for any element found in `FORBIDDEN_ON_COMMIT_ON_WRITE`, raises
+    `ValueError` with the message
+    `f"commit-on-write argv must never push: forbidden token '{token}' found in argv"`
+    (where `token` is the matching element); when no element matches, the
+    function returns None implicitly (no explicit `return` statement needed).
+  - Do not add any other function, class, constant, or import.
+  - Do not modify the module docstring or any previously existing function or
+    constant.
+
+  Machine-spec excerpt (concept C-007, the only concept this step realizes;
+  quoted verbatim from docs/plans/git-spec/spec.yaml):
+
+  concept_id: C-007
+  name: CommitNeverPushes
+  definition: The invariant that a commit produced on write never pushes, leaving
+    remote propagation a separate manual operation.
+  properties:
+    push_on_commit_on_write: never
+    remote_propagation: manual_separate_operation
+  source_labels:
+  - '{q7r8}'
+
+  Source specification text this concept is derived from (quoted verbatim from
+  docs/plans/git-spec/source_spec.md, section "3. Commit-on-write behaviour",
+  label {q7r8}):
+
+  "{q7r8} A commit produced by a write never pushes to a remote. Propagation of commits to a remote is exclusively a manual operation requested separately."
+
+  Rationale for the code shape (for your understanding, not additional scope):
+  `FORBIDDEN_ON_COMMIT_ON_WRITE` and `assert_never_pushes` are a second,
+  independent realization of the CommitNeverPushes invariant (complementing
+  `build_commit_argv` from a prior change to this same file): rather than only
+  relying on the argv builder never emitting a push, this guard function lets
+  any commit-on-write argv be actively checked and rejected with a raised
+  `ValueError` if it were ever to contain the forbidden "push" token, so the
+  invariant that a commit produced on write never pushes to a remote is
+  enforced defensively, not just by construction.
+verification:
+  type: manual
+  target: 'code_analysis/core/commit_on_write_policy.py :: FORBIDDEN_ON_COMMIT_ON_WRITE, assert_never_pushes'
+  expected: Importing the module succeeds. FORBIDDEN_ON_COMMIT_ON_WRITE equals frozenset({'push'}). assert_never_pushes(['git',
+    'commit', '-m', 'msg']) returns None without raising. assert_never_pushes(['git', 'push']) raises
+    ValueError.
+status: draft

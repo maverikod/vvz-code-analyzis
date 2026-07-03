@@ -1,0 +1,130 @@
+meta:
+  plan: git-spec
+  artifact: gs_concept_matrix
+  purpose: >
+    Coverage-contract matrix mapping every machine_spec concept (C-001..C-029)
+    to the global step(s) that own it, plus a relations matrix mapping every
+    machine_spec relation to the global step that realizes it. Produced by
+    Phase A (CODER) per docs/plans/git-spec verification of cycle_1/cycle_2.
+    Binding on Phase B (atomic-step authoring): every atomic step must trace
+    back to exactly one row here via its parent tactical step's parent global
+    step.
+  author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+concept_matrix:
+- concept_id: C-001
+  name: CapabilityBlock
+  covered_by_gs:
+  - G-006
+- concept_id: C-002
+  name: LayerBoundary
+  covered_by_gs:
+  - G-006
+- concept_id: C-009
+  name: GitReadOps
+  covered_by_gs:
+  - G-002
+- concept_id: C-010
+  name: GitLocalMutatingOps
+  covered_by_gs:
+  - G-003
+- concept_id: C-011
+  name: HardResetGuard
+  covered_by_gs:
+  - G-003
+- concept_id: C-012
+  name: LocalOpsNotProtectedGated
+  covered_by_gs:
+  - G-003
+- concept_id: C-013
+  name: RevertIsInverseCommit
+  covered_by_gs:
+  - G-003
+- concept_id: C-014
+  name: GitRemoteOps
+  covered_by_gs:
+  - G-004
+- concept_id: C-015
+  name: PullSemantics
+  covered_by_gs:
+  - G-004
+- concept_id: C-016
+  name: PushGuards
+  covered_by_gs:
+  - G-004
+- concept_id: C-017
+  name: GitSshAuth
+  covered_by_gs:
+  - G-004
+- concept_id: C-018
+  name: GithubBlock
+  covered_by_gs:
+  - G-005
+- concept_id: C-019
+  name: GithubPrMergeGuard
+  covered_by_gs:
+  - G-005
+- concept_id: C-020
+  name: GithubTokenAuth
+  covered_by_gs:
+  - G-005
+- concept_id: C-021
+  name: OwnershipInvariant
+  covered_by_gs:
+  - G-006
+- concept_id: C-022
+  name: PathConfinement
+  covered_by_gs:
+  - G-006
+- concept_id: C-023
+  name: RemoteTimeout
+  covered_by_gs:
+  - G-006
+- concept_id: C-026
+  name: ProjectRootResolution
+  covered_by_gs:
+  - G-006
+- concept_id: C-027
+  name: VenvWriteGuard
+  covered_by_gs:
+  - G-006
+- concept_id: C-028
+  name: DistinctFromEditSessionGit
+  covered_by_gs:
+  - G-006
+- concept_id: C-029
+  name: ReservedCommandPrefix
+  covered_by_gs:
+  - G-006
+relations_matrix:
+- from_concept: C-014
+  to_concept: C-017
+  type: depends_on
+  realized_by_gs: G-004
+- from_concept: C-018
+  to_concept: C-020
+  type: depends_on
+  realized_by_gs: G-005
+verification:
+  total_concepts_in_spec: 21
+  total_concepts_covered: 21
+  concepts_with_multiple_owners: 0
+  disjoint_union_equals_all_concepts: true
+  total_relations_in_spec: 2
+  total_relations_realized: 2
+  notes: >
+    Every concept is owned by exactly one global step (disjoint partition,
+    matching invariant I1 check a). Both relations in spec.yaml are internal
+    to a single global step (C-014->C-017 both owned by G-004; C-018->C-020
+    both owned by G-005), so each relation is realized entirely within one
+    G-step and needs no cross-G declaration (invariant I1 check b). No
+    concept currently requires a second owning G-step; the list-typed
+    covered_by_gs field is kept list-shaped per the task contract in case a
+    future cascade legitimately adds a second owner. G-001-commit-on-write
+    (concepts C-003..C-008, C-024, C-025) was excised from plan scope by
+    explicit user decision on 2026-07-03 (commit-on-write is out of scope;
+    this plan covers git_* and github_* server commands only); the excised
+    global step and its concepts are archived at
+    docs/plans/git-spec/_archive/G-001-commit-on-write/ and are no longer
+    present in this matrix. Totals above (21 concepts, 5 global steps:
+    G-002..G-006) reflect the post-excision plan.

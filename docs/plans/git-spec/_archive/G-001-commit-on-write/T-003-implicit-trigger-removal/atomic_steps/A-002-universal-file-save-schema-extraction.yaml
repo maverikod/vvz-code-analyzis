@@ -1,0 +1,286 @@
+step_id: A-002
+parent_tactical_step: T-003
+name: Extract universal_file_save schema and payload validation into a shared module
+target_file: code_analysis/commands/universal_file_save_schema.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-024
+status: draft
+prompt: |
+  Create the new file `code_analysis/commands/universal_file_save_schema.py`.
+  Operation: create_file. This file does not exist yet; write it from scratch.
+  Do not assume any pre-existing content.
+
+  ## Purpose
+
+  This is a mechanical extraction module. Two variants of the `universal_file_save`
+  MCP command exist in this codebase and both currently duplicate, byte-for-byte,
+  the same input-schema-building code and the same content-payload-validation code.
+  This module becomes the single source of truth for both pieces of logic so
+  neither command variant duplicates or drifts from the other. This module also
+  adds one new schema property, `commit_on_write`, needed to carry an explicit
+  per-write commit-intent flag (MRS concept C-024 below): because both command
+  variants declare `"additionalProperties": False` in their schema, any new
+  parameter accepted by the command's `execute` method must also appear as a
+  schema property, otherwise a caller supplying it would be schema-rejected
+  before `execute` ever runs.
+
+  This module does not itself implement any rejection logic, wiring, or call
+  site — it only provides the schema dict and the payload validator as
+  reusable, importable functions. It does not import or reference any pre-write
+  guard function.
+
+  ## MRS excerpt (only the concept relevant to this file)
+
+  concept_id: C-024
+  name: ImplicitTriggerRemoval
+  definition: The breaking migration that removes the prior message-only commit
+    trigger so a message without intent is now rejected.
+  properties:
+    removed: message_only_implies_commit
+    after_change: message_without_intent_rejected
+    breaking: true
+    old_caller: fails_loudly
+  source_labels: ['{c5d6}']
+  source_spec text (label {c5d6}): "Introducing the explicit commit-intent flag
+  removes a prior implicit behaviour in which supplying a commit message alone
+  triggered a commit. After the change, a message without the flag is rejected
+  rather than silently committing, so any existing caller that relied on the
+  implicit behaviour fails loudly and must adopt the explicit flag."
+
+  Relevance to this file: the new `commit_on_write` schema property this file
+  adds is the explicit commit-intent flag referenced by C-024. Its schema
+  description must explain, in the caller-facing schema text, that supplying
+  `commit_message` without `commit_on_write` is rejected with the code
+  `COMMIT_MESSAGE_WITHOUT_INTENT`, and that the previously implicit
+  message-only commit trigger has been removed.
+
+  ## Required file content — exact structure, three parts in this order
+
+  ### 1. Module docstring
+
+  The file starts with a module-level docstring (triple double-quotes). Its
+  text must state, in your own well-formed prose:
+  - This module is a mechanical extraction shared by both `universal_file_save`
+    command variants located at
+    `code_analysis/commands/universal_file_save_command.py` and
+    `code_analysis/commands/universal_file_save_command/save_command.py`.
+  - It provides the input schema builder and the content payload validator as
+    a single source of truth so neither variant duplicates or drifts from the
+    other.
+
+  End the docstring with exactly these two lines, each on its own line, as the
+  final lines of the docstring, matching this repository's module docstring
+  convention:
+
+  ```
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  ```
+
+  ### 2. Imports
+
+  Exactly these three import statements, in this exact order, each on its own
+  line (blank line separating each, matching this repository's import style):
+
+  ```python
+  from typing import Any, Dict, Optional
+
+  from mcp_proxy_adapter.commands.result import ErrorResult
+
+  from .registration import REGISTRY_SCHEMA_DISCOVERY_SHORT
+  ```
+
+  No other imports are used or needed anywhere in this file.
+
+  ### 3. Two module-level functions, in this exact order
+
+  #### Function 1
+
+  Exact signature:
+
+  ```python
+  def get_universal_file_save_schema() -> Dict[str, Any]:
+  ```
+
+  Docstring (first statement in the function body, triple double-quotes):
+  `"""Return the universal_file_save command input schema."""`
+
+  Function body: `return` the following dict literal exactly as written below
+  (this is the JSON-Schema-style input schema for the `universal_file_save`
+  MCP command; every key, value, and string must match character-for-character,
+  including the ellipsis character `…` and the em dash `—` in the `file_path`
+  property description):
+
+  ```python
+      return {
+          "type": "object",
+          "title": "universal_file_save",
+          "description": (
+              "Registry-first save for text, json, yaml, and python handlers. "
+              "Required: project_id, file_path, content (string). "
+              "Optional: dry_run, diff, backup (default true), create_parent_dirs "
+              "(default true, mkdir -p for all handlers), commit_message, "
+              "diff_context_lines; validate_syntax_only and tree_id apply only to Python. "
+              "Creates missing files and parent directories when allowed; same overwrite "
+              "pipelines apply once the file exists. "
+              + REGISTRY_SCHEMA_DISCOVERY_SHORT
+          ),
+          "properties": {
+              "project_id": {
+                  "type": "string",
+                  "description": "Project UUID (from create_project or list_projects).",
+              },
+              "file_path": {
+                  "type": "string",
+                  "description": (
+                      "Single path relative to project root (literal; globs/wildcards not supported). "
+                      "May name a file that does not exist yet: all handlers support create with "
+                      "create_parent_dirs (mkdir -p). Routing: text (.md, .txt, …), .json, "
+                      ".yaml/.yml, .py/.pyi/.pyw — see list_handler_mappings()."
+                  ),
+              },
+              "content": {
+                  "type": "string",
+                  "description": (
+                      "Full file body: plain text for .md/.txt/.rst/.adoc; JSON or YAML text "
+                      "for .json / .yaml/.yml; Python source for .py/.pyi/.pyw."
+                  ),
+              },
+              "dry_run": {
+                  "type": "boolean",
+                  "default": False,
+                  "description": "If true, no write, backup, or DB/index side effects.",
+              },
+              "diff": {
+                  "type": "boolean",
+                  "default": False,
+                  "description": "If true, include unified diff in the response when supported.",
+              },
+              "backup": {
+                  "type": "boolean",
+                  "default": True,
+                  "description": "If true (default), create backups where the handler does so.",
+              },
+              "create_parent_dirs": {
+                  "type": "boolean",
+                  "default": True,
+                  "description": (
+                      "When true (default), create missing parent directories for file_path "
+                      "(like mkdir -p) before writing. When false, fail with "
+                      "PARENT_DIR_MISSING if a parent directory is absent."
+                  ),
+              },
+              "commit_message": {
+                  "type": "string",
+                  "description": "Optional git commit message for handlers that support it.",
+              },
+              "commit_on_write": {
+                  "type": "boolean",
+                  "default": False,
+                  "description": (
+                      "Explicit commit-intent flag. Supplying commit_message without "
+                      "commit_on_write is rejected with COMMIT_MESSAGE_WITHOUT_INTENT "
+                      "(the implicit message-only commit trigger was removed)."
+                  ),
+              },
+              "diff_context_lines": {
+                  "type": "integer",
+                  "description": "Optional unified-diff context line count (default 3).",
+              },
+              "validate_syntax_only": {
+                  "type": "boolean",
+                  "default": False,
+                  "description": "Python handler: validate syntax only when applying ops.",
+              },
+              "tree_id": {
+                  "type": "string",
+                  "description": "Optional CST tree_id for Python save path.",
+              },
+          },
+          "required": ["project_id", "file_path", "content"],
+          "additionalProperties": False,
+      }
+  ```
+
+  Note the added `"commit_on_write"` property sits between `"commit_message"`
+  and `"diff_context_lines"` in the `"properties"` dict, exactly as shown
+  above. Every other key, value, ordering, and string in this dict is copied
+  verbatim from the pre-existing schema.
+
+  #### Function 2
+
+  Exact signature:
+
+  ```python
+  def validate_save_payload_content(content: Optional[str]) -> Optional[ErrorResult]:
+  ```
+
+  Parameter typing: `content: Optional[str]` — the caller-supplied file content,
+  or `None` when absent.
+
+  Return typing: `Optional[ErrorResult]` — `None` when the payload is valid;
+  otherwise an `ErrorResult` describing the validation failure.
+
+  Docstring (first statement in the function body, triple double-quotes):
+  `"""Return validate save payload."""`
+
+  Function body — exact logic, no deviation:
+
+  ```python
+      if content is None:
+          return ErrorResult(
+              message="content is required",
+              code="VALIDATION_ERROR",
+              details={"field": "content"},
+          )
+      if not isinstance(content, str):
+          return ErrorResult(
+              message="content must be a string",
+              code="VALIDATION_ERROR",
+              details={"field": "content"},
+          )
+      return None
+  ```
+
+  ## Constraints (all mandatory, no exceptions)
+
+  - The file contains only: the module docstring, the three import statements
+    listed above, and the two functions described above, in that order. No
+    classes, no additional functions, no module-level constants, no `__all__`,
+    no `if __name__ == "__main__"` block, no logging, no side effects at
+    import time.
+  - Neither function performs file I/O or network I/O. Neither function calls
+    the other. Neither function raises an exception itself (they only
+    construct and return values); `ErrorResult` construction is the only
+    external call either function makes.
+  - Do not implement, reference, or stub any pre-write commit-intent rejection
+    logic (that lives in a separate module entirely out of scope for this
+    file) — this file only builds the schema dict and validates the content
+    payload.
+  - Do not implement any wiring, call site, registration, or import of this
+    module into any other file — this file stands alone.
+  - Two blank lines separate the two module-level functions (standard Python
+    style), matching the blank-line convention already used elsewhere in this
+    repository between top-level definitions.
+  - All docstrings and comments are in English.
+  - Keep total file length well under 400 lines (expected size: roughly
+    120-135 lines including docstrings and the schema dict).
+verification:
+  type: import
+  target: code_analysis/commands/universal_file_save_schema.py
+  expected: >
+    The module imports cleanly with no errors. get_universal_file_save_schema()
+    returns a dict whose "type" equals "object", whose "additionalProperties"
+    equals False, whose "required" list equals ["project_id", "file_path",
+    "content"], and whose "properties" dict contains a "commit_on_write" key
+    with "type" == "boolean" and "default" == False, positioned alongside the
+    other properties (project_id, file_path, content, dry_run, diff, backup,
+    create_parent_dirs, commit_message, diff_context_lines,
+    validate_syntax_only, tree_id). validate_save_payload_content(None)
+    returns an ErrorResult with code "VALIDATION_ERROR" and
+    details == {"field": "content"}. validate_save_payload_content(123)
+    returns an ErrorResult with code "VALIDATION_ERROR".
+    validate_save_payload_content("some text") returns None.

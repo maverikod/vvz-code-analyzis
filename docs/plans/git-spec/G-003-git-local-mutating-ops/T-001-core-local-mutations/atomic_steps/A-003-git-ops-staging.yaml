@@ -1,0 +1,134 @@
+step_id: A-003
+parent_tactical_step: T-001
+name: Create git_ops staging module
+target_file: code_analysis/core/git_ops/staging.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/staging.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Local git staging operations: stage (git add) and unstage (git restore
+  --staged) project-relative paths in the resolved project repository. Never
+  contacts a remote.
+  """
+
+  from code_analysis.core.git_ops.common import confine_relative_path, ensure_local_repo, run_git
+
+
+  def git_add(root_dir: str, paths: list[str]) -> dict:
+      """Stage the given project-relative paths.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          paths: Project-relative paths to stage.
+
+      Returns:
+          On success: {"success": True, "staged_paths": list[str]} where
+          staged_paths are the input paths that were staged.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_PATH_OUTSIDE_PROJECT", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      confined_paths = []
+      for rel_path in paths:
+          absolute_path, path_failure = confine_relative_path(root_dir, rel_path)
+          if path_failure is not None:
+              return path_failure
+          confined_paths.append(absolute_path)
+
+      returncode, _stdout, stderr = run_git(root_dir, ["add", "--"] + confined_paths)
+      if returncode != 0:
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git add failed.",
+          }
+      return {"success": True, "staged_paths": paths}
+
+
+  def git_unstage(root_dir: str, paths: list[str]) -> dict:
+      """Unstage the given project-relative paths (git restore --staged).
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          paths: Project-relative paths to unstage.
+
+      Returns:
+          On success: {"success": True, "unstaged_paths": list[str]} where
+          unstaged_paths are the input paths that were unstaged.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_PATH_OUTSIDE_PROJECT", "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      confined_paths = []
+      for rel_path in paths:
+          absolute_path, path_failure = confine_relative_path(root_dir, rel_path)
+          if path_failure is not None:
+              return path_failure
+          confined_paths.append(absolute_path)
+
+      returncode, _stdout, stderr = run_git(root_dir, ["restore", "--staged", "--"] + confined_paths)
+      if returncode != 0:
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git restore --staged failed.",
+          }
+      return {"success": True, "unstaged_paths": paths}
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import confine_relative_path, ensure_local_repo, run_git`.
+  - Both functions must call ensure_local_repo(root_dir) first and return its
+    failure dict immediately if not None.
+  - Both functions must confine EVERY path in `paths` via confine_relative_path
+    before running any git command (collect all confined absolute paths into a
+    list; if any single path fails confinement, return that failure
+    immediately without running git and without staging/unstaging any path).
+  - Do not add any other function, class, or module-level variable.
+  - Do not add a shell=True subprocess call; only use run_git from common.py.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+  - `def confine_relative_path(root_dir: str, rel_path: str) -> tuple[str | None, dict | None]:` — returns (absolute_path_str, None) on success; else (None, {"success": False, "code": "GIT_PATH_OUTSIDE_PROJECT", "message": str}).
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "add" operation (as git_add, staging) plus
+    the unstage counterpart (git_unstage) named in tactical step G-003/T-001's
+    description ("staging and unstaging paths"). Both are owned by
+    G-003/T-001. reset and revert are owned by sibling tactical steps and are
+    out of scope for this file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.staging
+  expected: Importing code_analysis.core.git_ops.staging succeeds and exposes
+    two callables named git_add and git_unstage with the specified
+    signatures.
+status: frozen

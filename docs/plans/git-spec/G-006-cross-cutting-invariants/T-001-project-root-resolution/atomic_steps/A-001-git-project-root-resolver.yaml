@@ -1,0 +1,233 @@
+step_id: A-001
+parent_tactical_step: T-001
+name: Create git-block project root resolver
+target_file: code_analysis/core/project_git/root_resolution.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-026
+status: frozen
+prompt: |-
+  ## Task
+
+  Create a brand-new Python file. The parent directory does not exist yet;
+  create it as part of writing the file.
+
+  Target file (create_file — file and its parent directory do not exist yet):
+    code_analysis/core/project_git/root_resolution.py
+
+  Do not read, create, or modify any other file. Do not create an
+  __init__.py in this step — that is out of scope here.
+
+  ## Purpose
+
+  This module is the single git-block-facing entry point that every
+  project-scoped git operation and the commit-on-write behaviour use to
+  resolve a registered project's repository root. It delegates to the
+  existing function code_analysis.core.project_root_path.resolve_project_root_absolute_str
+  (do not modify that function or its file; only import and call it).
+
+  Existing function being delegated to (already present in the codebase,
+  exact signature, given here as fact — do not alter it):
+
+      def resolve_project_root_absolute_str(
+          *,
+          project_id: Optional[str] = None,
+          root_path_stored: Optional[str],
+          watch_dir_id: Optional[str],
+          project_name: Optional[str] = None,
+          database: Any,
+          require_exists: bool = True,
+      ) -> str:
+          """Resolves a project row to an absolute root path string, or ""
+          when resolution is empty or ambiguous."""
+
+  It lives at code_analysis/core/project_root_path.py and is imported as:
+      from code_analysis.core.project_root_path import resolve_project_root_absolute_str
+
+  ## Required file content
+
+  Write exactly this content (module docstring, imports, constant, dataclass,
+  function):
+
+      """
+      Git-block-facing project root resolution.
+
+      Single entry point every project-scoped git operation and the commit-on-write
+      behaviour use to resolve a registered project's repository root. Delegates to
+      code_analysis.core.project_root_path.resolve_project_root_absolute_str and
+      converts its ambiguous empty-string "could not resolve" result into a
+      distinct, explicit refusal outcome instead of acting on a guessed location.
+
+      Author: Vasiliy Zdanovskiy
+      email: vasilyvz@gmail.com
+      """
+
+      from __future__ import annotations
+
+      from dataclasses import dataclass
+      from typing import Any, Optional
+
+      from code_analysis.core.project_root_path import resolve_project_root_absolute_str
+
+      PROJECT_ROOT_RESOLUTION_REFUSED = "PROJECT_ROOT_RESOLUTION_REFUSED"
+
+
+      @dataclass(frozen=True)
+      class ProjectRootResolutionResult:
+          """Outcome of resolving a project's repository root for the git block.
+
+          Attributes:
+              resolved_root: The absolute repository root path when resolution
+                  succeeded, else None.
+              refused: True when resolution was refused because the underlying
+                  result was empty or ambiguous; False when resolved_root holds
+                  a valid root.
+              reason: The refusal reason code when refused is True, else None.
+          """
+
+          resolved_root: Optional[str]
+          refused: bool
+          reason: Optional[str]
+
+
+      def resolve_git_project_root(
+          *,
+          watch_dir_id: Optional[str],
+          project_id: Optional[str],
+          root_path_stored: Optional[str] = None,
+          project_name: Optional[str] = None,
+          legacy_absolute_root: Optional[str] = None,
+          database: Any,
+          require_exists: bool = True,
+      ) -> ProjectRootResolutionResult:
+          """Resolve a registered project's repository root for the git block.
+
+          The root is derived from the pair (watch_dir_id, project_id): the
+          project's folder beneath the watched directory's absolute path. A bare
+          absolute path supplied via root_path_stored or legacy_absolute_root is
+          honoured only as a legacy form. When resolution yields an empty or
+          ambiguous result, this function refuses rather than acting on a guessed
+          location. The same resolved root must be used by every git operation
+          and by any commit produced on write.
+
+          :param watch_dir_id: Identifier of the watched directory whose absolute
+              path anchors resolution.
+          :param project_id: Identifier of the registered project whose folder
+              under the watched directory is the repository root.
+          :param root_path_stored: The project's stored root_path value: a
+              watch-relative folder segment, or a legacy absolute path.
+          :param project_name: The project's name, used as a fallback folder-name
+              candidate when root_path_stored does not resolve directly.
+          :param legacy_absolute_root: An optional bare absolute path accepted
+              only as a legacy form when no watch-relative segment is available.
+          :param database: The database handle forwarded to
+              resolve_project_root_absolute_str for watch-directory and project
+              lookups.
+          :param require_exists: When True, both the watch directory and the
+              resolved project root must exist on disk on this server instance.
+          :return: A ProjectRootResolutionResult. On success, resolved_root holds
+              the absolute path and refused is False. On empty or ambiguous
+              resolution, resolved_root is None, refused is True, and reason is
+              PROJECT_ROOT_RESOLUTION_REFUSED.
+          """
+          stored = (root_path_stored or "").strip()
+          legacy = (legacy_absolute_root or "").strip()
+          effective_stored: Optional[str] = stored or legacy or None
+
+          resolved = resolve_project_root_absolute_str(
+              project_id=project_id,
+              root_path_stored=effective_stored,
+              watch_dir_id=watch_dir_id,
+              project_name=project_name,
+              database=database,
+              require_exists=require_exists,
+          )
+          resolved = (resolved or "").strip()
+
+          if not resolved:
+              return ProjectRootResolutionResult(
+                  resolved_root=None,
+                  refused=True,
+                  reason=PROJECT_ROOT_RESOLUTION_REFUSED,
+              )
+
+          return ProjectRootResolutionResult(
+              resolved_root=resolved,
+              refused=False,
+              reason=None,
+          )
+
+  ## Constraints (explicit; all mandatory)
+
+  - Reproduce the content above exactly (docstrings, imports, constant,
+    dataclass, function body) — do not add, remove, or reorder statements.
+  - Do not add any other function, class, constant, or import beyond what is
+    shown above.
+  - Do not add a __main__ block, CLI, or logging.
+  - The dataclass must be declared with @dataclass(frozen=True).
+  - All parameters of resolve_git_project_root are keyword-only (the bare
+    `*` marker is part of the signature exactly as shown).
+  - Naming: function and parameter names are snake_case; the class name is
+    PascalCase; the module-level constant is UPPER_SNAKE_CASE. Do not rename
+    anything shown above.
+  - File must be black/flake8/mypy clean: 4-space indentation, no unused
+    imports, no lines exceeding standard formatting width, trailing newline
+    at end of file.
+  - Resulting file must be well under 400 lines (expected size is
+    approximately 90 lines).
+  - Do not modify code_analysis/core/project_root_path.py or any other file.
+
+  ## MRS excerpt (verbatim, concept C-026 — the only concept this step touches)
+
+      concept_id: C-026
+      name: ProjectRootResolution
+      definition: The resolution rule deriving the repository root from the watched-directory
+        id and project id, refusing on empty or ambiguous results.
+      properties:
+        identified_by:
+        - watch_dir_id
+        - project_id
+        resolved_relative_to: watched_directory
+        root_is: project_folder_under_watch_dir_absolute_path
+        never_free_absolute_from_caller: true
+        absolute_path: legacy_form_only
+        ambiguous_or_empty: refuse_no_guess
+        same_root_governs:
+        - git_ops
+        - commit_on_write
+      source_labels:
+      - '{j3k4}'
+      - '{w3x4}'
+
+  Source-spec paragraphs the concept is bound to (verbatim):
+
+  {j3k4} The repository root is never taken as a free absolute path from the
+  caller. It is always resolved relative to a watched directory: the caller
+  identifies the project by the pair (watched-directory id, project id), and
+  the root is derived as the project's folder under that watched directory's
+  absolute path. A bare absolute root path is accepted only as a legacy
+  form. When resolution yields an empty or ambiguous root, the operation
+  refuses rather than acting on a guessed location. The same resolved root
+  governs both git operations and any commit produced on write.
+
+  {w3x4} Every git operation resolves the project's repository root before
+  acting, confirms the root is a git repository, and reports a distinct
+  clear outcome when git is unavailable or the root is not a repository.
+  Paths exchanged with git operations are project-relative.
+verification:
+  type: import
+  target: code_analysis.core.project_git.root_resolution
+  expected: >-
+    The module imports without error under Python. The module-level constant
+    PROJECT_ROOT_RESOLUTION_REFUSED equals the string
+    "PROJECT_ROOT_RESOLUTION_REFUSED". The frozen dataclass
+    ProjectRootResolutionResult is importable and has exactly the three
+    fields resolved_root, refused, and reason. The function
+    resolve_git_project_root is importable, accepts only keyword arguments,
+    and returns a ProjectRootResolutionResult whose refused field is True
+    and resolved_root field is None whenever the underlying
+    resolve_project_root_absolute_str call returns an empty string; when
+    that call returns a non-empty string, resolved_root equals the
+    stripped returned string and refused is False.

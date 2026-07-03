@@ -1,0 +1,133 @@
+step_id: A-002
+parent_tactical_step: T-002
+name: Git block venv write guard application
+target_file: code_analysis/core/project_git/write_guard.py
+operation: create_file
+priority: 1
+depends_on: []
+concepts:
+- C-027
+prompt: |
+  Create the new Python file at the exact path
+  code_analysis/core/project_git/write_guard.py (operation: create_file).
+  Do not modify, create, or read any other file. Do not assume any
+  pre-existing content in this file — the parent package
+  code_analysis/core/project_git/ already exists or is created as part of
+  this operation (its __init__.py is authored by a separate tactical step,
+  with no ordering guarantee relative to this step); you are only creating
+  this one module, creating the parent directory first if it does not yet
+  exist.
+
+  Write the file with exactly this structure and content:
+
+  1. A module docstring as the first statement in the file, non-empty, in
+  this exact shape:
+
+  """
+  Virtual-environment and installed-package write guard for the
+  project-scoped git command block.
+
+  Author: Vasiliy Zdanovskiy
+  email: vasilyvz@gmail.com
+  """
+
+  2. Then this exact import block, and no other imports:
+
+  from __future__ import annotations
+
+  from pathlib import Path
+  from typing import Optional
+
+  from mcp_proxy_adapter.commands.result import ErrorResult
+
+  from ...commands.project_text_file_guard import (
+      reject_if_write_under_project_venv,
+  )
+
+  This relative import is correct at this file's depth: the module
+  code_analysis/core/project_git/write_guard.py belongs to package
+  code_analysis.core.project_git, and three leading dots reach the
+  top-level code_analysis package, from which .commands.project_text_file_guard
+  is resolved — the same depth-3 relative-import pattern already used
+  elsewhere in this codebase by code_analysis/core/file_handlers/python_handler.py,
+  which contains the line "from ...commands.compose_cst_ops_flow import
+  run_ops_mode".
+
+  The imported function reject_if_write_under_project_venv, defined at
+  code_analysis/commands/project_text_file_guard.py, has this exact
+  signature and behaviour (do not redefine it anywhere in this file, only
+  import and call it):
+
+  def reject_if_write_under_project_venv(
+      absolute_path: Path, project_root: Path
+  ) -> Optional[ErrorResult]:
+
+  It returns an ErrorResult with code="PROJECT_VENV_WRITE_FORBIDDEN" and
+  details={"resolved_path": str(absolute_path), "project_root":
+  str(project_root)} when absolute_path lies under project_root/.venv or
+  project_root/venv (including anything nested under those directories,
+  such as a site-packages subdirectory), and returns None when the write
+  is permitted.
+
+  3. Then exactly one function, with this exact signature:
+
+  def reject_git_write_under_project_venv(
+      absolute_path: Path,
+      project_root: Path,
+  ) -> Optional[ErrorResult]:
+
+  The function's docstring must document both parameters and the return
+  value using Google-style "Args:" and "Returns:" sections (per the
+  project's PYTHON_DOCSTRING_STANDARD.md conventions: every parameter
+  except self/cls is documented under "Args:", and a "Returns:" section is
+  required because the function has a return annotation). State in the
+  docstring that this is the project-scoped git block's application point
+  of the virtual-environment and installed-package write guard: it is
+  applied to every working-tree write the git block performs (staging,
+  restore, commit-on-write, or any other write into the working tree),
+  and the git block never bypasses it.
+
+  Implement the function body as exactly one statement:
+
+  return reject_if_write_under_project_venv(absolute_path, project_root)
+
+  Constraints, all explicit and mandatory:
+  - Do not reimplement or duplicate any venv-detection or path-checking
+    logic in this file; the entire guard decision is delegated to the
+    imported reject_if_write_under_project_venv.
+  - Do not invent a new error code; the outcome code returned to the
+    caller is exactly whatever the delegated helper returns
+    (PROJECT_VENV_WRITE_FORBIDDEN on rejection, None on permission).
+  - Do not add any additional function, class, or constant to this file
+    beyond reject_git_write_under_project_venv.
+  - Every parameter and the return value carry full type annotations
+    exactly as shown in the signature; no untyped parameters.
+  - The finished file must be well under 400 lines (a correct
+    implementation is roughly 30-45 lines); do not pad with unrelated
+    content.
+  - Use only the imports listed above; do not add any other import.
+
+  Concept excerpt from the machine-readable specification (quote verbatim
+  as ground truth for this step; do not deviate from it):
+
+  concept_id: C-027
+  name: VenvWriteGuard
+  definition: The cross-cutting protection that rejects writes under
+    virtual-environment and installed-package directories, not bypassed
+    by the git block.
+  properties:
+    protected_locations: [project_virtualenv_dir, installed_package_dirs]
+    reject_writes_under: true
+    git_block_bypasses: false
+    applies_to: [commit_on_write, git_add, git_restore,
+      any_working_tree_write]
+  source_labels: ['{d7e8}']
+verification:
+  type: import
+  target: code_analysis.core.project_git.write_guard
+  expected: The module imports without error and exposes a function named
+    reject_git_write_under_project_venv accepting an absolute_path Path
+    and a project_root Path, returning an optional ErrorResult that is
+    exactly the result of delegating to reject_if_write_under_project_venv
+    from code_analysis.commands.project_text_file_guard.
+status: frozen

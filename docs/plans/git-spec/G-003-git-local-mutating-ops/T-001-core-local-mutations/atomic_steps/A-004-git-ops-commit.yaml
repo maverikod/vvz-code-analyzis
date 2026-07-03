@@ -1,0 +1,117 @@
+step_id: A-004
+parent_tactical_step: T-001
+name: Create git_ops commit-from-staged module
+target_file: code_analysis/core/git_ops/commit_op.py
+operation: create_file
+priority: 1
+depends_on:
+- A-002
+concepts:
+- C-010
+object_id: git_local_mutation_operation_set
+source_labels:
+- '{y5z6}'
+prompt: |
+  Create the file `code_analysis/core/git_ops/commit_op.py` with EXACTLY the
+  following content, byte for byte:
+
+  """Local git commit-from-staged operation: creates a commit from the currently
+  staged state with a caller-supplied non-empty message. Authorship comes from
+  the repository's own git configuration; never pushes to a remote.
+  """
+
+  from code_analysis.core.git_ops.common import ensure_local_repo, run_git
+
+
+  def git_commit(root_dir: str, message: str) -> dict:
+      """Create a commit from the currently staged state.
+
+      Args:
+          root_dir: Absolute path to the resolved project repository root.
+          message: The commit message. Must be non-empty after surrounding
+              whitespace is stripped; author identity is taken from the
+              repository's own git configuration (no -c user.name/user.email
+              overrides are passed).
+
+      Returns:
+          On success: {"success": True, "commit_hash": str, "branch": str}
+          where commit_hash is the new commit's full hash and branch is the
+          current branch name after the commit.
+          On failure: {"success": False, "code": str, "message": str} with
+          code one of "GIT_NOT_AVAILABLE", "GIT_NOT_A_REPO",
+          "GIT_COMMIT_MESSAGE_INVALID", "GIT_NOTHING_TO_COMMIT",
+          "GIT_COMMAND_FAILED".
+      """
+      repo_failure = ensure_local_repo(root_dir)
+      if repo_failure is not None:
+          return repo_failure
+
+      if not message or not message.strip():
+          return {
+              "success": False,
+              "code": "GIT_COMMIT_MESSAGE_INVALID",
+              "message": "Commit message must be non-empty after stripping whitespace.",
+          }
+
+      returncode, stdout, stderr = run_git(root_dir, ["commit", "-m", message])
+      if returncode != 0:
+          combined = (stdout + stderr).lower()
+          if "nothing to commit" in combined:
+              return {
+                  "success": False,
+                  "code": "GIT_NOTHING_TO_COMMIT",
+                  "message": "Nothing is staged to commit.",
+              }
+          return {
+              "success": False,
+              "code": "GIT_COMMAND_FAILED",
+              "message": stderr.strip() or "git commit failed.",
+          }
+
+      _rc_hash, hash_stdout, _hash_stderr = run_git(root_dir, ["rev-parse", "HEAD"])
+      _rc_branch, branch_stdout, _branch_stderr = run_git(root_dir, ["rev-parse", "--abbrev-ref", "HEAD"])
+      return {
+          "success": True,
+          "commit_hash": hash_stdout.strip(),
+          "branch": branch_stdout.strip(),
+      }
+
+  Constraints:
+  - Import exactly `from code_analysis.core.git_ops.common import ensure_local_repo, run_git`.
+  - Must call ensure_local_repo(root_dir) first and return its failure dict
+    immediately if not None.
+  - Must validate that message is non-empty after `.strip()` BEFORE calling
+    git commit; on invalid message return the GIT_COMMIT_MESSAGE_INVALID dict
+    without invoking git.
+  - Must never pass any `-c user.name=` or `-c user.email=` override to git;
+    authorship comes solely from the repository's own git configuration.
+  - Must never call `git push` or contact any remote.
+  - Do not add any other function, class, or module-level variable.
+
+  Exact signatures of the common.py helpers this file imports (quoted
+  verbatim, do not deviate):
+  - `def run_git(root_dir: str, args: list[str], timeout_seconds: int = 60) -> tuple[int, str, str]:` — runs `git -C <root_dir> <args>` via subprocess, no shell, returns (returncode, stdout, stderr).
+  - `def ensure_local_repo(root_dir: str) -> dict | None:` — returns None on success; else {"success": False, "code": "GIT_NOT_AVAILABLE"|"GIT_NOT_A_REPO", "message": str}.
+
+  Context (machine_spec excerpt, concept_id C-010):
+  concept_id: C-010
+  name: GitLocalMutatingOps
+  definition: The local git mutating operations that change the working tree
+    or history without contacting a remote.
+  properties:
+    operations: [add, commit, switch, restore, branch_create, branch_delete,
+      stash, reset, merge, cherry_pick, revert, tag]
+    queue: false
+    contacts_remote: false
+  source_labels: ['{y5z6}', '{e1f2}']
+  note: This file implements the "commit" operation owned by tactical step
+    G-003/T-001 ("creating a commit from the staged state"; "A commit created
+    here records authorship from the project git configuration and is never
+    pushed."). reset and revert are owned by sibling tactical steps and are
+    out of scope for this file.
+verification:
+  type: import
+  target: code_analysis.core.git_ops.commit_op
+  expected: Importing code_analysis.core.git_ops.commit_op succeeds and
+    exposes a callable named git_commit with the specified signature.
+status: frozen

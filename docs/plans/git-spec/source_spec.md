@@ -27,45 +27,6 @@ registered project via subprocess git. The GitHub command block operates only
 on the GitHub remote HTTP API. Neither block touches the server's internal
 command-to-driver-to-database chain.
 
-## 2. Locks are opaque to the writer
-
-{e5f6} The server does not interpret why a file is locked. Its responsibility on
-a write is to receive the file content and persist it. Whether that write also
-produces a commit is determined solely by the parameters of the write call, not
-by any lock state or lock semantics.
-
-{g7h8} A file write may occur with or without an accompanying commit, and may
-occur with or without releasing a lock. The commit decision and the unlock
-decision are independent of each other; neither implies the other.
-
-## 3. Commit-on-write behaviour
-
-{i9j0} A file write carries an explicit commit-intent flag. When the flag is
-set, the write produces a commit after the content is persisted, provided the
-content actually changed. When the flag is absent or unset, the write never
-produces a commit.
-
-{k1l2} When commit-intent is set, a commit message is mandatory. The message
-must be a text value and must be non-empty after surrounding whitespace is
-removed. A commit-intent write lacking a valid message is rejected before any
-content is written, leaving the target file untouched.
-
-{m3n4} A commit message supplied without commit-intent is rejected. The system
-provides exactly one path to a commit on write — the explicit commit-intent flag
-together with a valid message — and no implicit path exists.
-
-{o5p6} When commit-intent is set with a valid message but the written content is
-identical to the previous content, the write succeeds and no commit is produced.
-This outcome is not an error; it is reported as a successful write that produced
-no commit because nothing changed.
-
-{q7r8} A commit produced by a write never pushes to a remote. Propagation of
-commits to a remote is exclusively a manual operation requested separately.
-
-{s9t0} The identity recorded as the author of a commit-on-write commit is taken
-from the git configuration of the project, not from the writer or the lock
-holder.
-
 ## 4. Project-scoped git — read operations
 
 {u1v2} The git block provides read-only inspection of a project's repository:
@@ -183,11 +144,3 @@ new block neither replaces nor alters the edit-session facility.
 {h1i2} Every command in the project-scoped git block is named under a reserved
 prefix that keeps it disjoint from the edit-session git commands, so that no name
 or routing collision arises between the two facilities.
-
-## 10. Migration
-
-{c5d6} Introducing the explicit commit-intent flag removes a prior implicit
-behaviour in which supplying a commit message alone triggered a commit. After
-the change, a message without the flag is rejected rather than silently
-committing, so any existing caller that relied on the implicit behaviour fails
-loudly and must adopt the explicit flag.

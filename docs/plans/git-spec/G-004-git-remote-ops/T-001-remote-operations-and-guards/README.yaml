@@ -47,5 +47,9 @@ outputs:
     partial result.'
   name: remote_guard_outcome
   type: outcome
-atomic_steps: []
-status: draft
+atomic_steps:
+- A-001
+- A-002
+- A-003
+- A-004
+status: frozen

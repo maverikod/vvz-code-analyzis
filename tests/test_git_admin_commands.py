@@ -12,7 +12,6 @@ from code_analysis.commands.git_admin_commands import (
     GitRepoPermissionsRepairCommand,
 )
 
-
 COMMANDS = [
     GitRepoPermissionsCheckCommand,
     GitRepoPermissionsRepairCommand,

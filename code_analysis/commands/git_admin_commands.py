@@ -31,7 +31,6 @@ from code_analysis.core.git_remote_ops import (
 )
 from code_analysis.core.git_ssh_auth import GIT_AUTH_FAILED, classify_ssh_auth_stderr
 
-
 SCOPE_VALUES = ["git_only", "worktree", "all"]
 GIT_ADMIN_TIMEOUT_SECONDS = 60.0
 
@@ -99,14 +98,25 @@ def _iter_paths(root: Path, scope: str) -> Iterable[Path]:
                 yield current_path / filename
 
 
-def _path_entry(root: Path, path: Path, expected_uid: int, expected_gid: int) -> Dict[str, Any]:
+def _is_git_object_file(root: Path, path: Path) -> bool:
+    try:
+        rel = path.relative_to(root / ".git" / "objects")
+    except ValueError:
+        return False
+    parts = rel.parts
+    return len(parts) == 2 and len(parts[0]) == 2 and len(parts[1]) == 38
+
+
+def _path_entry(
+    root: Path, path: Path, expected_uid: int, expected_gid: int
+) -> Dict[str, Any]:
     st = path.lstat()
     issues: List[str] = []
     if st.st_uid != expected_uid:
         issues.append("owner_mismatch")
     if st.st_gid != expected_gid:
         issues.append("group_mismatch")
-    if not os.access(path, os.W_OK):
+    if not _is_git_object_file(root, path) and not os.access(path, os.W_OK):
         issues.append("not_writable_by_service")
     if path.is_dir() and not os.access(path, os.X_OK):
         issues.append("not_searchable_by_service")
@@ -161,7 +171,11 @@ def _collect_permission_report(
             ok_entries.append(entry)
     probes = [
         _write_probe(root),
-        _write_probe(root / ".git" / "objects") if (root / ".git" / "objects").is_dir() else None,
+        (
+            _write_probe(root / ".git" / "objects")
+            if (root / ".git" / "objects").is_dir()
+            else None
+        ),
     ]
     return {
         "checked_count": checked,
@@ -169,7 +183,8 @@ def _collect_permission_report(
         "problems": problems,
         "ok_entries": ok_entries,
         "write_probes": [item for item in probes if item is not None],
-        "clean": not problems and all(item is not None and item["writable"] for item in probes),
+        "clean": not problems
+        and all(item is not None and item["writable"] for item in probes),
     }
 
 
@@ -178,11 +193,14 @@ def _run_git(
     args: List[str],
     timeout: float = LOCAL_GIT_TIMEOUT_SECONDS,
 ) -> Tuple[int, str, str, bool]:
-    return run_git_subprocess(
-        ["git", *args],
-        cwd=root,
-        env=None,
-        timeout_seconds=timeout,
+    return cast(
+        Tuple[int, str, str, bool],
+        run_git_subprocess(
+            ["git", *args],
+            cwd=root,
+            env=None,
+            timeout_seconds=timeout,
+        ),
     )
 
 
@@ -270,6 +288,22 @@ def _standard_errors() -> Dict[str, Any]:
             "solution": "Fix parameters per schema and retry.",
         },
     }
+
+
+def _desired_mode(
+    root: Path,
+    path: Path,
+    current_mode: int,
+    directory_mode: str,
+    file_mode: str,
+) -> int:
+    if _is_git_object_file(root, path):
+        return current_mode
+    minimum = int(directory_mode if path.is_dir() else file_mode, 8)
+    target = current_mode | minimum
+    if not path.is_dir() and current_mode & stat.S_IXUSR:
+        target |= stat.S_IXUSR | stat.S_IXGRP
+    return target
 
 
 class GitRepoPermissionsCheckCommand(GitWorktreeCommand):
@@ -367,7 +401,9 @@ class GitRepoPermissionsCheckCommand(GitWorktreeCommand):
                         "write_probes": "Root and .git/objects write-test results.",
                     },
                 },
-                "error": {"description": "Validation, project, or git availability failure."},
+                "error": {
+                    "description": "Validation, project, or git availability failure."
+                },
             },
             [
                 {
@@ -567,7 +603,9 @@ class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
                         "errors": "Per-path chmod/chown failures.",
                     },
                 },
-                "error": {"description": "Validation, project, git, or permission failure."},
+                "error": {
+                    "description": "Validation, project, git, or permission failure."
+                },
             },
             [
                 {
@@ -621,8 +659,8 @@ class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
         try:
             expected_uid = _uid_for(expected_user)
             expected_gid = _gid_for(expected_group)
-            dir_mode = int(directory_mode, 8)
-            regular_mode = int(file_mode, 8)
+            int(directory_mode, 8)
+            int(file_mode, 8)
         except ValueError as exc:
             return validation_error(str(exc), "mode")
         root, error = self._resolve_git_root_or_error(project_id)
@@ -636,8 +674,11 @@ class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
             if path.is_symlink():
                 continue
             entry = _path_entry(cast(Path, root), path, expected_uid, expected_gid)
-            target_mode = dir_mode if path.is_dir() else regular_mode
-            needs_mode = stat.S_IMODE(path.lstat().st_mode) != target_mode
+            current_mode = stat.S_IMODE(path.lstat().st_mode)
+            target_mode = _desired_mode(
+                cast(Path, root), path, current_mode, directory_mode, file_mode
+            )
+            needs_mode = current_mode != target_mode
             needs_owner = entry["uid"] != expected_uid or entry["gid"] != expected_gid
             if not needs_mode and not needs_owner:
                 continue
@@ -793,11 +834,16 @@ class GitRepoDoctorCommand(GitWorktreeCommand):
             include_ok=False,
         )
         locks = [
-            {"path": _relative(cast(Path, root), path), "age_seconds": time.time() - path.stat().st_mtime}
+            {
+                "path": _relative(cast(Path, root), path),
+                "age_seconds": time.time() - path.stat().st_mtime,
+            }
             for path in (cast(Path, root) / ".git").rglob("*.lock")
         ][:max_entries]
         snapshot = _status_snapshot(cast(Path, root))
-        healthy = permissions["clean"] and not locks and snapshot["status"]["returncode"] == 0
+        healthy = (
+            permissions["clean"] and not locks and snapshot["status"]["returncode"] == 0
+        )
         return SuccessResult(
             data=cast(
                 Dict[str, Any],
@@ -984,7 +1030,9 @@ class GitRepoLockCleanupCommand(GitWorktreeCommand):
             "errors": errors,
         }
         if errors:
-            return git_remote_error_result("LOCK_CLEANUP_FAILED", "Some stale locks were not removed", payload)
+            return git_remote_error_result(
+                "LOCK_CLEANUP_FAILED", "Some stale locks were not removed", payload
+            )
         return SuccessResult(data=cast(Dict[str, Any], payload))
 
 
@@ -1006,9 +1054,17 @@ class GitPullSafeCommand(GitWorktreeCommand):
             "type": "object",
             "properties": {
                 "project_id": {"type": "string", "description": "Project UUID."},
-                "remote": {"type": "string", "default": "origin", "description": "Remote name."},
+                "remote": {
+                    "type": "string",
+                    "default": "origin",
+                    "description": "Remote name.",
+                },
                 "ref": {"type": "string", "description": "Remote branch/ref to pull."},
-                "rebase": {"type": "boolean", "default": False, "description": "Use git pull --rebase."},
+                "rebase": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use git pull --rebase.",
+                },
                 "include_untracked": {
                     "type": "boolean",
                     "default": True,
@@ -1099,12 +1155,18 @@ class GitPullSafeCommand(GitWorktreeCommand):
                         "final_status": "Post-workflow git status snapshot.",
                     },
                 },
-                "error": {"description": "One workflow step failed; details include completed steps."},
+                "error": {
+                    "description": "One workflow step failed; details include completed steps."
+                },
             },
             [
                 {
                     "description": "Pull origin/main with a safety stash",
-                    "command": {"project_id": "<uuid>", "remote": "origin", "ref": "main"},
+                    "command": {
+                        "project_id": "<uuid>",
+                        "remote": "origin",
+                        "ref": "main",
+                    },
                     "explanation": "Stashes dirty work, fast-forwards, and reapplies the stash.",
                 },
                 {
@@ -1154,7 +1216,11 @@ class GitPullSafeCommand(GitWorktreeCommand):
         if auth_error is not None:
             return git_remote_error_result(
                 GIT_AUTH_FAILED,
-                str(auth_error.get("message", "SSH authentication is not configured correctly")),
+                str(
+                    auth_error.get(
+                        "message", "SSH authentication is not configured correctly"
+                    )
+                ),
                 {},
             )
         steps: List[Dict[str, Any]] = []
@@ -1219,7 +1285,9 @@ class GitPullSafeCommand(GitWorktreeCommand):
                 {"steps": steps, "stash_ref": stash_ref},
             )
         if stash_ref and apply_stash:
-            code, out, err, timed_out = _run_git(cast(Path, root), ["stash", "apply", stash_ref])
+            code, out, err, timed_out = _run_git(
+                cast(Path, root), ["stash", "apply", stash_ref]
+            )
             steps.append(
                 {
                     "step": "stash_apply",
@@ -1236,7 +1304,9 @@ class GitPullSafeCommand(GitWorktreeCommand):
                     {"steps": steps, "stash_ref": stash_ref},
                 )
             if drop_stash_after_apply:
-                code, out, err, timed_out = _run_git(cast(Path, root), ["stash", "drop", stash_ref])
+                code, out, err, timed_out = _run_git(
+                    cast(Path, root), ["stash", "drop", stash_ref]
+                )
                 steps.append(
                     {
                         "step": "stash_drop",

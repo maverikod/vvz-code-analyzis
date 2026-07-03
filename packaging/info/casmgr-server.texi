@@ -18,6 +18,8 @@
 * Admin commands::              Setup and maintenance tools
 * PostgreSQL container::        Docker mounts and lifecycle
 * Ports and co-existence with dev::  MCP ports vs git checkout
+* Git and GitHub commands::     Repository workflow through MCP
+* Command reference::           Live MCP command schema and metadata catalog
 * Systemd::                     Service units and journal
 * Environment::                 Override variables for admin scripts
 * Upgrade and removal::         apt upgrade, remove, purge
@@ -511,7 +513,7 @@ Container @file{/etc/casmgr/postgres} (read-only)
 
 Port publishing: @code{127.0.0.1:5432} on the host (configurable via @code{code_analysis.database.driver.config.port}).
 
-@node Ports and co-existence with dev, Systemd, PostgreSQL container, Top
+@node Ports and co-existence with dev, Git and GitHub commands, PostgreSQL container, Top
 @chapter Ports and co-existence with dev
 
 On one host, production and a git-checkout dev server must not share the same MCP
@@ -530,7 +532,268 @@ Upgrades preserve an existing @file{/etc/casmgr/config.json}; change
 @code{server.port} to @strong{15010} if it still uses @strong{15000} and you run
 both servers on the same machine.
 
-@node Systemd, Environment, Ports and co-existence with dev, Top
+@node Git and GitHub commands, Command reference, Ports and co-existence with dev, Top
+@chapter Git and GitHub commands
+
+The package exposes a project-scoped Git and GitHub command set through MCP.
+Agents should use these commands through the proxy instead of running shell
+@code{git} commands when the target repository is registered as a casmgr project.
+Every command resolves @code{project_id} to the registered project root; callers
+pass project-relative paths and refs, not host working directories.
+
+@heading Invocation model
+
+Use MCP proxy discovery first:
+
+@example
+list_servers
+list_projects
+call_server(server_id="code-analysis-server", copy_number=1,
+            command="<command>", params=project_id:<uuid>)
+@end example
+
+Long-running or mutating Git commands may return @code{job_id}; poll
+@code{queue_get_job_status} until @code{status} is @code{completed} or
+@code{failed}. Treat "queued" as submission only, not command success. The final
+job payload contains @code{command_success}, @code{inner_success}, and the command
+result.
+
+@heading Repository identity and config
+
+@table @code
+@item git_config_get
+Read one Git config key from @code{local}, @code{global}, or effective scope.
+Missing keys return @code{configured=false} rather than failing.
+@item git_config_list
+List Git config entries, optionally with origin metadata.
+@item git_identity_get
+Return local and effective @code{user.name} / @code{user.email}.
+@item git_identity_set
+Set @code{user.name} and @code{user.email}. Defaults to local repository config;
+global config requires an explicit @code{allow_global=true}.
+@end table
+
+Use @code{git_identity_get} before the first commit in a project. Use
+@code{git_identity_set} through MCP when identity is missing; do not repair it by
+opening a shell on the host.
+
+@heading Read-only Git inspection
+
+@table @code
+@item git_status
+Report current branch and porcelain-style status entries.
+@item git_branch_current
+Return current branch, upstream, ahead/behind, and detached state.
+@item git_branch
+Report local branch list with the current branch marked.
+@item git_branch_list
+Report local and remote branches with refs, commit ids, upstream, and scope.
+@item git_branch_compare
+Compare refs: ahead/behind, commits, and changed files.
+@item git_branch_sync_status
+Report whether a branch is synchronized with its upstream.
+@item git_remote
+List configured remotes.
+@item git_log
+Read commit history, optionally scoped to a revision or file.
+@item git_show
+Show one commit/object.
+@item git_diff
+Show diffs between refs or between a ref and the worktree.
+@item git_blame
+Show blame information for a file/range.
+@end table
+
+These commands are the preferred first step before any mutating action. For an
+agent workflow, collect @code{git_status}, @code{git_branch_current}, and the
+relevant @code{git_diff} before deciding how to stage, commit, merge, or reset.
+
+@heading Branch and remote workflow
+
+@table @code
+@item git_branch_create
+Create a local branch, optionally checking it out.
+@item git_branch_checkout
+Switch branches; can create a branch from a start point.
+@item git_branch_delete
+Delete a local branch, with force support for cleanup branches.
+@item git_branch_track_remote
+Create or checkout a local branch tracking a remote branch.
+@item git_branch_set_upstream
+Set upstream tracking for the current or named branch.
+@item git_branch_unset_upstream
+Remove upstream tracking.
+@item git_branch_fetch
+Fetch a branch from a remote.
+@item git_branch_pull
+Pull one branch from a remote.
+@item git_branch_push
+Push one branch and optionally set upstream.
+@item git_branch_delete_remote
+Delete a remote branch.
+@item git_fetch
+Fetch from a remote.
+@item git_pull
+Pull the current branch.
+@item git_push
+Push the current or selected branch; supports dry-run workflows.
+@end table
+
+Normal branch workflow:
+
+@enumerate
+@item @code{git_branch_current} and @code{git_status}.
+@item @code{git_branch_create} with @code{checkout=true}.
+@item Edit files through MCP file commands.
+@item @code{git_add}, @code{git_commit}.
+@item @code{git_branch_push} or @code{git_push}.
+@item Use GitHub PR commands when a review flow is needed.
+@end enumerate
+
+@heading Working tree, index, and stash
+
+@table @code
+@item git_add
+Stage explicit paths, all changes, or tracked updates.
+@item git_commit
+Create or amend a commit from staged changes.
+@item git_restore
+Restore worktree paths and/or unstage paths. Worktree restore can discard
+uncommitted content.
+@item git_reset
+Reset HEAD/index/worktree. @code{mode=hard} requires @code{confirm_hard=true}.
+@item git_clean
+Preview or delete untracked files. Defaults to @code{dry_run=true}; deletion
+requires @code{confirm=true}.
+@item git_stash_push
+Save working-tree changes to stash, optionally scoped to paths.
+@item git_stash_list
+List stash entries.
+@item git_stash_apply
+Apply a stash entry, optionally keeping it.
+@item git_stash_drop
+Drop a stash entry.
+@end table
+
+Safety rules:
+
+@itemize
+@item
+Prefer explicit @code{paths} for @code{git_add}, @code{git_restore},
+@code{git_reset}, and @code{git_clean}.
+@item
+Run @code{git_clean} without @code{confirm=true} first and inspect the dry-run
+output.
+@item
+Use @code{git_reset mode=hard confirm_hard=true} only after proving that no
+valuable worktree changes remain.
+@end itemize
+
+@heading History surgery and integration
+
+@table @code
+@item git_merge
+Merge another ref into the current branch. Supports @code{ff_only},
+@code{no_ff}, @code{squash}, @code{commit=false}, messages, and
+@code{abort=true}.
+@item git_rebase
+Replay current or selected branch onto another base. Supports @code{onto},
+@code{autostash}, @code{abort}, @code{continue_rebase}, and @code{skip}.
+Interactive rebase is intentionally not exposed.
+@item git_cherry_pick
+Apply one or more commits. Supports @code{no_commit}, @code{abort}, and
+@code{continue_pick}.
+@item git_revert
+Create inverse changes or commits. Supports @code{no_commit}, merge
+@code{mainline}, @code{abort}, and @code{continue_revert}.
+@item git_tag
+List, create, delete, push, or delete remote tags. Deletion requires
+@code{confirm_delete=true}; release tags should normally be annotated with
+@code{message}.
+@end table
+
+Prefer @code{git_revert} over @code{git_reset} on shared branches. Use
+@code{git_rebase} primarily for unpublished local branches. For merge/rebase,
+conflicts are reported as command failures with Git diagnostics in stderr; use
+status/diff commands plus MCP file editing to resolve, then continue or abort.
+
+@heading GitHub operations
+
+@table @code
+@item github_repo_get
+Read one repository.
+@item github_repo_list
+List repositories visible to the configured GitHub token.
+@item github_pr_list
+List pull requests.
+@item github_pr_get
+Read one pull request in detail.
+@item github_pr_create
+Create a pull request.
+@item github_pr_merge
+Merge a pull request.
+@item github_issue_list
+List issues.
+@item github_issue_create
+Create an issue.
+@item github_issue_comment
+Add an issue or pull-request comment.
+@item github_release_create
+Create a GitHub release.
+@end table
+
+GitHub commands use the configured token and repository parameters. Read-only
+commands are safe for discovery. Write commands create public repository state;
+agents should only execute them when the requested outcome explicitly includes a
+PR, issue, comment, merge, or release.
+
+@heading Coverage boundary
+
+The Git/GitHub command set is sufficient for normal repository work without a
+terminal: inspect, branch, edit through MCP file commands, stage, commit, stash,
+sync, push, create PRs/issues/releases, merge, rebase, cherry-pick, revert, tag,
+reset, and clean. @code{git worktree} is intentionally not part of this block
+yet because it commonly creates directories outside the registered project root;
+it needs an explicit allowed-path policy before being exposed safely.
+
+@node Command reference, Systemd, Git and GitHub commands, Top
+@chapter Command reference
+
+The MCP @code{info} command exposes a runtime-generated @code{Command reference}
+node. That node is built from the live command registry after all command hooks
+have registered their classes and after metadata finalization has run.
+
+It includes, for every registered command:
+
+@itemize
+@item
+command name, category/group, version, and description;
+@item
+input schema properties, required parameters, defaults, enums, and
+@code{additionalProperties};
+@item
+extended command metadata: detailed description, return contract, usage
+examples, error cases, and best practices when published by the command;
+@item
+Git, GitHub, file, project, queue, session, search, worker, database, AST/CST,
+analysis, backup, logging, transfer, and system commands registered in the
+running server.
+@end itemize
+
+Use it through MCP:
+
+@example
+call_server(server_id="code-analysis-server", copy_number=1,
+            command="info",
+            params=node:Command reference,format:text,max_chars:250000)
+@end example
+
+Because it is generated from the live registry, the command reference stays in
+sync with newly added commands without requiring this static Texinfo file to
+duplicate every command description. The static manual remains the deployment
+and operations guide; the dynamic node is the authoritative full command catalog.
+
+@node Systemd, Environment, Command reference, Top
 @chapter Systemd
 
 @table @asis

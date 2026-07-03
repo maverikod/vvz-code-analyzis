@@ -339,7 +339,11 @@ def get_git_tag_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "usage_examples": [
                 {
                     "description": "List release tags",
-                    "command": {"project_id": "<uuid>", "action": "list", "pattern": "v1.*"},
+                    "command": {
+                        "project_id": "<uuid>",
+                        "action": "list",
+                        "pattern": "v1.*",
+                    },
                     "explanation": "Returns sorted local tag names and count.",
                 },
                 {
@@ -406,23 +410,35 @@ def get_git_merge_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "parameters": {
                 "project_id": PROJECT_ID_PARAM,
                 "ref": _ref_param("Branch or commit-ish to merge.", required=False),
-                "no_ff": _bool_param("Create a merge commit even when fast-forward is possible."),
+                "no_ff": _bool_param(
+                    "Create a merge commit even when fast-forward is possible."
+                ),
                 "ff_only": _bool_param("Fail unless the merge can fast-forward."),
-                "squash": _bool_param("Squash changes into the index without creating a merge commit."),
-                "commit": _bool_param("Allow git to create a merge commit.", default=True),
+                "squash": _bool_param(
+                    "Squash changes into the index without creating a merge commit."
+                ),
+                "commit": _bool_param(
+                    "Allow git to create a merge commit.", default=True
+                ),
                 "message": {
                     "description": "Optional merge commit message passed with -m.",
                     "type": "string",
                     "required": False,
                     "examples": ["Merge feature/api"],
                 },
-                "abort": _bool_param("Run git merge --abort to leave an in-progress merge."),
+                "abort": _bool_param(
+                    "Run git merge --abort to leave an in-progress merge."
+                ),
             },
             "return_value": _standard_return("git merge"),
             "usage_examples": [
                 {
                     "description": "Fast-forward only merge",
-                    "command": {"project_id": "<uuid>", "ref": "origin/main", "ff_only": True},
+                    "command": {
+                        "project_id": "<uuid>",
+                        "ref": "origin/main",
+                        "ff_only": True,
+                    },
                     "explanation": "Updates current branch only if no merge commit is needed.",
                 },
                 {
@@ -481,9 +497,13 @@ def get_git_cherry_pick_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "items": "string commit-ish",
                     "examples": [["abc1234"], ["abc1234", "def5678"]],
                 },
-                "no_commit": _bool_param("Apply changes to index/worktree without committing."),
+                "no_commit": _bool_param(
+                    "Apply changes to index/worktree without committing."
+                ),
                 "abort": _bool_param("Abort an in-progress cherry-pick."),
-                "continue_pick": _bool_param("Continue an in-progress cherry-pick after conflicts are resolved."),
+                "continue_pick": _bool_param(
+                    "Continue an in-progress cherry-pick after conflicts are resolved."
+                ),
             },
             "return_value": _standard_return("git cherry-pick"),
             "usage_examples": [
@@ -560,7 +580,9 @@ def get_git_revert_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "examples": [1, 2],
                 },
                 "abort": _bool_param("Abort an in-progress revert."),
-                "continue_revert": _bool_param("Continue an in-progress revert after conflicts are resolved."),
+                "continue_revert": _bool_param(
+                    "Continue an in-progress revert after conflicts are resolved."
+                ),
             },
             "return_value": _standard_return("git revert"),
             "usage_examples": [
@@ -595,6 +617,99 @@ def get_git_revert_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "Prefer revert over reset on shared branches.",
                 "Use no_commit=true when reverting multiple commits into one commit.",
                 "For merge commits, pass the intended mainline parent explicitly.",
+            ],
+        }
+    )
+    return metadata
+
+
+def get_git_rebase_metadata(cls: Type[Any]) -> Dict[str, Any]:
+    """Return detailed metadata for git_rebase."""
+    metadata = _base_metadata(
+        cls,
+        (
+            "Replay the current branch on top of another base with git rebase. The "
+            "command supports normal rebase, --onto, --autostash, --abort, "
+            "--continue, and --skip. Interactive rebase is intentionally not exposed "
+            "because it requires editor-driven todo-file interaction; use explicit "
+            "non-interactive operations instead. The command is queued because it "
+            "rewrites local history and mutates the index and worktree.\n\n"
+            "Operation flow:\n"
+            "1. Resolve project_id to the registered repository root.\n"
+            "2. Verify git is installed and the root is a git repository.\n"
+            "3. If abort/continue_rebase/skip is set, run exactly one recovery action.\n"
+            "4. Otherwise validate upstream and optional branch/onto parameters.\n"
+            "5. Run git rebase with requested non-interactive flags.\n"
+            "6. Return stdout/stderr so conflict and replay diagnostics are visible.\n\n"
+            "Safety notes: rebase rewrites local commits. Prefer it for unpublished "
+            "branches or after coordinating with collaborators."
+        ),
+    )
+    metadata.update(
+        {
+            "parameters": {
+                "project_id": PROJECT_ID_PARAM,
+                "upstream": _ref_param(
+                    "Upstream/base ref to replay the branch onto.", required=False
+                ),
+                "branch": _ref_param(
+                    "Optional branch to check out and rebase instead of current branch.",
+                    required=False,
+                ),
+                "onto": _ref_param(
+                    "Optional new base passed as git rebase --onto <onto>.",
+                    required=False,
+                ),
+                "autostash": _bool_param(
+                    "Automatically stash and re-apply local changes around the rebase."
+                ),
+                "abort": _bool_param("Abort an in-progress rebase."),
+                "continue_rebase": _bool_param(
+                    "Continue an in-progress rebase after conflicts are resolved."
+                ),
+                "skip": _bool_param(
+                    "Skip the current patch during an in-progress rebase."
+                ),
+            },
+            "return_value": _standard_return("git rebase"),
+            "usage_examples": [
+                {
+                    "description": "Rebase current branch onto origin/main",
+                    "command": {"project_id": "<uuid>", "upstream": "origin/main"},
+                    "explanation": "Equivalent to git rebase origin/main.",
+                },
+                {
+                    "description": "Abort conflicted rebase",
+                    "command": {"project_id": "<uuid>", "abort": True},
+                    "explanation": "Equivalent to git rebase --abort.",
+                },
+                {
+                    "description": "Rebase a named branch with autostash",
+                    "command": {
+                        "project_id": "<uuid>",
+                        "upstream": "origin/main",
+                        "branch": "feature/api",
+                        "autostash": True,
+                    },
+                    "explanation": "Checks out/rebases the named branch using git rebase syntax.",
+                },
+            ],
+            "error_cases": {
+                "VALIDATION_ERROR": {
+                    "description": "Missing upstream or multiple recovery actions were selected.",
+                    "message": "upstream is required unless abort, continue_rebase, or skip is true.",
+                    "solution": "Provide upstream for a normal rebase or choose one recovery action.",
+                },
+                "GIT_REBASE_FAILED": {
+                    "description": "git rebase returned non-zero, commonly because of conflicts.",
+                    "message": "details.stderr contains git's diagnostic.",
+                    "solution": "Resolve conflicts and continue, skip, or abort.",
+                },
+            },
+            "best_practices": [
+                "Run git_status before rebasing.",
+                "Use rebase mainly on local/unpublished branches.",
+                "Use abort to return to the pre-rebase state when conflicts are not intended.",
             ],
         }
     )

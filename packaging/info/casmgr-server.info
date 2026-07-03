@@ -19,6 +19,8 @@ Casmgr Server Deployment
 * Admin commands::              Setup and maintenance tools
 * PostgreSQL container::        Docker mounts and lifecycle
 * Ports and co-existence with dev::  MCP ports vs git checkout
+* Git and GitHub commands::     Repository workflow through MCP
+* Command reference::           Live MCP command schema and metadata catalog
 * Systemd::                     Service units and journal
 * Environment::                 Override variables for admin scripts
 * Upgrade and removal::         apt upgrade, remove, purge
@@ -154,13 +156,14 @@ Production installs use the static template
 ‘/etc/casmgr/config.json’.  For development and custom deployments,
 generate a config with the *casmgr-config* CLI:
 
-     python -m code_analysis.cli.config_cli generate --help
-     python -m code_analysis.cli.config_cli validate --file config.json
-     python -m code_analysis.cli.config_cli schema --file config.json
+     casmgr-config generate --help
+     casmgr-config-generate --protocol https --with-proxy --out config.json
+     casmgr-config-validate
+     casmgr-config schema --file config.json
 
-   Installed package:
+   Installed package: commands in ‘/usr/bin/’ (same names).
 
-     /usr/lib/casmgr-server/.venv/bin/python -m code_analysis.cli.config_cli generate ...
+     casmgr-config-generate --protocol https --with-proxy --out /tmp/test.json
 
 Architecture
 ============
@@ -207,7 +210,7 @@ Example: dev HTTPS, proxy, PostgreSQL
 
 From the git checkout root:
 
-     python -m code_analysis.cli.config_cli generate \
+     casmgr-config-generate \
        --protocol https \
        --with-proxy \
        --registration-port 3004 \
@@ -536,7 +539,7 @@ Host ‘/etc/casmgr/postgres’
 ‘code_analysis.database.driver.config.port’).
 
 
-File: casmgr-server.info,  Node: Ports and co-existence with dev,  Next: Systemd,  Prev: PostgreSQL container,  Up: Top
+File: casmgr-server.info,  Node: Ports and co-existence with dev,  Next: Git and GitHub commands,  Prev: PostgreSQL container,  Up: Top
 
 10 Ports and co-existence with dev
 **********************************
@@ -558,9 +561,262 @@ PostgreSQL (Docker)
 servers on the same machine.
 
 
-File: casmgr-server.info,  Node: Systemd,  Next: Environment,  Prev: Ports and co-existence with dev,  Up: Top
+File: casmgr-server.info,  Node: Git and GitHub commands,  Next: Command reference,  Prev: Ports and co-existence with dev,  Up: Top
 
-11 Systemd
+11 Git and GitHub commands
+**************************
+
+The package exposes a project-scoped Git and GitHub command set through
+MCP.  Agents should use these commands through the proxy instead of
+running shell ‘git’ commands when the target repository is registered as
+a casmgr project.  Every command resolves ‘project_id’ to the registered
+project root; callers pass project-relative paths and refs, not host
+working directories.
+
+Invocation model
+================
+
+Use MCP proxy discovery first:
+
+     list_servers
+     list_projects
+     call_server(server_id="code-analysis-server", copy_number=1,
+                 command="<command>", params=project_id:<uuid>)
+
+   Long-running or mutating Git commands may return ‘job_id’; poll
+‘queue_get_job_status’ until ‘status’ is ‘completed’ or ‘failed’.  Treat
+"queued" as submission only, not command success.  The final job payload
+contains ‘command_success’, ‘inner_success’, and the command result.
+
+Repository identity and config
+==============================
+
+‘git_config_get’
+     Read one Git config key from ‘local’, ‘global’, or effective scope.
+     Missing keys return ‘configured=false’ rather than failing.
+‘git_config_list’
+     List Git config entries, optionally with origin metadata.
+‘git_identity_get’
+     Return local and effective ‘user.name’ / ‘user.email’.
+‘git_identity_set’
+     Set ‘user.name’ and ‘user.email’.  Defaults to local repository
+     config; global config requires an explicit ‘allow_global=true’.
+
+   Use ‘git_identity_get’ before the first commit in a project.  Use
+‘git_identity_set’ through MCP when identity is missing; do not repair
+it by opening a shell on the host.
+
+Read-only Git inspection
+========================
+
+‘git_status’
+     Report current branch and porcelain-style status entries.
+‘git_branch_current’
+     Return current branch, upstream, ahead/behind, and detached state.
+‘git_branch’
+     Report local branch list with the current branch marked.
+‘git_branch_list’
+     Report local and remote branches with refs, commit ids, upstream,
+     and scope.
+‘git_branch_compare’
+     Compare refs: ahead/behind, commits, and changed files.
+‘git_branch_sync_status’
+     Report whether a branch is synchronized with its upstream.
+‘git_remote’
+     List configured remotes.
+‘git_log’
+     Read commit history, optionally scoped to a revision or file.
+‘git_show’
+     Show one commit/object.
+‘git_diff’
+     Show diffs between refs or between a ref and the worktree.
+‘git_blame’
+     Show blame information for a file/range.
+
+   These commands are the preferred first step before any mutating
+action.  For an agent workflow, collect ‘git_status’,
+‘git_branch_current’, and the relevant ‘git_diff’ before deciding how to
+stage, commit, merge, or reset.
+
+Branch and remote workflow
+==========================
+
+‘git_branch_create’
+     Create a local branch, optionally checking it out.
+‘git_branch_checkout’
+     Switch branches; can create a branch from a start point.
+‘git_branch_delete’
+     Delete a local branch, with force support for cleanup branches.
+‘git_branch_track_remote’
+     Create or checkout a local branch tracking a remote branch.
+‘git_branch_set_upstream’
+     Set upstream tracking for the current or named branch.
+‘git_branch_unset_upstream’
+     Remove upstream tracking.
+‘git_branch_fetch’
+     Fetch a branch from a remote.
+‘git_branch_pull’
+     Pull one branch from a remote.
+‘git_branch_push’
+     Push one branch and optionally set upstream.
+‘git_branch_delete_remote’
+     Delete a remote branch.
+‘git_fetch’
+     Fetch from a remote.
+‘git_pull’
+     Pull the current branch.
+‘git_push’
+     Push the current or selected branch; supports dry-run workflows.
+
+   Normal branch workflow:
+
+  1. ‘git_branch_current’ and ‘git_status’.
+  2. ‘git_branch_create’ with ‘checkout=true’.
+  3. Edit files through MCP file commands.
+  4. ‘git_add’, ‘git_commit’.
+  5. ‘git_branch_push’ or ‘git_push’.
+  6. Use GitHub PR commands when a review flow is needed.
+
+Working tree, index, and stash
+==============================
+
+‘git_add’
+     Stage explicit paths, all changes, or tracked updates.
+‘git_commit’
+     Create or amend a commit from staged changes.
+‘git_restore’
+     Restore worktree paths and/or unstage paths.  Worktree restore can
+     discard uncommitted content.
+‘git_reset’
+     Reset HEAD/index/worktree.  ‘mode=hard’ requires
+     ‘confirm_hard=true’.
+‘git_clean’
+     Preview or delete untracked files.  Defaults to ‘dry_run=true’;
+     deletion requires ‘confirm=true’.
+‘git_stash_push’
+     Save working-tree changes to stash, optionally scoped to paths.
+‘git_stash_list’
+     List stash entries.
+‘git_stash_apply’
+     Apply a stash entry, optionally keeping it.
+‘git_stash_drop’
+     Drop a stash entry.
+
+   Safety rules:
+
+   • Prefer explicit ‘paths’ for ‘git_add’, ‘git_restore’, ‘git_reset’,
+     and ‘git_clean’.
+   • Run ‘git_clean’ without ‘confirm=true’ first and inspect the
+     dry-run output.
+   • Use ‘git_reset mode=hard confirm_hard=true’ only after proving that
+     no valuable worktree changes remain.
+
+History surgery and integration
+===============================
+
+‘git_merge’
+     Merge another ref into the current branch.  Supports ‘ff_only’,
+     ‘no_ff’, ‘squash’, ‘commit=false’, messages, and ‘abort=true’.
+‘git_rebase’
+     Replay current or selected branch onto another base.  Supports
+     ‘onto’, ‘autostash’, ‘abort’, ‘continue_rebase’, and ‘skip’.
+     Interactive rebase is intentionally not exposed.
+‘git_cherry_pick’
+     Apply one or more commits.  Supports ‘no_commit’, ‘abort’, and
+     ‘continue_pick’.
+‘git_revert’
+     Create inverse changes or commits.  Supports ‘no_commit’, merge
+     ‘mainline’, ‘abort’, and ‘continue_revert’.
+‘git_tag’
+     List, create, delete, push, or delete remote tags.  Deletion
+     requires ‘confirm_delete=true’; release tags should normally be
+     annotated with ‘message’.
+
+   Prefer ‘git_revert’ over ‘git_reset’ on shared branches.  Use
+‘git_rebase’ primarily for unpublished local branches.  For
+merge/rebase, conflicts are reported as command failures with Git
+diagnostics in stderr; use status/diff commands plus MCP file editing to
+resolve, then continue or abort.
+
+GitHub operations
+=================
+
+‘github_repo_get’
+     Read one repository.
+‘github_repo_list’
+     List repositories visible to the configured GitHub token.
+‘github_pr_list’
+     List pull requests.
+‘github_pr_get’
+     Read one pull request in detail.
+‘github_pr_create’
+     Create a pull request.
+‘github_pr_merge’
+     Merge a pull request.
+‘github_issue_list’
+     List issues.
+‘github_issue_create’
+     Create an issue.
+‘github_issue_comment’
+     Add an issue or pull-request comment.
+‘github_release_create’
+     Create a GitHub release.
+
+   GitHub commands use the configured token and repository parameters.
+Read-only commands are safe for discovery.  Write commands create public
+repository state; agents should only execute them when the requested
+outcome explicitly includes a PR, issue, comment, merge, or release.
+
+Coverage boundary
+=================
+
+The Git/GitHub command set is sufficient for normal repository work
+without a terminal: inspect, branch, edit through MCP file commands,
+stage, commit, stash, sync, push, create PRs/issues/releases, merge,
+rebase, cherry-pick, revert, tag, reset, and clean.  ‘git worktree’ is
+intentionally not part of this block yet because it commonly creates
+directories outside the registered project root; it needs an explicit
+allowed-path policy before being exposed safely.
+
+
+File: casmgr-server.info,  Node: Command reference,  Next: Systemd,  Prev: Git and GitHub commands,  Up: Top
+
+12 Command reference
+********************
+
+The MCP ‘info’ command exposes a runtime-generated ‘Command reference’
+node.  That node is built from the live command registry after all
+command hooks have registered their classes and after metadata
+finalization has run.
+
+   It includes, for every registered command:
+
+   • command name, category/group, version, and description;
+   • input schema properties, required parameters, defaults, enums, and
+     ‘additionalProperties’;
+   • extended command metadata: detailed description, return contract,
+     usage examples, error cases, and best practices when published by
+     the command;
+   • Git, GitHub, file, project, queue, session, search, worker,
+     database, AST/CST, analysis, backup, logging, transfer, and system
+     commands registered in the running server.
+
+   Use it through MCP:
+
+     call_server(server_id="code-analysis-server", copy_number=1,
+                 command="info",
+                 params=node:Command reference,format:text,max_chars:250000)
+
+   Because it is generated from the live registry, the command reference
+stays in sync with newly added commands without requiring this static
+Texinfo file to duplicate every command description.  The static manual
+remains the deployment and operations guide; the dynamic node is the
+authoritative full command catalog.
+
+
+File: casmgr-server.info,  Node: Systemd,  Next: Environment,  Prev: Command reference,  Up: Top
+
+13 Systemd
 **********
 
 ‘casmgr-postgres.service’
@@ -586,7 +842,7 @@ exist.
 
 File: casmgr-server.info,  Node: Environment,  Next: Upgrade and removal,  Prev: Systemd,  Up: Top
 
-12 Environment
+14 Environment
 **************
 
 Admin scripts and services honor these variables when set:
@@ -607,7 +863,7 @@ Admin scripts and services honor these variables when set:
 
 File: casmgr-server.info,  Node: Upgrade and removal,  Next: Troubleshooting,  Prev: Environment,  Up: Top
 
-13 Upgrade and removal
+15 Upgrade and removal
 **********************
 
 *Upgrade:* installing a newer ‘.deb’ pulls the new pinned image, removes
@@ -627,7 +883,7 @@ pinned image.  ‘/var/casmgr’ data is retained unless deleted manually.
 
 File: casmgr-server.info,  Node: Troubleshooting,  Prev: Upgrade and removal,  Up: Top
 
-14 Troubleshooting
+16 Troubleshooting
 ******************
 
 Address already in use (MCP port)
@@ -676,20 +932,22 @@ Missing Python modules after install
 
 Tag Table:
 Node: Top87
-Node: Overview1109
-Node: Release build3026
-Node: Installation3892
-Node: Config generator5307
-Node: Config reference8936
-Node: Secrets12341
-Node: mTLS13469
-Node: Admin commands14428
-Node: PostgreSQL container17560
-Node: Ports and co-existence with dev18479
-Node: Systemd19321
-Node: Environment20291
-Node: Upgrade and removal21063
-Node: Troubleshooting21864
+Node: Overview1250
+Node: Release build3167
+Node: Installation4033
+Node: Config generator5448
+Node: Config reference9065
+Node: Secrets12470
+Node: mTLS13598
+Node: Admin commands14557
+Node: PostgreSQL container17689
+Node: Ports and co-existence with dev18608
+Node: Git and GitHub commands19466
+Node: Command reference27603
+Node: Systemd29079
+Node: Environment30035
+Node: Upgrade and removal30807
+Node: Troubleshooting31608
 
 End Tag Table
 

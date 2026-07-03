@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import re
 import gzip
+import json
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -34,11 +35,14 @@ INFO_NODES = [
     "Admin commands",
     "PostgreSQL container",
     "Ports and co-existence with dev",
+    "Git and GitHub commands",
+    "Command reference",
     "Systemd",
     "Environment",
     "Upgrade and removal",
     "Troubleshooting",
 ]
+COMMAND_REFERENCE_NODE = "Command reference"
 
 INFO_PATH_CANDIDATES = [
     Path("/usr/share/info/casmgr-server.info"),
@@ -234,6 +238,197 @@ def _truncate(text: str, max_chars: int) -> Tuple[str, bool]:
     return text[: max(0, max_chars)].rstrip() + "\n\n[truncated]", True
 
 
+def _short_json(value: Any, max_chars: int = 2000) -> str:
+    """Return a stable JSON representation, clipped for reference readability."""
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
+    except TypeError:
+        text = repr(value)
+    clipped, _ = _truncate(text, max_chars)
+    return clipped
+
+
+def _iter_mapping_items(value: Any) -> Iterable[Tuple[str, Any]]:
+    """Yield mapping items sorted by string key."""
+    if not isinstance(value, dict):
+        return []
+    return sorted(((str(k), v) for k, v in value.items()), key=lambda item: item[0])
+
+
+def _metadata_from_command_info(info: Any) -> Dict[str, Any]:
+    """Return the richest metadata block available from registry command info."""
+    if not isinstance(info, dict):
+        return {}
+    ai_metadata = info.get("ai_metadata")
+    if isinstance(ai_metadata, dict):
+        return ai_metadata
+    metadata_block = info.get("metadata")
+    if isinstance(metadata_block, dict):
+        return metadata_block
+    return {}
+
+
+def _schema_from_command_info(info: Any) -> Dict[str, Any]:
+    """Return schema dict from registry command info."""
+    if isinstance(info, dict) and isinstance(info.get("schema"), dict):
+        return cast(Dict[str, Any], info["schema"])
+    return {}
+
+
+def _command_reference_group(name: str, metadata_doc: Dict[str, Any]) -> str:
+    """Classify command name for the generated reference."""
+    category = str(metadata_doc.get("category") or "").strip()
+    if category and category not in {"custom", "system"}:
+        return category
+    if name.startswith("git_"):
+        return "git"
+    if name.startswith("github_"):
+        return "github"
+    if name.startswith("queue_") or name in {"long_task", "job_status"}:
+        return "queue"
+    if name.startswith("search"):
+        return "search"
+    if name.startswith("session_") or name.startswith("subordinate_session_"):
+        return "sessions"
+    if name.startswith("project_") or name in {"list_projects", "create_project"}:
+        return "projects"
+    if name.startswith("fs_") or "file" in name:
+        return "files"
+    return category or "general"
+
+
+def _format_command_reference_entry(name: str, info: Any) -> str:
+    """Format one command's schema and metadata as manual text."""
+    schema = _schema_from_command_info(info)
+    metadata_doc = _metadata_from_command_info(info)
+    description = (
+        metadata_doc.get("description")
+        or metadata_doc.get("summary")
+        or (info.get("description") if isinstance(info, dict) else None)
+        or ""
+    )
+    detailed = metadata_doc.get("detailed_description") or description
+    required_raw = schema.get("required")
+    required = (
+        [str(item) for item in required_raw] if isinstance(required_raw, list) else []
+    )
+    properties = (
+        schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    )
+    parameters = metadata_doc.get("parameters")
+    if not isinstance(parameters, dict):
+        parameters = {}
+
+    lines = [f"### {name}"]
+    if description:
+        lines.append(str(description).strip())
+    if detailed and detailed != description:
+        lines.extend(["", str(detailed).strip()])
+    lines.extend(
+        [
+            "",
+            f"- group: {_command_reference_group(name, metadata_doc)}",
+            f"- category: {metadata_doc.get('category', 'unknown')}",
+            f"- version: {metadata_doc.get('version', 'unknown')}",
+            f"- required: {', '.join(str(item) for item in required) if required else '(none)'}",
+            f"- additionalProperties: {schema.get('additionalProperties', 'unknown')}",
+        ]
+    )
+    if properties:
+        lines.extend(["", "Parameters:"])
+        for param_name, param_schema_raw in _iter_mapping_items(properties):
+            param_schema = (
+                param_schema_raw if isinstance(param_schema_raw, dict) else {}
+            )
+            param_doc = parameters.get(param_name)
+            if not isinstance(param_doc, dict):
+                param_doc = {}
+            param_type = param_schema.get("type") or param_doc.get("type") or "unknown"
+            required_mark = "required" if param_name in required else "optional"
+            default_text = (
+                f", default={param_schema['default']!r}"
+                if "default" in param_schema
+                else ""
+            )
+            enum_text = (
+                f", enum={param_schema['enum']!r}" if "enum" in param_schema else ""
+            )
+            param_description = (
+                param_schema.get("description") or param_doc.get("description") or ""
+            )
+            lines.append(
+                f"- {param_name} ({param_type}, {required_mark}{default_text}"
+                f"{enum_text}): {param_description}"
+            )
+
+    for title, key, limit in (
+        ("Return value", "return_value", 3000),
+        ("Usage examples", "usage_examples", 3000),
+        ("Error cases", "error_cases", 3000),
+        ("Best practices", "best_practices", 2000),
+    ):
+        value = metadata_doc.get(key)
+        if value:
+            lines.extend(["", f"{title}:", _short_json(value, limit)])
+    return "\n".join(lines).rstrip()
+
+
+def _build_command_reference_text() -> str:
+    """Build a full command reference from the live MCP command registry."""
+    try:
+        from mcp_proxy_adapter.commands.command_registry import registry
+    except Exception as exc:
+        return f"Command reference unavailable: failed to import registry: {exc}"
+
+    try:
+        command_info = registry.get_all_commands_info()
+    except Exception as exc:
+        return f"Command reference unavailable: failed to read registry: {exc}"
+    if (
+        isinstance(command_info, dict)
+        and isinstance(command_info.get("commands"), dict)
+        and set(command_info).issubset({"commands"})
+    ):
+        command_info = command_info["commands"]
+    if not isinstance(command_info, dict) or not command_info:
+        return "Command reference unavailable: registry returned no commands."
+
+    groups: Dict[str, List[Tuple[str, Any]]] = {}
+    for name, info in _iter_mapping_items(command_info):
+        metadata_doc = _metadata_from_command_info(info)
+        groups.setdefault(_command_reference_group(name, metadata_doc), []).append(
+            (name, info)
+        )
+
+    lines = [
+        "Command reference",
+        "=================",
+        "",
+        (
+            "This node is generated at runtime from the live MCP command registry. "
+            "It includes each command's description, input schema, required "
+            "parameters, extended metadata, return contract, usage examples, "
+            "error cases, and best practices when the command publishes them."
+        ),
+        "",
+        f"Registered commands: {sum(len(items) for items in groups.values())}",
+        "Groups: " + ", ".join(sorted(groups)),
+    ]
+    for group in sorted(groups):
+        lines.extend(["", f"## {group}", ""])
+        for name, info in groups[group]:
+            lines.append(_format_command_reference_entry(name, info))
+            lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _add_dynamic_nodes(nodes: Dict[str, str]) -> Dict[str, str]:
+    """Add runtime-generated manual nodes."""
+    merged = dict(nodes)
+    merged[COMMAND_REFERENCE_NODE] = _build_command_reference_text()
+    return merged
+
+
 def _runtime_package_info(source: Dict[str, Any]) -> Dict[str, Any]:
     """Collect runtime package metadata displayed with every info response."""
     return {
@@ -302,7 +497,7 @@ class InfoCommand(Command):
                     "description": "Maximum characters of manual text to return.",
                     "default": 20000,
                     "minimum": 1000,
-                    "maximum": 100000,
+                    "maximum": 1000000,
                 },
             },
             "required": [],
@@ -325,6 +520,12 @@ class InfoCommand(Command):
                     "manual source path, file mtime, and available Info nodes. Use this "
                     "command to inspect installation, config, secrets, mTLS, admin commands, "
                     "systemd, upgrade/removal, and troubleshooting guidance through MCP."
+                    " It also documents the project-scoped Git and GitHub command "
+                    "set so agents can operate repositories without falling back to "
+                    "a shell for normal workflows. The dynamic `Command reference` "
+                    "node is generated from the live MCP command registry and includes "
+                    "registered command schemas, metadata, return contracts, examples, "
+                    "errors, and best practices."
                 ),
                 parameters=parameters_from_schema(cls.get_schema()),
                 usage_examples=[
@@ -342,6 +543,27 @@ class InfoCommand(Command):
                         "description": "Read installation guidance",
                         "command": {"node": "Installation", "format": "text"},
                         "explanation": "Returns the Installation node from the installed Info manual.",
+                    },
+                    {
+                        "description": "Read Git and GitHub command guidance",
+                        "command": {
+                            "node": "Git and GitHub commands",
+                            "format": "text",
+                            "max_chars": 30000,
+                        },
+                        "explanation": "Returns command groups, workflows, safety flags, and proxy usage.",
+                    },
+                    {
+                        "description": "Read the live command reference",
+                        "command": {
+                            "node": "Command reference",
+                            "format": "text",
+                            "max_chars": 250000,
+                        },
+                        "explanation": (
+                            "Returns all registered commands with schema and metadata "
+                            "from the live registry."
+                        ),
                     },
                     {
                         "description": "Search troubleshooting topics",
@@ -391,6 +613,8 @@ class InfoCommand(Command):
                 best_practices=[
                     "Use format='nodes' first when you need an exact chapter name.",
                     "Use node='Troubleshooting' for operational failures after deploy.",
+                    "Use node='Git and GitHub commands' before shelling out for repository work.",
+                    "Use node='Command reference' for the complete live command catalog.",
                     "Check package.manual.mtime to confirm the command is reading the installed manual.",
                     "Use health after info when validating a live server deployment.",
                 ],
@@ -401,8 +625,8 @@ class InfoCommand(Command):
         """Validate schema and command-specific constraints."""
         params = super().validate_params(params)
         max_chars = int(params.get("max_chars", 20000) or 20000)
-        if max_chars < 1000 or max_chars > 100000:
-            raise ValueError("max_chars must be between 1000 and 100000")
+        if max_chars < 1000 or max_chars > 1000000:
+            raise ValueError("max_chars must be between 1000 and 1000000")
         if params.get("node") and params.get("section"):
             raise ValueError("Use either node or section, not both")
         return params
@@ -427,6 +651,7 @@ class InfoCommand(Command):
         max_chars = int(params.get("max_chars") or 20000)
 
         nodes, source = _load_manual_nodes()
+        nodes = _add_dynamic_nodes(nodes)
         package = _runtime_package_info(source)
         if not nodes:
             return _error_result(

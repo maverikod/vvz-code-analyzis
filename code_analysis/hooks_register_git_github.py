@@ -88,16 +88,23 @@ def register_commands_git_github(reg: Any) -> None:
         from .commands.git_push_command import GitPushCommand
         from .commands.git_worktree_commands import (
             GitAddCommand,
+            GitCherryPickCommand,
+            GitCleanCommand,
             GitCommitCommand,
             GitConfigGetCommand,
             GitConfigListCommand,
             GitIdentityGetCommand,
             GitIdentitySetCommand,
+            GitMergeCommand,
+            GitRebaseCommand,
+            GitResetCommand,
             GitRestoreCommand,
+            GitRevertCommand,
             GitStashApplyCommand,
             GitStashDropCommand,
             GitStashListCommand,
             GitStashPushCommand,
+            GitTagCommand,
         )
 
         reg.register(GitAddCommand, "custom")
@@ -114,25 +121,33 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitFetchCommand, "custom")
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
+        reg.register(GitCherryPickCommand, "custom")
+        reg.register(GitCleanCommand, "custom")
         reg.register(GitCommitCommand, "custom")
         reg.register(GitConfigGetCommand, "custom")
         reg.register(GitConfigListCommand, "custom")
         reg.register(GitIdentityGetCommand, "custom")
         reg.register(GitIdentitySetCommand, "custom")
+        reg.register(GitMergeCommand, "custom")
+        reg.register(GitRebaseCommand, "custom")
+        reg.register(GitResetCommand, "custom")
         reg.register(GitRestoreCommand, "custom")
+        reg.register(GitRevertCommand, "custom")
         reg.register(GitStashApplyCommand, "custom")
         reg.register(GitStashDropCommand, "custom")
         reg.register(GitStashListCommand, "custom")
         reg.register(GitStashPushCommand, "custom")
+        reg.register(GitTagCommand, "custom")
         logger.info(
             "✅ Registered git write commands: git_add, git_branch_checkout, "
             "git_branch_create, git_branch_delete, git_branch_delete_remote, "
             "git_branch_fetch, git_branch_pull, git_branch_push, "
             "git_branch_track_remote, git_branch_set_upstream, "
             "git_branch_unset_upstream, git_fetch, git_pull, git_push, "
-            "git_commit, git_config_get, git_config_list, "
-            "git_identity_get, git_identity_set, git_restore, "
-            "git_stash_apply, git_stash_drop, git_stash_list, git_stash_push"
+            "git_cherry_pick, git_clean, git_commit, git_config_get, "
+            "git_config_list, git_identity_get, git_identity_set, git_merge, "
+            "git_rebase, git_reset, git_restore, git_revert, git_stash_apply, "
+            "git_stash_drop, git_stash_list, git_stash_push, git_tag"
         )
     except ImportError as e:
         logger.warning("Failed to import git remote commands: %s", e)

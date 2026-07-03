@@ -14,6 +14,7 @@ from code_analysis.commands.git_history_metadata import (
     get_git_cherry_pick_metadata,
     get_git_clean_metadata,
     get_git_merge_metadata,
+    get_git_rebase_metadata,
     get_git_reset_metadata,
     get_git_revert_metadata,
     get_git_tag_metadata,
@@ -147,7 +148,11 @@ class GitResetCommand(GitWorktreeCommand):
                     success=True,
                     stdout=stdout,
                     stderr=stderr,
-                    extra={"mode": mode_value, "target": target_value, "paths": pathspecs},
+                    extra={
+                        "mode": mode_value,
+                        "target": target_value,
+                        "paths": pathspecs,
+                    },
                 ),
             )
         )
@@ -670,7 +675,11 @@ class GitCherryPickCommand(GitWorktreeCommand):
             args,
             error_code="GIT_CHERRY_PICK_FAILED",
             action="git cherry-pick",
-            details={"commits": commit_refs, "abort": abort, "continue_pick": continue_pick},
+            details={
+                "commits": commit_refs,
+                "abort": abort,
+                "continue_pick": continue_pick,
+            },
         )
         if error is not None:
             return error
@@ -791,7 +800,11 @@ class GitRevertCommand(GitWorktreeCommand):
             args,
             error_code="GIT_REVERT_FAILED",
             action="git revert",
-            details={"commits": commit_refs, "abort": abort, "continue_revert": continue_revert},
+            details={
+                "commits": commit_refs,
+                "abort": abort,
+                "continue_revert": continue_revert,
+            },
         )
         if error is not None:
             return error
@@ -809,6 +822,152 @@ class GitRevertCommand(GitWorktreeCommand):
                         "mainline": mainline,
                         "abort": abort,
                         "continue_revert": continue_revert,
+                    },
+                ),
+            )
+        )
+
+
+class GitRebaseCommand(GitWorktreeCommand):
+    """Rebase the current or selected branch onto another base."""
+
+    name = "git_rebase"
+    version = "1.0.0"
+    descr = "Rebase the current or selected branch onto another base."
+    use_queue = True
+
+    @staticmethod
+    def get_name() -> str:
+        """Return the MCP command name."""
+        return "git_rebase"
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Return the JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Project UUID. Use list_projects to discover valid values.",
+                },
+                "upstream": {
+                    "type": "string",
+                    "description": "Upstream/base ref to replay the branch onto.",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Optional branch to rebase instead of current branch.",
+                },
+                "onto": {
+                    "type": "string",
+                    "description": "Optional new base passed as --onto.",
+                },
+                "autostash": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Automatically stash and re-apply local changes.",
+                },
+                "abort": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Abort an in-progress rebase.",
+                },
+                "continue_rebase": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Continue an in-progress rebase.",
+                },
+                "skip": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Skip the current patch in an in-progress rebase.",
+                },
+            },
+            "required": ["project_id"],
+            "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls) -> Dict[str, Any]:
+        """Return extended AI/docs metadata for git_rebase."""
+        return get_git_rebase_metadata(cls)
+
+    async def execute(
+        self,
+        project_id: str,
+        upstream: Optional[str] = None,
+        branch: Optional[str] = None,
+        onto: Optional[str] = None,
+        autostash: bool = False,
+        abort: bool = False,
+        continue_rebase: bool = False,
+        skip: bool = False,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """Execute the git_rebase command."""
+        _ = kwargs
+        recovery_count = sum(1 for item in (abort, continue_rebase, skip) if item)
+        if recovery_count > 1:
+            return validation_error(
+                "Choose only one rebase recovery action",
+                "abort",
+            )
+        args = ["rebase"]
+        if abort:
+            args.append("--abort")
+        elif continue_rebase:
+            args.append("--continue")
+        elif skip:
+            args.append("--skip")
+        else:
+            upstream_value = (upstream or "").strip()
+            branch_value = (branch or "").strip()
+            onto_value = (onto or "").strip()
+            if not upstream_value:
+                return validation_error(
+                    "upstream is required unless a recovery action is selected",
+                    "upstream",
+                )
+            if autostash:
+                args.append("--autostash")
+            if onto_value:
+                args.extend(["--onto", onto_value])
+            args.append(upstream_value)
+            if branch_value:
+                args.append(branch_value)
+        result, error = self._run_local_git(
+            project_id,
+            args,
+            error_code="GIT_REBASE_FAILED",
+            action="git rebase",
+            details={
+                "upstream": upstream,
+                "branch": branch,
+                "onto": onto,
+                "abort": abort,
+                "continue_rebase": continue_rebase,
+                "skip": skip,
+            },
+        )
+        if error is not None:
+            return error
+        stdout, stderr = result or ("", "")
+        return SuccessResult(
+            data=cast(
+                Dict[str, Any],
+                _git_output_data(
+                    success=True,
+                    stdout=stdout,
+                    stderr=stderr,
+                    extra={
+                        "upstream": upstream,
+                        "branch": branch,
+                        "onto": onto,
+                        "autostash": autostash,
+                        "abort": abort,
+                        "continue_rebase": continue_rebase,
+                        "skip": skip,
                     },
                 ),
             )

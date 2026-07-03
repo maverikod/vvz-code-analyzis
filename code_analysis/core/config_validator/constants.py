@@ -14,5 +14,6 @@ ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {
     "search_session",
     "all_logs_rotation",
     "git_commit_on_write",
+    "github",
     "storage",
 }

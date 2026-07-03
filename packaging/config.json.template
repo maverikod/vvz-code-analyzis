@@ -202,6 +202,11 @@
         "docs/ai_reports/**"
       ]
     },
+    "github": {
+      "timeout_seconds": 30,
+      "allow_pr_merge": false,
+      "allow_protected_base_merge": false
+    },
     "search_session": {
       "ttl_seconds": 1800,
       "max_block_size_bytes": 4096

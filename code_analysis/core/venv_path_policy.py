@@ -18,6 +18,8 @@ import re
 from pathlib import Path
 from typing import Collection, FrozenSet, List, Optional, Sequence, Set
 
+from .fs_permissions import log_walk_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -421,7 +423,7 @@ def iter_project_python_files_excluding_venv(
     }
     root_path = project_root.resolve()
     files: List[Path] = []
-    for walk_root, dirs, walk_files in os.walk(root_path):
+    for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
         _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
         for f in walk_files:
             if f.endswith(".py"):
@@ -448,7 +450,7 @@ def iter_project_files_excluding_venv(
     }
     root_path = project_root.resolve()
     files: List[Path] = []
-    for walk_root, dirs, walk_files in os.walk(root_path):
+    for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
         _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
         for f in walk_files:
             p = Path(walk_root) / f
@@ -462,6 +464,32 @@ def iter_project_files_excluding_venv(
                 continue
             files.append(p)
     return files
+
+
+def project_root_listing_error(project_root: Path) -> Optional[OSError]:
+    """Return the ``OSError`` if ``project_root`` cannot be listed, else ``None``.
+
+    A directory can be traversable (execute bit) yet not listable (read bit):
+    opening a known path such as ``pkg/mod.py`` still works, but enumerating the
+    tree yields nothing because listing a directory requires the read bit.
+    ``os.walk`` swallows that ``PermissionError`` silently, so indexing/listing
+    would report an empty result as success and leave a stale index. Callers use
+    this to fail loud with a typed error instead of returning an empty set.
+
+    Args:
+        project_root: Directory to probe for read/list permission.
+
+    Returns:
+        The raised ``OSError`` (e.g. ``PermissionError``) when the directory
+        exists but cannot be enumerated; ``None`` when it lists successfully
+        (including a legitimately empty directory).
+    """
+    try:
+        with os.scandir(project_root) as entries:
+            next(entries, None)
+        return None
+    except OSError as exc:
+        return exc
 
 
 def allowed_venv_py_files_for_watch_dir(watch_dir: Path) -> Set[Path]:

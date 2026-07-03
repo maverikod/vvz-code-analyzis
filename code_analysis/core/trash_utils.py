@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from code_analysis.core.fs_permissions import log_fs_access_error
 
 # Characters illegal or problematic in filenames (Windows + Unix)
 _ILLEGAL_CHARS = re.compile(r'[/\\:*?"<>|]+')
@@ -94,6 +95,7 @@ def get_project_id_from_trash_folder(
             pass
         return raw
     except OSError:
+        log_fs_access_error(path, "get_project_id_from_trash_folder")
         return None
 
 
@@ -147,6 +149,7 @@ def collect_project_ids_for_trash_cleanup(trash_dir: Path) -> List[str]:
                 seen.add(pid)
                 out.append(pid)
     except OSError:
+        log_fs_access_error(trash_dir, "collect_project_ids_for_trash_cleanup")
         return out
     return out
 

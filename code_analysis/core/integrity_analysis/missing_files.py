@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from code_analysis.core.file_identity import absolute_path_for_indexed_file
+from code_analysis.core.fs_permissions import log_fs_access_error
 from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
@@ -58,6 +59,7 @@ def find_missing_indexed_files(
         try:
             still_file = Path(abs_key).is_file()
         except OSError:
+            log_fs_access_error(abs_key, "find_missing_indexed_files")
             still_file = False
         if not still_file:
             missing.append(

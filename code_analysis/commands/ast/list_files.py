@@ -10,7 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from typing import Any, Dict, List, Optional
-from mcp_proxy_adapter.commands.result import CommandResult, SuccessResult
+from mcp_proxy_adapter.commands.result import (
+    CommandResult,
+    ErrorResult,
+    SuccessResult,
+)
 
 from ..base_mcp_command import BaseMCPCommand
 from ..file_management.relative_path_list_pattern import (
@@ -19,6 +23,7 @@ from ..file_management.relative_path_list_pattern import (
     relative_path_matches_listing_pattern,
 )
 from ..project_fs_enumerate import enumerate_project_paths
+from ...core.venv_path_policy import project_root_listing_error
 from ...core.list_pagination import (
     build_list_page_payload,
     list_pagination_schema_properties,
@@ -228,6 +233,26 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         """
         try:
             project_root = self._resolve_project_root(project_id).resolve()
+
+            # A directory can be traversable (execute bit) yet not listable
+            # (read bit); enumeration then silently returns empty. Surface a
+            # typed error instead of a misleading empty listing.
+            listing_error = project_root_listing_error(project_root)
+            if listing_error is not None:
+                return ErrorResult(
+                    message=(
+                        f"Project root exists but cannot be listed: {project_root}. "
+                        "The server process lacks read permission on this "
+                        "directory, so file enumeration returns empty. Restore "
+                        "the owner read bit on the project root."
+                    ),
+                    code="PROJECT_ROOT_NOT_READABLE",
+                    details={
+                        "project_id": project_id,
+                        "root_path": str(project_root),
+                        "error": str(listing_error),
+                    },
+                )
 
             fs_paths = enumerate_project_paths(
                 project_root,

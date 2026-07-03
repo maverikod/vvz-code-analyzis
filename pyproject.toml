@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis"
-version = "1.6.24"
+version = "1.6.26"
 description = "Code analysis MCP server, database tooling, and AST/CST commands"
 readme = { file = "docs/README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -60,3 +60,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["code_analysis*", "casmgr_entry*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]

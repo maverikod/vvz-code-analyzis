@@ -16,6 +16,7 @@ from code_analysis.core.file_identity import (
     FILE_ROW_PATH_MATCH_SQL,
     file_row_path_match_values,
 )
+from code_analysis.core.fs_permissions import log_fs_access_error
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def collect_file_disk_metadata(path: Path) -> Tuple[int, bool]:
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
+        log_fs_access_error(path, "collect_file_disk_metadata")
         logger.debug("Failed to read file for metadata: %s", path, exc_info=True)
         return 0, False
     return collect_content_metadata(text)

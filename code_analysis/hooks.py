@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.hooks import register_auto_import_module
 from .core.config_command_gate import install_config_command_gate
 from .hooks_register_part1 import register_commands_part1
 from .hooks_register_part2 import register_commands_part2
+from .hooks_register_git_github import register_commands_git_github
 
 
 def register_code_analysis_commands(reg: registry) -> None:
@@ -29,6 +30,7 @@ def register_code_analysis_commands(reg: registry) -> None:
     """
     register_commands_part1(reg)
     register_commands_part2(reg)
+    register_commands_git_github(reg)
     from .commands.command_metadata_helpers import (
         apply_metadata_finalization_to_registry,
     )

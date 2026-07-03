@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from code_analysis.core.fs_permissions import log_fs_access_error
 from code_analysis.core.tree_lifecycle.lifecycle import TreeLifecycle
 from code_analysis.core.tree_lifecycle.node_id_map import parse_tree_file
 from code_analysis.tree.contracts import NodeId, validate_short_id
@@ -58,6 +59,7 @@ def _read_source_text(*, preview_abs_path: Path) -> str:
     try:
         source = preview_abs_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        log_fs_access_error(preview_abs_path, "_read_source_text")
         source = ""
     path_str = str(preview_abs_path)
     if source or not path_str.endswith(".draft"):
@@ -68,6 +70,7 @@ def _read_source_text(*, preview_abs_path: Path) -> str:
     try:
         return original_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        log_fs_access_error(original_path, "_read_source_text")
         return source
 
 

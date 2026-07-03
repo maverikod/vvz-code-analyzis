@@ -17,6 +17,7 @@ from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.venv_path_policy import (
     collect_python_files_for_indexing,
     load_venv_site_packages_index_allowlist_from_config,
+    project_root_listing_error,
 )
 from .base_mcp_command import BaseMCPCommand
 from .update_indexes_analyzer import analyze_file
@@ -172,6 +173,27 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         ),
                         code="PROJECT_ROOT_NOT_FOUND",
                         details={"project_id": project_id, "root_path": str(root_path)},
+                    )
+                # A directory can be traversable (execute bit) yet not listable
+                # (read bit): os.walk then silently yields nothing and we would
+                # report "No Python files found" as success while leaving a stale
+                # index. Detect an unenumerable root and fail loud instead.
+                listing_error = project_root_listing_error(root_path)
+                if listing_error is not None:
+                    return ErrorResult(
+                        message=(
+                            f"Project root exists but cannot be listed: {root_path}. "
+                            "The server process lacks read permission on this "
+                            "directory (execute-only permits opening known paths "
+                            "but not enumeration), so the index cannot be built. "
+                            "Restore the owner read bit on the project root."
+                        ),
+                        code="PROJECT_ROOT_NOT_READABLE",
+                        details={
+                            "project_id": project_id,
+                            "root_path": str(root_path),
+                            "error": str(listing_error),
+                        },
                     )
 
                 if progress_tracker:

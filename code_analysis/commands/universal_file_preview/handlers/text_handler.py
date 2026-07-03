@@ -15,6 +15,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from code_analysis.core.fs_permissions import log_fs_access_error
+
 from ..base_handler import FileHandler
 from ..budget import PreviewBudget
 from ..errors import PreviewError, input_error, INPUT_ERROR_UNKNOWN_NODE_REF
@@ -73,6 +75,7 @@ class TextFileHandler(FileHandler):
             try:
                 text = Path(file_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
+                log_fs_access_error(file_path, "text_handler._load_lines")
                 text = ""
             raw_lines = text.splitlines()
             return [

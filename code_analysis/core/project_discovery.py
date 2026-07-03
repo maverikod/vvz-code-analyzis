@@ -31,6 +31,7 @@ from .exceptions import (
     NestedProjectError,
     ProjectIdError,
 )
+from .fs_permissions import log_walk_error
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,7 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
         walk_root = project_root
     try:
         for dirpath, dirnames, filenames in os.walk(
-            walk_root, topdown=True, followlinks=False
+            walk_root, topdown=True, followlinks=False, onerror=log_walk_error
         ):
             dpath = Path(dirpath)
             pruned: List[str] = []

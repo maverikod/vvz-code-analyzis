@@ -463,3 +463,19 @@ class TestDocsIndexingConfigValidation:
         cfg["code_analysis"]["docs_indexing"] = "no"
         results = validator.validate_config(cfg)
         assert any("docs_indexing must be an object" in r.message for r in results)
+
+
+def test_github_config_section_valid() -> None:
+    """Verify GitHub command-block config section is accepted."""
+    cfg = _config_with_docs_indexing({"enabled": False})
+    cfg["code_analysis"]["github"] = {
+        "timeout_seconds": 30,
+        "allow_pr_merge": False,
+        "allow_protected_base_merge": False,
+    }
+
+    validator = CodeAnalysisConfigValidator()
+    results = validator.validate_config(cfg)
+
+    assert validator.get_validation_summary()["is_valid"] is True
+    assert not any(r.level == "error" for r in results)

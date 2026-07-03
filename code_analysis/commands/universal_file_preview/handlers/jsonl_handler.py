@@ -18,6 +18,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from code_analysis.core.fs_permissions import log_fs_access_error
+
 from ..base_handler import FileHandler
 from ..budget import PreviewBudget
 from ..errors import (
@@ -80,6 +82,7 @@ class JsonLinesFileHandler(FileHandler):
             try:
                 text = Path(file_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
+                log_fs_access_error(file_path, "jsonl_handler._load_lines")
                 text = ""
             return [
                 Node(

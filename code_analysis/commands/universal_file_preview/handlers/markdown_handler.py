@@ -23,6 +23,8 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from code_analysis.core.fs_permissions import log_fs_access_error
+
 from ..base_handler import FileHandler
 from ..budget import PreviewBudget
 from ..errors import (
@@ -56,6 +58,7 @@ def _read_markdown_source(file_path: str) -> str:
     try:
         source = Path(file_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
+        log_fs_access_error(file_path, "_read_markdown_source")
         source = ""
     if source or not file_path.endswith(".draft"):
         return source
@@ -63,6 +66,7 @@ def _read_markdown_source(file_path: str) -> str:
     try:
         return Path(original_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
+        log_fs_access_error(original_path, "_read_markdown_source")
         return source
 
 

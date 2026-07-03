@@ -19,6 +19,7 @@ from code_analysis.core.constants import (
 )
 from code_analysis.core.database.watch_dir_sql import watch_dirs_insert_new_row_sql
 from code_analysis.core.docker_watch_paths import docker_watch_dir_container_path
+from code_analysis.core.fs_permissions import log_fs_access_error
 from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.watch_dir_settings import (
     WatchDirSettings,
@@ -138,7 +139,12 @@ def discover_uuid_watch_dirs(mount_root: Path) -> dict[str, Path]:
     if not mount_root.is_dir():
         return {}
     discovered: dict[str, Path] = {}
-    for child in mount_root.iterdir():
+    try:
+        children = list(mount_root.iterdir())
+    except OSError:
+        log_fs_access_error(mount_root, "discover_uuid_watch_dirs")
+        raise
+    for child in children:
         if not child.is_dir():
             continue
         if not _is_uuid4_name(child.name):

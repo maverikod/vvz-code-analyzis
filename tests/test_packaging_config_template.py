@@ -34,9 +34,9 @@ def test_packaging_template_production_shape() -> None:
     assert server["ssl"]["cert"].startswith("/etc/casmgr/mtls/")
 
     registration = data["registration"]
-    assert registration["server_id"] == "code-analysis-server"
+    assert registration["server_id"] == "code-analysis-server-vvz"
     assert registration["instance_uuid"] == "REPLACE_ON_INSTALL"
-    assert "MCP_PROXY_HOST" in registration["register_url"]
+    assert registration["register_url"] == "https://172.18.0.1:3004/register"
 
     ca = data["code_analysis"]
     assert ca["port"] == 15010

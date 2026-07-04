@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import faulthandler
 import logging
+import uuid
 import threading
 import time
 from pathlib import Path
@@ -44,6 +45,10 @@ STALL_LIMIT_SECONDS: float = 45.0
 # Liveness is checked at least this often, independently of the (longer)
 # heartbeat interval, so stalls are detected promptly.
 LIVENESS_CHECK_INTERVAL: float = 5.0
+
+# Verify that the externally exposed JSON-RPC route still receives exactly the
+# body we send. This is intentionally slower than heartbeat/liveness checks.
+JSONRPC_SELF_CHECK_INTERVAL: float = 30.0
 
 
 def _abs_path(value: Optional[str], base_dir: Path) -> Optional[str]:
@@ -141,6 +146,27 @@ def _build_payload(settings: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _build_jsonrpc_self_check_payload() -> Dict[str, Any]:
+    """Build a JSON-RPC request with a nonce id for route body integrity checks."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "health",
+        "params": {},
+        "id": f"jsonrpc-self-check:{uuid.uuid4()}",
+    }
+
+
+def _jsonrpc_self_check_ok(payload: Dict[str, Any], response: Any) -> bool:
+    """Return whether a JSON-RPC response preserved the request id and shape."""
+    if not isinstance(response, dict):
+        return False
+    if response.get("jsonrpc") != "2.0":
+        return False
+    if response.get("id") != payload["id"]:
+        return False
+    return "result" in response or "error" in response
+
+
 def _watchdog_main(
     full_config: Dict[str, Any],
     config_path: Path,
@@ -186,6 +212,8 @@ def _watchdog_main(
 
     next_heartbeat = 0.0  # monotonic deadline; 0 → send on first healthy tick
     hb_fail_logged = False  # throttle: log a heartbeat failure once until it recovers
+    next_self_check = 0.0
+    self_check_failed = False
 
     def _maybe_send_heartbeat() -> None:
         """Send the independent heartbeat if due; throttle failure logging."""
@@ -210,12 +238,47 @@ def _watchdog_main(
                 )
                 hb_fail_logged = True
 
+    def _maybe_run_jsonrpc_self_check() -> None:
+        """POST a nonce JSON-RPC request to this server and verify response shape."""
+        nonlocal next_self_check, self_check_failed
+        if client is None or settings is None or not settings.get("server_url"):
+            return
+        now = time.monotonic()
+        if now < next_self_check:
+            return
+        next_self_check = now + JSONRPC_SELF_CHECK_INTERVAL
+        payload = _build_jsonrpc_self_check_payload()
+        url = f"{settings['server_url'].rstrip('/')}/api/jsonrpc"
+        try:
+            resp = client.post(url, json=payload)
+            resp.raise_for_status()
+            response = resp.json()
+        except Exception as exc:
+            logger.critical("JSON-RPC self-check failed to call %s: %s", url, exc)
+            self_check_failed = True
+            return
+        if not _jsonrpc_self_check_ok(payload, response):
+            logger.critical(
+                "JSON-RPC self-check failed: request id %r, response type=%s id=%r "
+                "keys=%s",
+                payload["id"],
+                type(response).__name__,
+                response.get("id") if isinstance(response, dict) else None,
+                sorted(response) if isinstance(response, dict) else None,
+            )
+            self_check_failed = True
+            return
+        if self_check_failed:
+            logger.info("JSON-RPC self-check recovered.")
+            self_check_failed = False
+
     try:
         while not heartbeat_stop.wait(tick):
             # During startup the beat coroutine has not run yet; don't treat the
             # boot window as a stall. Heartbeats below still flow (server booting).
             if not loop_liveness.has_beaten():
                 _maybe_send_heartbeat()
+                _maybe_run_jsonrpc_self_check()
                 continue
             stale = loop_liveness.seconds_since_beat()
             if stale > STALL_LIMIT_SECONDS:
@@ -238,6 +301,9 @@ def _watchdog_main(
                     stale,
                 )
                 stall_logged = False
+            _maybe_run_jsonrpc_self_check()
+            if self_check_failed:
+                continue
             _maybe_send_heartbeat()
     finally:
         if client is not None:

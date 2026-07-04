@@ -75,3 +75,8 @@ def patch_app_openapi_for_mcp_proxy(app: Any) -> None:
             return copy.deepcopy(stored)
 
     app.openapi = _wrapped
+
+
+def prime_openapi_cache(app: Any) -> None:
+    """Generate and cache the normalized OpenAPI schema during app construction."""
+    app.openapi()

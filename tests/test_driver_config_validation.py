@@ -46,6 +46,47 @@ class TestDriverConfigValidation:
         errors = [r for r in results if r.level == "error"]
         assert len(errors) == 0
 
+    def test_git_section_is_allowed(self):
+        """code_analysis.git is a first-class config section used by remote commands."""
+        config = {
+            "server": {
+                "host": "localhost",
+                "port": 15000,
+                "protocol": "mtls",
+                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
+            },
+            "queue_manager": {"enabled": True},
+            "code_analysis": {
+                "git": {
+                    "remote_enabled": True,
+                    "protected_branches": ["main"],
+                    "remote_timeout_seconds": 30,
+                },
+                "database": {
+                    "driver": {
+                        "type": "sqlite_proxy",
+                        "config": {
+                            "path": "data/test.db",
+                            "worker_config": {
+                                "command_timeout": 30.0,
+                                "poll_interval": 0.1,
+                            },
+                        },
+                    }
+                },
+            },
+        }
+
+        validator = CodeAnalysisConfigValidator()
+        results = validator.validate_config(config)
+
+        assert validator.get_validation_summary()["is_valid"] is True
+        assert not [
+            r
+            for r in results
+            if r.level == "error" and r.key == "git" and "Unknown key" in r.message
+        ]
+
     def test_pgvector_with_sqlite_class_driver_errors(self) -> None:
         """vector_search_backend=pgvector is invalid for sqlite / sqlite_proxy (FAISS only)."""
         config = {

@@ -69,3 +69,28 @@ def test_openapi_schema_cached_per_app(app) -> None:
     second = app.openapi()
     assert first == second
     assert first is not second
+
+
+def test_openapi_schema_is_primed_during_app_creation(app) -> None:
+    """App construction freezes a normalized OpenAPI schema before live traffic."""
+    assert app.openapi_schema is not None
+
+
+def test_jsonrpc_simplified_command_form_uses_adapter_raw_body_route(app) -> None:
+    """Adapter >=8.10.17 route accepts simplified JSON-RPC command bodies."""
+    async def _run() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/jsonrpc",
+                json={"command": "help", "params": {}, "id": 7},
+                timeout=60,
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["id"] == 7
+            assert "result" in payload
+
+    asyncio.run(_run())

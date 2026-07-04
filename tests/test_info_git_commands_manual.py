@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,11 @@ def test_built_info_manual_contains_full_git_command_block() -> None:
         "git_branch_current",
         "git_branch_create",
         "git_branch_push",
+        "git_remote_add",
+        "git_remote_set_url",
+        "git_remote_set_push_url",
+        "git_remote_remove",
+        "git_remote_rename",
         "git_add",
         "git_commit",
         "git_restore",
@@ -82,6 +88,7 @@ def test_built_info_manual_contains_full_git_command_block() -> None:
     for safety_phrase in (
         "confirm_hard=true",
         "dry_run=true",
+        "inline credentials",
         "confirm=true",
         "confirm_delete=true",
         "git worktree",
@@ -110,10 +117,39 @@ async def test_info_command_reference_node_uses_live_registry() -> None:
     assert item["node"] == COMMAND_REFERENCE_NODE
     assert result.data["truncated"] is False
     text = item["text"]
+    command_info = registry.get_all_commands_info()
+    registered_commands = command_info.get("commands", command_info)
+    assert isinstance(registered_commands, dict)
+    matches = list(re.finditer(r"^### ([^\n]+)$", text, re.MULTILINE))
+    entries = {}
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        entries[match.group(1)] = text[start:end]
+    for registered_name in sorted(registered_commands):
+        header = f"### {registered_name}"
+        assert header in text
+        entry = entries[registered_name]
+        assert "- group:" in entry
+        assert "- category:" in entry
+        assert "- version:" in entry
+        assert "- required:" in entry
+        assert "- additionalProperties:" in entry
+        schema = registered_commands[registered_name].get("schema", {})
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        if properties:
+            assert "Parameters:" in entry
+        for param_name in properties:
+            assert f"- {param_name} (" in entry
     for command_name in (
         "### git_reset",
         "### git_rebase",
         "### git_tag",
+        "### git_remote_add",
+        "### git_remote_set_url",
+        "### git_remote_set_push_url",
+        "### git_remote_remove",
+        "### git_remote_rename",
         "### github_pr_create",
         "### list_projects",
         "### search",

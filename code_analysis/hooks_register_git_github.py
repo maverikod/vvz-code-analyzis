@@ -86,6 +86,13 @@ def register_commands_git_github(reg: Any) -> None:
         from .commands.git_fetch_command import GitFetchCommand
         from .commands.git_pull_command import GitPullCommand
         from .commands.git_push_command import GitPushCommand
+        from .commands.git_remote_config_commands import (
+            GitRemoteAddCommand,
+            GitRemoteRemoveCommand,
+            GitRemoteRenameCommand,
+            GitRemoteSetPushUrlCommand,
+            GitRemoteSetUrlCommand,
+        )
         from .commands.git_worktree_commands import (
             GitAddCommand,
             GitCherryPickCommand,
@@ -128,6 +135,11 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitFetchCommand, "custom")
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
+        reg.register(GitRemoteAddCommand, "custom")
+        reg.register(GitRemoteSetUrlCommand, "custom")
+        reg.register(GitRemoteSetPushUrlCommand, "custom")
+        reg.register(GitRemoteRemoveCommand, "custom")
+        reg.register(GitRemoteRenameCommand, "custom")
         reg.register(GitCherryPickCommand, "custom")
         reg.register(GitCleanCommand, "custom")
         reg.register(GitCommitCommand, "custom")
@@ -156,6 +168,8 @@ def register_commands_git_github(reg: Any) -> None:
             "git_branch_fetch, git_branch_pull, git_branch_push, "
             "git_branch_track_remote, git_branch_set_upstream, "
             "git_branch_unset_upstream, git_fetch, git_pull, git_push, "
+            "git_remote_add, git_remote_set_url, git_remote_set_push_url, "
+            "git_remote_remove, git_remote_rename, "
             "git_cherry_pick, git_clean, git_commit, git_config_get, "
             "git_config_list, git_identity_get, git_identity_set, git_merge, "
             "git_rebase, git_reset, git_restore, git_revert, git_stash_apply, "

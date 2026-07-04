@@ -661,6 +661,18 @@ Branch and remote workflow
      Push one branch and optionally set upstream.
 ‘git_branch_delete_remote’
      Delete a remote branch.
+‘git_remote_add’
+     Add a local remote configuration entry without contacting the
+     remote.
+‘git_remote_set_url’
+     Replace the fetch URL for an existing remote.
+‘git_remote_set_push_url’
+     Set a dedicated push URL while leaving the fetch URL unchanged.
+‘git_remote_remove’
+     Remove a local remote configuration entry; use ‘dry_run=true’ first
+     when an agent is unsure.
+‘git_remote_rename’
+     Rename a local remote configuration entry.
 ‘git_fetch’
      Fetch from a remote.
 ‘git_pull’
@@ -676,6 +688,18 @@ Branch and remote workflow
   4. ‘git_add’, ‘git_commit’.
   5. ‘git_branch_push’ or ‘git_push’.
   6. Use GitHub PR commands when a review flow is needed.
+
+   Remote configuration rules:
+
+   • Use ‘git_remote_add’, ‘git_remote_set_url’,
+     ‘git_remote_set_push_url’, ‘git_remote_remove’, and
+     ‘git_remote_rename’ to edit local ‘.git/config’ remote entries.
+     These commands do not fetch, pull, push, or perform SSH
+     authentication.
+   • Run ‘git_remote’ before and after a remote configuration change
+     when an audit trail is needed.
+   • Do not pass inline credentials in remote URLs; configure
+     authentication through the server's SSH or secret flow.
 
 Working tree, index, and stash
 ==============================
@@ -741,22 +765,22 @@ resolve, then continue or abort.
 Repository maintenance and safe automation
 ==========================================
 
-The MCP Git layer includes administrative repository maintenance commands
-so agents do not need a host shell when normal Git workflows are blocked
-by stale locks, mixed ownership, or write-permission drift in a
-registered project.
+The MCP Git layer includes administrative repository maintenance
+commands so agents do not need a host shell when normal Git workflows
+are blocked by stale locks, mixed ownership, or write-permission drift
+in a registered project.
 
 ‘git_repo_permissions_check’
      Inspect ‘.git’, the working tree, or both for owner/group
      mismatches, missing write/search permissions, and effective CAS
-     write access.  The command also performs short-lived write probes in
-     the project root and ‘.git/objects’.
+     write access.  The command also performs short-lived write probes
+     in the project root and ‘.git/objects’.
 ‘git_repo_permissions_repair’
      Repair owner/group and file modes for ‘.git’, the working tree, or
      both.  It defaults to ‘dry_run=true’; real changes require
-     ‘confirm_repair=true’.  If files are owned by a user the CAS process
-     cannot change, the command reports the exact paths and the required
-     host-level repair.
+     ‘confirm_repair=true’.  If files are owned by a user the CAS
+     process cannot change, the command reports the exact paths and the
+     required host-level repair.
 ‘git_repo_doctor’
      Produce one operational report: branch/status, stash list, stale
      lock candidates, permission report, and write probes.  Run this
@@ -765,10 +789,11 @@ registered project.
      List or remove stale ‘.git/*.lock’ and ‘.git/**.lock’ files.
      Deletion requires ‘confirm_cleanup=true’; use ‘dry_run=true’ first.
 ‘git_pull_safe’
-     Guarded pull workflow: capture status, stash dirty tracked/untracked
-     work, pull the selected remote/ref, optionally apply the temporary
-     stash, and optionally drop it after a clean apply.  The response is
-     a step-by-step audit trail, not just a final success flag.
+     Guarded pull workflow: capture status, stash dirty
+     tracked/untracked work, pull the selected remote/ref, optionally
+     apply the temporary stash, and optionally drop it after a clean
+     apply.  The response is a step-by-step audit trail, not just a
+     final success flag.
 
    Recommended recovery flow when ‘git_pull’, ‘git_stash_push’, or
 ‘git_commit’ fails with permission or lock diagnostics:
@@ -776,18 +801,19 @@ registered project.
   1. Run ‘git_repo_doctor’.
   2. If permissions are dirty, run ‘git_repo_permissions_repair’ with
      ‘dry_run=true’; inspect planned actions.
-  3. Run ‘git_repo_permissions_repair dry_run=false
-     confirm_repair=true’ only when the planned owner/group/mode changes
-     are correct for the registered project.
+  3. Run ‘git_repo_permissions_repair dry_run=false confirm_repair=true’
+     only when the planned owner/group/mode changes are correct for the
+     registered project.
   4. If stale locks remain, run ‘git_repo_lock_cleanup dry_run=true’;
      delete only confirmed stale locks.
-  5. Prefer ‘git_pull_safe’ over manually composing stash/pull/apply/drop
-     when updating a dirty server checkout from a remote branch.
+  5. Prefer ‘git_pull_safe’ over manually composing
+     stash/pull/apply/drop when updating a dirty server checkout from a
+     remote branch.
 
    These commands are project-scoped and use ‘project_id’; they never
 accept a host working directory.  Their full JSON schemas, return
 contracts, error cases, and examples are included in *note Command
-reference::.
+reference: Command reference.
 
 GitHub operations
 =================
@@ -994,11 +1020,11 @@ Node: Admin commands14557
 Node: PostgreSQL container17689
 Node: Ports and co-existence with dev18608
 Node: Git and GitHub commands19466
-Node: Command reference27603
-Node: Systemd29079
-Node: Environment30035
-Node: Upgrade and removal30807
-Node: Troubleshooting31608
+Node: Command reference31288
+Node: Systemd32764
+Node: Environment33720
+Node: Upgrade and removal34492
+Node: Troubleshooting35293
 
 End Tag Table
 

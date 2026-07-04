@@ -631,6 +631,17 @@ Pull one branch from a remote.
 Push one branch and optionally set upstream.
 @item git_branch_delete_remote
 Delete a remote branch.
+@item git_remote_add
+Add a local remote configuration entry without contacting the remote.
+@item git_remote_set_url
+Replace the fetch URL for an existing remote.
+@item git_remote_set_push_url
+Set a dedicated push URL while leaving the fetch URL unchanged.
+@item git_remote_remove
+Remove a local remote configuration entry; use @code{dry_run=true} first when
+an agent is unsure.
+@item git_remote_rename
+Rename a local remote configuration entry.
 @item git_fetch
 Fetch from a remote.
 @item git_pull
@@ -649,6 +660,22 @@ Normal branch workflow:
 @item @code{git_branch_push} or @code{git_push}.
 @item Use GitHub PR commands when a review flow is needed.
 @end enumerate
+
+Remote configuration rules:
+
+@itemize
+@item
+Use @code{git_remote_add}, @code{git_remote_set_url},
+@code{git_remote_set_push_url}, @code{git_remote_remove}, and
+@code{git_remote_rename} to edit local @file{.git/config} remote entries.
+These commands do not fetch, pull, push, or perform SSH authentication.
+@item
+Run @code{git_remote} before and after a remote configuration change when an
+audit trail is needed.
+@item
+Do not pass inline credentials in remote URLs; configure authentication through
+the server's SSH or secret flow.
+@end itemize
 
 @heading Working tree, index, and stash
 

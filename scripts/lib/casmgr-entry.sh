@@ -40,16 +40,36 @@ casmgr_entry() {
     local script="$1"
     local command="$2"
     shift 2
-    casmgr_init_from_script "$script"
     case "$command" in
         config)
             casmgr_exec_config_cli "$@"
             ;;
         server)
-            casmgr_exec_server_manager "$@"
+            _casmgr_server_entry "$@"
             ;;
         *)
             echo "ERROR: unknown casmgr entry command: $command" >&2
+            exit 1
+            ;;
+    esac
+}
+
+_casmgr_server_entry() {
+    local sub="${1:-status}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+        start|stop|restart|status)
+            casmgr_service_action "$sub"
+            ;;
+        logs)
+            casmgr_logs
+            ;;
+        sessions|locks)
+            casmgr_exec_server_manager_subcommand "$sub" "$@"
+            ;;
+        *)
+            echo "ERROR: unknown casmgr server command: $sub" >&2
+            echo "       Supported: start stop restart status logs sessions locks" >&2
             exit 1
             ;;
     esac

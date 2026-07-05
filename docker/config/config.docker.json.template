@@ -1,8 +1,17 @@
-# Docker stack config (/etc/casmgr/config.json inside casmgr-server container).
-# Copy to docker/runtime/etc/casmgr/config.json and edit placeholders.
+# casmgr config template — single all-in-one docker container.
+# SOURCE OF TRUTH is packaging/config.json.template; this file's JSON body (the
+# part starting at the opening "{") is kept byte-identical to it — only this
+# header comment differs. When packaging/config.json.template's JSON body
+# changes, copy it here again.
 #
-# Watch directories: each entry.path MUST be a direct child of /watched
-# (bind-mount host trees as /watched/<name> in docker-compose.yml).
+# Installed path inside the container: /etc/casmgr/config.json, bind-mounted
+# from the host's /etc/casmgr (see docker/docker-compose.allinone.yml, which is
+# installed as /etc/casmgr/docker-compose.yml by the casmgr .deb package).
+#
+# Watch directories are UUID4 subdirectories placed directly under
+# code_analysis.file_watcher.watch_mount_root (/var/casmgr/watched) by the host.
+# The whole /var/casmgr tree is one bind mount now, so no per-directory /watched
+# remap or docker-compose.watch-mounts.yml overlay is needed anymore.
 #
 # registration.server_id ships with the "-vvz" suffix used on the current production host
 # (192.168.254.26); rename it to match the local host when installing elsewhere.
@@ -26,6 +35,10 @@
       "check_hostname": false
     }
   },
+  "client": {
+    "enabled": false,
+    "protocol": "https"
+  },
   "registration": {
     "enabled": true,
     "protocol": "https",
@@ -47,9 +60,28 @@
       "check_hostname": false
     }
   },
+  "server_validation": {
+    "enabled": false,
+    "protocol": "https"
+  },
+  "auth": {
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {}
+  },
   "queue_manager": {
     "enabled": true,
-    "in_memory": true
+    "in_memory": true,
+    "registry_path": null,
+    "shutdown_timeout": 30.0,
+    "max_concurrent_jobs": 5,
+    "max_queue_size": null,
+    "per_job_type_limits": null,
+    "completed_job_retention_seconds": 21600
+  },
+  "process_management": {
+    "shutdown_grace_seconds": 10.0
   },
   "code_analysis": {
     "host": "0.0.0.0",
@@ -68,14 +100,22 @@
       "driver": {
         "type": "postgres",
         "config": {
-          "host": "casmgr-postgres",
+          "host": "127.0.0.1",
           "port": 5432,
           "dbname": "code_analysis",
           "user": "code_analysis",
           "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
         }
+      },
+      "rpc": {
+        "shm_threshold_bytes": 65536,
+        "shm_enabled": true
       }
     },
+    "vector_dim": 384,
+    "min_chunk_length": 30,
+    "vectorization_retry_attempts": 3,
+    "vectorization_retry_delay": 10.0,
     "chunker": {
       "enabled": true,
       "url": "CHUNKER_HOST",
@@ -84,6 +124,10 @@
       "cert_file": "/etc/casmgr/mtls/client.crt",
       "key_file": "/etc/casmgr/mtls/client.key",
       "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 600.0,
       "check_hostname": false
     },
     "embedding": {
@@ -94,6 +138,10 @@
       "cert_file": "/etc/casmgr/mtls/client.crt",
       "key_file": "/etc/casmgr/mtls/client.key",
       "ca_cert_file": "/etc/casmgr/mtls/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 120.0,
       "check_hostname": false
     },
     "worker": {
@@ -101,20 +149,73 @@
       "poll_interval": 30,
       "batch_size": 5,
       "log_path": "/var/log/casmgr/vectorization_worker.log",
-      "watch_dirs": []
+      // Trial watch root: seeded from packaging/watch-catalog-example/ on install.
+      // Replace path with your host tree; keep settings.json in the watch root (see docs/CASMGR_DOCKER.md).
+      "watch_dirs": [
+        {
+          "id": "550e8400-e29b-41d4-a716-446655440001",
+          "path": "/var/casmgr/watch_catalog/550e8400-e29b-41d4-a716-446655440001"
+        }
+      ]
     },
     "file_watcher": {
       "enabled": true,
       "scan_interval": 60,
       "log_path": "/var/log/casmgr/file_watcher.log",
       "version_dir": "/var/casmgr/versions",
-      "watch_mount_root": "/watched"
+      "host_watch_catalog": "/var/casmgr/watch_catalog",
+      "watch_mount_root": "/var/casmgr/watched",
+      "ignore_patterns": [
+        "**/__pycache__/**",
+        "**/.git/**",
+        "**/node_modules/**",
+        "**/.venv/**",
+        "**/venv/**",
+        "**/env/**",
+        "**/ENV/**",
+        "**/.pytest_cache/**",
+        "**/.mypy_cache/**",
+        "**/.ruff_cache/**",
+        "**/.cache/**",
+        "**/cache/**"
+      ]
     },
     "indexing_worker": {
       "enabled": true,
       "poll_interval": 30,
       "batch_size": 5,
       "log_path": "/var/log/casmgr/indexing_worker.log"
+    },
+    "docs_indexing": {
+      "enabled": false,
+      "vectorize": false,
+      "roots": [
+        "docs"
+      ],
+      "include": [
+        "docs/**/*.md",
+        "docs/*.md",
+        "docs/**/*.json",
+        "docs/*.json",
+        "docs/**/*.yaml",
+        "docs/**/*.yml",
+        "docs/*.yaml",
+        "docs/*.yml",
+        "README.md"
+      ],
+      "exclude": [
+        "docs/plans/**",
+        "docs/ai_reports/**"
+      ]
+    },
+    "github": {
+      "timeout_seconds": 30,
+      "allow_pr_merge": false,
+      "allow_protected_base_merge": false
+    },
+    "search_session": {
+      "ttl_seconds": 1800,
+      "max_block_size_bytes": 4096
     }
   }
 }

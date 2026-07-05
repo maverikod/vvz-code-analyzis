@@ -17,22 +17,22 @@ Replaces: code-analysis-server
 Conflicts: code-analysis-server
 Depends: ${misc:Depends},
          python3 (>= 3.10),
-         python3-venv,
-         python3-pip,
          systemd,
          adduser,
          rsync,
          openssl,
-         ca-certificates
-Recommends: docker.io | docker-ce-cli,
-            postgresql-client
-Description: Code Analysis Server (casmgr) — MCP server with PostgreSQL in Docker
- Installs the code-analysis MCP daemon as a systemd service (casmgr-server)
- and manages a version-locked PostgreSQL/pgvector container (casmgr-postgres).
+         ca-certificates,
+         docker.io | docker-ce-cli,
+         docker-compose-plugin
+Description: Code Analysis Server (casmgr) — all-in-one containerized MCP server
+ Installs a thin systemd unit (casmgr.service) that runs the all-in-one
+ casmgr Docker image (PostgreSQL/pgvector + the code-analysis MCP daemon and
+ its workers) via `docker compose`. No application code or Python venv runs
+ on the host.
  .
- Configuration: /etc/casmgr/config.json
+ Configuration: /etc/casmgr/config.json, /etc/casmgr/docker-compose.yml
  Data and secrets: /var/casmgr
- Logs: /var/log/casmgr
+ Logs: /var/log/casmgr (host) and `docker logs casmgr` / `casmgr logs`
  .
- The Debian package version matches the Docker Hub tag for casmgr-postgres
- (see /usr/share/casmgr/docker-image after install).
+ The Debian package version matches the Docker Hub tag for the casmgr image
+ (see /usr/share/casmgr/docker-image and /etc/casmgr/.env after install).

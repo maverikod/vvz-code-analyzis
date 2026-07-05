@@ -19,8 +19,7 @@ override_dh_auto_install:
 	$(CURDIR)/debian/install-package.sh $(CURDIR)
 
 override_dh_installsystemd:
-	dh_installsystemd --name=casmgr-postgres --no-start
-	dh_installsystemd --name=casmgr-server --no-start
+	dh_installsystemd --name=casmgr --no-start
 
 override_dh_installdocs:
 	dh_installdocs

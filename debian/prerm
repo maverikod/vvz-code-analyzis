@@ -1,9 +1,7 @@
 #!/bin/bash
-# debian/prerm — stop services; remove PostgreSQL container on package remove.
+# debian/prerm — stop services on upgrade/remove.
 
 set -e
-
-BIN="/usr/lib/casmgr/bin"
 
 stop_unit() {
     local svc="$1"
@@ -17,10 +15,11 @@ stop_unit() {
 
 case "$1" in
     remove|upgrade|deconfigure)
+        stop_unit casmgr
         stop_unit casmgr-server
         stop_unit casmgr-postgres
-        if [[ -x "${BIN}/casmgr-postgres-container" ]]; then
-            "${BIN}/casmgr-postgres-container" remove || true
+        if command -v docker >/dev/null 2>&1 && [[ -f /etc/casmgr/docker-compose.yml ]]; then
+            docker compose -f /etc/casmgr/docker-compose.yml down 2>/dev/null || true
         fi
         ;;
 esac

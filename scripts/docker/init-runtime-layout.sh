@@ -1,66 +1,87 @@
 #!/usr/bin/env bash
-# Prepare host directories for docker compose bind mounts (config, logs, /watched/*).
+# Prepare a local host directory tree for the all-in-one casmgr container, so
+# docker/docker-compose.allinone.yml can be tested from a repo checkout without
+# the packaged /etc/casmgr + /var/casmgr + /var/log/casmgr layout.
+#
+# It creates the three bind-mount roots (etc/casmgr, var/casmgr, var/log/casmgr)
+# under a local RUNTIME directory. Point the bind mounts in a copy of
+# docker/docker-compose.allinone.yml at these paths (see the note printed at the
+# end and docker/.env.example).
 #
 # Author: Vasiliy Zdanovskiy
 # email: vasilyvz@gmail.com
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNTIME="${CASMGR_RUNTIME:-${ROOT}/docker/runtime}"
 
-mkdir -p \
-    "${RUNTIME}/etc/casmgr/mtls" \
-    "${RUNTIME}/secrets" \
-    "${RUNTIME}/log/postgres" \
-    "${RUNTIME}/data/batch_output" \
-    "${RUNTIME}/postgres/data" \
-    "${RUNTIME}/postgres/cache" \
-    "${RUNTIME}/faiss" \
-    "${RUNTIME}/locks" \
-    "${RUNTIME}/backups" \
-    "${RUNTIME}/trash" \
-    "${RUNTIME}/versions" \
-    "${RUNTIME}/watched"
+ETC="${RUNTIME}/etc/casmgr"
+VAR="${RUNTIME}/var/casmgr"
+LOG="${RUNTIME}/var/log/casmgr"
 
-if [[ ! -f "${RUNTIME}/etc/casmgr/config.json" ]]; then
+mkdir -p \
+    "${ETC}/mtls" \
+    "${VAR}/secrets" \
+    "${VAR}/postgres/data" \
+    "${VAR}/postgres/cache" \
+    "${VAR}/data" \
+    "${VAR}/faiss" \
+    "${VAR}/locks" \
+    "${VAR}/backups" \
+    "${VAR}/trash" \
+    "${VAR}/versions" \
+    "${VAR}/watch_catalog" \
+    "${VAR}/watched" \
+    "${LOG}/postgres"
+
+if [[ ! -f "${ETC}/config.json" ]]; then
     cp "${ROOT}/docker/config/config.docker.json.template" \
-        "${RUNTIME}/etc/casmgr/config.json"
-    echo "Created ${RUNTIME}/etc/casmgr/config.json — edit placeholders."
+        "${ETC}/config.json"
+    echo "Created ${ETC}/config.json — edit placeholders."
 fi
 
-if [[ ! -f "${RUNTIME}/secrets/.env" ]]; then
+if [[ ! -f "${VAR}/secrets/.env" ]]; then
     if [[ -f "${ROOT}/packaging/secrets.env.template" ]]; then
-        cp "${ROOT}/packaging/secrets.env.template" "${RUNTIME}/secrets/.env"
+        cp "${ROOT}/packaging/secrets.env.template" "${VAR}/secrets/.env"
     else
-        cat >"${RUNTIME}/secrets/.env" <<'EOF'
+        cat >"${VAR}/secrets/.env" <<'EOF'
 POSTGRES_SUPERUSER_PASSWORD=change_me_superuser
 CODE_ANALYSIS_POSTGRES_PASSWORD=change_me_app
 POSTGRES_DB=code_analysis
 EOF
     fi
-    echo "Created ${RUNTIME}/secrets/.env — set passwords before first start."
+    echo "Created ${VAR}/secrets/.env — set passwords before first start."
+fi
+
+# PostgreSQL runs as uid/gid 999 inside the container; its data/cache dirs must
+# be owned accordingly (the container's 00-init-dirs also chowns these, but set
+# them here too so a rootless local test does not trip on permissions).
+if command -v chown >/dev/null 2>&1; then
+    chown -R 999:999 "${VAR}/postgres" 2>/dev/null \
+        || echo "Note: could not chown ${VAR}/postgres to 999:999 (run with sudo if PG fails to start)."
 fi
 
 cat <<EOF
 
 Runtime layout: ${RUNTIME}
 
-Mount contract inside casmgr-server:
-  /etc/casmgr/config.json     ← ${RUNTIME}/etc/casmgr/config.json
-  /var/casmgr/secrets/.env    ← ${RUNTIME}/secrets/.env
-  /var/log/casmgr             ← ${RUNTIME}/log
-  /var/casmgr/data            ← ${RUNTIME}/data
-  /watched/<watch_dir_uuid>/  ← host tree (contents of watched root)
+All-in-one mount contract (three bind mounts, casuser-root, rw):
+  /etc/casmgr       ← ${ETC}
+  /var/casmgr       ← ${VAR}
+  /var/log/casmgr   ← ${LOG}
 
-Each watch_dirs entry:
-  id   = UUID
-  path = /watched/<same-uuid>
-That path is written to watch_dir_paths.absolute_path on startup.
+Watched directories are UUID4 children of /var/casmgr/watched:
+  place/mount a source tree so its contents land at ${VAR}/watched/<uuid4>/
 
-Compose (one mount per watch dir):
-  \${HOST_WATCH_ROOT}:/watched/\${WATCH_DIR_ID}:rw
+To test docker/docker-compose.allinone.yml against this tree, copy it and
+replace the three absolute bind-mount source paths (/etc/casmgr, /var/casmgr,
+/var/log/casmgr) with the paths above, then:
 
-Copy docker/.env.example → docker/.env and align WATCH_DIR_ID with config.
+  cp docker/.env.example docker/.env   # set passwords + CASMGR_VERSION
+  docker compose -f <your-copy>.yml up -d
+
+The packaged install (casmgr.service) uses the real /etc/casmgr, /var/casmgr,
+and /var/log/casmgr directly and does not need this script.
 
 EOF

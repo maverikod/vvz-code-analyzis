@@ -1,0 +1,54 @@
+#!/usr/bin/with-contenv bash
+# Oneshot (root -> gosu postgres): initialize the PostgreSQL data directory on
+# first boot only. Skipped on every subsequent boot once PG_VERSION exists.
+set -euo pipefail
+
+PGDATA=/var/casmgr/postgres/data
+PG_LOG=/var/log/casmgr/postgres/initdb.log
+
+if [[ -f "${PGDATA}/PG_VERSION" ]]; then
+    echo "10-pg-initdb: ${PGDATA}/PG_VERSION present, skipping initdb."
+    exit 0
+fi
+
+if [[ ! -f /var/casmgr/secrets/.env ]]; then
+    echo "ERROR: /var/casmgr/secrets/.env not found; cannot read POSTGRES_SUPERUSER_PASSWORD." >&2
+    exit 1
+fi
+set -a
+# shellcheck disable=SC1091
+source /var/casmgr/secrets/.env
+set +a
+: "${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD not set in /var/casmgr/secrets/.env}"
+
+# Write the initial superuser password to a temp file readable only by
+# postgres; initdb consumes it via --pwfile and the file is removed after.
+pwfile="$(mktemp)"
+trap 'rm -f "${pwfile}"' EXIT
+printf '%s\n' "${POSTGRES_SUPERUSER_PASSWORD}" > "${pwfile}"
+chown 999:999 "${pwfile}"
+chmod 600 "${pwfile}"
+
+# --auth-local=peer: administrative oneshot/longrun scripts in this image
+# always connect via the local unix socket as the OS "postgres" user, so peer
+# auth needs no password. --auth-host=scram-sha-256: TCP connections (used by
+# 30-pg-init and the daemon over 127.0.0.1) require the password above.
+# shellcheck disable=SC2086
+gosu postgres initdb -D "${PGDATA}" \
+    --auth-local=peer --auth-host=scram-sha-256 \
+    --pwfile="${pwfile}" ${POSTGRES_INITDB_ARGS:-}
+
+# Bring up a local-socket-only, throwaway instance to install pgvector on
+# template1: CREATE DATABASE copies template1 by default, so every database
+# created afterwards (including code_analysis in 30-pg-init) inherits the
+# extension automatically without a separate per-database step.
+gosu postgres pg_ctl start -D "${PGDATA}" -w \
+    -o "-c listen_addresses='' -c unix_socket_directories=/var/run/postgresql" \
+    >>"${PG_LOG}" 2>&1
+
+POSTGRES_USER=postgres POSTGRES_DB=template1 \
+    gosu postgres /opt/casmgr/postgres-init/01-pgvector.sh
+
+gosu postgres pg_ctl stop -D "${PGDATA}" -m fast -w >>"${PG_LOG}" 2>&1
+
+echo "10-pg-initdb: cluster initialized, vector extension installed on template1."

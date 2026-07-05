@@ -6,10 +6,12 @@ CURDIR="${1:?usage: install-package.sh CURDIR}"
 
 ST="${CURDIR}/debian/casmgr-server"
 
-install -d "${ST}/usr/lib/casmgr-server"
-cp -a "${CURDIR}/code_analysis" "${CURDIR}/casmgr_entry" \
-    "${CURDIR}/pyproject.toml" \
-    "${ST}/usr/lib/casmgr-server/"
+VERSION="$(grep -m1 '^version' "${CURDIR}/pyproject.toml" | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+if [[ -z "$VERSION" ]]; then
+    echo "ERROR: could not determine version from ${CURDIR}/pyproject.toml" >&2
+    exit 1
+fi
+
 install -d "${ST}/usr/lib/casmgr-server/scripts/lib"
 install -m 644 "${CURDIR}/scripts/lib/casmgr-runtime.sh" \
     "${ST}/usr/lib/casmgr-server/scripts/lib/casmgr-runtime.sh"
@@ -21,10 +23,6 @@ install -m 755 "${CURDIR}/scripts/casmgr-config-generate" \
     "${ST}/usr/lib/casmgr-server/scripts/casmgr-config-generate"
 install -m 755 "${CURDIR}/scripts/casmgr-config-validate" \
     "${ST}/usr/lib/casmgr-server/scripts/casmgr-config-validate"
-install -m 755 "${CURDIR}/scripts/casmgr_ensure_instance_uuid.py" \
-    "${ST}/usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py"
-install -m 755 "${CURDIR}/scripts/casmgr-prepare-watch-mounts.py" \
-    "${ST}/usr/lib/casmgr-server/scripts/casmgr-prepare-watch-mounts.py"
 install -d "${ST}/usr/lib/casmgr-server/docs"
 install -m 644 "${CURDIR}/docs/README.md" "${ST}/usr/lib/casmgr-server/docs/README.md"
 
@@ -35,33 +33,25 @@ install -m 755 "${CURDIR}/scripts/casmgr-config-generate" "${ST}/usr/bin/casmgr-
 install -m 755 "${CURDIR}/scripts/casmgr-config-validate" "${ST}/usr/bin/casmgr-config-validate"
 
 install -d "${ST}/lib/systemd/system"
-install -m 644 "${CURDIR}/packaging/systemd/casmgr-server.service" \
-    "${ST}/lib/systemd/system/"
-install -m 644 "${CURDIR}/packaging/systemd/casmgr-postgres.service" \
+install -m 644 "${CURDIR}/packaging/systemd/casmgr.service" \
     "${ST}/lib/systemd/system/"
 
 install -d "${ST}/usr/lib/casmgr/bin"
-install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-common.sh" \
-    "${ST}/usr/lib/casmgr/bin/"
-install -m 755 "${CURDIR}/packaging/bin/casmgr-postgres-container" \
-    "${ST}/usr/lib/casmgr/bin/"
-install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-init" \
-    "${ST}/usr/lib/casmgr/bin/"
 install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-set-password" \
     "${ST}/usr/lib/casmgr/bin/"
 install -m 755 "${CURDIR}/packaging/bin/casmgr-install-server-config" \
     "${ST}/usr/lib/casmgr/bin/"
-
-install -d "${ST}/usr/share/casmgr-server/scripts"
-install -m 644 "${CURDIR}/scripts/postgres_setup_from_env_config.py" \
-    "${ST}/usr/share/casmgr-server/scripts/"
 
 install -d "${ST}/usr/share/casmgr"
 if [[ -f "${CURDIR}/debian/casmgr-docker-image" ]]; then
     install -m 644 "${CURDIR}/debian/casmgr-docker-image" \
         "${ST}/usr/share/casmgr/docker-image"
 else
-    echo "vasilyvz/casmgr-postgres:unknown" > "${ST}/usr/share/casmgr/docker-image"
+    echo "vasilyvz/casmgr:${VERSION}" > "${ST}/usr/share/casmgr/docker-image"
+fi
+if [[ -f "${CURDIR}/debian/casmgr-image.tar.gz" ]]; then
+    install -m 644 "${CURDIR}/debian/casmgr-image.tar.gz" \
+        "${ST}/usr/share/casmgr/casmgr-image.tar.gz"
 fi
 
 if [[ ! -f "${CURDIR}/packaging/config.json.template" ]]; then
@@ -69,9 +59,13 @@ if [[ ! -f "${CURDIR}/packaging/config.json.template" ]]; then
     exit 1
 fi
 
-install -d "${ST}/etc/casmgr/postgres"
+install -d "${ST}/etc/casmgr"
 install -m 640 "${CURDIR}/packaging/config.json.template" \
     "${ST}/etc/casmgr/config.json"
+install -m 644 "${CURDIR}/docker/docker-compose.allinone.yml" \
+    "${ST}/etc/casmgr/docker-compose.yml"
+printf 'CASMGR_VERSION=%s\n' "$VERSION" > "${ST}/etc/casmgr/.env"
+chmod 644 "${ST}/etc/casmgr/.env"
 
 install -d "${ST}/var/casmgr/secrets"
 install -m 640 "${CURDIR}/packaging/secrets.env.template" \
@@ -111,9 +105,5 @@ elif [[ -f "${CURDIR}/packaging/info/casmgr-server.info" ]]; then
 fi
 
 install -d "${ST}/usr/sbin"
-ln -sf ../lib/casmgr/bin/casmgr-postgres-container \
-    "${ST}/usr/sbin/casmgr-postgres-container"
-ln -sf ../lib/casmgr/bin/casmgr-pg-init \
-    "${ST}/usr/sbin/casmgr-pg-init"
 ln -sf ../lib/casmgr/bin/casmgr-pg-set-password \
     "${ST}/usr/sbin/casmgr-pg-set-password"

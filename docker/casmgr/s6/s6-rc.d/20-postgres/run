@@ -1,0 +1,41 @@
+#!/usr/bin/with-contenv bash
+# Longrun (root -> gosu postgres): the PostgreSQL server, TCP+socket on
+# 127.0.0.1 only. Signals s6-rc readiness on fd 3 (notification-fd protocol)
+# once pg_isready succeeds, unblocking 30-pg-init and 40-casmgr.
+set -uo pipefail
+
+# Opened by root before the privilege drop so the file itself is created
+# root-owned (per 00-init-dirs, /var/log/casmgr/postgres is not chowned to
+# postgres); the already-open fd remains writable by the gosu'd child.
+exec >>/var/log/casmgr/postgres/postgres.log 2>&1
+
+gosu postgres postgres \
+    -D /var/casmgr/postgres/data \
+    -c listen_addresses=127.0.0.1 \
+    -c unix_socket_directories=/var/run/postgresql &
+pg_pid=$!
+
+# SIGTERM to the postgres postmaster IS a "Fast Shutdown" (equivalent to
+# `pg_ctl stop -m fast`); forward it explicitly so the wait below returns
+# promptly on `s6-svc -d`/container stop.
+trap 'kill -TERM "${pg_pid}" 2>/dev/null; wait "${pg_pid}"; exit $?' TERM INT
+
+tries=60
+until gosu postgres pg_isready -h 127.0.0.1 -p 5432 -q >/dev/null 2>&1; do
+    tries=$((tries - 1))
+    if (( tries <= 0 )); then
+        echo "ERROR: postgres did not become ready within 60s" >&2
+        kill -TERM "${pg_pid}" 2>/dev/null || true
+        wait "${pg_pid}" || true
+        exit 1
+    fi
+    if ! kill -0 "${pg_pid}" 2>/dev/null; then
+        echo "ERROR: postgres exited during startup" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+echo >&3
+
+wait "${pg_pid}"

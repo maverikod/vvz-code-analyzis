@@ -1,80 +1,90 @@
-# Docker deployment — full stack in containers
+# Docker deployment — all-in-one container
 
-Production can run **both** the MCP server and PostgreSQL in Docker. Application
-code is baked into the **`casmgr-server`** image; nothing from the host checkout
-is required at runtime except mounted configuration, secrets, logs, data, and
-watched source trees.
+Production runs PostgreSQL, the MCP daemon, and all workers inside a **single**
+container (`vasilyvz/casmgr:<version>`), supervised by s6-overlay. Nothing from
+the host checkout is required at runtime except the three bind-mounted
+directories below.
 
-Debian package deployment (server on host, PostgreSQL in Docker only) remains
-documented in [CASMGR_DEPLOYMENT.md](CASMGR_DEPLOYMENT.md).
+Debian package deployment (thin installer + `casmgr.service`) is documented in
+[CASMGR_DEPLOYMENT.md](CASMGR_DEPLOYMENT.md); this file covers the container
+contract itself.
 
 Author: Vasiliy Zdanovskiy — vasilyvz@gmail.com
 
-## Images
+## Image
 
 | Image | Contents |
 |-------|----------|
-| `vasilyvz/casmgr-server:<version>` | Python app, `code_analysis` package, workers, MCP server |
-| `vasilyvz/casmgr-postgres:<version>` | PostgreSQL 16 + pgvector |
+| `vasilyvz/casmgr:<version>` | PostgreSQL 16 + pgvector, `code_analysis` package, all workers, MCP server — supervised by s6-overlay v3 |
+
+`<version>` is the app version from [pyproject.toml](../pyproject.toml) (currently `1.6.35`); the release pipeline also tags/pushes `latest`.
 
 Build from repository root:
 
 ```bash
-docker build -f docker/casmgr-server/Dockerfile \
-  --build-arg VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" \
-  -t vasilyvz/casmgr-server:TAG .
-
-docker build -f docker/casmgr-postgres/Dockerfile \
-  --build-arg VERSION=TAG \
-  -t vasilyvz/casmgr-postgres:TAG .
+docker build -f docker/casmgr/Dockerfile \
+  --build-arg VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" \
+  -t vasilyvz/casmgr:TAG .
 ```
 
-Release pipeline (`./scripts/release_build.sh`) publishes **`casmgr-postgres`** and
-**`casmgr-server`** with the same version tag as `pyproject.toml`.
+Release pipeline (`./scripts/release_build.sh`) builds and pushes
+`vasilyvz/casmgr:<pyproject version>` and `vasilyvz/casmgr:latest`.
+
+## Supervision (s6-overlay)
+
+PID 1 is s6-overlay v3 (`docker/casmgr/s6/s6-rc.d/`). Boot order:
+
+1. `00-init-dirs` (root) — create missing directories; `chown -R 999:999`
+   the PostgreSQL data/cache dirs (bind mount arrives casuser-root owned).
+2. `10-pg-initdb` (root → `gosu postgres`) — `initdb` + `CREATE EXTENSION vector`
+   on first boot (no `PG_VERSION` file yet).
+3. `20-postgres` (longrun, `gosu postgres`) — `postgres -D /var/casmgr/postgres/data
+   -c listen_addresses=127.0.0.1`; readiness = `pg_isready`.
+4. `30-pg-init` (root, after PG ready) — ensures the app role/DB (`code_analysis`)
+   and password from `/var/casmgr/secrets/.env`; idempotent.
+5. `40-casmgr` (longrun, **root**) — `code_analysis.main --config /etc/casmgr/config.json --foreground`.
+
+On shutdown, PostgreSQL gets a clean `pg_ctl stop -m fast` before the
+container exits (no WAL replay warning on next start).
+
+## Root model
+
+The daemon runs **as root** inside the container so it has full access to the
+casuser-root bind-mounted tree; this requires `CASMGR_ALLOW_ROOT=1` (set in
+the image and in `docker/docker-compose.allinone.yml`). PostgreSQL still drops
+privileges to uid/gid 999 (`gosu postgres`) — do not confuse the two. Files the
+daemon creates in observed repositories (git objects, `versions/` snapshots,
+`trash/`, sidecar `.cst`/`.tree` files without a source) end up owned
+`root:root`; a host user needs `sudo` to edit them directly.
 
 ## Mount contract
 
-Inside the **`casmgr-server`** container:
+Three bind mounts, all **casuser-root, rw**:
 
-| Container path | Host mount | Purpose |
-|----------------|------------|---------|
-| `/etc/casmgr/config.json` | `docker/runtime/etc/casmgr/` | MCP config (JSONC) + mTLS under `mtls/` |
-| `/var/casmgr/secrets/.env` | `docker/runtime/secrets/` | PostgreSQL passwords |
-| `/var/log/casmgr` | `docker/runtime/log/` | All application logs |
-| `/var/casmgr/data`, `faiss`, `locks`, … | `docker/runtime/…` | Service state (not in image) |
-| **`/watched/<watch_dir_uuid>/`** | **host watch root** | **One bind mount per UUID subdirectory** |
+| Container path | Purpose |
+|-----------------|---------|
+| `/etc/casmgr` | `config.json`, `mtls/`, `docker-compose.yml` (this is what `casmgr.service` runs) |
+| `/var/casmgr` | `secrets/.env`, `postgres/{data,cache}` (uid 999), `data/`, `faiss/`, `locks/`, `backups/`, `trash/`, `versions/`, `watch_catalog/`, `watched/<uuid4>/` |
+| `/var/log/casmgr` | daemon logs + `postgres/` subdir |
 
-### Watched directories (host catalog → container mount root)
+Nothing else is mounted — no per-watch-dir compose overrides, no separate
+PostgreSQL container.
 
-**Host (before container / systemd start):** run
-``scripts/casmgr-prepare-watch-mounts.py`` (packaged as
-``/usr/lib/casmgr-server/scripts/casmgr-prepare-watch-mounts.py``). It merges:
+### Watched directories
 
-1. **``file_watcher.host_watch_catalog``** — immediate children that are UUID4-named
-   directories/symlinks, plus non-UUID entries whose resolved path matches config.
-2. **``code_analysis.worker.watch_dirs``** — explicit ``{id, path}`` on the host.
+Only **UUID4-named direct children of `/var/casmgr/watched`** are watch dirs —
+the same scan used by the file watcher and `list_projects`. Bind-mount (or
+place) a host tree so its *contents* land directly under
+`/var/casmgr/watched/<uuid4>/`:
 
-Then either creates symlinks under ``watch_mount_root`` (Debian host) or writes a
-Compose override (``--compose-out docker/docker-compose.watch-mounts.yml``).
+```
+host:/home/user/projects/tools  →  /var/casmgr/watched/a6c47e01-.../
+                                      ├── settings.json
+                                      ├── project_a/
+                                      └── project_b/
+```
 
-**Inside the container / server:** only **UUID4 direct children of
-``watch_mount_root``** (default ``/watched``) are watch dirs — same scan as the
-file watcher and ``list_projects``.
-
-Fixed parent **`/watched`** (`CASMGR_DOCKER_WATCH_ROOT`). Mount mode is active when
-``code_analysis.file_watcher.watch_mount_root`` is set or ``CASMGR_WATCH_ROOT`` env
-is non-empty.
-
-1. Scan direct subdirectories of ``watch_mount_root`` whose names are valid **UUID4**.
-2. Each becomes a watch dir at ``/watched/{uuid}/``.
-3. On each watcher init/cycle, sync DB with disk:
-   - **New on disk** → insert watch_dir row + create `settings.json` with defaults.
-   - **Absent on disk** → `watch_dirs.deleted = 1` and soft-delete all projects
-     and files for that watch_dir.
-   - **Reappeared on disk** → clear `watch_dirs.deleted` and
-     `settings.json` `"deleted": false` only (projects/files stay deleted).
-
-Each watch directory root must contain **`settings.json`**:
+Each watch directory root must contain `settings.json`:
 
 ```json
 {
@@ -87,102 +97,95 @@ Each watch directory root must contain **`settings.json`**:
 }
 ```
 
-`ignore_patterns` apply per watch dir (project-relative matching in the scanner).
-When the file is missing, the watcher creates it with the default pattern list
-(see ``code_analysis.core.watch_dir_settings.DEFAULT_WATCH_DIR_IGNORE_PATTERNS``).
+When missing, the watcher creates it with the default pattern list (see
+`code_analysis.core.watch_dir_settings.DEFAULT_WATCH_DIR_IGNORE_PATTERNS`).
+On each watcher cycle the DB is synced with disk: new UUID dirs are inserted,
+directories removed from disk soft-delete their watch_dir/projects/files, and
+directories that reappear are un-deleted (projects/files stay deleted).
 
-**Package template (trial catalog):** on install, ``debian/postinst`` copies
-``packaging/watch-catalog-example/{uuid}/`` (shipped under
-``/usr/share/casmgr-server/watch-catalog-example/``) into
-``/var/casmgr/watch_catalog/{uuid}/`` when that entry does not exist yet.
-The shipped ``settings.json`` is the reference ignore list. ``config.json.template``
-includes a matching ``worker.watch_dirs`` entry pointing at that path; replace it
-with your host tree and edit ``settings.json`` (or add per-dir overrides) as needed.
+Do **not** list watch dirs under `code_analysis.worker.watch_dirs` for this
+deployment — bind-mount UUID directories under `/var/casmgr/watched/` instead.
 
-Host bind-mount exposes the **contents** of the host tree at that path:
+## Lifecycle
 
-```
-host:/home/user/projects/tools  →  container:/watched/a6c47e01-…/
-                                      ├── settings.json
-                                      ├── project_a/
-                                      └── project_b/
-```
-
-Docker Compose (see `docker/.env.example`):
-
-```yaml
-- ${HOST_WATCH_ROOT}:/watched/${WATCH_DIR_ID}:rw
-```
-
-Config (`docker/config/config.docker.json.template`):
-
-```json
-"file_watcher": {
-  "watch_mount_root": "/watched"
-},
-"worker": {
-  "watch_dirs": []
-}
-```
-
-Do **not** list watch dirs under `worker.watch_dirs` in Docker — bind-mount
-UUID directories under `/watched/` instead. Host deployment without
-`watch_mount_root` keeps config-driven `worker.watch_dirs` unchanged.
-
-## Quick start
+Everything on the host is `casmgr.service` (systemd, installed by the `.deb`)
+wrapping a single `docker compose` stack:
 
 ```bash
-./scripts/docker/init-runtime-layout.sh
-python scripts/casmgr-prepare-watch-mounts.py \
-  --config docker/runtime/etc/casmgr/config.json \
-  --compose-out docker/docker-compose.watch-mounts.yml
-
-# Edit docker/runtime/etc/casmgr/config.json (advertised_host, MCP proxy, watch dirs)
-# Place mTLS files in docker/runtime/etc/casmgr/mtls/
-# Set passwords in docker/runtime/secrets/.env
-
-cd docker
-cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.watch-mounts.yml up -d --build
+sudo systemctl start casmgr      # docker compose -f /etc/casmgr/docker-compose.yml up -d
+sudo systemctl stop casmgr       # ... down
+sudo systemctl restart casmgr
+docker logs -f casmgr            # daemon + postgres logs (foreground process)
 ```
 
-First-time database (from host, with `postgresql-client` or exec into postgres container):
+There is no separate PostgreSQL container/unit — `casmgr-postgres` no longer
+exists. `docker/docker-compose.allinone.yml` is installed as
+`/etc/casmgr/docker-compose.yml`; do not run `docker compose` from a different
+compose file for this deployment.
+
+## Quick start (manual, without the .deb)
 
 ```bash
-docker exec -it casmgr-postgres psql -U postgres -d code_analysis
-# or use casmgr-pg-init on a host that shares the same config/secrets mounts
+mkdir -p /etc/casmgr /var/casmgr /var/log/casmgr
+cp docker/config/config.docker.json.template /etc/casmgr/config.json
+# edit /etc/casmgr/config.json: advertised_host, registration URLs, mTLS paths
+mkdir -p /etc/casmgr/mtls   # place server.crt/server.key/ca.crt/client.crt/client.key
+cat > /var/casmgr/secrets/.env <<'EOF'
+POSTGRES_SUPERUSER_PASSWORD=change_me_superuser
+CODE_ANALYSIS_POSTGRES_PASSWORD=change_me_app
+POSTGRES_DB=code_analysis
+EOF
+
+export CASMGR_VERSION=1.6.35   # or omit for :latest
+docker compose -f docker/docker-compose.allinone.yml up -d
 ```
 
-Server runs in **foreground** inside the container (`--foreground`), PID 1 friendly
-for Docker restarts.
+First-time database check:
 
-## Compose environment
+```bash
+docker exec casmgr gosu postgres psql -U postgres -d code_analysis -c '\dx'
+```
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `CASMGR_RUNTIME` | `docker/runtime` (relative to compose file) | Host state root |
-| `HOST_WATCH_ROOT` | `/home/vasilyvz/projects/tools` | Host directory mounted at `/watched/${WATCH_DIR_ID}` |
-| `WATCH_DIR_ID` | (see `docker/.env.example`) | Must equal `watch_dirs[].id` and path suffix |
-| `CASMGR_SERVER_IMAGE` | `vasilyvz/casmgr-server:<pyproject version>` | Server image |
-| `CASMGR_POSTGRES_IMAGE` | `vasilyvz/casmgr-postgres:<version>` | Postgres image |
-| `CASMGR_MCP_PUBLISH` | `0.0.0.0:15010:15010` | Published MCP HTTPS port |
-| `CASMGR_PG_PUBLISH` | `127.0.0.1:5432:5432` | Optional host access to PG |
+Confirm the daemon (mTLS JSON-RPC, port 15010):
+
+```bash
+curl --cacert /etc/casmgr/mtls/ca.crt --cert /etc/casmgr/mtls/client.crt \
+     --key /etc/casmgr/mtls/client.key \
+     https://127.0.0.1:15010/ -d '{"jsonrpc":"2.0","method":"health_check","id":1}'
+```
+
+## Port
+
+The container publishes **15010** (HTTPS + mTLS) — `0.0.0.0:15010:15010` in
+`docker/docker-compose.allinone.yml`.
+
+## External services (unchanged)
+
+`config.json` still carries placeholders for services outside this container —
+edit them before starting:
+
+- `advertised_host` — this host's IP/DNS name
+- `registration.*` — MCP proxy registration/heartbeat URLs and `instance_uuid`
+- mTLS material under `/etc/casmgr/mtls/` (`server.crt`, `server.key`, `ca.crt`,
+  `client.crt`, `client.key`)
+- `chunker` (default `:8009`) and `embedding` (default `:8001`) service endpoints
 
 ## What stays in the image
 
-- Python dependencies (`pip install -e .`)
-- `code_analysis/` package and entrypoints
-- Worker and MCP server code
+- Python dependencies (isolated venv at `/opt/casmgr/venv`, `pip install -e ".[postgres-backup]"`)
+- `code_analysis/` package, `casmgr_entry`, worker and MCP server code
+- s6-overlay service tree and PostgreSQL binaries (from the `pgvector/pgvector:pg16` base)
 
 ## What is never in the image
 
 - `config.json`, secrets, mTLS private keys
 - Log files
 - PostgreSQL data directory
-- Watched project source trees (only mounted under `/watched/*`)
+- Watched project source trees (only mounted under `/var/casmgr/watched/*`)
 
 ## Related
 
-- [CASMGR_DEPLOYMENT.md](CASMGR_DEPLOYMENT.md) — Debian + host server layout
-- `docker/config/config.docker.json.template` — starter config for containers
-- `packaging/config.json.template` — host `/etc/casmgr` layout
+- [CASMGR_DEPLOYMENT.md](CASMGR_DEPLOYMENT.md) — Debian install + `casmgr.service` lifecycle
+- `docker/casmgr/Dockerfile` — image build
+- `docker/docker-compose.allinone.yml` — the compose stack installed as `/etc/casmgr/docker-compose.yml`
+- `docker/config/config.docker.json.template` — starter config

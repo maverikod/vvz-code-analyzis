@@ -3,7 +3,7 @@
 
 set -e
 
-for svc in casmgr-server casmgr-postgres code-analysis-server; do
+for svc in casmgr casmgr-server casmgr-postgres code-analysis-server; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
         echo "Stopping ${svc}..."
         systemctl stop "$svc" || true

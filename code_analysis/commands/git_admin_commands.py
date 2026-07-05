@@ -12,7 +12,7 @@ import pwd
 import stat
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, cast
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Type, cast
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -49,22 +49,62 @@ def _group_name(gid: int) -> str:
         return str(gid)
 
 
-def _uid_for(name: Optional[str]) -> int:
+def _uid_for(name: Optional[str], configured: Optional[int] = None) -> int:
+    """Resolve an expected uid: explicit name, else configured override, else current euid."""
     if not name:
-        return os.geteuid()
+        return configured if configured is not None else os.geteuid()
     try:
         return pwd.getpwnam(name).pw_uid
     except KeyError as exc:
         raise ValueError(f"Unknown user: {name}") from exc
 
 
-def _gid_for(name: Optional[str]) -> int:
+def _gid_for(name: Optional[str], configured: Optional[int] = None) -> int:
+    """Resolve an expected gid: explicit name, else configured override, else current egid."""
     if not name:
-        return os.getegid()
+        return configured if configured is not None else os.getegid()
     try:
         return grp.getgrnam(name).gr_gid
     except KeyError as exc:
         raise ValueError(f"Unknown group: {name}") from exc
+
+
+def _configured_expected_owner(
+    config_data: Optional[Mapping[str, Any]],
+) -> Tuple[Optional[int], Optional[int]]:
+    """Read an optional expected-ownership override from code_analysis.git config.
+
+    Returns (expected_owner_uid, expected_owner_gid) parsed from
+    code_analysis.git.expected_owner_uid / code_analysis.git.expected_owner_gid
+    when present and coercible to int; otherwise (None, None) for either or
+    both. Absent or malformed config keeps the corresponding value None, so
+    callers fall back to the current euid/egid, preserving today's behavior
+    unchanged when this config is not set.
+
+    In root-mode container deployments (CASMGR_ALLOW_ROOT), the CAS process
+    euid/egid is 0/0, so owner_mismatch/group_mismatch findings against
+    human-created files are expected and advisory only unless this override
+    is configured to point at the real intended owner.
+    """
+    if not isinstance(config_data, Mapping):
+        return None, None
+    section = config_data.get("code_analysis")
+    if not isinstance(section, Mapping):
+        return None, None
+    git_section = section.get("git")
+    if not isinstance(git_section, Mapping):
+        return None, None
+    uid_value = git_section.get("expected_owner_uid")
+    gid_value = git_section.get("expected_owner_gid")
+    try:
+        uid = int(uid_value) if uid_value is not None else None
+    except (TypeError, ValueError):
+        uid = None
+    try:
+        gid = int(gid_value) if gid_value is not None else None
+    except (TypeError, ValueError):
+        gid = None
+    return uid, gid
 
 
 def _scope_roots(root: Path, scope: str) -> List[Path]:
@@ -307,7 +347,14 @@ def _desired_mode(
 
 
 class GitRepoPermissionsCheckCommand(GitWorktreeCommand):
-    """Inspect ownership, modes, and writeability of a project git repository."""
+    """Inspect ownership, modes, and writeability of a project git repository.
+
+    In root-mode container deployments the CAS process euid/egid is 0/0, so
+    the default expected owner is root; configure
+    code_analysis.git.expected_owner_uid / expected_owner_gid to point at the
+    real intended owner, or treat owner_mismatch/group_mismatch findings as
+    advisory only while running as root without that configuration.
+    """
 
     name = "git_repo_permissions_check"
     version = "1.0.0"
@@ -441,9 +488,12 @@ class GitRepoPermissionsCheckCommand(GitWorktreeCommand):
                 "scope must be one of git_only, worktree, all",
                 "scope",
             )
+        configured_uid, configured_gid = _configured_expected_owner(
+            self._get_raw_config()
+        )
         try:
-            expected_uid = _uid_for(expected_user)
-            expected_gid = _gid_for(expected_group)
+            expected_uid = _uid_for(expected_user, configured_uid)
+            expected_gid = _gid_for(expected_group, configured_gid)
         except ValueError as exc:
             return validation_error(str(exc), "expected_user")
         root, error = self._resolve_git_root_or_error(project_id)
@@ -473,7 +523,13 @@ class GitRepoPermissionsCheckCommand(GitWorktreeCommand):
 
 
 class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
-    """Repair ownership and mode bits for a project git repository."""
+    """Repair ownership and mode bits for a project git repository.
+
+    In root-mode container deployments, set
+    code_analysis.git.expected_owner_uid / expected_owner_gid before running
+    with dry_run=false, otherwise the CAS process (root) will "repair"
+    ownership of every file to root:root.
+    """
 
     name = "git_repo_permissions_repair"
     version = "1.0.0"
@@ -656,9 +712,12 @@ class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
                 "confirm_repair=true is required when dry_run=false",
                 "confirm_repair",
             )
+        configured_uid, configured_gid = _configured_expected_owner(
+            self._get_raw_config()
+        )
         try:
-            expected_uid = _uid_for(expected_user)
-            expected_gid = _gid_for(expected_group)
+            expected_uid = _uid_for(expected_user, configured_uid)
+            expected_gid = _gid_for(expected_group, configured_gid)
             int(directory_mode, 8)
             int(file_mode, 8)
         except ValueError as exc:
@@ -727,7 +786,12 @@ class GitRepoPermissionsRepairCommand(GitWorktreeCommand):
 
 
 class GitRepoDoctorCommand(GitWorktreeCommand):
-    """Run a combined repository health report for MCP git workflows."""
+    """Run a combined repository health report for MCP git workflows.
+
+    In root-mode container deployments the embedded permissions report is
+    advisory for ownership findings unless
+    code_analysis.git.expected_owner_uid / expected_owner_gid is configured.
+    """
 
     name = "git_repo_doctor"
     version = "1.0.0"
@@ -823,8 +887,11 @@ class GitRepoDoctorCommand(GitWorktreeCommand):
         root, error = self._resolve_git_root_or_error(project_id)
         if error is not None:
             return error
-        expected_uid = os.geteuid()
-        expected_gid = os.getegid()
+        configured_uid, configured_gid = _configured_expected_owner(
+            self._get_raw_config()
+        )
+        expected_uid = configured_uid if configured_uid is not None else os.geteuid()
+        expected_gid = configured_gid if configured_gid is not None else os.getegid()
         permissions = _collect_permission_report(
             cast(Path, root),
             scope=scope,

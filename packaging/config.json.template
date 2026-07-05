@@ -1,4 +1,8 @@
 # casmgr-server configuration (/etc/casmgr/config.json)
+# SOURCE OF TRUTH for casmgr config templates: docker/config/config.docker.json.template
+# is kept byte-identical to this file's JSON body (everything from the opening "{"
+# onward); only the header comments differ. If you edit the JSON body here, copy it
+# into that file too.
 # Lines starting with # or // are allowed (JSONC via commentjson).
 #
 # Port and registration defaults (same host as dev checkout):

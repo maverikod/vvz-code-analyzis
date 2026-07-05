@@ -1,0 +1,15 @@
+#!/usr/bin/with-contenv bash
+# Longrun (root): the code_analysis MCP daemon and all in-process workers
+# (indexing / vectorization / file-watcher / queue-manager). Must run via the
+# venv interpreter so sys.executable-based quality-tool resolution
+# (flake8/mypy/black/isort/bandit) finds them in /opt/casmgr/venv.
+set -uo pipefail
+
+if [[ -f /var/casmgr/secrets/.env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source /var/casmgr/secrets/.env
+    set +a
+fi
+
+exec /opt/casmgr/venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --foreground

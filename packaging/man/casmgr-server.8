@@ -1,45 +1,46 @@
 .\" Man page for casmgr-server production deployment.
 .TH CASMGR-SERVER 8 "June 2026" "casmgr-server" "System Administration"
 .SH NAME
-casmgr-server \- Code Analysis MCP server and PostgreSQL (Docker) deployment
+casmgr-server \- Code Analysis MCP server, all-in-one Docker deployment
 .SH SYNOPSIS
 .B casmgr
 [\fB--config\fR \fIPATH\fR] {start|stop|restart|status|sessions|locks}
-.PP
-.B casmgr-postgres-container
-{\fBpull\fR|\fBrecreate\fR|\fBstart\fR|\fBstop\fR|\fBremove\fR|\fBstatus\fR}
-.PP
-.B casmgr-pg-init
-[\fB--fix-existing-db-owner\fR]
 .PP
 .B casmgr-pg-set-password
 [\fB--superuser-only\fR]
 .PP
 .B systemctl
-{start|stop|restart|status|enable} {casmgr-postgres|casmgr-server}
+{start|stop|restart|status|enable} casmgr
 .SH DESCRIPTION
 .B casmgr-server
-is the production deployment of the Code Analysis MCP server. The Debian package
-installs application code under
-.IR /usr/lib/casmgr-server ,
-systemd units, admin scripts under
+is the production deployment of the Code Analysis MCP server. It is a thin
+Debian package: it installs a single systemd unit
+.RB ( casmgr.service ),
+admin scripts under
 .IR /usr/lib/casmgr/bin/
 (symlinked in
 .IR /usr/sbin/ ),
+the compose file
+.IR /etc/casmgr/docker-compose.yml ,
 and configuration under
 .IR /etc/casmgr/ .
+There is no application code or Python venv on the host.
 .PP
-PostgreSQL with pgvector runs in Docker container
-.BR casmgr-postgres .
-The package version equals the Docker Hub tag recorded in
+PostgreSQL with pgvector, the MCP daemon, and all workers run inside a single
+all-in-one Docker container
+.RB ( vasilyvz/casmgr ),
+supervised by s6-overlay. The package version equals the Docker Hub tag recorded
+in
 .IR /usr/share/casmgr/docker-image .
 .PP
 Admin scripts accept only
 .B root
 or
 .BR casuser .
-The MCP daemon runs as
-.BR casuser:casgrp .
+Inside the container the MCP daemon runs as
+.B root
+.RB ( CASMGR_ALLOW_ROOT=1 );
+PostgreSQL drops to UID/GID 999.
 .PP
 Full narrative guide:
 .IR /usr/share/doc/casmgr-server/CASMGR_DEPLOYMENT.md .
@@ -51,6 +52,10 @@ Extended reference:
 Main server configuration (mode 640, group
 .BR casgrp ).
 Conffile: preserved across package upgrades.
+.TP
+.B /etc/casmgr/docker-compose.yml
+All-in-one compose stack run by
+.BR casmgr.service .
 .TP
 .B /var/casmgr/secrets/.env
 PostgreSQL passwords and optional overrides (mode 640,
@@ -83,7 +88,7 @@ Configuration file:
 .IR /etc/casmgr/config.json .
 JSON with comments is supported (JSONC). On first install the template is copied
 from the package; placeholders must be replaced before
-.B casmgr-server.service
+.B casmgr.service
 starts automatically.
 .SS server
 MCP HTTPS listener and logging.
@@ -279,75 +284,25 @@ All commands below require
 or
 .BR casuser .
 Paths shown are production defaults.
-.SS casmgr-postgres-container
-Manage Docker container
-.BR casmgr-postgres .
-.TP
-.B pull
-Download image from
-.IR /usr/share/casmgr/docker-image .
-.TP
-.B recreate
-Remove existing container and create a new one with host bind mounts. Uses
-.B POSTGRES_SUPERUSER_PASSWORD
-and
-.B POSTGRES_DB
-from secrets. Publishes PostgreSQL on
-.BR 127.0.0.1:5432
-(port from config).
-.TP
-.B start
-Start container; runs
-.B recreate
-if missing.
-.TP
-.B stop
-Stop container.
-.TP
-.B remove
-Stop and remove container (image retained).
-.TP
-.B status
-Print container name, state, and image.
-.PP
-Bind mounts:
-.B /var/casmgr/postgres/data
-,
-.B /var/casmgr/postgres/cache
-,
-.B /var/log/casmgr/postgres
-,
-.B /etc/casmgr
-(read-only).
-.SS casmgr-pg-init
-Bootstrap PostgreSQL after the container is running:
-.IP \(bu 3
-Apply superuser password from secrets.
-.IP \(bu 3
-Create application role and database from
-.IR config.json
-driver settings.
-.IP \(bu 3
-Grant privileges on database and
-.B public
-schema.
-.PP
-Option
-.B --fix-existing-db-owner
-runs
-.B ALTER DATABASE ... OWNER
-when the database already exists.
-.PP
-Run after first install, after
-.B recreate
-on empty data, or when secrets were reset:
+.SS Container lifecycle
+The all-in-one container is managed through systemd and Docker, not a dedicated
+wrapper script:
 .PP
 .RS
 .nf
-sudo systemctl start casmgr-postgres
-sudo casmgr-pg-init
+sudo systemctl start|stop|restart|status casmgr
+docker logs -f casmgr
+docker exec casmgr gosu postgres psql -U postgres -d code_analysis
 .fi
 .RE
+.PP
+On first start the container itself runs
+.B initdb
+, creates the
+.B vector
+extension, and provisions the application role and database
+.RB ( code_analysis )
+from secrets; no separate database bootstrap command is needed.
 .SS casmgr-pg-set-password
 Apply passwords from
 .IR /var/casmgr/secrets/.env
@@ -372,8 +327,11 @@ sudo casmgr-pg-set-password --superuser-only
 .SS casmgr
 Daemon manager CLI (also
 .IR /usr/bin/casmgr ).
-Uses the package venv when installed under
-.IR /usr/lib/casmgr-server .
+Wraps
+.B systemctl
+and
+.B docker
+for the all-in-one container; there is no host venv.
 .TP
 .B --config PATH
 Config file (default
@@ -391,9 +349,7 @@ Production service management should use systemd; use
 .B casmgr
 for debugging or non-systemd layouts.
 .SS casmgr_ensure_instance_uuid
-Python helper at
-.IR /usr/lib/casmgr-server/scripts/casmgr_ensure_instance_uuid.py .
-Ensures
+Python helper that ensures
 .B registration.instance_uuid
 is a valid UUID4. Invoked from package
 .BR postinst .
@@ -406,34 +362,27 @@ Config file (default
 Report without writing.
 .SH SYSTEMD
 .TP
-.B casmgr-postgres.service
-Oneshot unit: starts Docker container via
-.BR casmgr-postgres-container start .
-Requires Docker.
-.TP
-.B casmgr-server.service
-Runs MCP daemon as
-.BR casuser .
-Requires
-.BR casmgr-postgres.service .
-Reads
-.IR /etc/casmgr/config.json ;
-loads
-.IR /var/casmgr/secrets/.env .
+.B casmgr.service
+Single unit that runs the all-in-one container via
+.B docker compose -f /etc/casmgr/docker-compose.yml up -d
+on start and
+.B ... down
+on stop. Requires Docker. Config and secrets are bind-mounted from
+.IR /etc/casmgr
+and
+.IR /var/casmgr .
 .PP
 .RS
 .nf
-sudo systemctl enable casmgr-postgres casmgr-server
-sudo systemctl start casmgr-postgres
-sudo casmgr-pg-init
-sudo systemctl start casmgr-server
-sudo systemctl status casmgr-postgres casmgr-server
-sudo journalctl -u casmgr-server -f
+sudo systemctl enable casmgr
+sudo systemctl start casmgr
+sudo systemctl status casmgr
+sudo docker logs -f casmgr
 .fi
 .RE
 .PP
 The package starts
-.B casmgr-server
+.B casmgr
 automatically only when config has no
 .B CHANGE_ME
 or
@@ -455,12 +404,15 @@ Secrets directory (default
 .B CASMGR_ETC, CASMGR_VAR, CASMGR_LOG
 Configuration, data, and log roots under FHS layout.
 .TP
-.B CASMGR_PG_CONTAINER
+.B CASMGR_CONTAINER
 Docker container name (default
-.BR casmgr-postgres ).
+.BR casmgr ).
 .TP
-.B CODE_ANALYSIS_DAEMON_PYTHON, CASMGR_PYTHON
-Override Python interpreter for admin tooling.
+.B CASMGR_VENV_PYTHON
+In-container Python interpreter used by
+.B docker exec
+admin tooling (default
+.IR /opt/casmgr/venv/bin/python ).
 .SH INSTALLATION
 .PP
 .RS
@@ -474,10 +426,11 @@ On configure: creates
 .B casuser
 /
 .BR casgrp ,
-installs config and secrets if missing, pulls Docker image, recreates container,
-runs
-.BR casmgr-pg-init ,
-enables systemd units, and prints a post-install checklist.
+installs config, secrets, and
+.IR /etc/casmgr/docker-compose.yml
+if missing, pulls the Docker image, enables
+.BR casmgr.service ,
+and prints a post-install checklist.
 .SH POST-INSTALL
 Replace placeholders in
 .IR /etc/casmgr/config.json
@@ -513,7 +466,10 @@ and
 .SH REMOVAL
 .TP
 .B apt remove casmgr-server
-Stops units and removes the container; keeps image and
+Stops
+.B casmgr.service
+.RB ( "docker compose down" );
+keeps image and
 .IR /var/casmgr
 data.
 .TP

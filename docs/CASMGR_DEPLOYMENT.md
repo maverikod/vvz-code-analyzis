@@ -1,4 +1,4 @@
-# casmgr-server — production deployment
+# casmgr — production deployment
 
 Full reference: **`man casmgr-server`**, **`man casmgr-config`**, **`info casmgr-server`** (config sections, secrets, mTLS, admin commands, config generator), and this file.
 
@@ -7,26 +7,33 @@ Full reference: **`man casmgr-server`**, **`man casmgr-config`**, **`info casmgr
 | Path | Purpose |
 |------|---------|
 | `/etc/casmgr/config.json` | MCP server configuration (**conffile**) |
+| `/etc/casmgr/docker-compose.yml` | Installed from `docker/docker-compose.allinone.yml`; what `casmgr.service` runs |
+| `/etc/casmgr/mtls/` | mTLS certificates/keys |
 | `/var/casmgr/secrets/.env` | PostgreSQL passwords (**conffile**) |
 | `/var/casmgr/postgres/data` | PG data (bind mount, uid 999) |
 | `/var/casmgr/postgres/cache` | PG cache (bind mount, uid 999) |
+| `/var/casmgr/watched/<uuid4>/` | Observed source trees (bind-mount contents here) |
 | `/var/log/casmgr` | Application logs |
 | `/var/log/casmgr/postgres` | PostgreSQL logs in container |
 | `/usr/share/casmgr/docker-image` | Pinned image ref (`registry/name:tag`) |
 | `/usr/lib/casmgr/bin/` | Admin scripts (also in `/usr/sbin/`) |
 
-**Full Docker stack** (server + PostgreSQL in containers, `/watched/*` mount
-contract): see [CASMGR_DOCKER.md](CASMGR_DOCKER.md).
+**All-in-one container contract** (image contents, mount details, watch-dir
+scan, s6-overlay boot order): see [CASMGR_DOCKER.md](CASMGR_DOCKER.md).
+
+Everything runs inside **one container** (`vasilyvz/casmgr:<version>`):
+PostgreSQL 16 + pgvector (uid 999) and the `code_analysis` daemon with all
+workers (root, `CASMGR_ALLOW_ROOT=1`). The host only needs Docker and one
+systemd unit, `casmgr.service` — there is no host venv and no separate
+PostgreSQL container/unit.
 
 ## Upgrade from `code-analysis-server`
 
-The `casmgr-server` package **Provides/Replaces/Conflicts** with the old
+The `casmgr` package **Provides/Replaces/Conflicts** with the old
 `code-analysis-server` name. On upgrade, legacy systemd unit
-`code-analysis-server.service` is disabled; use `casmgr-server.service`.
+`code-analysis-server.service` is disabled; use `casmgr.service`.
 
-Application code lives under `/usr/lib/casmgr-server` (venv created at install).
-
-## Release build (version = Docker tag)
+## Release build (image tag = app version)
 
 After git clone, build the Debian package with one command:
 
@@ -47,22 +54,23 @@ Full release (Docker push + deb):
 
 Build details: `DEB_BUILD_README.md`, `scripts/casmgr_ensure_build_deps.sh`.
 
-Produces:
+Produces (example, version from `pyproject.toml`, currently `1.6.35`):
 
-- Docker image `vasilyvz/casmgr-postgres:1.0.6` (pushed to Hub)
-- Debian package `casmgr-server_1.0.6-1_all.deb`
+- Docker image `vasilyvz/casmgr:1.6.35` and `vasilyvz/casmgr:latest` (pushed to Hub)
+- Debian package `casmgr-server_1.6.35-1_all.deb`
 
 ## Install
 
 ```bash
-sudo dpkg -i casmgr-server_1.0.6-1_all.deb
+sudo dpkg -i casmgr-server_1.6.35-1_all.deb
 sudo apt-get install -f
 ```
 
-Automatic steps: pull image, recreate container, init DB, enable systemd.
-**`casmgr-server` is not started** until `/etc/casmgr/config.json` has no
+Automatic steps: pull the `casmgr` image, write `/etc/casmgr/docker-compose.yml`,
+generate PostgreSQL passwords, enable `casmgr.service`.
+**`casmgr` is not started** until `/etc/casmgr/config.json` has no
 `CHANGE_ME` / `MCP_PROXY_HOST` placeholders and mTLS files exist under
-`/etc/casmgr/mtls/`. PostgreSQL (`casmgr-postgres`) starts when Docker is available.
+`/etc/casmgr/mtls/`.
 
 After `dpkg` finishes, read the **post-install banner** on the terminal: it lists
 placeholders to replace, password files, and start commands.
@@ -72,20 +80,20 @@ placeholders to replace, password files, and start commands.
 1. **`/etc/casmgr/config.json`** — replace placeholders:
    - `server.advertised_host`: `CHANGE_ME` → this host's IP or DNS name
    - `registration.*` URLs: `MCP_PROXY_HOST` → MCP proxy hostname/IP
-   - `code_analysis.worker.watch_dirs` — project roots to index
+   - `chunker`/`embedding` endpoints if not using the defaults (`:8009`/`:8001`)
 2. **`/var/casmgr/secrets/.env`** — PostgreSQL passwords:
    - On first install, random passwords are generated if the file is new
    - Back them up securely, or set your own `POSTGRES_*` values
    - Apply to the cluster: `sudo casmgr-pg-set-password`
-   - First DB/role creation: `sudo casmgr-pg-init`
 3. **mTLS** — place `server.crt`, `server.key`, `ca.crt`, `client.crt`, `client.key`
    under `/etc/casmgr/mtls/` (permissions applied by `dpkg --configure`)
-4. **Start** (if the package did not start the MCP server automatically):
+4. **Watched directories** — bind-mount host source trees so their contents
+   land under `/var/casmgr/watched/<uuid4>/` (see
+   [CASMGR_DOCKER.md](CASMGR_DOCKER.md#watched-directories))
+5. **Start** (if the package did not start it automatically):
 
    ```bash
-   sudo systemctl start casmgr-postgres
-   sudo casmgr-pg-init
-   sudo systemctl start casmgr-server
+   sudo systemctl start casmgr
    ```
 
 ### Password rotation
@@ -105,15 +113,19 @@ Superuser only: `sudo casmgr-pg-set-password --superuser-only`
 ## Admin commands
 
 ```bash
-sudo casmgr-postgres-container pull|recreate|start|stop|remove|status
-sudo casmgr-pg-init [--fix-existing-db-owner]
+sudo systemctl start|stop|restart|status casmgr
+docker logs -f casmgr
+docker exec casmgr gosu postgres psql -U postgres -d code_analysis
 sudo casmgr-pg-set-password [--superuser-only]
-sudo systemctl restart casmgr-postgres casmgr-server
 ```
+
+`casmgr.service` wraps `docker compose -f /etc/casmgr/docker-compose.yml`
+(`up -d` on start, `down` on stop); there is no separate `casmgr-postgres`
+service or container to manage.
 
 ## Remove / purge
 
-- `apt remove casmgr-server` — stops services, removes container, keeps image and `/var/casmgr`
+- `apt remove casmgr-server` — stops `casmgr.service` (`docker compose down`), keeps the image and `/var/casmgr`
 - `apt purge casmgr-server` — also `docker rmi` for the pinned tag
 
 ## Port and registration defaults
@@ -123,34 +135,26 @@ proxy `server_id`.
 
 | Role | Config file | MCP port | `registration.server_id` |
 |------|-------------|----------|---------------------------|
-| Production (`casmgr-server`) | `/etc/casmgr/config.json` | **15010** | `code-analysis-server` |
+| Production (`casmgr` container) | `/etc/casmgr/config.json` | **15010** | `code-analysis-server` |
 | Development (git checkout) | `./config.json` | **15000** | `code-analysis-server-dev` |
-| PostgreSQL (Docker) | both use `code_analysis.database.driver` | **5432** on `127.0.0.1` | — |
+| PostgreSQL (in-container) | `code_analysis.database.driver` | **5432** on `127.0.0.1` (inside the container) | — |
 
-When both servers share the packaged PostgreSQL container, keep **distinct**
+When both servers share the packaged PostgreSQL (dev pointed at the packaged
+container's exposed port, if any), keep **distinct**
 `registration.instance_uuid` values (auto-generated on first package install for
 production).
 
-Fresh installs ship `/etc/casmgr/config.json` with port **15010**. Upgrades keep
-your existing conffile; change `server.port` and `code_analysis.port` to **15010**
-if you still use **15000** and run the dev server on the same machine.
+Fresh installs ship `/etc/casmgr/config.json` with port **15010**.
 
 ## Configuration checklist
 
-1. Edit `/etc/casmgr/config.json` (registration, mTLS, `watch_dirs`)
+1. Edit `/etc/casmgr/config.json` (registration, mTLS, external service endpoints)
 2. Place certificates under `/etc/casmgr/mtls/` (`server.crt`, `server.key`, `ca.crt`, `client.crt`, `client.key`)
-3. Ensure `casuser` can read private keys (group `casgrp`, mode `0640`):
-
-   ```bash
-   sudo chown root:casgrp /etc/casmgr/mtls /etc/casmgr/mtls/*
-   sudo chmod 0750 /etc/casmgr/mtls
-   sudo chmod 0640 /etc/casmgr/mtls/*
-   ```
-
-   `dpkg --configure casmgr-server` applies these permissions automatically on upgrade.
+3. Ensure permissions allow the container to read private keys (mode `0640`
+   under `/etc/casmgr/mtls`, applied automatically by `dpkg --configure`)
 4. Confirm `/var/casmgr/secrets/.env` passwords (auto-generated on first install)
-5. `sudo casmgr-pg-set-password` after editing passwords; `sudo casmgr-pg-init` on first DB setup
-6. `sudo systemctl start casmgr-server`
+5. `sudo casmgr-pg-set-password` after editing passwords
+6. `sudo systemctl start casmgr`
 
 ## Troubleshooting
 
@@ -164,7 +168,7 @@ table in [Port and registration defaults](#port-and-registration-defaults).
 cd ~/projects/tools/code_analysis
 casmgr --config config.json stop
 # or: pkill -f 'code_analysis.main --config config.json'
-sudo systemctl restart casmgr-server
+sudo systemctl restart casmgr
 ```
 
 Check listeners:
@@ -175,13 +179,13 @@ ss -tlnp | grep -E '15000|15010'
 
 ### `pg_advisory_unlock` / `Database is unavailable` (watch_dirs)
 
-If journal shows `no unique constraint matching given keys for referenced table "watch_dirs"`,
+If the log shows `no unique constraint matching given keys for referenced table "watch_dirs"`,
 the PostgreSQL schema migration left `watch_dirs` without a primary key. Re-run configure after
 upgrading the package, or repair manually (replace `INSTANCE_UUID` with
 `registration.instance_uuid` from config):
 
 ```bash
-sudo docker exec -it casmgr-postgres psql -U postgres -d code_analysis <<'SQL'
+docker exec -it casmgr gosu postgres psql -U postgres -d code_analysis <<'SQL'
 UPDATE watch_dirs SET server_instance_id = 'INSTANCE_UUID' WHERE server_instance_id IS NULL;
 UPDATE watch_dir_paths wdp
 SET server_instance_id = wd.server_instance_id
@@ -194,15 +198,19 @@ WHERE p.watch_dir_id = wd.id AND p.server_instance_id IS NULL;
 ALTER TABLE watch_dirs DROP CONSTRAINT IF EXISTS watch_dirs_pkey;
 ALTER TABLE watch_dirs ADD PRIMARY KEY (server_instance_id, id);
 SQL
-sudo systemctl restart casmgr-server
+sudo systemctl restart casmgr
 ```
 
-### Missing Python modules after install
+### Missing Python modules / daemon crash-loops after install
 
-Re-run package configure (reinstalls pip deps and verifies imports):
+The application venv lives **inside the image**, not on the host. If the
+daemon fails to start, check `docker logs casmgr` first; a broken venv means
+the image itself needs rebuilding/re-pulling rather than a host `dpkg
+--configure`:
 
 ```bash
-sudo dpkg --configure casmgr-server
+docker logs --tail 200 casmgr
+sudo systemctl restart casmgr
 ```
 
 Author: Vasiliy Zdanovskiy — vasilyvz@gmail.com

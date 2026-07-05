@@ -26,7 +26,7 @@ purge_docker_image() {
 if [[ "$1" == "purge" ]]; then
     purge_docker_image
     systemctl daemon-reload
-    systemctl reset-failed casmgr-server casmgr-postgres 2>/dev/null || true
+    systemctl reset-failed casmgr casmgr-server casmgr-postgres 2>/dev/null || true
     echo "Note: /var/casmgr data retained; remove manually if required."
 fi
 

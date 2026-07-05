@@ -1,0 +1,30 @@
+# Single all-in-one casmgr stack: PostgreSQL 16 + pgvector, the daemon, and all
+# workers run inside one container. Installed to /etc/casmgr/docker-compose.yml
+# by the casmgr .deb package.
+#
+# Usage:
+#   docker compose -f /etc/casmgr/docker-compose.yml up -d
+#
+# Author: Vasiliy Zdanovskiy
+# email: vasilyvz@gmail.com
+
+name: casmgr
+
+services:
+  casmgr:
+    image: vasilyvz/casmgr:${CASMGR_VERSION:-latest}
+    container_name: casmgr
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - /var/casmgr/secrets/.env
+    environment:
+      CASMGR_CONFIG: /etc/casmgr/config.json
+      CASMGR_SECRETS: /var/casmgr/secrets
+      CASMGR_ALLOW_ROOT: "1"
+    volumes:
+      - /etc/casmgr:/etc/casmgr
+      - /var/casmgr:/var/casmgr
+      - /var/log/casmgr:/var/log/casmgr
+    ports:
+      - "0.0.0.0:15010:15010"

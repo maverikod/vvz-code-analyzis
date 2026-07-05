@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# Release pipeline: build & push casmgr-postgres Docker image, Debian package,
-# and (on full release) publish code-analysis-client to PyPI.
+# Release pipeline: build & push the single casmgr Docker image (from
+# docker/casmgr/Dockerfile), Debian package, and (on full release) publish
+# code-analysis-client to PyPI.
 # Version: root pyproject.toml; Docker tag and client wheel use the same value.
 #
 # Usage (after git clone):
 #   ./build.sh                    # deb only, version from pyproject.toml
 #   ./scripts/release_build.sh --deb-only
-#   ./scripts/release_build.sh 1.0.7              # full release with explicit version
-#   ./scripts/release_build.sh 1.0.7 --deb-only
-#   ./scripts/release_build.sh 1.0.7 --skip-pypi   # Docker + deb, no PyPI
+#   ./scripts/release_build.sh 1.6.35              # full release with explicit version
+#   ./scripts/release_build.sh 1.6.35 --deb-only
+#   ./scripts/release_build.sh 1.6.35 --skip-pypi   # Docker + deb, no PyPI
 #
 # Author: Vasiliy Zdanovskiy
 # email: vasilyvz@gmail.com
@@ -131,10 +132,9 @@ casmgr_sync_client_version_from_pyproject() {
 }
 
 REGISTRY="${CASMGR_DOCKER_REGISTRY:-vasilyvz}"
-IMAGE_NAME="${CASMGR_DOCKER_IMAGE_NAME:-casmgr-postgres}"
+IMAGE_NAME="${CASMGR_DOCKER_IMAGE_NAME:-casmgr}"
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
-SERVER_IMAGE_NAME="${CASMGR_DOCKER_SERVER_IMAGE_NAME:-casmgr-server}"
-FULL_SERVER_IMAGE="${REGISTRY}/${SERVER_IMAGE_NAME}:${VERSION}"
+LATEST_IMAGE="${REGISTRY}/${IMAGE_NAME}:latest"
 DEB_VERSION="${VERSION}-1"
 
 export CASMGR_RELEASE_VERSION="$VERSION"
@@ -191,25 +191,16 @@ casmgr_verify_docker_image_on_hub() {
 casmgr_build_and_push_docker_image() {
     info "Building Docker image ${FULL_IMAGE}"
     docker build \
-        -f docker/casmgr-postgres/Dockerfile \
+        -f docker/casmgr/Dockerfile \
         --build-arg VERSION="${VERSION}" \
         -t "${FULL_IMAGE}" \
+        -t "${LATEST_IMAGE}" \
         .
     info "Pushing ${FULL_IMAGE}"
     docker push "${FULL_IMAGE}"
+    info "Pushing ${LATEST_IMAGE}"
+    docker push "${LATEST_IMAGE}"
     casmgr_verify_docker_image_on_hub "${FULL_IMAGE}"
-}
-
-casmgr_build_and_push_server_docker_image() {
-    info "Building Docker image ${FULL_SERVER_IMAGE}"
-    docker build \
-        -f docker/casmgr-server/Dockerfile \
-        --build-arg VERSION="${VERSION}" \
-        -t "${FULL_SERVER_IMAGE}" \
-        .
-    info "Pushing ${FULL_SERVER_IMAGE}"
-    docker push "${FULL_SERVER_IMAGE}"
-    casmgr_verify_docker_image_on_hub "${FULL_SERVER_IMAGE}" "${SERVER_IMAGE_NAME}"
 }
 
 casmgr_ensure_docker_image_published() {
@@ -223,14 +214,12 @@ casmgr_ensure_docker_image_published() {
 
 if (( DO_DOCKER )); then
     casmgr_build_and_push_docker_image
-    casmgr_build_and_push_server_docker_image
 elif (( DO_DEB )) && (( ! SKIP_DOCKER_PUSH )); then
     casmgr_ensure_docker_image_published
 fi
 
 echo "${FULL_IMAGE}" > debian/casmgr-docker-image
-echo "${FULL_SERVER_IMAGE}" > debian/casmgr-server-docker-image
-info "Recorded image refs in debian/casmgr-docker-image and debian/casmgr-server-docker-image"
+info "Recorded image ref in debian/casmgr-docker-image"
 
 DEBIAN_DATE="$(date -R)"
 cat > debian/changelog <<EOF

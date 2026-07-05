@@ -66,7 +66,11 @@ ARG S6_OVERLAY_VERSION=3.2.3.0
 # via GIT_SSH_COMMAND (git alone is not enough -- without it: "ssh: not
 # found"); ca-certificates for TLS/pip; sudo for casuser's on-demand root
 # escalation; xz-utils to unpack the s6-overlay tarballs; curl+gnupg are only
-# needed to fetch and dearmor the PGDG apt signing key below.
+# needed to fetch and dearmor the PGDG apt signing key below; locales because
+# ubuntu:24.04 ships no generated glibc locales, but existing PostgreSQL data
+# dirs created on the old (Debian) base have en_US.utf8 baked into their
+# postgresql.conf (lc_messages/monetary/numeric/time) -- without it postgres
+# aborts: 'invalid value for parameter "lc_messages": "en_US.utf8"'.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 \
@@ -79,6 +83,9 @@ RUN apt-get update \
         xz-utils \
         curl \
         gnupg \
+        locales \
+    && sed -i 's/^# *\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen \
+    && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
 # PostgreSQL 16 + pgvector + gosu from the official PGDG apt repo: this base,

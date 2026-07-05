@@ -76,8 +76,18 @@ write_uid_gid_env() {
     fi
     install -d -m 0750 -o root -g "$CASMGR_GROUP" "$CONFIG_DIR"
     touch "${CONFIG_DIR}/.env"
+    # /etc/casmgr/.env is a dpkg conffile, so an upgrade with --force-confold
+    # keeps the OLD CASMGR_VERSION and compose would pull a stale image. Force
+    # it to the package's pinned image tag (a package-managed, non-conffile
+    # file that is always refreshed on upgrade).
+    local ver=""
+    if [[ -f /usr/share/casmgr/docker-image ]]; then
+        ver="$(sed -E 's/.*:([^:]+)$/\1/' /usr/share/casmgr/docker-image | tr -d '[:space:]')"
+    fi
     sed -i -e '/^CASMGR_UID=/d' -e '/^CASMGR_GID=/d' "${CONFIG_DIR}/.env"
+    [[ -n "$ver" ]] && sed -i -e '/^CASMGR_VERSION=/d' "${CONFIG_DIR}/.env"
     {
+        [[ -n "$ver" ]] && echo "CASMGR_VERSION=${ver}"
         echo "CASMGR_UID=${uid}"
         echo "CASMGR_GID=${gid}"
     } >> "${CONFIG_DIR}/.env"

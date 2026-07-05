@@ -24,4 +24,11 @@ done
 
 chown -R 999:999 /var/casmgr/postgres/data /var/casmgr/postgres/cache
 
+# PostgreSQL runs as uid 999 and reaches its data dir THROUGH /var/casmgr and
+# /var/casmgr/postgres. The bind-mounted /var/casmgr arrives 0750 casuser:casgrp
+# on a packaged host, so uid 999 (neither owner nor in casgrp) gets EACCES on
+# the data dir it owns. Grant traverse-only (o+x, NOT read) on the path
+# components so postgres can descend; contents stay unreadable to "other".
+chmod o+x /var/casmgr /var/casmgr/postgres 2>/dev/null || true
+
 echo "00-init-dirs: directories ready."

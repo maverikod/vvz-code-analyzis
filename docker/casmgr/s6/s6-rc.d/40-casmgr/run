@@ -28,4 +28,13 @@ fi
 # (fresh volume or restart) regardless of what any earlier root step created.
 chown -R "${CASMGR_UID}:${CASMGR_GID}" /var/log/casmgr
 
+# Stable CWD: s6 launches longruns with CWD = the s6-rc service dir
+# (/run/s6-rc:.../servicedirs/40-casmgr). Queue-manager worker subprocesses
+# inherit that CWD, and a code path that resolves "config.json" relatively then
+# fails ("No such file or directory: .../40-casmgr/config.json"), breaking every
+# use_queue command (git_pull/fetch/push/clone, long analyses). Anchor CWD at
+# /etc/casmgr so a relative config.json resolves to the real config; the config's
+# own storage paths are absolute under /var/casmgr, so nothing else is affected.
+cd /etc/casmgr || exit 1
+
 exec gosu "${CASMGR_UID}:${CASMGR_GID}" /opt/casmgr/venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --foreground

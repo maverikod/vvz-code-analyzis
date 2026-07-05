@@ -192,10 +192,10 @@ class GitCloneCommand(BaseMCPCommand):
                 "scaffold=False, create_venv=False) — the same mechanism "
                 "create_project uses — writing a projectid file at "
                 "dest/projectid and inserting the projects row.\n\n"
-                "Ownership note: the clone runs as the daemon user (root "
-                "inside the all-in-one container deployment), so the new "
-                "tree is root-owned. This is the accepted trade-off from the "
-                "containerization work; this command does not chown."
+                "Ownership note: the clone runs as the daemon user (casuser "
+                "in the all-in-one container deployment, its uid/gid matched to "
+                "the host via CASMGR_UID/CASMGR_GID and dropped via gosu), so the "
+                "new tree is owned casuser:casgrp; this command does not chown."
             ),
             "parameters": {
                 "url": {

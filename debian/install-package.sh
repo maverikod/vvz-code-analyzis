@@ -60,7 +60,25 @@ if [[ ! -f "${CURDIR}/packaging/config.json.template" ]]; then
 fi
 
 install -d "${ST}/etc/casmgr"
-install -m 640 "${CURDIR}/packaging/config.json.template" \
+# /etc/casmgr/config.json MUST be strict JSON (no comments): besides the app's
+# own commentjson-tolerant loader, mcp_proxy_adapter does an eager import-time
+# json.load('./config.json') that rejects the "#"/"//" documentation comments the
+# source template carries. With 40-casmgr/run's `cd /etc/casmgr` that resolves to
+# this file and crash-loops the daemon on a JSONC config. Emit strict JSON from
+# the (documented, JSONC) source template at stage time; reuse it for the runtime
+# template that postinst copies from when config.json is absent.
+_casmgr_py="python3"
+[[ -x "${CURDIR}/.venv/bin/python" ]] && _casmgr_py="${CURDIR}/.venv/bin/python"
+"${_casmgr_py}" -c "import commentjson" 2>/dev/null || {
+    echo "ERROR: commentjson required to emit strict-JSON /etc/casmgr/config.json (pip install commentjson)" >&2
+    exit 1
+}
+_casmgr_cfg_strict="$(mktemp)"
+"${_casmgr_py}" -c "import commentjson, json, sys; json.dump(commentjson.load(open(sys.argv[1])), open(sys.argv[2], 'w'), indent=2, ensure_ascii=False)" \
+    "${CURDIR}/packaging/config.json.template" "${_casmgr_cfg_strict}"
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${_casmgr_cfg_strict}" \
+    || { echo "ERROR: emitted /etc/casmgr/config.json is not strict JSON" >&2; exit 1; }
+install -m 640 "${_casmgr_cfg_strict}" \
     "${ST}/etc/casmgr/config.json"
 install -m 644 "${CURDIR}/docker/docker-compose.allinone.yml" \
     "${ST}/etc/casmgr/docker-compose.yml"
@@ -72,8 +90,11 @@ install -m 640 "${CURDIR}/packaging/secrets.env.template" \
     "${ST}/var/casmgr/secrets/.env"
 
 install -d "${ST}/usr/share/casmgr-server"
-install -m 644 "${CURDIR}/packaging/config.json.template" \
+# Strict-JSON runtime template (postinst's casmgr-install-server-config copies
+# this verbatim to /etc/casmgr/config.json when absent — must also be strict).
+install -m 644 "${_casmgr_cfg_strict}" \
     "${ST}/usr/share/casmgr-server/config.json.template"
+rm -f "${_casmgr_cfg_strict}"
 install -m 644 "${CURDIR}/packaging/secrets.env.template" \
     "${ST}/usr/share/casmgr-server/secrets.env.template"
 install -d "${ST}/usr/share/casmgr-server/watch-catalog-example"

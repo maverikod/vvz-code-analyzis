@@ -326,7 +326,8 @@ class ExportGraphMCPCommand(BaseMCPCommand):
 
                 dot_lines = ["digraph G {"]
                 for n in node_list:
-                    dot_lines.append(f"  \"{str(n).replace('\\\"', '\\\\"')}\";")
+                    node_label = str(n).replace('\\"', '\\\\"')
+                    dot_lines.append(f'  "{node_label}";')
                 for e in edges:
                     src = str(e["from"]).replace('\\"', '\\\\"')
                     dst = str(e["to"]).replace('\\"', '\\\\"')

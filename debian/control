@@ -16,7 +16,7 @@ Provides: code-analysis-server
 Replaces: code-analysis-server
 Conflicts: code-analysis-server
 Depends: ${misc:Depends},
-         python3 (>= 3.10),
+         python3 (>= 3.12), python3 (<< 3.13),
          systemd,
          adduser,
          rsync,

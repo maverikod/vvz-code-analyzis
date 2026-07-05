@@ -45,4 +45,12 @@ chown -R "${CASMGR_UID}:${CASMGR_GID}" \
     /var/casmgr/home \
     /var/log/casmgr
 
+# OpenSSH refuses group/world-readable private keys, so the git deploy key must
+# be 0600 or every git_* remote command fails with "Permission denied
+# (publickey)". Enforce it here (the key is bind-mounted from the host and may
+# arrive 0640). Skip .pub public keys.
+for _k in /var/casmgr/secrets/git_id_* /var/casmgr/secrets/git_*_key; do
+    [[ -f "$_k" && "$_k" != *.pub ]] && chmod 600 "$_k" 2>/dev/null || true
+done
+
 echo "05-init-user: ${user_name}(${CASMGR_UID}):${group_name}(${CASMGR_GID}) ready; daemon-writable dirs chowned."

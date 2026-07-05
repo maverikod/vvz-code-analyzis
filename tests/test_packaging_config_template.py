@@ -96,10 +96,21 @@ def test_debian_staging_installs_config_and_runtime_template(
         staged = staging_root / staging_rel
         assert staged.is_file(), staging_rel
         assert oct(staged.stat().st_mode & 0o777) == oct(int(mode, 8))
-        assert staged.read_text(encoding="utf-8") == TEMPLATE_PATH.read_text(
-            encoding="utf-8"
+        # The staged config is now STRICT JSON (comments stripped from the JSONC
+        # source template): /etc/casmgr/config.json is read not only by the app's
+        # commentjson-tolerant loader but also by mcp_proxy_adapter's eager
+        # import-time json.load, which rejects comments and would crash-loop the
+        # daemon (with 40-casmgr/run's `cd /etc/casmgr`). So it must parse with the
+        # plain stdlib json loader and be semantically identical to the template.
+        import json
+
+        staged_text = staged.read_text(encoding="utf-8")
+        staged_data = json.loads(staged_text)  # strict: no comment support
+        assert staged_data == load_config_json(TEMPLATE_PATH)
+        assert not any(
+            line.lstrip().startswith(("#", "//"))
+            for line in staged_text.splitlines()
         )
-        load_config_json(staged)
     finally:
         if staging_root.is_dir():
             import shutil

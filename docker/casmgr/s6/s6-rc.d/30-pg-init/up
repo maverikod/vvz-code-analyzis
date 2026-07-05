@@ -1,5 +1,7 @@
 #!/usr/bin/with-contenv bash
-# Oneshot (root), idempotent -- runs every boot. Applies
+# Oneshot (root), idempotent -- runs every boot. Stays root: this is only a
+# TCP/SQL client to Postgres, it writes no files into casuser-owned dirs.
+# Applies
 # POSTGRES_SUPERUSER_PASSWORD and ensures the code_analysis role/database
 # exist, against 127.0.0.1:5432 (config.json's driver.config.host must be
 # 127.0.0.1 in this all-in-one image -- a later phase owns the config template).

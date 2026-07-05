@@ -6,8 +6,8 @@
 # Version: root pyproject.toml; Docker tag and client wheel use the same value.
 #
 # Usage (after git clone):
-#   ./build.sh                    # deb only, version from pyproject.toml
-#   ./scripts/release_build.sh --deb-only
+#   ./build.sh                    # ONE command: build+push Docker image + build deb (skips PyPI)
+#   ./scripts/release_build.sh --deb-only          # deb only (no Docker image)
 #   ./scripts/release_build.sh 1.6.35              # full release with explicit version
 #   ./scripts/release_build.sh 1.6.35 --deb-only
 #   ./scripts/release_build.sh 1.6.35 --skip-pypi   # Docker + deb, no PyPI

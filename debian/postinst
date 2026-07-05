@@ -66,6 +66,24 @@ create_user() {
     fi
 }
 
+write_uid_gid_env() {
+    local uid gid
+    uid="$(id -u "$CASMGR_USER" 2>/dev/null || true)"
+    gid="$(getent group "$CASMGR_GROUP" | cut -d: -f3)"
+    if [[ -z "$uid" || -z "$gid" ]]; then
+        echo "WARNING: could not resolve ${CASMGR_USER}/${CASMGR_GROUP} numeric ids; CASMGR_UID/CASMGR_GID not written" >&2
+        return 0
+    fi
+    install -d -m 0750 -o root -g "$CASMGR_GROUP" "$CONFIG_DIR"
+    touch "${CONFIG_DIR}/.env"
+    sed -i -e '/^CASMGR_UID=/d' -e '/^CASMGR_GID=/d' "${CONFIG_DIR}/.env"
+    {
+        echo "CASMGR_UID=${uid}"
+        echo "CASMGR_GID=${gid}"
+    } >> "${CONFIG_DIR}/.env"
+    chmod 644 "${CONFIG_DIR}/.env"
+}
+
 create_layout() {
     install -d -m 0750 -o root -g "$CASMGR_GROUP" "$CONFIG_DIR" "${CONFIG_DIR}/mtls"
     install -d -m 0750 -o "$CASMGR_USER" -g "$CASMGR_GROUP" \
@@ -267,6 +285,7 @@ print_post_install_banner() {
 
 if [[ "$1" == "configure" ]]; then
     create_user
+    write_uid_gid_env
     create_layout
     fix_mtls_permissions
     provision_image

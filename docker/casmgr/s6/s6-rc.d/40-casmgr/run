@@ -1,9 +1,15 @@
 #!/usr/bin/with-contenv bash
-# Longrun (root): the code_analysis MCP daemon and all in-process workers
-# (indexing / vectorization / file-watcher / queue-manager). Must run via the
-# venv interpreter so sys.executable-based quality-tool resolution
-# (flake8/mypy/black/isort/bandit) finds them in /opt/casmgr/venv.
+# Longrun (root -> gosu casuser): the code_analysis MCP daemon and all
+# in-process workers (indexing / vectorization / file-watcher / queue-manager).
+# Drops privileges to casuser (CASMGR_UID:CASMGR_GID, created by 05-init-user)
+# so files the daemon creates in the bind-mounted watched trees are
+# casuser-owned on the host, not root:root. Must run via the venv interpreter
+# so sys.executable-based quality-tool resolution (flake8/mypy/black/isort/
+# bandit) finds them in /opt/casmgr/venv.
 set -uo pipefail
+
+: "${CASMGR_UID:?CASMGR_UID not set}"
+: "${CASMGR_GID:?CASMGR_GID not set}"
 
 if [[ -f /var/casmgr/secrets/.env ]]; then
     set -a
@@ -12,4 +18,4 @@ if [[ -f /var/casmgr/secrets/.env ]]; then
     set +a
 fi
 
-exec /opt/casmgr/venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --foreground
+exec gosu "${CASMGR_UID}:${CASMGR_GID}" /opt/casmgr/venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --foreground

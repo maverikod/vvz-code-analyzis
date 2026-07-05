@@ -33,14 +33,14 @@ Decisions taken at design review:
   identity, policy) lives in a dedicated `code_analysis.git` config subsection.
 - **Safety:** destructive/remote operations gated by explicit flags + `dry_run`;
   pushes to protected branches blocked by config.
-- **Engine:** subprocess `git` (consistent with `git_integration.py`). In the
-  legacy host deployment this always ran as the unprivileged server user
-  (`casuser`), so writes stayed `casuser:casgrp` with no `chown`. In the
-  all-in-one container deployment the daemon may run as **root**, gated by
-  the `CASMGR_ALLOW_ROOT` environment variable (see
-  `core/project_git/execution_context.py`); when that flag is set, artifacts
-  created in watched trees are `root:root` instead — an accepted trade-off
-  (see §5).
+- **Engine:** subprocess `git` (consistent with `git_integration.py`). The
+  daemon runs as the unprivileged server user (`casuser`) both on the legacy
+  host deployment and inside the all-in-one container (its uid/gid matched
+  to the host `casuser` via `CASMGR_UID`/`CASMGR_GID`, dropped via `gosu`
+  from the container's root PID 1), so writes stay `casuser:casgrp` with no
+  post-hoc `chown` in either case. `CASMGR_ALLOW_ROOT` (see
+  `core/project_git/execution_context.py`) remains as a safety guard but is
+  not exercised in normal operation, since the daemon is never root.
 
 ## 2. Configuration subsection: `code_analysis.git`
 
@@ -93,12 +93,12 @@ Rationale:
 - `StrictHostKeyChecking=yes` + pinned `known_hosts` → no MITM, no interactive
   prompt (CI/headless safe). Operators pre-seed `known_hosts` (e.g. `ssh-keyscan
   github.com`).
-- On the legacy host deployment the server runs as `casuser`; subprocess git
-  inherits it, so created/updated files and `.git` objects are
-  `casuser:casgrp` with no post-hoc `chown`. In the all-in-one container the
-  daemon runs as root (guarded by `CASMGR_ALLOW_ROOT`); git objects it
-  creates are `root:root` instead — see §5 for the accepted trade-off and the
-  one legitimate runtime `os.chown` exception in this codebase.
+- The server runs as `casuser` on both deployment models — the legacy host
+  install and the all-in-one container (uid/gid injected via
+  `CASMGR_UID`/`CASMGR_GID`, dropped from root via `gosu`); subprocess git
+  inherits it, so created/updated files and `.git` objects are always
+  `casuser:casgrp` with no post-hoc `chown` — see §5 for the one legitimate
+  runtime `os.chown` exception in this codebase.
 
 HTTPS+token is an explicit non-goal for v1 (kept out to avoid token storage/rotation);
 revisit only if an SSH key per host is impractical.
@@ -161,22 +161,21 @@ return structured data; paths in params/results are **project-relative POSIX**.
   without merge; on `git_reset` → report target without moving HEAD/worktree.
 - **Timeouts**: remote ops bounded by `remote_timeout_seconds`; on timeout
   `GIT_TIMEOUT`, no retry inside the command.
-- **Ownership**: on the legacy host deployment these commands rely on the
-  unprivileged server user (`casuser`) so writes are `casuser:casgrp`, with
-  no `chown`. In the all-in-one container deployment the daemon is allowed
-  to run as root when `CASMGR_ALLOW_ROOT` is set (see
-  `check_unprivileged_execution_context` in
-  `core/project_git/execution_context.py`); writes it performs then land as
-  `root:root`. This is an accepted trade-off of the root-in-container model,
-  not a violation of this section. The single legitimate runtime `os.chown`
-  anywhere in this codebase is
+- **Ownership**: these commands rely on the unprivileged server user
+  (`casuser`) on both deployment models, so writes are always
+  `casuser:casgrp` with no `chown`. In the all-in-one container, the
+  daemon's uid/gid are matched to the host `casuser` via `CASMGR_UID`/
+  `CASMGR_GID` (set from the host's real numeric ids by `debian/postinst`)
+  and dropped via `gosu` from the container's root PID 1 before the daemon
+  starts; `CASMGR_ALLOW_ROOT` (see `check_unprivileged_execution_context`
+  in `core/project_git/execution_context.py`) remains as a safety guard but
+  is not used in normal operation, since the daemon is never root. The
+  single legitimate runtime `os.chown` anywhere in this codebase is
   `code_analysis/core/tree_file_write.py:match_file_owner` (~line 40), which
   preserves the *source file's* existing owner when writing a `.cst`/`.tree`
   sidecar next to it (falling back to the parent directory's owner when the
   source does not yet exist); it does not claim ownership for the daemon
-  itself and its behavior is unaffected by `CASMGR_ALLOW_ROOT`. Host casuser
-  will need sudo to edit root-owned artifacts the daemon creates in watched
-  trees under the container model; this is an accepted trade-off, not a bug.
+  itself and its behavior is unaffected by `CASMGR_ALLOW_ROOT`.
 
 ## 6. Error codes (stable)
 
@@ -211,10 +210,9 @@ return structured data; paths in params/results are **project-relative POSIX**.
   unless `allow_force_push=true` + `force=true`; `dry_run=true` performs no remote write.
 - A-5: remote commands with missing `code_analysis.git` ⇒ `GIT_REMOTE_NOT_CONFIGURED`;
   local/read commands still function.
-- A-6: on the legacy host deployment, all created/updated files and `.git`
-  objects are owned `casuser:casgrp`. On the all-in-one container deployment
-  (daemon running as root under `CASMGR_ALLOW_ROOT`), created/updated files
-  and `.git` objects are owned `root:root` instead; this is the accepted
-  trade-off of that deployment model, not a regression of this acceptance
-  criterion.
+- A-6: on both the legacy host deployment and the all-in-one container
+  deployment, all created/updated files and `.git` objects are owned
+  `casuser:casgrp` (the container daemon's uid/gid are matched to the host
+  `casuser` via `CASMGR_UID`/`CASMGR_GID`); there is no root-owned artifact
+  trade-off in this model.
 ```

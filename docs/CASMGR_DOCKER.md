@@ -36,26 +36,43 @@ PID 1 is s6-overlay v3 (`docker/casmgr/s6/s6-rc.d/`). Boot order:
 
 1. `00-init-dirs` (root) — create missing directories; `chown -R 999:999`
    the PostgreSQL data/cache dirs (bind mount arrives casuser-root owned).
-2. `10-pg-initdb` (root → `gosu postgres`) — `initdb` + `CREATE EXTENSION vector`
+2. `05-init-user` (root, parallel with `00-init-dirs`) — creates `casuser`
+   inside the image with uid/gid from `CASMGR_UID`/`CASMGR_GID`; chowns
+   daemon-writable directories.
+3. `10-pg-initdb` (root → `gosu postgres`) — `initdb` + `CREATE EXTENSION vector`
    on first boot (no `PG_VERSION` file yet).
-3. `20-postgres` (longrun, `gosu postgres`) — `postgres -D /var/casmgr/postgres/data
+4. `20-postgres` (longrun, `gosu postgres`) — `postgres -D /var/casmgr/postgres/data
    -c listen_addresses=127.0.0.1`; readiness = `pg_isready`.
-4. `30-pg-init` (root, after PG ready) — ensures the app role/DB (`code_analysis`)
+5. `30-pg-init` (root, after PG ready) — ensures the app role/DB (`code_analysis`)
    and password from `/var/casmgr/secrets/.env`; idempotent.
-5. `40-casmgr` (longrun, **root**) — `code_analysis.main --config /etc/casmgr/config.json --foreground`.
+6. `40-casmgr` (longrun, root → `gosu casuser`, waits on `30-pg-init` and
+   `05-init-user`) — `code_analysis.main --config /etc/casmgr/config.json --foreground`.
 
 On shutdown, PostgreSQL gets a clean `pg_ctl stop -m fast` before the
 container exits (no WAL replay warning on next start).
 
-## Root model
+## Process user model
 
-The daemon runs **as root** inside the container so it has full access to the
-casuser-root bind-mounted tree; this requires `CASMGR_ALLOW_ROOT=1` (set in
-the image and in `docker/docker-compose.allinone.yml`). PostgreSQL still drops
-privileges to uid/gid 999 (`gosu postgres`) — do not confuse the two. Files the
-daemon creates in observed repositories (git objects, `versions/` snapshots,
-`trash/`, sidecar `.cst`/`.tree` files without a source) end up owned
-`root:root`; a host user needs `sudo` to edit them directly.
+s6-overlay's PID 1 starts as root only to perform init tasks (create
+directories, fix ownership) and to run PostgreSQL, which drops to uid/gid 999
+(`gosu postgres`). The `code_analysis` daemon itself never runs as root: its
+`40-casmgr` service starts as root just long enough to `gosu` into `casuser`,
+using the uid/gid injected at container start via the `CASMGR_UID`/
+`CASMGR_GID` environment variables (read by
+`docker/docker-compose.allinone.yml` from `/etc/casmgr/.env`). On a real
+host, `debian/postinst` writes those two variables with the host
+`casuser`/`casgrp` real numeric ids (`id -u casuser`, `getent group
+casgrp`), so the daemon's in-container uid/gid always match the host
+`casuser` that owns the bind-mounted trees. Files the daemon creates in
+observed repositories (git objects, `versions/` snapshots, `trash/`, sidecar
+`.cst`/`.tree` files without a source) are therefore owned `casuser:casgrp`,
+matching the host — no root-owned artifacts, no `sudo` needed to edit them.
+
+**Security note:** inside the container, `casuser` has passwordless `sudo`
+to root (`/etc/sudoers.d/casuser`: `casuser ALL=(ALL) NOPASSWD: ALL`) for
+admin/maintenance tasks. This is an intentional escalation path local to the
+container's own user namespace — the daemon itself never exercises it during
+normal operation, and it does not change the ownership model described above.
 
 ## Mount contract
 

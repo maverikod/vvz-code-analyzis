@@ -23,9 +23,12 @@ scan, s6-overlay boot order): see [CASMGR_DOCKER.md](CASMGR_DOCKER.md).
 
 Everything runs inside **one container** (`vasilyvz/casmgr:<version>`):
 PostgreSQL 16 + pgvector (uid 999) and the `code_analysis` daemon with all
-workers (root, `CASMGR_ALLOW_ROOT=1`). The host only needs Docker and one
-systemd unit, `casmgr.service` — there is no host venv and no separate
-PostgreSQL container/unit.
+workers, running as `casuser` (uid/gid matched to the host casuser via
+`CASMGR_UID`/`CASMGR_GID`, dropped via `gosu` from the container's root
+PID 1). The host only needs Docker and one systemd unit, `casmgr.service` —
+there is no host venv and no separate PostgreSQL container/unit. Inside the
+container, `casuser` retains passwordless `sudo` to root for admin/maintenance
+tasks (see [CASMGR_DOCKER.md](CASMGR_DOCKER.md) — Process user model).
 
 ## Upgrade from `code-analysis-server`
 
@@ -67,6 +70,8 @@ sudo apt-get install -f
 ```
 
 Automatic steps: pull the `casmgr` image, write `/etc/casmgr/docker-compose.yml`,
+write the host `casuser`'s uid/gid (`CASMGR_UID`/`CASMGR_GID`) into
+`/etc/casmgr/.env` so the container daemon matches host file ownership,
 generate PostgreSQL passwords, enable `casmgr.service`.
 **`casmgr` is not started** until `/etc/casmgr/config.json` has no
 `CHANGE_ME` / `MCP_PROXY_HOST` placeholders and mTLS files exist under

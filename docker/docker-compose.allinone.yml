@@ -21,7 +21,8 @@ services:
     environment:
       CASMGR_CONFIG: /etc/casmgr/config.json
       CASMGR_SECRETS: /var/casmgr/secrets
-      CASMGR_ALLOW_ROOT: "1"
+      CASMGR_UID: ${CASMGR_UID:-1000}
+      CASMGR_GID: ${CASMGR_GID:-1000}
     volumes:
       - /etc/casmgr:/etc/casmgr
       - /var/casmgr:/var/casmgr

@@ -625,6 +625,8 @@ Fetch from a remote.
 Pull the current branch.
 @item git_push
 Push the current or selected branch; supports dry-run workflows.
+@item git_clone
+Clone a remote repository into a watch directory and register the result as a new project.
 @end table
 
 Normal branch workflow:

@@ -1,8 +1,9 @@
 #!/usr/bin/with-contenv bash
 # Oneshot (root): ensure the /var/casmgr and /var/log/casmgr subtrees exist.
-# The bind-mounted /var/casmgr arrives owned by the host's casuser-root; only
-# the PostgreSQL data/cache subtrees need uid/gid 999 (this image's "postgres"
-# user) -- nothing else here is chowned, root (the daemon) writes there directly.
+# The bind-mounted /var/casmgr arrives owned by the host's casuser-root; the
+# PostgreSQL data/cache subtrees get uid/gid 999 (this image's "postgres" user)
+# here. Everything else (daemon-writable state dirs) is chowned to
+# CASMGR_UID:CASMGR_GID by 05-init-user, which runs next.
 set -euo pipefail
 
 for d in \

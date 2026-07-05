@@ -87,3 +87,6 @@ package ships no Python dependencies for the host.
 - **casmgr.service** — single systemd unit; `docker compose -f /etc/casmgr/docker-compose.yml up -d` / `down`
 - **Admin scripts** in `/usr/lib/casmgr/bin/`
 - **Pinned image** in `/usr/share/casmgr/docker-image`
+- **casuser uid/gid** — `postinst` writes `CASMGR_UID`/`CASMGR_GID` (the host
+  casuser's real numeric ids) into `/etc/casmgr/.env`, so the container
+  daemon (which runs as `casuser`, not root) matches host file ownership

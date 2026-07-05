@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # Longrun (root -> gosu casuser): the code_analysis MCP daemon and all
 # in-process workers (indexing / vectorization / file-watcher / queue-manager).
 # Drops privileges to casuser (CASMGR_UID:CASMGR_GID, created by 05-init-user)
@@ -17,5 +17,15 @@ if [[ -f /var/casmgr/secrets/.env ]]; then
     source /var/casmgr/secrets/.env
     set +a
 fi
+
+# Guard against a fresh-first-boot race: 05-init-user's chown of /var/log/casmgr
+# runs in parallel with 10-pg-initdb/20-postgres, before server_startup.log is
+# ever created; that file is actually first created (root-owned, 644) later, by
+# 30-pg-init importing code_analysis (whose package __init__ installs the log
+# dir) as root. Without this, casuser can read but not append to it, so the
+# daemon's own append_server_startup_log() calls fail silently. Re-chown here,
+# immediately before the privilege drop, so this is correct on every boot
+# (fresh volume or restart) regardless of what any earlier root step created.
+chown -R "${CASMGR_UID}:${CASMGR_GID}" /var/log/casmgr
 
 exec gosu "${CASMGR_UID}:${CASMGR_GID}" /opt/casmgr/venv/bin/python -m code_analysis.main --config /etc/casmgr/config.json --foreground

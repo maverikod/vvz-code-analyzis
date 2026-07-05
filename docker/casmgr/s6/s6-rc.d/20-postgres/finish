@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # Executed by s6-supervise once the `run` script's process has exited. The
 # TERM trap in `run` already performs a native Postgres fast shutdown; this
 # is a defensive no-op safety net (e.g. if the process died without the trap

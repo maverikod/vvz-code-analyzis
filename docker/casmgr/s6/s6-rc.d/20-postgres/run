@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bash
+#!/command/with-contenv bash
 # Longrun (root -> gosu postgres): the PostgreSQL server, TCP+socket on
 # 127.0.0.1 only. Signals s6-rc readiness on fd 3 (notification-fd protocol)
 # once pg_isready succeeds, unblocking 30-pg-init and 40-casmgr.

@@ -86,13 +86,27 @@ COPY casmgr_entry ./casmgr_entry
 COPY scripts/postgres_setup_from_env_config.py ./scripts/postgres_setup_from_env_config.py
 COPY docker/casmgr-postgres/docker-entrypoint-initdb.d/01-pgvector.sh ./postgres-init/01-pgvector.sh
 
-RUN /opt/casmgr/venv/bin/pip install --no-cache-dir -e ".[postgres-backup]" \
+# Some source files carry restrictive host-dev-machine permissions (owner-only
+# read, no "other" bit); COPY preserves those bits verbatim under root:root, so
+# without this the daemon (running as casuser, an arbitrary non-root uid with
+# no special group membership -- see 40-casmgr/run) fails at import time with
+# PermissionError. World-readable is safe: this is application source, not
+# secrets (those live under /var/casmgr/secrets, never copied into the image).
+RUN chmod -R a+rX /opt/casmgr/code_analysis /opt/casmgr/casmgr_entry /opt/casmgr/scripts \
+    && /opt/casmgr/venv/bin/pip install --no-cache-dir -e ".[postgres-backup]" \
     && chmod +x ./postgres-init/01-pgvector.sh
 
 # s6-overlay service tree (see docker/casmgr/s6/s6-rc.d/*/{up,run} for details).
+# Oneshot `up` files are pure execline one-liners (s6-rc-oneshot-run feeds their
+# content straight to execlineb, ignoring any shebang) that just exec the real
+# bash worker script below; those worker scripts carry the s6-overlay-v3
+# `/command/with-contenv` shebang (v2's `/usr/bin/with-contenv` does not exist).
 COPY docker/casmgr/s6/s6-rc.d /etc/s6-overlay/s6-rc.d
-RUN chmod -R +x /etc/s6-overlay/s6-rc.d \
-    && touch /etc/s6-overlay/s6-rc.d/user/contents.d/40-casmgr
+COPY docker/casmgr/s6/scripts /etc/s6-overlay/scripts
+RUN chmod -R +x /etc/s6-overlay/s6-rc.d /etc/s6-overlay/scripts \
+    && touch /etc/s6-overlay/s6-rc.d/user/contents.d/40-casmgr \
+    && test -x /command/with-contenv \
+    && test -x /command/execlineb
 
 # CASMGR_UID/CASMGR_GID: host casuser's real numeric uid/gid, injected at
 # container-run time (compose `environment`, sourced from /etc/casmgr/.env on

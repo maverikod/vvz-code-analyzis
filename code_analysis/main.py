@@ -196,6 +196,15 @@ def main() -> None:
     config_path, full_config = load_config_and_validate(args)
 
     heartbeat_stop = setup_daemon_logging(args, full_config, config_path)
+    # setup_daemon_logging only creates the heartbeat_stop Event in --daemon mode,
+    # but the watchdog below (plus the server run and shutdown signaling) need it
+    # in --foreground too — the all-in-one container runs --foreground. Without a
+    # real Event the watchdog thread crashes on ``heartbeat_stop.wait(...)``
+    # (AttributeError: 'NoneType' object has no attribute 'wait').
+    if heartbeat_stop is None:
+        import threading
+
+        heartbeat_stop = threading.Event()
 
     # Independent proxy-heartbeat watchdog: detects main-loop stalls (dumps
     # tracebacks) and posts a best-effort heartbeat while the loop is alive, so a

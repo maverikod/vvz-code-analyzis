@@ -85,6 +85,7 @@ def register_commands_git_github(reg: Any) -> None:
         )
         from .commands.git_clone_command import GitCloneCommand
         from .commands.git_fetch_command import GitFetchCommand
+        from .commands.git_init_command import GitInitCommand
         from .commands.git_pull_command import GitPullCommand
         from .commands.git_push_command import GitPushCommand
         from .commands.git_remote_config_commands import (
@@ -137,6 +138,7 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitPullCommand, "custom")
         reg.register(GitPushCommand, "custom")
         reg.register(GitCloneCommand, "custom")
+        reg.register(GitInitCommand, "custom")
         reg.register(GitRemoteAddCommand, "custom")
         reg.register(GitRemoteSetUrlCommand, "custom")
         reg.register(GitRemoteSetPushUrlCommand, "custom")
@@ -170,7 +172,7 @@ def register_commands_git_github(reg: Any) -> None:
             "git_branch_fetch, git_branch_pull, git_branch_push, "
             "git_branch_track_remote, git_branch_set_upstream, "
             "git_branch_unset_upstream, git_fetch, git_pull, git_push, "
-            "git_clone, "
+            "git_clone, git_init, "
             "git_remote_add, git_remote_set_url, git_remote_set_push_url, "
             "git_remote_remove, git_remote_rename, "
             "git_cherry_pick, git_clean, git_commit, git_config_get, "

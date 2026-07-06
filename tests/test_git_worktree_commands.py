@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 from code_analysis.commands.git_worktree_commands import (
     GitAddCommand,
     GitCommitCommand,
+    GitInitCommand,
     GitRestoreCommand,
     GitStashApplyCommand,
     GitStashDropCommand,
@@ -27,6 +28,7 @@ PROJECT_ID = "00000000-0000-0000-0000-000000000031"
 WORKTREE_COMMANDS = (
     GitAddCommand,
     GitCommitCommand,
+    GitInitCommand,
     GitRestoreCommand,
     GitStashPushCommand,
     GitStashListCommand,
@@ -128,6 +130,30 @@ async def test_git_add_stages_selected_paths(
     status = _git(repo, "status", "--porcelain=v1")
     assert "A  tracked.txt" in status
     assert "?? untracked.txt" in status
+
+
+@pytest.mark.asyncio
+async def test_git_init_creates_missing_path(tmp_path: Path) -> None:
+    """Verify git_init follows git init behavior for a missing path."""
+    target = tmp_path / "new_repo"
+
+    result = await GitInitCommand().execute(path=str(target))
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["success"] is True
+    assert result.data["path"] == str(target)
+    assert (target / ".git").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_git_init_reinitializes_existing_repo(repo: Path) -> None:
+    """Verify git_init succeeds when the path is already a repository."""
+    result = await GitInitCommand().execute(path=str(repo))
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["success"] is True
+    assert result.data["path"] == str(repo)
+    assert (repo / ".git").is_dir()
 
 
 @pytest.mark.asyncio

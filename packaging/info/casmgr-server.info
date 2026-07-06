@@ -652,6 +652,21 @@ Branch and remote workflow
 ‘git_clone’
      Clone a remote repository into a watch directory and register the
      result as a new project.
+‘git_init’
+     Initialize or reinitialize a git repository.  The optional ‘path’
+     parameter is passed to native ‘git init’; missing paths are created
+     and existing repositories are reinitialized, matching ordinary Git
+     behavior.
+
+   New projects created with ‘create_project’ now run ‘git init’ in the
+resolved project directory automatically after registration and
+bootstrap.  Before that initialization, ‘create_project’ creates or
+updates ‘.gitignore’ with Python caches, virtual environments, build
+output, logs, ‘.env’ files, and code-analysis service artifacts such as
+‘old_code/’, ‘backups/’, ‘versions/’, ‘trash/’, ‘*.tree’, ‘.cst/’, and
+‘.trees/’.  Git initialization failures are reported in
+‘bootstrap_warnings’ and ‘git_init’; they do not roll back project
+registration.
 
    Normal branch workflow:
 
@@ -996,11 +1011,11 @@ Node: Admin commands14881
 Node: PostgreSQL container17036
 Node: Ports and co-existence with dev18024
 Node: Git and GitHub commands18882
-Node: Command reference30821
-Node: Systemd32297
-Node: Environment33039
-Node: Upgrade and removal33844
-Node: Troubleshooting34619
+Node: Command reference31685
+Node: Systemd33161
+Node: Environment33903
+Node: Upgrade and removal34708
+Node: Troubleshooting35483
 
 End Tag Table
 

@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The create_project command creates or registers a new project in the system. It validates prerequisites, creates a projectid file with UUID4 identifier, and registers the project in the database.
+The create_project command creates or registers a new project in the system. It validates prerequisites, creates a projectid file with UUID4 identifier, registers the project in the database, creates/updates `.gitignore`, and initializes git in the project directory.
 
 Operation flow:
 1. Validates root_dir exists and is a directory
@@ -32,7 +32,9 @@ Operation flow:
    - If exists but invalid: Recreates projectid file
    - If not exists: Creates new projectid file with UUID4
 9. Registers project in database with watch_dir_id
-10. Returns project information including watch_dir_id
+10. Creates or updates `.gitignore` with default Python and code_analysis service artifact ignores
+11. Initializes git in the project directory
+12. Returns project information including watch_dir_id
 
 Project ID File Format:
 The projectid file is created in JSON format:
@@ -54,7 +56,12 @@ Return Values:
 - description: Project description (from file if existed, or provided)
 - old_description: Previous description if projectid file was recreated
 - watch_dir_id: UUID4 identifier of the watch directory (project is linked to this watch_dir)
+- gitignore: `.gitignore` creation/update status
+- git_initialized: True when automatic git init completed successfully
+- git_init: stdout/stderr/returncode details from automatic git init
 - message: Status message
+
+Default `.gitignore` entries cover Python caches, virtual environments, build output, logs, `.env` files, and code_analysis service artifacts such as `old_code/`, `backups/`, `versions/`, `trash/`, `*.tree`, `.cst/`, and `.trees/`.
 
 Use cases:
 - Register a new project for code analysis
@@ -95,6 +102,9 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `description`: Project description (from file if existed, or provided)
 - `old_description`: Previous description if projectid file was recreated, empty otherwise
 - `watch_dir_id`: UUID4 identifier of the watch directory (project is linked to this watch_dir)
+- `gitignore`: `.gitignore` creation/update status
+- `git_initialized`: True when automatic git init completed successfully
+- `git_init`: stdout/stderr/returncode details from automatic git init
 - `message`: Status message
 
 ### Error

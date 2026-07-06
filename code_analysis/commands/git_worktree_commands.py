@@ -21,6 +21,7 @@ from code_analysis.commands.git_history_commands import (
     GitRevertCommand,
     GitTagCommand,
 )
+from code_analysis.commands.git_init_command import GitInitCommand
 from code_analysis.commands.git_stage_commands import (
     GitAddCommand,
     GitCommitCommand,
@@ -40,6 +41,7 @@ __all__ = [
     "GitConfigListCommand",
     "GitCherryPickCommand",
     "GitCleanCommand",
+    "GitInitCommand",
     "GitIdentityGetCommand",
     "GitIdentitySetCommand",
     "GitMergeCommand",

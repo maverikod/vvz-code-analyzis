@@ -627,7 +627,21 @@ Pull the current branch.
 Push the current or selected branch; supports dry-run workflows.
 @item git_clone
 Clone a remote repository into a watch directory and register the result as a new project.
+@item git_init
+Initialize or reinitialize a git repository. The optional @code{path} parameter
+is passed to native @code{git init}; missing paths are created and existing
+repositories are reinitialized, matching ordinary Git behavior.
 @end table
+
+New projects created with @code{create_project} now run @code{git init} in the
+resolved project directory automatically after registration and bootstrap. Before
+that initialization, @code{create_project} creates or updates @file{.gitignore}
+with Python caches, virtual environments, build output, logs, @file{.env} files,
+and code-analysis service artifacts such as @file{old_code/}, @file{backups/},
+@file{versions/}, @file{trash/}, @file{*.tree}, @file{.cst/}, and
+@file{.trees/}. Git initialization failures are reported in
+@code{bootstrap_warnings} and @code{git_init}; they do not roll back project
+registration.
 
 Normal branch workflow:
 

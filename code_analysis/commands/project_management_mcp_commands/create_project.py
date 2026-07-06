@@ -83,6 +83,11 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "Optional create_venv=true (default): creates .venv. "
                 "Optional apply_template=true (default): deploys "
                 ".cursor/agents, docs/PROJECT_RULES.md, README.md, etc."
+                " Creates or updates .gitignore with Python and code_analysis "
+                "service artifacts before git initialization."
+                " Git is initialized automatically in the project directory; "
+                "git failures are returned as bootstrap warnings and do not "
+                "roll back project creation."
             ),
             "properties": {
                 "watch_dir_id": {
@@ -257,10 +262,13 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 )
             else:
                 project_root = None
+            gitignore_result: Dict[str, Any] = {"success": False, "skipped": True}
+            git_init_result: Dict[str, Any] = {"success": False, "skipped": True}
 
             if project_root is not None and project_root.is_dir():
                 from ...core.project_bootstrap import (
                     DirScaffold,
+                    GitignoreBootstrap,
                     TemplateDeployer,
                     VenvCreator,
                 )
@@ -295,6 +303,58 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         bootstrap_warnings.extend(
                             f"template: {e}" for e in deploy_result.errors
                         )
+
+                gitignore = GitignoreBootstrap(project_root)
+                gitignore_bootstrap_result = gitignore.ensure()
+                gitignore_result = {
+                    "success": gitignore_bootstrap_result.success,
+                    "path": gitignore_bootstrap_result.path,
+                    "created": gitignore_bootstrap_result.created,
+                    "appended": gitignore_bootstrap_result.appended,
+                    "skipped": gitignore_bootstrap_result.skipped,
+                    "errors": gitignore_bootstrap_result.errors,
+                }
+                if not gitignore_bootstrap_result.success:
+                    bootstrap_warnings.extend(
+                        f"gitignore: {e}" for e in gitignore_bootstrap_result.errors
+                    )
+
+                try:
+                    from ...core.git_integration import is_git_available
+                    from ...core.git_remote_ops import run_git_subprocess
+
+                    if is_git_available():
+                        returncode, stdout, stderr, timed_out = run_git_subprocess(
+                            ["git", "init", str(project_root)],
+                            cwd=pathlib.Path.cwd(),
+                            env=None,
+                            timeout_seconds=30.0,
+                        )
+                        git_init_result = {
+                            "success": returncode == 0 and not timed_out,
+                            "skipped": False,
+                            "returncode": returncode,
+                            "timed_out": timed_out,
+                            "stdout": stdout.strip(),
+                            "stderr": stderr.strip(),
+                        }
+                        if timed_out:
+                            bootstrap_warnings.append("git_init: git init timed out")
+                        elif returncode != 0:
+                            bootstrap_warnings.append(
+                                f"git_init: git init failed: {stderr.strip()}"
+                            )
+                    else:
+                        bootstrap_warnings.append(
+                            "git_init: git executable not available"
+                        )
+                except Exception as e:
+                    git_init_result = {
+                        "success": False,
+                        "skipped": False,
+                        "error": str(e),
+                    }
+                    bootstrap_warnings.append(f"git_init: {e}")
             else:
                 bootstrap_warnings.append(
                     "project_root not found; skipped bootstrap steps"
@@ -308,6 +368,9 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     "description": description,
                     "watch_dir_id": watch_dir_id,
                     "project_root": str(project_root) if project_root else None,
+                    "gitignore": gitignore_result,
+                    "git_initialized": bool(git_init_result.get("success")),
+                    "git_init": git_init_result,
                     "bootstrap_warnings": bootstrap_warnings,
                     "bootstrap_report": result.get("bootstrap_report"),
                 },
@@ -341,7 +404,8 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             "detailed_description": (
                 "The create_project command creates or registers a new project in the system. "
                 "It validates prerequisites, creates a projectid file with UUID4 identifier, "
-                "and registers the project in the database.\n\n"
+                "registers the project in the database, performs bootstrap steps, "
+                "and initializes git in the project directory.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Opens database connection\n"
@@ -360,7 +424,15 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "   - If exists but invalid: Recreates projectid file\n"
                 "   - If not exists: Creates new projectid file with UUID4\n"
                 "9. Registers project in database with watch_dir_id\n"
-                "10. Returns project information including watch_dir_id\n\n"
+                "10. Runs bootstrap steps: standard directories, optional .venv, optional template\n"
+                "11. Creates .gitignore when absent, or appends missing default ignore entries "
+                "for Python and code_analysis service artifacts when the file already exists\n"
+                "12. Runs git init for the resolved project root. Native git behavior applies: "
+                "missing .git is created, and an existing repository is reinitialized successfully. "
+                "If git is unavailable or git init fails, project creation still succeeds and the "
+                "issue is returned in bootstrap_warnings and git_init.\n"
+                "13. Returns project information including watch_dir_id, .gitignore status, "
+                "and git initialization status\n\n"
                 "Project ID File Format:\n"
                 "The projectid file is created in JSON format:\n"
                 "{\n"
@@ -379,6 +451,9 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "- description: Project description (from file if existed, or provided)\n"
                 "- old_description: Previous description if projectid file was recreated\n"
                 "- watch_dir_id: UUID4 identifier of the watch directory (project is linked to this watch_dir)\n"
+                "- gitignore: .gitignore creation/update status\n"
+                "- git_initialized: True when automatic git init completed successfully\n"
+                "- git_init: stdout/stderr/returncode details from automatic git init\n"
                 "- message: Status message\n\n"
                 "Use cases:\n"
                 "- Register a new project for code analysis\n"
@@ -390,7 +465,15 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "registered, the command fails with PROJECT_DIR_EXISTS (same as before this option existed).\n"
                 "- use_existing_dir=true: if the project directory already exists, the command creates "
                 "only the projectid file (id + description) in that directory and registers the project in "
-                "the database. Use this to register an existing folder without creating a new directory."
+                "the database. Use this to register an existing folder without creating a new directory.\n\n"
+                "Git initialization:\n"
+                "- create_project creates or updates .gitignore before git initialization.\n"
+                "- The default .gitignore covers Python caches, venvs, build outputs, logs, .env files, "
+                "old_code, backups, versions, trash, *.tree, .cst, and .trees artifacts.\n"
+                "- create_project automatically runs git init for the resolved project root.\n"
+                "- If the directory is already a git repository, native git behavior reinitializes it successfully.\n"
+                "- If git is unavailable or git init fails, project creation still succeeds and the issue is reported "
+                "in bootstrap_warnings and git_init."
             ),
             "parameters": {
                 "root_dir": {

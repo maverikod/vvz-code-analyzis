@@ -14,6 +14,10 @@ services:
   casmgr:
     image: vasilyvz/casmgr:${CASMGR_VERSION:-latest}
     container_name: casmgr
+    # Join the shared service mesh so the daemon reaches embed / svo-chunker /
+    # mcp-proxy by docker network aliases (network declared below).
+    networks:
+      - smart-assistant
     restart: unless-stopped
     stop_grace_period: 60s
     env_file:
@@ -29,3 +33,9 @@ services:
       - /var/log/casmgr:/var/log/casmgr
     ports:
       - "0.0.0.0:15010:15010"
+
+networks:
+  # External shared mesh created by the proxy/services stack; the casmgr
+  # systemd unit ensures it exists (ExecStartPre) before compose up.
+  smart-assistant:
+    external: true

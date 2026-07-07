@@ -24,6 +24,7 @@ from ...core.storage_paths import (
     resolve_storage_paths,
 )
 from ...core.vector_search_backend import effective_vector_search_backend
+from ...core.sql_portable import WHERE_FILES_ACTIVE_F
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +132,6 @@ class RevectorizeCommand(BaseMCPCommand):
                         message=str(exc),
                         code="CONFIG_INVALID",
                     )
-
-                root_path = project.root_path
-                self._ensure_project_root_under_watch_dir(root_path, config_dict)
 
                 storage_paths = resolve_storage_paths(
                     config_data=config_dict, config_path=config_path
@@ -458,19 +456,28 @@ class RevectorizeCommand(BaseMCPCommand):
             )
 
         try:
-            # Get chunks for this project that need revectorization
-            # If force=True, get all chunks; otherwise get only chunks without embeddings
-            if force:
-                # Get all chunks for this project
-                chunks = database.get_all_chunks_for_faiss_rebuild(
-                    project_id=project_id
-                )
-            else:
-                # Get only chunks without embeddings
-                chunks = database.get_all_chunks_for_faiss_rebuild(
-                    project_id=project_id
-                )
-                # Filter chunks without embeddings
+            # Fetch chunks through the universal driver chain (Command -> universal
+            # driver -> specific driver -> DBMS) so this works on both SQLite and
+            # Postgres. ``?`` placeholders are translated per backend by the driver.
+            fetch_result = database.execute(
+                f"""
+                SELECT cc.id, cc.chunk_text, cc.embedding_vector,
+                       cc.embedding_model, cc.source_type
+                FROM code_chunks cc
+                INNER JOIN files f ON cc.file_id = f.id
+                WHERE cc.project_id = ?
+                  AND {WHERE_FILES_ACTIVE_F}
+                ORDER BY cc.created_at DESC, cc.id DESC
+                """,
+                (project_id,),
+            )
+            chunks = (
+                fetch_result.get("data", [])
+                if isinstance(fetch_result, dict)
+                else (fetch_result or [])
+            )
+            if not force:
+                # Only chunks that still lack an embedding.
                 chunks = [
                     c
                     for c in chunks
@@ -490,81 +497,93 @@ class RevectorizeCommand(BaseMCPCommand):
                     "vector_backend": "pgvector" if use_pgvector else "faiss",
                 }
 
-            # Revectorize chunks and update FAISS index
+            # Revectorize chunks in BATCHES: one embed call per batch (not per
+            # chunk). Per-chunk round-trips through the queued embed path are
+            # ~seconds each and on a large project overrun the sync-cap; batching
+            # keeps the whole command well under it.
+            import json
+            import numpy as np
+
+            class _TmpChunk:
+                """Lightweight chunk carrying id + text for batch embedding."""
+
+                def __init__(self, chunk_id: Any, text: str):
+                    """Initialize the instance."""
+                    self.chunk_id = chunk_id
+                    self.body = text
+                    self.text = text
+
+            is_pg = (
+                use_pgvector
+                and getattr(database, "_driver_type", None) == "postgres"
+            )
+            pending = [
+                _TmpChunk(c.get("id"), c.get("chunk_text", ""))
+                for c in chunks
+                if c.get("chunk_text")
+            ]
+
             revectorized_count = 0
-            for chunk in chunks:
-                chunk_id = chunk.get("id")
-                chunk_text = chunk.get("chunk_text", "")
-
-                if not chunk_text:
-                    continue
-
+            batch_size = 64
+            for start in range(0, len(pending), batch_size):
+                batch = pending[start : start + batch_size]
                 try:
-                    # Get new embedding from SVO service
-                    class _TmpChunk:
-                        """Represent TmpChunk."""
-
-                        def __init__(self, text: str):
-                            """Initialize the instance."""
-                            self.body = text
-                            self.text = text
-
-                    tmp = _TmpChunk(chunk_text)
-                    chunks_with_emb = await svo_client_manager.get_embeddings([tmp])
-                    if chunks_with_emb and hasattr(chunks_with_emb[0], "embedding"):
-                        embedding = getattr(chunks_with_emb[0], "embedding")
-                        embedding_model = getattr(
-                            chunks_with_emb[0], "embedding_model", None
-                        )
-
-                        if embedding is not None:
-                            import json
-                            import numpy as np
-
-                            embedding_array = np.array(embedding, dtype="float32")
-                            embedding_json = json.dumps(embedding_array.tolist())
-
-                            # Postgres + pgvector: store normalized vector in embedding_vec
-                            if (
-                                use_pgvector
-                                and getattr(database, "_driver_type", None)
-                                == "postgres"
-                            ):
-                                norm = FaissIndexManager._normalize_vector(
-                                    embedding_array
-                                )
-                                vt = numpy_embedding_to_pgvector_text(norm)
-                                database.execute(
-                                    """
-                                    UPDATE code_chunks
-                                    SET embedding_vector = ?,
-                                        embedding_model = ?,
-                                        vector_id = NULL,
-                                        embedding_vec = ?::vector
-                                    WHERE id = ?
-                                    """,
-                                    (
-                                        embedding_json,
-                                        embedding_model,
-                                        vt,
-                                        chunk_id,
-                                    ),
-                                )
-                            else:
-                                database.execute(
-                                    """
-                                    UPDATE code_chunks
-                                    SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
-                                    WHERE id = ?
-                                    """,
-                                    (embedding_json, embedding_model, chunk_id),
-                                )
-
-                            revectorized_count += 1
+                    embedded = await svo_client_manager.get_embeddings(batch)
                 except Exception as e:
                     logger.warning(
-                        f"Failed to revectorize chunk {chunk_id}: {e}", exc_info=True
+                        "Failed to embed revectorize batch [%d:%d]: %s",
+                        start,
+                        start + len(batch),
+                        e,
+                        exc_info=True,
                     )
+                    continue
+
+                for tmp in embedded or []:
+                    embedding = getattr(tmp, "embedding", None)
+                    if embedding is None:
+                        continue
+                    chunk_id = getattr(tmp, "chunk_id", None)
+                    embedding_model = getattr(tmp, "embedding_model", None)
+                    try:
+                        embedding_array = np.array(embedding, dtype="float32")
+                        embedding_json = json.dumps(embedding_array.tolist())
+
+                        # Postgres + pgvector: store normalized vector in embedding_vec
+                        if is_pg:
+                            norm = FaissIndexManager._normalize_vector(
+                                embedding_array
+                            )
+                            vt = numpy_embedding_to_pgvector_text(norm)
+                            database.execute(
+                                """
+                                UPDATE code_chunks
+                                SET embedding_vector = ?,
+                                    embedding_model = ?,
+                                    vector_id = NULL,
+                                    embedding_vec = ?::vector
+                                WHERE id = ?
+                                """,
+                                (embedding_json, embedding_model, vt, chunk_id),
+                            )
+                        else:
+                            database.execute(
+                                """
+                                UPDATE code_chunks
+                                SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
+                                WHERE id = ?
+                                """,
+                                (embedding_json, embedding_model, chunk_id),
+                            )
+
+                        revectorized_count += 1
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to write revectorized chunk %s: %s",
+                            chunk_id,
+                            e,
+                            exc_info=True,
+                        )
 
             if use_pgvector:
                 try:

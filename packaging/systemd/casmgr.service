@@ -9,6 +9,7 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/etc/casmgr
+ExecStartPre=-/bin/sh -c 'docker network inspect smart-assistant >/dev/null 2>&1 || docker network create smart-assistant'
 ExecStartPre=-/usr/bin/docker compose -f /etc/casmgr/docker-compose.yml pull
 ExecStart=/usr/bin/docker compose -f /etc/casmgr/docker-compose.yml up -d
 ExecStop=/usr/bin/docker compose -f /etc/casmgr/docker-compose.yml down

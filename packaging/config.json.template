@@ -10,7 +10,7 @@
 #   Development (repo root): server.port = 15000, registration.server_id = code-analysis-server-dev
 #   PostgreSQL (Docker):     127.0.0.1:5432 — may be shared; each server needs its own instance_uuid
 #   Vectorization requires code_analysis.chunker and code_analysis.embedding (SVO chunker + embedding API).
-#   Replace CHUNKER_HOST / EMBEDDING_HOST with reachable hostnames or IPs (defaults: port 8009 / 8001, HTTPS + mTLS).
+#   chunker.url / embedding.host default to docker aliases svo-chunker / embed (ports 8009 / 8001, HTTPS). Override with hostnames/IPs if not on the smart-assistant docker network.
 #   registration.server_id ships with the "-vvz" suffix used on the current production host
 #   (192.168.254.26); rename it to match the local host when installing elsewhere.
 #   registration.register_url / unregister_url default to the mcp-proxy published on the
@@ -116,7 +116,7 @@
     "vectorization_retry_delay": 10.0,
     "chunker": {
       "enabled": true,
-      "url": "CHUNKER_HOST",
+      "url": "svo-chunker",
       "port": 8009,
       "protocol": "https",
       "cert_file": "/etc/casmgr/mtls/client.crt",
@@ -130,7 +130,7 @@
     },
     "embedding": {
       "enabled": true,
-      "host": "EMBEDDING_HOST",
+      "host": "embed",
       "port": 8001,
       "protocol": "https",
       "cert_file": "/etc/casmgr/mtls/client.crt",

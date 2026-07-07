@@ -18,6 +18,9 @@ from typing import Any, Dict, Iterable, List, cast
 
 logger = logging.getLogger(__name__)
 
+# Max seconds to wait for an in-process embed_execute batch to complete.
+EMBED_WAIT_TIMEOUT_SECONDS = 120
+
 # region agent log
 _AGENT_DEBUG_LOG = (
     "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-718d03.log"
@@ -349,40 +352,44 @@ async def get_embeddings(
         )
     try:
         texts: list[str] = [get_chunk_text(ch) for ch in chunks_list]
-        result = await manager._embedding_client.cmd(
-            command="embed", params={"texts": texts}
+        # Use the embed_client high-level ``embed(wait=True)``: it runs the embed
+        # in-process on the service (``embed_execute`` — no queue, no WS command
+        # session) and returns ``{"results": [{"embedding": [...], "body": ...}],
+        # "model", "dimension"}``. This parses multi-text BATCHES correctly and
+        # avoids the per-call queued-command latency that tripped the server
+        # sync-cap on large revectorize runs. (Previously this used the low-level
+        # ``cmd`` + a home-grown normalizer that only handled single-text.)
+        resp = await manager._embedding_client.embed(
+            texts, wait=True, wait_timeout=EMBED_WAIT_TIMEOUT_SECONDS
         )
-        # region agent log
-        _agent_debug_log(
-            "D",
-            "svo_client_manager_embedding.get_embeddings",
-            "after_embed_cmd",
-            {"summary": _summarize_embed_cmd_payload(result), "texts_n": len(texts)},
-        )
-        # endregion
-        if not result:
+        if not isinstance(resp, dict):
             raise ValueError(
-                f"Invalid embedding service response: empty (result={result})"
+                f"Invalid embedding service response: not a dict (resp={resp!r})"
             )
-        data = _normalize_embed_cmd_response(result)
-        embeddings = None
-        if "embeddings" in data:
-            embeddings = data["embeddings"]
-        elif "results" in data:
+        results = resp.get("results")
+        if isinstance(results, list):
             embeddings = [
                 r.get("embedding") if isinstance(r, dict) else None
-                for r in data["results"]
+                for r in results
             ]
-        if not embeddings or len(embeddings) != len(chunks_list):
+        elif isinstance(resp.get("embeddings"), list):
+            embeddings = resp["embeddings"]
+        else:
             raise ValueError(
-                "Embedding service returned unexpected format or count mismatch: "
-                f"expected {len(chunks_list)} embeddings, got {len(embeddings) if embeddings else 0}"
+                "Embedding service returned no results/embeddings: "
+                f"keys={list(resp.keys())}"
             )
+        if len(embeddings) != len(chunks_list):
+            raise ValueError(
+                "Embedding service returned unexpected count: "
+                f"expected {len(chunks_list)}, got {len(embeddings)}"
+            )
+        model = resp.get("model")
         for ch, emb in zip(chunks_list, embeddings):
             if emb is not None:
                 setattr(ch, "embedding", emb)
-                if isinstance(data, dict) and "model" in data:
-                    setattr(ch, "embedding_model", data["model"])
+                if model is not None:
+                    setattr(ch, "embedding_model", model)
         manager._record_success()
         return chunks_list
     except Exception as e:

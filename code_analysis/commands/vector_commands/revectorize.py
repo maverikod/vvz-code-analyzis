@@ -524,7 +524,9 @@ class RevectorizeCommand(BaseMCPCommand):
             ]
 
             revectorized_count = 0
-            batch_size = 64
+            # Each batch = one in-process embed_execute call (see
+            # SVOClientManager.get_embeddings), so batches can be large.
+            batch_size = 128
             for start in range(0, len(pending), batch_size):
                 batch = pending[start : start + batch_size]
                 try:
@@ -539,6 +541,18 @@ class RevectorizeCommand(BaseMCPCommand):
                     )
                     continue
 
+                got = sum(
+                    1
+                    for t in (embedded or [])
+                    if getattr(t, "embedding", None) is not None
+                )
+                logger.info(
+                    "[REVEC] batch [%d:%d] embeddings_returned=%d/%d",
+                    start,
+                    start + len(batch),
+                    got,
+                    len(batch),
+                )
                 for tmp in embedded or []:
                     embedding = getattr(tmp, "embedding", None)
                     if embedding is None:

@@ -18,11 +18,7 @@ from code_analysis.core.svo_client_manager_chunker import (
     get_chunks,
     get_chunks_batch,
 )
-from code_analysis.core.svo_client_manager_embedding import (
-    _normalize_embed_cmd_response,
-    _unwrap_embed_execute_payload,
-    get_embeddings,
-)
+from code_analysis.core.svo_client_manager_embedding import get_embeddings
 
 
 def test_chunker_protocol_for_client() -> None:
@@ -31,57 +27,6 @@ def test_chunker_protocol_for_client() -> None:
     assert _chunker_protocol_for_client("HTTPS") == "https"
     assert _chunker_protocol_for_client("mtls") == "mtls"
     assert _chunker_protocol_for_client("unknown") == "https"
-
-
-def test_unwrap_embed_execute_payload_promotes_result_data_result_data_results() -> (
-    None
-):
-    """Queued job completion after normalize: vectors under ``result.data.result.data``."""
-    raw: dict = {
-        "result": {
-            "success": True,
-            "data": {
-                "job_id": "job-1",
-                "command": "embed",
-                "status": "job_completed",
-                "result": {
-                    "data": {
-                        "model": "queued-model",
-                        "results": [
-                            {"embedding": [0.1, 0.2], "body": "a"},
-                        ],
-                    }
-                },
-            },
-        },
-    }
-    _unwrap_embed_execute_payload(raw)
-    data = raw["result"]["data"]
-    assert "result" not in data
-    assert data["results"][0]["embedding"] == [0.1, 0.2]
-    assert data["model"] == "queued-model"
-    assert data["job_id"] == "job-1"
-    assert data["status"] == "job_completed"
-
-
-def test_normalize_embed_cmd_response_job_envelope_without_success_wrapper() -> None:
-    """embed_client may return job completion at ``result`` without ``success``/``data``."""
-    payload = {
-        "result": {
-            "job_id": "job-1",
-            "command": "embed",
-            "status": "job_completed",
-            "result": {
-                "data": {
-                    "model": "m1",
-                    "results": [{"embedding": [0.1, 0.2], "body": "a"}],
-                }
-            },
-        }
-    }
-    out = _normalize_embed_cmd_response(payload)
-    assert out["model"] == "m1"
-    assert out["results"][0]["embedding"] == [0.1, 0.2]
 
 
 def test_chunk_rpc_kwargs_maps_type_to_chunk_type() -> None:
@@ -162,141 +107,16 @@ async def test_get_chunks_batch_uses_chunk_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_embeddings_uses_extract_embeddings_adapter_shape() -> None:
-    """embed-client parser accepts ``result.data.results[].embedding``."""
-    raw_response = {
-        "mode": "immediate",
-        "result": {
-            "success": True,
-            "data": {
-                "model": "test-model",
-                "results": [
-                    {"embedding": [1.0, 2.0], "body": "a"},
-                ],
-            },
-        },
+async def test_get_embeddings_sets_embedding_and_model() -> None:
+    """embed_client.embed(wait=True) returns {results, model}; sets .embedding and .embedding_model."""
+    resp = {
+        "results": [
+            {"embedding": [1.0, 2.0], "body": "a"},
+        ],
+        "model": "test-model",
     }
     mock_embed = MagicMock()
-    mock_embed.cmd = AsyncMock(return_value=raw_response)
-
-    chunk = SimpleNamespace(body="hello")
-    manager = SimpleNamespace(
-        _maybe_transition=lambda: None,
-        _embedding_client=mock_embed,
-        embedding_enabled=True,
-        _record_success=MagicMock(),
-        _record_failure=MagicMock(),
-        _embedding_available=True,
-        _embedding_status_logged=False,
-    )
-
-    out = await get_embeddings(manager, [chunk])
-    assert out[0] is chunk
-    assert chunk.embedding == [1.0, 2.0]
-    assert getattr(chunk, "embedding_model") == "test-model"
-
-
-@pytest.mark.asyncio
-async def test_get_embeddings_unwraps_embed_execute_nested_data_results() -> None:
-    """Normalized responses may nest vectors under ``data.embed_execute.data.results``."""
-    raw_response = {
-        "mode": "immediate",
-        "result": {
-            "success": True,
-            "data": {
-                "embed_execute": {
-                    "data": {
-                        "model": "wrapped-model",
-                        "results": [
-                            {"embedding": [0.5, 0.25], "body": "a"},
-                        ],
-                    }
-                }
-            },
-        },
-    }
-    mock_embed = MagicMock()
-    mock_embed.cmd = AsyncMock(return_value=raw_response)
-
-    chunk = SimpleNamespace(body="hello")
-    manager = SimpleNamespace(
-        _maybe_transition=lambda: None,
-        _embedding_client=mock_embed,
-        embedding_enabled=True,
-        _record_success=MagicMock(),
-        _record_failure=MagicMock(),
-        _embedding_available=True,
-        _embedding_status_logged=False,
-    )
-
-    out = await get_embeddings(manager, [chunk])
-    assert out[0] is chunk
-    assert chunk.embedding == [0.5, 0.25]
-    assert getattr(chunk, "embedding_model") == "wrapped-model"
-
-
-@pytest.mark.asyncio
-async def test_get_embeddings_unwraps_result_data_result_data_results() -> None:
-    """Same shape as after ``normalize_command_response`` for queued completion (no extra normalize)."""
-    raw_response = {
-        "result": {
-            "success": True,
-            "data": {
-                "job_id": "job-1",
-                "command": "embed",
-                "status": "job_completed",
-                "result": {
-                    "data": {
-                        "model": "norm-model",
-                        "results": [
-                            {"embedding": [9.0, 8.0], "body": "a"},
-                        ],
-                    }
-                },
-            },
-        },
-    }
-    mock_embed = MagicMock()
-    mock_embed.cmd = AsyncMock(return_value=raw_response)
-
-    chunk = SimpleNamespace(body="hello")
-    manager = SimpleNamespace(
-        _maybe_transition=lambda: None,
-        _embedding_client=mock_embed,
-        embedding_enabled=True,
-        _record_success=MagicMock(),
-        _record_failure=MagicMock(),
-        _embedding_available=True,
-        _embedding_status_logged=False,
-    )
-
-    out = await get_embeddings(manager, [chunk])
-    assert out[0] is chunk
-    assert chunk.embedding == [9.0, 8.0]
-    assert getattr(chunk, "embedding_model") == "norm-model"
-
-
-@pytest.mark.asyncio
-async def test_get_embeddings_accepts_queued_job_completed_despite_false_success_flag() -> (
-    None
-):
-    """
-    Queued embed normalizer sets success only for status completed/success;
-    live services use job_completed, yielding success false with valid data.
-    """
-    raw_response = {
-        "mode": "queued",
-        "status": "job_completed",
-        "job_id": "job-1",
-        "result": {
-            "model": "test-model",
-            "results": [
-                {"embedding": [1.0, 2.0], "body": "hello"},
-            ],
-        },
-    }
-    mock_embed = MagicMock()
-    mock_embed.cmd = AsyncMock(return_value=raw_response)
+    mock_embed.embed = AsyncMock(return_value=resp)
 
     chunk = SimpleNamespace(body="hello")
     manager = SimpleNamespace(
@@ -318,15 +138,9 @@ async def test_get_embeddings_accepts_queued_job_completed_despite_false_success
 
 @pytest.mark.asyncio
 async def test_get_embeddings_rejects_explicit_failure() -> None:
-    """Verify test get embeddings rejects explicit failure."""
-    raw_response = {
-        "result": {
-            "success": False,
-            "error": {"message": "boom"},
-        },
-    }
+    """embed_client.embed raises or returns no results; get_embeddings raises and records failure."""
     mock_embed = MagicMock()
-    mock_embed.cmd = AsyncMock(return_value=raw_response)
+    mock_embed.embed = AsyncMock(side_effect=ValueError("service unavailable"))
 
     chunk = SimpleNamespace(body="x")
     manager = SimpleNamespace(
@@ -339,6 +153,6 @@ async def test_get_embeddings_rejects_explicit_failure() -> None:
         _embedding_status_logged=False,
     )
 
-    with pytest.raises(ValueError, match="Embedding service error"):
+    with pytest.raises(ValueError, match="service unavailable"):
         await get_embeddings(manager, [chunk])
     manager._record_failure.assert_called_once()

@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import ast
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Optional
 
 from code_analysis.core.database_driver_pkg.drivers.base import BaseDatabaseDriver
 from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
@@ -246,77 +246,3 @@ async def _vectorize_via_client(
             "marked_for_worker": True,
             "error": str(e),
         }
-
-
-async def update_and_vectorize_via_driver(
-    driver: BaseDatabaseDriver,
-    file_path: str,
-    project_id: str,
-    root_dir: Path,
-    svo_client_manager: Optional[Any] = None,
-    faiss_manager: Optional[Any] = None,
-) -> Dict[str, Any]:
-    """
-    Update database and immediately vectorize a file using BaseDatabaseDriver.
-
-    Combines update_file_data_via_driver + _vectorize_via_client.
-    Both operations share the same InProcessRpcClient session.
-
-    Args:
-        driver: Database driver (SQLiteDriver or PostgreSQLDriver).
-        file_path: Absolute path to the file.
-        project_id: Project UUID.
-        root_dir: Project root directory.
-        svo_client_manager: Optional SVO client manager for vectorization.
-        faiss_manager: Optional FAISS manager.
-
-    Returns:
-        Combined result dict with keys from analyze_file +
-        'vectorize_result' (if vectorization was attempted).
-    """
-    from code_analysis.commands.update_indexes_analyzer import analyze_file
-    from code_analysis.core.database_client.client import DatabaseClient
-    from code_analysis.core.database_client.in_process_rpc_client import (
-        InProcessRpcClient,
-    )
-    from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
-
-    handlers = RPCHandlers(driver)
-    ipc = InProcessRpcClient(handlers)
-    ipc.connect()
-    client = DatabaseClient(
-        rpc_client=ipc,
-        driver_type=_driver_type_for_inprocess_client(driver),
-    )
-    try:
-        update_result = cast(
-            Dict[str, Any],
-            analyze_file(
-                database=client,
-                file_path=Path(file_path),
-                project_id=project_id,
-                root_path=root_dir,
-                docs_indexing=None,
-                server_config_path=None,
-            ),
-        )
-        if update_result.get("status") != "success":
-            return update_result
-
-        abs_path = str(Path(file_path).resolve())
-        file_rec = client.get_file_by_path(abs_path, project_id)
-        file_id = file_rec.get("id") if file_rec else None
-
-        if file_id and svo_client_manager:
-            vectorize_result = await _vectorize_via_client(
-                client=client,
-                file_id=file_id,
-                project_id=project_id,
-                file_path=file_path,
-                svo_client_manager=svo_client_manager,
-                faiss_manager=faiss_manager,
-            )
-            update_result["vectorize_result"] = vectorize_result
-        return update_result
-    finally:
-        ipc.disconnect(close_driver=False)

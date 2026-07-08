@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from code_analysis.core.embedding_input import EmbeddingInput
 from code_analysis.core.vectorization_worker_pkg.batch_processor import (
-    _EmbeddingTextChunk,
     process_chunk_only_files,
     recover_unvectorized_by_neighbor_merge,
 )
@@ -20,9 +20,9 @@ from code_analysis.core.vectorization_worker_pkg.batch_processor import (
 async def test_neighbor_merge_middle_failure_merges_with_previous() -> None:
     """Verify test neighbor merge middle failure merges with previous."""
     chunks = [
-        _EmbeddingTextChunk("a", "A"),
-        _EmbeddingTextChunk("b", "B"),
-        _EmbeddingTextChunk("c", "C"),
+        EmbeddingInput(text="A", id="a"),
+        EmbeddingInput(text="B", id="b"),
+        EmbeddingInput(text="C", id="c"),
     ]
     chunks[0].embedding = [1.0]
     chunks[0].embedding_model = "m"
@@ -47,9 +47,9 @@ async def test_neighbor_merge_middle_failure_merges_with_previous() -> None:
 async def test_neighbor_merge_first_failure_merges_with_next() -> None:
     """Verify test neighbor merge first failure merges with next."""
     chunks = [
-        _EmbeddingTextChunk("a", "A"),
-        _EmbeddingTextChunk("b", "B"),
-        _EmbeddingTextChunk("c", "C"),
+        EmbeddingInput(text="A", id="a"),
+        EmbeddingInput(text="B", id="b"),
+        EmbeddingInput(text="C", id="c"),
     ]
     chunks[1].embedding = [2.0]
     chunks[1].embedding_model = "m"
@@ -72,10 +72,10 @@ async def test_neighbor_merge_first_failure_merges_with_next() -> None:
 async def test_neighbor_merge_grows_to_whole_file_and_assigns_shared_vector() -> None:
     """Verify test neighbor merge grows to whole file and assigns shared vector."""
     chunks = [
-        _EmbeddingTextChunk("a", "A"),
-        _EmbeddingTextChunk("b", "B"),
-        _EmbeddingTextChunk("c", "C"),
-        _EmbeddingTextChunk("d", "D"),
+        EmbeddingInput(text="A", id="a"),
+        EmbeddingInput(text="B", id="b"),
+        EmbeddingInput(text="C", id="c"),
+        EmbeddingInput(text="D", id="d"),
     ]
     chunks[0].embedding = [1.0]
     chunks[0].embedding_model = "m"
@@ -107,8 +107,8 @@ async def test_neighbor_merge_grows_to_whole_file_and_assigns_shared_vector() ->
 async def test_neighbor_merge_unembeddable_whole_file_returns_no_assignments() -> None:
     """Verify test neighbor merge unembeddable whole file returns no assignments."""
     chunks = [
-        _EmbeddingTextChunk("a", "A"),
-        _EmbeddingTextChunk("b", "B"),
+        EmbeddingInput(text="A", id="a"),
+        EmbeddingInput(text="B", id="b"),
     ]
     calls: list[str] = []
 

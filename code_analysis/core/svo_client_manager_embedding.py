@@ -9,68 +9,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
-import time
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, cast
+from typing import Any, Iterable, List
 
 logger = logging.getLogger(__name__)
 
 # Max seconds to wait for an in-process embed_execute batch to complete.
 EMBED_WAIT_TIMEOUT_SECONDS = 120
-
-# region agent log
-_AGENT_DEBUG_LOG = (
-    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-718d03.log"
-)
-_AGENT_SESSION = "718d03"
-
-
-def _agent_debug_log(
-    hypothesis_id: str, location: str, message: str, data: Dict[str, Any]
-) -> None:
-    """Return agent debug log."""
-    try:
-        payload = {
-            "sessionId": _AGENT_SESSION,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
-    except Exception:
-        pass
-
-
-def _summarize_embed_cmd_payload(r: Any) -> Dict[str, Any]:
-    """Safe shape summary for embed ``cmd`` responses (no secrets)."""
-    if not isinstance(r, dict):
-        return {"payload_type": type(r).__name__}
-    out: Dict[str, Any] = {"top_keys": list(r.keys())}
-    if "mode" in r:
-        out["mode"] = r.get("mode")
-    top = r.get("result")
-    if isinstance(top, dict):
-        out["result_keys"] = list(top.keys())
-        out["success"] = top.get("success")
-        err = top.get("error")
-        out["error_py_type"] = type(err).__name__
-        if isinstance(err, dict):
-            out["error_keys"] = list(err.keys())
-        elif err is not None:
-            out["error_preview"] = str(err)[:200]
-        data = top.get("data")
-        if isinstance(data, dict):
-            out["data_keys"] = list(data.keys())[:40]
-    return out
-
-
-# endregion
 
 try:
     from embed_client.client_factory import ClientFactory
@@ -87,167 +33,6 @@ except ImportError as exc:
     print(_msg, file=sys.stderr)
     print(f"ImportError: {exc}", file=sys.stderr)
     raise SystemExit(1) from exc
-
-
-def _unwrap_embed_execute_payload(raw: Dict[str, Any]) -> None:
-    """
-    In-place: promote ``result.data.result.data`` into ``result.data`` (queued embed jobs).
-    """
-    res = raw.get("result")
-    if not isinstance(res, dict):
-        return
-    data = res.get("data")
-    if not isinstance(data, dict):
-        return
-    nested = data.get("result")
-    if not isinstance(nested, dict):
-        return
-    inner = nested.get("data")
-    if not isinstance(inner, dict):
-        return
-    new_data = {k: v for k, v in data.items() if k != "result"}
-    new_data.update(inner)
-    res["data"] = new_data
-
-
-def _try_extract_embed_from_job_envelope(top: Dict[str, Any]) -> Dict[str, Any] | None:
-    """
-    Extract ``{results|embeddings, model?}`` when ``result`` is a queued job dict
-    without ``success``/``data`` wrapper, e.g. ``{job_id, command, status, result: ...}``.
-    """
-    inner = top.get("result")
-    if not isinstance(inner, dict):
-        return None
-    d = inner.get("data")
-    if isinstance(d, dict) and ("results" in d or "embeddings" in d):
-        return dict(d)
-    if "results" in inner or "embeddings" in inner:
-        return dict(inner)
-    synthetic = {"result": {"success": True, "data": dict(top)}}
-    _unwrap_embed_execute_payload(synthetic)
-    res = synthetic.get("result")
-    if not isinstance(res, dict):
-        return None
-    ud = res.get("data")
-    if isinstance(ud, dict) and ("results" in ud or "embeddings" in ud):
-        return dict(ud)
-    return None
-
-
-def _normalize_embed_cmd_response(result: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Reduce embed ``cmd`` response variants to a single dict with ``results`` and optional ``model``.
-    """
-    # region agent log
-    _agent_debug_log(
-        "A",
-        "svo_client_manager_embedding._normalize_embed_cmd_response",
-        "entry",
-        {"summary": _summarize_embed_cmd_payload(result)},
-    )
-    # endregion
-    # Queued completion: model/results at ``result`` without ``success`` envelope.
-    if result.get("mode") == "queued" and isinstance(result.get("result"), dict):
-        inner = result["result"]
-        if "results" in inner:
-            return dict(inner)
-
-    if "result" not in result:
-        raise ValueError(
-            f"Invalid embedding service response: missing result (result={result})"
-        )
-
-    top = result["result"]
-    if not isinstance(top, dict):
-        raise ValueError("Invalid embedding service response: result is not a dict")
-
-    # embed_client: job completion without top-level success (keys like job_id, status, result)
-    if "job_id" in top and "result" in top and top.get("success") is None:
-        from_job = _try_extract_embed_from_job_envelope(top)
-        if from_job is not None:
-            return from_job
-
-    if top.get("success") is False:
-        raw_err = top.get("error")
-        if "error" in top:
-            if isinstance(raw_err, dict):
-                msg = (
-                    raw_err.get("message")
-                    or raw_err.get("code")
-                    or raw_err.get("detail")
-                )
-                if msg is None:
-                    msg = (
-                        "embedding service reported failure (empty error object)"
-                        if not raw_err
-                        else str(raw_err)
-                    )
-            elif raw_err is not None:
-                msg = str(raw_err)
-            else:
-                msg = "embedding service reported failure (error is null)"
-            raise ValueError(f"Embedding service error: {msg}")
-        raise ValueError("Embedding service error: success=false without error details")
-
-    if top.get("success") is not True:
-        data_probe = top.get("data")
-        if isinstance(data_probe, dict) and (
-            "results" in data_probe
-            or "embeddings" in data_probe
-            or "embed_execute" in data_probe
-        ):
-            pass
-        else:
-            # region agent log
-            _agent_debug_log(
-                "C",
-                "svo_client_manager_embedding._normalize_embed_cmd_response",
-                "falsy_success_fallback",
-                {
-                    "success_value": top.get("success"),
-                    "error_present": top.get("error") is not None,
-                    "error_repr_type": type(top.get("error")).__name__,
-                    "top_keys": list(top.keys()),
-                },
-            )
-            # endregion
-            raise ValueError(
-                "Embedding service error: expected success=true or data payload; "
-                f"success={top.get('success')!r}, top_keys={list(top.keys())}"
-            )
-
-    data = top.get("data")
-    if not isinstance(data, dict):
-        raise ValueError("Embedding service response: missing data")
-    data_dict: Dict[str, Any] = data
-
-    ee = data_dict.get("embed_execute")
-    if isinstance(ee, dict) and isinstance(ee.get("data"), dict):
-        return cast(Dict[str, Any], ee["data"])
-
-    if "result" in data_dict:
-        _unwrap_embed_execute_payload(result)
-        top2 = result.get("result")
-        if isinstance(top2, dict):
-            d2 = top2.get("data")
-            if isinstance(d2, dict) and ("results" in d2 or "embeddings" in d2):
-                return d2
-
-    if "results" in data_dict or "embeddings" in data_dict:
-        return data_dict
-
-    # region agent log
-    _agent_debug_log(
-        "E",
-        "svo_client_manager_embedding._normalize_embed_cmd_response",
-        "unexpected_data_shape",
-        {"data_keys": list(data_dict.keys())},
-    )
-    # endregion
-    raise ValueError(
-        "Embedding service returned unexpected data shape: keys="
-        f"{list(data_dict.keys())}"
-    )
 
 
 def get_chunk_text(chunk: Any) -> str:
@@ -301,20 +86,6 @@ async def init_embedding(manager: Any) -> None:
         **client_kwargs,
     )
     await manager._embedding_client.__aenter__()
-    # region agent log
-    _agent_debug_log(
-        "B",
-        "svo_client_manager_embedding.init_embedding",
-        "embedding_client_ready",
-        {
-            "embedding_url": manager._embedding_url,
-            "port": manager._embedding_port,
-            "protocol": manager._embedding_protocol,
-            "ssl_enabled": ssl_enabled,
-            "has_embedding_client": manager._embedding_client is not None,
-        },
-    )
-    # endregion
     logger.info(
         "SVOClientManager initialized with real embedding service "
         "(url=%s:%s, protocol=%s, vector_dim=%s)",
@@ -369,8 +140,7 @@ async def get_embeddings(
         results = resp.get("results")
         if isinstance(results, list):
             embeddings = [
-                r.get("embedding") if isinstance(r, dict) else None
-                for r in results
+                r.get("embedding") if isinstance(r, dict) else None for r in results
             ]
         elif isinstance(resp.get("embeddings"), list):
             embeddings = resp["embeddings"]

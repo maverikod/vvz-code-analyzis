@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis"
-version = "1.6.47"
+version = "1.6.48"
 description = "Code analysis MCP server, database tooling, and AST/CST commands"
 readme = { file = "docs/README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -25,6 +25,8 @@ dependencies = [
     "lark>=1.1.0",
     "libcst>=1.1.0",
     "embed-client>=3.1.9.5",
+    "aiohttp>=3.8.0",
+    "httpx>=0.24.0",
     "mcp-proxy-adapter>=8.10.17",
     "numpy>=1.26,<3",
     "faiss-cpu>=1.7",

@@ -9,6 +9,8 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import json
+import tempfile
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -126,15 +128,27 @@ def install_comment_json_for_mcp_adapter() -> None:
 
     Idempotent; safe to call more than once. Must run before ``SimpleConfig.load()``.
 
-    Does not replace ``json.loads`` on the stdlib ``json`` module (that breaks
-    ``commentjson`` itself, which delegates to ``json.loads`` after stripping comments).
+    Implementation note: this NEVER reassigns ``json.loads``/``json.load`` (or any
+    other attribute) on the stdlib ``json`` module. That process-global module is
+    shared by every thread; briefly replacing ``json.loads`` with a closure that
+    returns a fixed (and, worse, still-being-mutated) dict is a race condition —
+    any unrelated thread calling ``json.load``/``json.loads`` during the window
+    gets the wrong data instead of the file it asked for. Instead, comments are
+    stripped up front via :func:`load_config_json` (``commentjson``), the result
+    is re-serialized as plain JSON into a private temporary file, and the
+    *instance's* ``config_path`` is pointed at that temp file for the duration of
+    a single call to the original, unmodified ``SimpleConfig.load``. Only the
+    calling instance's own attribute is touched (restored in ``finally``), so
+    concurrent, unrelated ``SimpleConfig.load``/``json.load`` calls are
+    unaffected. Each call site here creates a fresh ``SimpleConfig`` instance
+    immediately before calling ``.load()`` (see ``main_config.py`` and
+    ``config_validator/validator.py``), so there is no shared-instance hazard.
     """
     global _MCP_COMMENT_JSON_INSTALLED, _MCP_SIMPLE_CONFIG_PATCHED
     if _MCP_COMMENT_JSON_INSTALLED:
         return
 
     from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
-    import mcp_proxy_adapter.core.config.simple_config as sc_mod
 
     if _MCP_SIMPLE_CONFIG_PATCHED:
         _MCP_COMMENT_JSON_INSTALLED = True
@@ -143,14 +157,24 @@ def install_comment_json_for_mcp_adapter() -> None:
     _orig_simple_load = SimpleConfig.load
 
     def load_with_comments(self: Any) -> Any:
-        """Return load with comments."""
+        """Strip comments into a private temp file, then run the real loader."""
         content = load_config_json(self.config_path)
-        orig_loads = sc_mod.json.loads
-        sc_mod.json.loads = lambda *_args, **_kwargs: content
+        stripped_text = json.dumps(content)
+
+        original_config_path = self.config_path
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            prefix="code_analysis_config_stripped_",
+            suffix=".json",
+        )
+        tmp_path = Path(tmp_name)
         try:
+            with open(tmp_fd, "w", encoding="utf-8") as tmp_file:
+                tmp_file.write(stripped_text)
+            self.config_path = tmp_path
             return _orig_simple_load(self)
         finally:
-            sc_mod.json.loads = orig_loads
+            self.config_path = original_config_path
+            tmp_path.unlink(missing_ok=True)
 
     SimpleConfig.load = load_with_comments  # type: ignore[method-assign]
     _MCP_SIMPLE_CONFIG_PATCHED = True

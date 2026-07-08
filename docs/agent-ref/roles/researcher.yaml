@@ -7,6 +7,7 @@ job: 'study code + docs read-only; aggregate findings for orchestrator. Write NO
 standards: [search]                # read-only access only
 search_order: 'structured code analysis first (symbols / usages / structure where tooling provides them); plain text search only if that misses'
 
-output: 'structured findings; cite file:line; facts only, no invented recommendations'
+output: 'structured findings in fixed sections; cite file:line; facts only, no invented recommendations; end with per-claim confidence + explicit "unknowns / what to read next"'
+evidence: 'each finding = file:line + enclosing symbol + short VERBATIM quote (cite file:line to locate, anchor claims to symbol names — lines drift); separate observed fact from inference; any negative (unused/dead/absent) needs an explicit usage/caller search — state what was searched; if evidence contradicts the task premise, say so; if another copy of the code disagrees with the task''s source of truth, report the drift'
 must_not: [edit files, run state-changing commands, make assumptions]
 escalation: 'tool error or unresolved question -> stop + escalate to orchestrator'

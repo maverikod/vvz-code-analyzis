@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from .database_client.client import DatabaseClient
+from .embedding_input import EmbeddingInput
 from code_analysis.core.docs_markdown_vector_gate import (
     DOCS_MARKDOWN_SOURCE_TYPE,
     sql_and_exclude_docs_markdown_chunks,
@@ -262,18 +263,13 @@ async def _fetch_embedding_from_svo(
 ) -> Optional[np.ndarray]:
     """Request embedding from SVO; optionally save to DB. Returns array or None."""
 
-    class _TmpChunk:
-        """Represent TmpChunk."""
-
-        def __init__(self: "_TmpChunk", text: str) -> None:
-            """Initialize the instance."""
-            self.body = text
-            self.text = text
-
     try:
-        tmp = _TmpChunk(chunk_text)
+        tmp = EmbeddingInput(text=chunk_text)
         chunks_with_emb = await svo_client_manager.get_embeddings([tmp])
-        if not chunks_with_emb or not hasattr(chunks_with_emb[0], "embedding"):
+        if (
+            not chunks_with_emb
+            or getattr(chunks_with_emb[0], "embedding", None) is None
+        ):
             return None
         embedding = getattr(chunks_with_emb[0], "embedding")
         if embedding is None:

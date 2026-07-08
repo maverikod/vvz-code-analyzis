@@ -16,6 +16,7 @@ from ..core.exceptions import ValidationError
 from ..core.faiss_manager import FaissIndexManager
 from ..core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ..core.config_json import ConfigJSONDecodeError
+from ..core.embedding_input import EmbeddingInput
 from ..core.storage_paths import (
     get_faiss_index_path,
     load_raw_config,
@@ -229,16 +230,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     await svo_pg.initialize()
                     try:
 
-                        class _QChunk:
-                            """Represent QChunk."""
-
-                            def __init__(self, text: str) -> None:
-                                """Initialize the instance."""
-                                self.body = text
-                                self.text = text
-
-                        q_emb = await svo_pg.get_embeddings([_QChunk(query)])
-                        if not q_emb or not hasattr(q_emb[0], "embedding"):
+                        q_emb = await svo_pg.get_embeddings(
+                            [EmbeddingInput(text=query)]
+                        )
+                        if not q_emb or getattr(q_emb[0], "embedding", None) is None:
                             return ErrorResult(
                                 message="Failed to get embedding for query from real service",
                                 code="EMBEDDING_SERVICE_ERROR",
@@ -444,22 +439,15 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                                 },
                             )
 
-                    # Create dummy chunk object for embedding
-                    class QueryChunk:
-                        """Represent QueryChunk."""
-
-                        def __init__(self, text: str):
-                            """Initialize the instance."""
-                            self.body = text
-                            self.text = text
-
-                    query_chunk = QueryChunk(query)
+                    # Create query embedding input
+                    query_chunk = EmbeddingInput(text=query)
                     chunks_with_emb = await svo_client_manager.get_embeddings(
                         [query_chunk]
                     )
 
-                    if not chunks_with_emb or not hasattr(
-                        chunks_with_emb[0], "embedding"
+                    if (
+                        not chunks_with_emb
+                        or getattr(chunks_with_emb[0], "embedding", None) is None
                     ):
                         error_msg = (
                             "Failed to get embedding for query from real service"

@@ -14,6 +14,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.config import get_driver_config
+from ...core.embedding_input import EmbeddingInput
 from ...core.exceptions import ValidationError
 from ...core.faiss_manager import FaissIndexManager
 from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
@@ -504,21 +505,11 @@ class RevectorizeCommand(BaseMCPCommand):
             import json
             import numpy as np
 
-            class _TmpChunk:
-                """Lightweight chunk carrying id + text for batch embedding."""
-
-                def __init__(self, chunk_id: Any, text: str):
-                    """Initialize the instance."""
-                    self.chunk_id = chunk_id
-                    self.body = text
-                    self.text = text
-
             is_pg = (
-                use_pgvector
-                and getattr(database, "_driver_type", None) == "postgres"
+                use_pgvector and getattr(database, "_driver_type", None) == "postgres"
             )
             pending = [
-                _TmpChunk(c.get("id"), c.get("chunk_text", ""))
+                EmbeddingInput(text=c.get("chunk_text", ""), id=c.get("id"))
                 for c in chunks
                 if c.get("chunk_text")
             ]
@@ -557,7 +548,7 @@ class RevectorizeCommand(BaseMCPCommand):
                     embedding = getattr(tmp, "embedding", None)
                     if embedding is None:
                         continue
-                    chunk_id = getattr(tmp, "chunk_id", None)
+                    chunk_id = getattr(tmp, "id", None)
                     embedding_model = getattr(tmp, "embedding_model", None)
                     try:
                         embedding_array = np.array(embedding, dtype="float32")
@@ -565,9 +556,7 @@ class RevectorizeCommand(BaseMCPCommand):
 
                         # Postgres + pgvector: store normalized vector in embedding_vec
                         if is_pg:
-                            norm = FaissIndexManager._normalize_vector(
-                                embedding_array
-                            )
+                            norm = FaissIndexManager._normalize_vector(embedding_array)
                             vt = numpy_embedding_to_pgvector_text(norm)
                             database.execute(
                                 """

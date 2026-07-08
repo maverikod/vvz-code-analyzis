@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from code_analysis.core.embedding_input import EmbeddingInput
 from code_analysis.core.faiss_manager import FaissIndexManager
 from code_analysis.core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
@@ -36,17 +37,6 @@ def _sql_exclude_docs_markdown_if_gated(worker_like: Any) -> str:
     if getattr(worker_like, "docs_markdown_embeddings_enabled", True):
         return ""
     return sql_and_exclude_docs_markdown_chunks("cc")
-
-
-class _EmbeddingTextChunk:
-    """Represent EmbeddingTextChunk."""
-
-    def __init__(self, chunk_id: str, text: str) -> None:
-        """Initialize the instance."""
-        self.id = chunk_id
-        self.text = text
-        self.embedding: Optional[list] = None
-        self.embedding_model: Optional[str] = None
 
 
 def _usable_embedding(chunk: Any) -> Optional[list]:
@@ -208,8 +198,9 @@ async def process_chunk_only_files(
         if not chunks:
             continue
 
-        chunk_objs: List[_EmbeddingTextChunk] = [
-            _EmbeddingTextChunk(str(r["id"]), r.get("chunk_text") or "") for r in chunks
+        chunk_objs: List[EmbeddingInput] = [
+            EmbeddingInput(text=r.get("chunk_text") or "", id=str(r["id"]))
+            for r in chunks
         ]
 
         logger.info(
@@ -254,7 +245,7 @@ async def process_chunk_only_files(
 
             async def _embed_one(text: str) -> Tuple[Optional[list], Optional[str]]:
                 """Return embed one."""
-                tmp = _EmbeddingTextChunk("__merged__", text)
+                tmp = EmbeddingInput(text=text, id="__merged__")
                 await svo_mgr.get_embeddings([tmp])
                 return _usable_embedding(tmp), _embedding_model(tmp)
 

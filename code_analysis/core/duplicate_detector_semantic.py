@@ -11,7 +11,47 @@ from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 import numpy as np
 
+from code_analysis.core.embedding_input import EmbeddingInput
+
 logger = logging.getLogger(__name__)
+
+
+def _function_code_text(func_node: ast.AST, source_code: Optional[str] = None) -> str:
+    """
+    Extract function source code text from AST node.
+
+    Args:
+        func_node: AST function node.
+        source_code: Optional source code for extracting function text by line numbers.
+
+    Returns:
+        Function code as string. Uses source_code line extraction if available,
+        otherwise falls back to ast.dump().
+    """
+    if source_code and hasattr(func_node, "lineno"):
+        start_line = func_node.lineno
+        end_line = getattr(func_node, "end_lineno", start_line) or start_line
+        lines = source_code.split("\n")
+        func_code = "\n".join(lines[start_line - 1 : end_line])
+    else:
+        func_code = ast.dump(func_node)
+    return func_code
+
+
+def _normalize_embedding(embedding_array: np.ndarray) -> np.ndarray:
+    """
+    L2-normalize an embedding vector.
+
+    Args:
+        embedding_array: Raw embedding vector (typically float32).
+
+    Returns:
+        L2-normalized embedding. If norm is zero, returns the original array.
+    """
+    norm = float(np.linalg.norm(embedding_array))
+    if norm > 0:
+        embedding_array = embedding_array / norm
+    return embedding_array
 
 
 async def get_function_embedding(
@@ -36,32 +76,18 @@ async def get_function_embedding(
         return None
 
     try:
-        if source_code and hasattr(func_node, "lineno"):
-            start_line = func_node.lineno
-            end_line = getattr(func_node, "end_lineno", start_line) or start_line
-            lines = source_code.split("\n")
-            func_code = "\n".join(lines[start_line - 1 : end_line])
-        else:
-            func_code = ast.dump(func_node)
-
-        class FunctionChunk:
-            """Represent FunctionChunk."""
-
-            def __init__(self: "FunctionChunk", text: str) -> None:
-                """Initialize the instance."""
-                self.body = text
-                self.text = text
-
-        chunk = FunctionChunk(func_code)
+        func_code = _function_code_text(func_node, source_code)
+        chunk = EmbeddingInput(text=func_code)
         svo = detector._svo_client_manager
         chunks_with_emb = await svo.get_embeddings([chunk])
 
-        if chunks_with_emb and hasattr(chunks_with_emb[0], "embedding"):
+        if (
+            chunks_with_emb
+            and getattr(chunks_with_emb[0], "embedding", None) is not None
+        ):
             embedding = getattr(chunks_with_emb[0], "embedding")
             embedding_array = np.array(embedding, dtype="float32")
-            norm = float(np.linalg.norm(embedding_array))
-            if norm > 0:
-                embedding_array = embedding_array / norm
+            embedding_array = _normalize_embedding(embedding_array)
             return embedding_array
     except Exception as e:
         logger.debug("Failed to get embedding for function: %s", e)
@@ -95,13 +121,46 @@ async def find_semantic_duplicates_impl(
         return []
 
     function_embeddings: Dict[int, Tuple[np.ndarray, Tuple]] = {}
+
+    # Build all function code texts and embedding inputs in parallel
+    function_inputs: List[Tuple[int, EmbeddingInput]] = []
+    function_metadata: Dict[int, Tuple[ast.AST, str, Optional[str], str]] = {}
+
     for idx, (func_node, func_name, class_name, func_type) in enumerate(functions):
-        embedding = await get_function_embedding(detector, func_node, source_code)
-        if embedding is not None:
-            function_embeddings[idx] = (
-                embedding,
-                (func_node, func_name, class_name, func_type),
-            )
+        func_code = _function_code_text(func_node, source_code)
+        function_inputs.append((idx, EmbeddingInput(text=func_code)))
+        function_metadata[idx] = (func_node, func_name, class_name, func_type)
+
+    # Try batched embedding call
+    try:
+        svo = detector._svo_client_manager
+        chunks_with_emb = await svo.get_embeddings([ei for _, ei in function_inputs])
+
+        # Scatter results back to indices
+        if chunks_with_emb:
+            for (idx, _), chunk in zip(function_inputs, chunks_with_emb):
+                if getattr(chunk, "embedding", None) is not None:
+                    embedding = getattr(chunk, "embedding")
+                    embedding_array = np.array(embedding, dtype="float32")
+                    embedding_array = _normalize_embedding(embedding_array)
+                    func_metadata_tuple = function_metadata[idx]
+                    function_embeddings[idx] = (
+                        embedding_array,
+                        func_metadata_tuple,
+                    )
+    except Exception as e:
+        # Fallback to per-function approach on batched call failure
+        logger.debug(
+            "Batched embedding call failed, falling back to per-function: %s", e
+        )
+        for idx in function_metadata:
+            func_node, func_name, class_name, func_type = function_metadata[idx]
+            embedding = await get_function_embedding(detector, func_node, source_code)
+            if embedding is not None:
+                function_embeddings[idx] = (
+                    embedding,
+                    (func_node, func_name, class_name, func_type),
+                )
 
     duplicate_groups: Dict[str, Dict[str, Any]] = {}
     indices = list(function_embeddings.keys())

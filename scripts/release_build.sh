@@ -131,6 +131,10 @@ casmgr_sync_client_version_from_pyproject() {
     python3 "${ROOT}/scripts/sync_code_analysis_client_version.py" --repo-root "${ROOT}"
 }
 
+casmgr_sync_dependency_versions_from_pyproject() {
+    python3 "${ROOT}/scripts/sync_dependency_versions.py" --repo-root "${ROOT}"
+}
+
 REGISTRY="${CASMGR_DOCKER_REGISTRY:-vasilyvz}"
 IMAGE_NAME="${CASMGR_DOCKER_IMAGE_NAME:-casmgr}"
 FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
@@ -158,6 +162,8 @@ if [[ -n "$CLI_VERSION" ]]; then
     info "Writing version ${VERSION} to pyproject.toml"
     casmgr_write_pyproject_version
 fi
+info "Synchronizing dependency versions from pyproject.toml"
+casmgr_sync_dependency_versions_from_pyproject
 casmgr_sync_client_version_from_pyproject
 
 casmgr_docker_image_on_hub() {

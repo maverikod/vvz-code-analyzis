@@ -47,6 +47,7 @@ if [[ ! -f "${ROOT}/client/pyproject.toml" ]]; then
 fi
 
 info "Client version from pyproject.toml"
+python3 "${ROOT}/scripts/sync_dependency_versions.py" --repo-root "${ROOT}"
 python3 "${ROOT}/scripts/sync_code_analysis_client_version.py" --repo-root "${ROOT}"
 
 CLIENT_VERSION="$(casmgr_read_project_version "${ROOT}")"

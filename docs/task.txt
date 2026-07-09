@@ -1,0 +1,19 @@
+✅ Fix verified on prod 1.6.49 (direct mTLS, daemon code-analysis-server-vvz)
+Search variant	Result
+Fulltext (BM25)	success=true
+Semantic (vector)	success=true
+Grep (on-disk)	success=true
+Full cross (fulltext+semantic+grep)	success=true
+AST (search_ast_nodes)	success=true, returns nodes
+8 concurrent, mixed variants, 5 projects	all success=true; all 8 background jobs completed
+Queries were deliberately config-provocative ("config", "ssl config", "json loads"), fired concurrently — the exact ~7-concurrent trigger that reliably crashed 1.6.48.
+
+Log scan during/after the barrage: SSLConfig = 0, main_pid = 0, -32600/command is required = 0, config-dict self-check = 0. The only tracebacks were unrelated (hypercorn TLS-close noise + a file-watcher manifest scan). health reports version 1.6.49, config valid; list_projects returns real project data, not a config dict.
+
+The bug is gone. The corruption mechanism no longer fires under the load that used to trigger it.
+
+Two decisions for you
+The -32600 was verified absent, but the proxy is separately sick: mcp-proxy pegged at 100% CPU / unhealthy (pre-existing, vectorization storm). Want me to restart mcp-proxy? It would (a) relieve the peg and restore the proxy path, and (b) double as the historical trigger test (proxy restart = the re-registration burst that used to cascade). Caveat: it's shared infra (planmgr, ai-editor, lmrs, svo-chunker, embed all re-register), so I'm asking before touching it.
+
+Commit? The fix is verified OK. Ready to commit the working tree (config_json.py + test_config_json.py + version bump to 1.6.49). Commit now on main, or wait until after the proxy-path check?
+

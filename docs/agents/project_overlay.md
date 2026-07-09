@@ -14,7 +14,7 @@ Repository-specific paths, behavior, and restrictions. Universal layout: [`PROJE
 - **Tests:** pytest under [`tests/`](../../tests/). **Non-pytest** harnesses, smoke runners, and ops scripts → [`scripts/`](../../scripts/) per **LAYOUT-07**.
 - **Configuration:** Primary runtime config at repo root [`config.json`](../../config.json) (and variants such as `config_mtls_proxy.json`); sample schemas live under [`docs/`](../). **LAYOUT-04** directory [`configs/`](../../configs/) holds sample / non-secret configuration patterns when added.
 - **Planning stack (when used):** under `docs/plans/` or `docs/tech_spec/` per agent hierarchy, consistent with [`common_agent_rules.md`](common_agent_rules.md).
-- **Runtime dependency:** `mcp-proxy-adapter>=8.10.13` (help merges `get_schema()` + `metadata()` per [`standards/METADATA_SCHEMA_STANDARD.md`](../standards/METADATA_SCHEMA_STANDARD.md)).
+- **Runtime dependency:** `mcp-proxy-adapter>=8.10.19` (help merges `get_schema()` + `metadata()` per [`standards/METADATA_SCHEMA_STANDARD.md`](../standards/METADATA_SCHEMA_STANDARD.md)).
 
 ## Directories and files beyond the universal skeleton
 

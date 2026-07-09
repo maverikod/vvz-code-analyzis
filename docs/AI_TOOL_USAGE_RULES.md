@@ -32,7 +32,7 @@ The disk file is **not** updated by `universal_file_edit`. Changes reach disk on
 
 **Command parameters (source of truth)**: Project-scoped commands use **`project_id`** (UUID from `list_projects` or the `projectid` file in the project root). Authoritative schemas: `help(server_id="code-analysis-server", command="<name>")` via MCP, or `get_schema()` in code. See [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md), [COMMANDS_INDEX.md](COMMANDS_INDEX.md).
 
-**Command metadata vs schema**: Validation and adapter `help` **schema** come from `get_schema()`. Extended AI fields live in `metadata()` — [standards/METADATA_SCHEMA_STANDARD.md](standards/METADATA_SCHEMA_STANDARD.md). Requires **`mcp-proxy-adapter>=8.10.13`**.
+**Command metadata vs schema**: Validation and adapter `help` **schema** come from `get_schema()`. Extended AI fields live in `metadata()` — [standards/METADATA_SCHEMA_STANDARD.md](standards/METADATA_SCHEMA_STANDARD.md). Requires **`mcp-proxy-adapter>=8.10.19`**.
 
 **Project-specific rules**: Code under `test_data/` — [TEST_DATA_AI_RULES.md](TEST_DATA_AI_RULES.md) (server-only read/write for test code).
 

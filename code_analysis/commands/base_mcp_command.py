@@ -69,7 +69,7 @@ class BaseMCPCommand(Command):
     - Standardized error handling
     - Common validation methods
 
-    Command description contract (``mcp-proxy-adapter`` >= 8.10.13):
+    Command description contract (``mcp-proxy-adapter`` >= 8.10.19):
     - ``get_schema()`` — machine-readable input JSON Schema for validation and help.
     - ``metadata()`` — extended AI/docs fields; merged by the adapter into help payloads.
       Do not duplicate schema fields inside ``metadata()``; see

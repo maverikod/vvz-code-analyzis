@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis"
-version = "1.6.49"
+version = "1.6.50"
 description = "Code analysis MCP server, database tooling, and AST/CST commands"
 readme = { file = "docs/README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ dependencies = [
     "embed-client>=3.1.9.5",
     "aiohttp>=3.8.0",
     "httpx>=0.24.0",
-    "mcp-proxy-adapter>=8.10.17",
+    "mcp-proxy-adapter>=8.10.19",
     "numpy>=1.26,<3",
     "faiss-cpu>=1.7",
     "queuemgr>=1.0.20",
@@ -60,6 +60,10 @@ dev = [
     # black / flake8 / mypy moved to runtime dependencies (the server runs them);
     # isort / bandit added there too. Kept out of dev to avoid divergent pins.
 ]
+
+[tool.code-analysis.dependency-versions]
+mcp-proxy-adapter = "8.10.19"
+queuemgr = "1.0.20"
 
 [tool.setuptools.packages.find]
 where = ["."]

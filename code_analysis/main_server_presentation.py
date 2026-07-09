@@ -1,7 +1,7 @@
 """
 Resolve OpenAPI / MCP server title, description, and version from config.
 
-Adapter contract (mcp-proxy-adapter >= 8.10.13):
+Adapter contract (mcp-proxy-adapter >= 8.10.19):
 - ``AppFactory.create_app(title=..., description=..., version=...)`` → OpenAPI + ``help`` ``tool_info``.
 - Proxy ``list_servers`` description: ``registration.metadata.description`` (see
   ``build_server_metadata`` in the adapter; same pattern as ``mcp_terminal`` /

@@ -7,7 +7,7 @@ from __future__ import annotations
 from importlib import metadata
 from typing import Any, Dict
 
-MIN_MCP_PROXY_ADAPTER_VERSION = "8.10.15"
+MIN_MCP_PROXY_ADAPTER_VERSION = "8.10.19"
 MIN_QUEUEMGR_VERSION = "1.0.20"
 
 

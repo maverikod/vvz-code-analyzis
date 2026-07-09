@@ -6,9 +6,9 @@ The external MCP/API surface is owned by `mcp-proxy-adapter`. The `code_analysis
 
 Canonical copy (standards tree): [`standards/METADATA_SCHEMA_STANDARD.md`](standards/METADATA_SCHEMA_STANDARD.md).
 
-## Adapter integration (`mcp-proxy-adapter` >= 8.10.13)
+## Adapter integration (`mcp-proxy-adapter` >= 8.10.19)
 
-Requires **`mcp-proxy-adapter>=8.10.13`** (see `pyproject.toml` / `requirements.txt`).
+Requires **`mcp-proxy-adapter>=8.10.19`** (see `pyproject.toml` / `requirements.txt`).
 
 The adapter builds help via `build_command_help_payload()`:
 

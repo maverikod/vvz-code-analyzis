@@ -81,11 +81,7 @@ REQUIRED_CLIENT_API: FrozenSet[str] = frozenset(
         "FileSessionClient.upload_bytes",
         "FileSessionClient.upload",
         "FileSessionClient.upload_new",
-        # UniversalFileClient
-        "UniversalFileClient.open",
-        "UniversalFileClient.edit",
-        "UniversalFileClient.write",
-        "UniversalFileClient.close",
+        # UniversalFileClient (read-only preview; editing lives in ai-editor client)
         "UniversalFileClient.preview",
     }
 )

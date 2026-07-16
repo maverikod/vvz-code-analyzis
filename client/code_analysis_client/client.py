@@ -128,7 +128,7 @@ class CodeAnalysisAsyncClient:
 
     @property
     def universal_files(self) -> UniversalFileClient:
-        """Universal edit-session workflow (``universal_file_*`` commands)."""
+        """Read-only structured preview (``universal_file_preview`` command)."""
         return UniversalFileClient(self)
 
     async def get_command_schema(

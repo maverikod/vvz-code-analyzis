@@ -72,12 +72,17 @@ from the server registry. Use the facades below or generic `call` / `commands.*`
 | Facade | Property | Server commands |
 |--------|----------|-----------------|
 | Client DB sessions + transfer | `client.file_sessions` | `session_*`, `subordinate_session_*`, `project_file_transfer_*`, `project_file_advisory_lock_batch` |
-| Universal edit sessions | `client.universal_files` | `universal_file_open`, `edit`, `write`, `close`, `preview` |
+| Universal file preview | `client.universal_files` | `universal_file_preview` (read-only) |
 | Any registered command | `client.call` / `client.commands.<name>` | schema from live `help()` |
 
 Canonical command lists: `code_analysis_client.server_api` — exported as
 `FILE_SESSION_COMMANDS`, `FILE_SESSION_FACADE_METHODS`, `CLIENT_FACADE_COMMANDS`,
 `REMOVED_COMMANDS`.
+
+**Scope boundary:** this client manipulates files only as whole units — transfer,
+locks, sessions, and structured read-only preview — and analyzes them. Content
+editing (open/edit/write/close draft sessions) is not served by this project's
+code-analysis server; use the ai-editor client for that.
 
 Sync checks (in-process registry):
 
@@ -98,7 +103,7 @@ documentation** is embedded in the **module docstrings** of those Python files
 |--------|---------|
 | `run_all_examples.py` | Full API tour + runs all live sibling scripts |
 | `ex_minimal_validated.py` | Smallest validated RPC example |
-| `ex_universal_files.py` | All `UniversalFileClient` methods (open/edit/write/close/preview) |
+| `ex_universal_files.py` | `UniversalFileClient.preview` (read-only structured preview) |
 | `ex_session_view_subordinates.py` | `session_view` and subordinate CRUD |
 | `ex_file_sessions.py` | Sessions, locks, transfer roundtrip |
 | `ex_config_only.py` | Parse `config.json` without TCP |

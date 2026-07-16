@@ -1,9 +1,9 @@
 """
-Universal file edit-session workflow on top of :class:`CodeAnalysisAsyncClient`.
+Read-only structured file preview on top of :class:`CodeAnalysisAsyncClient`.
 
-Wraps ``universal_file_open`` / ``edit`` / ``write`` / ``close`` / ``preview`` only.
-Legacy ``universal_file_read`` / ``universal_file_save`` and CST commands are not
-part of this API (see :mod:`server_api`).
+Wraps ``universal_file_preview`` only. Content editing (open/edit/write/close
+sessions) is not served by this project's code-analysis server; that workflow
+lives in the ai-editor client instead.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict
 
 from code_analysis_client.responses import unwrap_command_result
 
@@ -20,98 +20,18 @@ if TYPE_CHECKING:
 
 
 class UniversalFileClient:
-    """Edit-session workflow for project files (open → edit → write → close).
+    """Read-only structured preview for project files.
 
-    Uses ``session_id`` from ``universal_file_open`` only. Not related to
-    client ``session_*`` commands (``session_create``, ``session_open_file``, …).
+    Wraps ``universal_file_preview`` (the only ``universal_file_*`` command
+    still registered on the code-analysis server). Content editing belongs to
+    the ai-editor client, not this package.
     """
 
     __slots__ = ("_client",)
 
     def __init__(self, client: CodeAnalysisAsyncClient) -> None:
-        """Store the async client used for universal file workflow commands."""
+        """Store the async client used for universal file preview commands."""
         self._client = client
-
-    async def open(
-        self,
-        project_id: str,
-        file_path: str,
-        *,
-        create: bool = False,
-        initial_content: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Start an edit session (``universal_file_open``).
-
-        Identifies the file by ``project_id`` + ``file_path`` (not ``file_id``).
-        """
-        params: Dict[str, Any] = {
-            "project_id": project_id,
-            "file_path": file_path,
-            "create": create,
-        }
-        if initial_content is not None:
-            params["initial_content"] = initial_content
-        return unwrap_command_result(
-            await self._client.call_validated("universal_file_open", params)
-        )
-
-    async def edit(
-        self,
-        project_id: str,
-        session_id: str,
-        operations: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        """Apply draft mutations (``universal_file_edit``)."""
-        return unwrap_command_result(
-            await self._client.call_validated(
-                "universal_file_edit",
-                {
-                    "project_id": project_id,
-                    "session_id": session_id,
-                    "operations": operations,
-                },
-            )
-        )
-
-    async def write(
-        self,
-        project_id: str,
-        session_id: str,
-        *,
-        write_mode: str = "commit",
-    ) -> Dict[str, Any]:
-        """Persist or preview draft (``universal_file_write``).
-
-        Default ``write_mode`` is ``commit`` in this client wrapper. The server
-        default when the parameter is omitted is ``preview``. Pass
-        ``write_mode='preview'`` first to inspect the diff, then ``commit``.
-        """
-        return unwrap_command_result(
-            await self._client.call_validated(
-                "universal_file_write",
-                {
-                    "project_id": project_id,
-                    "session_id": session_id,
-                    "write_mode": write_mode,
-                },
-            )
-        )
-
-    async def close(
-        self,
-        project_id: str,
-        session_id: str,
-    ) -> Dict[str, Any]:
-        """End edit session (``universal_file_open`` session_id, not client ``session_*``)."""
-        return unwrap_command_result(
-            await self._client.call_validated(
-                "universal_file_close",
-                {
-                    "project_id": project_id,
-                    "session_id": session_id,
-                },
-            )
-        )
 
     async def preview(
         self,

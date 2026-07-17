@@ -8,7 +8,9 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import errno
 import logging
+import os
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -150,6 +152,18 @@ class WorkerMonitor:
                             is_alive = False
 
                     if not is_alive and pid:
+                        try:
+                            reaped_pid, _status = os.waitpid(pid, os.WNOHANG)
+                            if reaped_pid == pid:
+                                logger.debug(
+                                    f"Reaped zombie child process (PID: {pid}) via waitpid"
+                                )
+                        except ChildProcessError:
+                            # Not our child (or already reaped) — fall through.
+                            pass
+                        except OSError as e:
+                            if e.errno != errno.ECHILD:
+                                logger.debug(f"waitpid({pid}) failed: {e}")
                         try:
                             import psutil
 

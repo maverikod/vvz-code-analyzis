@@ -98,6 +98,11 @@ class VectorizationWorker:
         )
         self.vector_ann_backend: Literal["faiss", "pgvector"] = vector_ann_backend
         self._stop_event = multiprocessing.Event()
+        # In-process only (resets on worker restart): counts consecutive
+        # unresolved attempts per chunk_id for the chunk-only embedding path,
+        # so a chunk that can never be embedded is dead-lettered instead of
+        # retried forever. See batch_processor.process_chunk_only_files.
+        self._chunk_only_attempts: Dict[str, int] = {}
 
     def stop(self) -> None:
         """Stop the worker."""

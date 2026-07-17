@@ -43,7 +43,7 @@ async def process_projects_in_cycle(
     chunks_total_at_start: int,
     total_processed: int,
     total_errors: int,
-) -> Tuple[int, int, bool, float, float, float, float, int]:
+) -> Tuple[int, int, bool, float, float, float, float, int, int]:
     """
     Process each project in the cycle: chunking, chunk-only embedding fill,
     assign vector_id.
@@ -51,7 +51,7 @@ async def process_projects_in_cycle(
     Returns:
         (total_processed_delta, total_errors_delta, cycle_activity,
          cycle_step0_s, cycle_step1_query_s, cycle_step1_chunking_s,
-         cycle_step2_s, cycle_chunked_files).
+         cycle_step2_s, cycle_chunked_files, cycle_committed_work).
     """
     from ..faiss_manager import FaissIndexManager
 
@@ -63,6 +63,7 @@ async def process_projects_in_cycle(
     cycle_activity = False
     delta_processed = 0
     delta_errors = 0
+    cycle_committed_work = 0
 
     _now_sql = sql_julian_timestamp_now_expr(database)
 
@@ -277,14 +278,19 @@ async def process_projects_in_cycle(
                 if co_updated or co_errors:
                     logger.info(
                         "[PROJECT_CYCLE STEP 1.5] chunk_only: updated=%d errors=%d project_id=%s",
-                        co_updated, co_errors, project_id,
+                        co_updated,
+                        co_errors,
+                        project_id,
                     )
                     if co_updated > 0:
                         cycle_activity = True
+                cycle_committed_work += co_updated
             except Exception as e:
                 logger.error(
                     "[PROJECT_CYCLE STEP 1.5] chunk_only vectorization failed project_id=%s: %s",
-                    project_id, e, exc_info=True,
+                    project_id,
+                    e,
+                    exc_info=True,
                 )
             logger.info(
                 "[PROJECT_CYCLE STEP 2] embedding/vectorization project_id=%s",
@@ -327,6 +333,7 @@ async def process_projects_in_cycle(
                 )
 
                 delta_processed += batch_processed
+                cycle_committed_work += batch_processed
                 delta_errors += batch_errors
                 write_worker_status(
                     getattr(worker, "status_file_path", None),
@@ -397,4 +404,5 @@ async def process_projects_in_cycle(
         cycle_step1_chunking_s,
         cycle_step2_s,
         cycle_chunked_files,
+        cycle_committed_work,
     )

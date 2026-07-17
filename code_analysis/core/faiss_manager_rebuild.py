@@ -79,6 +79,7 @@ async def rebuild_from_database_impl(
                     WHERE project_id = ?
                       AND embedding_model IS NOT NULL
                       AND embedding_vector IS NOT NULL
+                      AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)
                       {norm_omit_sql}
                 )
                 UPDATE code_chunks
@@ -97,6 +98,7 @@ async def rebuild_from_database_impl(
                     FROM code_chunks
                     WHERE embedding_model IS NOT NULL
                       AND embedding_vector IS NOT NULL
+                      AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)
                       {norm_omit_sql}
                 )
                 UPDATE code_chunks
@@ -189,6 +191,7 @@ def _fetch_chunks_for_rebuild(
         FROM code_chunks cc
         WHERE cc.embedding_model IS NOT NULL
           AND cc.embedding_vector IS NOT NULL
+          AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
           {md_frag}
     """
     if project_id:

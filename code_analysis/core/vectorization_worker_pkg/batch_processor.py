@@ -53,6 +53,44 @@ def _embedding_model(chunk: Any) -> Optional[str]:
     return str(model) if model else None
 
 
+# code_chunks.vectorization_skipped encoding: 1 = docs-markdown policy gate (written by
+# docstring_chunker.py, untouched by this module); 2 = vectorization dead-letter (this
+# module) — a chunk whose embedding could not be produced/parsed after exhausting
+# retries. Both values are excluded by every existing reader's
+# "IS NULL OR = 0" pending-check, so introducing 2 needs no other query changes.
+VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE = 2
+
+
+def _mark_vectorization_dead_letter(
+    database: Any, chunk_id: Any, *, file_path: str = "", reason: str
+) -> None:
+    """Permanently mark a chunk as dead-lettered so it stops being retried.
+
+    Args:
+        database: Database client (DatabaseClient RPC or CodeDatabase); ``execute``
+            is called synchronously, matching the rest of this module.
+        chunk_id: code_chunks.id of the row to mark.
+        file_path: File path/relative path for the log line (best-effort; may be "").
+        reason: Short human-readable reason, logged for operability.
+
+    Returns:
+        None.
+    """
+    database.execute(
+        "UPDATE code_chunks SET vectorization_skipped = ? WHERE id = ?",
+        (VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE, chunk_id),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+    )
+    logger.warning(
+        "[dead-letter] chunk_id=%s file=%s reason=%s — vectorization_skipped=%d, "
+        "will not be retried",
+        chunk_id,
+        file_path or "?",
+        reason,
+        VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE,
+    )
+
+
 async def recover_unvectorized_by_neighbor_merge(
     ordered_chunks: List[Any],
     embed_one: Callable[[str], Awaitable[Tuple[Optional[list], Optional[str]]]],
@@ -272,6 +310,7 @@ async def process_chunk_only_files(
             assignments.update(recovered)
 
         update_ops: List[Tuple[str, Optional[tuple]]] = []
+        resolved_ids: List[str] = []
         for chunk in chunk_objs:
             assigned = assignments.get(chunk.id)
             if not assigned:
@@ -280,12 +319,49 @@ async def process_chunk_only_files(
             update_ops.append(
                 (_EMBED_UPDATE_SQL, (json.dumps(vector), model, chunk.id))
             )
-        unresolved_count = len(chunk_objs) - len(update_ops)
+            resolved_ids.append(chunk.id)
+
+        unresolved_chunks = [c for c in chunk_objs if c.id not in assignments]
+        unresolved_count = len(unresolved_chunks)
+
+        if unresolved_chunks:
+            max_attempts = getattr(self, "retry_attempts", 3)
+            attempts_map = getattr(self, "_chunk_only_attempts", None)
+            if attempts_map is None:
+                attempts_map = {}
+                self._chunk_only_attempts = attempts_map
+            dead_letter_ids: List[str] = []
+            pending_retry = 0
+            for c in unresolved_chunks:
+                n = attempts_map.get(c.id, 0) + 1
+                attempts_map[c.id] = n
+                if n >= max_attempts:
+                    dead_letter_ids.append(c.id)
+                else:
+                    pending_retry += 1
+            for cid in dead_letter_ids:
+                _mark_vectorization_dead_letter(
+                    database,
+                    cid,
+                    file_path=file_path,
+                    reason=f"no usable embedding after {max_attempts} attempt(s)",
+                )
+                attempts_map.pop(cid, None)
+            if pending_retry:
+                logger.info(
+                    "[chunk_only] file=%s: %d chunk(s) unresolved, leaving for "
+                    "retry (attempts < %d)",
+                    file_path,
+                    pending_retry,
+                    max_attempts,
+                )
+
+        for cid in resolved_ids:
+            attempts_map_for_reset = getattr(self, "_chunk_only_attempts", None)
+            if attempts_map_for_reset is not None:
+                attempts_map_for_reset.pop(cid, None)
+
         if not update_ops:
-            logger.info(
-                "[chunk_only] file=%s: no usable embeddings; leaving chunks for retry",
-                file_path,
-            )
             error_count += unresolved_count
             continue
 
@@ -363,7 +439,8 @@ async def process_embedding_ready_chunks(
     chunks_result = database.execute(
         f"""
         SELECT cc.id, cc.chunk_text, cc.class_id, cc.function_id, cc.method_id,
-               cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model
+               cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model,
+               f.relative_path AS chunk_file_relative_path
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
@@ -479,9 +556,11 @@ async def process_embedding_ready_chunks(
                     )
 
             if embedding_array is None:
-                logger.debug(
-                    f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), skipping "
-                    "(indexer must set embedding_vector; vectorization worker only transfers)"
+                _mark_vectorization_dead_letter(
+                    database,
+                    chunk_id,
+                    file_path=chunk.get("chunk_file_relative_path") or "",
+                    reason=f"unparseable/empty embedding_vector ({ast_binding})",
                 )
                 continue
 

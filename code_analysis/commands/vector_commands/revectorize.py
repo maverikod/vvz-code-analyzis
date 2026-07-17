@@ -26,6 +26,9 @@ from ...core.storage_paths import (
 )
 from ...core.vector_search_backend import effective_vector_search_backend
 from ...core.sql_portable import WHERE_FILES_ACTIVE_F
+from ...core.vectorization_worker_pkg.batch_processor import (
+    VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -559,21 +562,29 @@ class RevectorizeCommand(BaseMCPCommand):
                             norm = FaissIndexManager._normalize_vector(embedding_array)
                             vt = numpy_embedding_to_pgvector_text(norm)
                             database.execute(
-                                """
+                                f"""
                                 UPDATE code_chunks
                                 SET embedding_vector = ?,
                                     embedding_model = ?,
                                     vector_id = NULL,
-                                    embedding_vec = ?::vector
+                                    embedding_vec = ?::vector,
+                                    vectorization_skipped = CASE
+                                        WHEN vectorization_skipped = {VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE} THEN 0
+                                        ELSE vectorization_skipped
+                                    END
                                 WHERE id = ?
                                 """,
                                 (embedding_json, embedding_model, vt, chunk_id),
                             )
                         else:
                             database.execute(
-                                """
+                                f"""
                                 UPDATE code_chunks
-                                SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
+                                SET embedding_vector = ?, embedding_model = ?, vector_id = NULL,
+                                    vectorization_skipped = CASE
+                                        WHEN vectorization_skipped = {VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE} THEN 0
+                                        ELSE vectorization_skipped
+                                    END
                                 WHERE id = ?
                                 """,
                                 (embedding_json, embedding_model, chunk_id),

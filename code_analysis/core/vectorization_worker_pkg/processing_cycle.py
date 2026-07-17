@@ -177,7 +177,7 @@ async def run_one_cycle(
     cycle_count: int,
     total_processed: int,
     total_errors: int,
-) -> Tuple[int, int, bool, float, float, float, float, float, int]:
+) -> Tuple[int, int, bool, float, float, float, float, float, int, int]:
     """
     Run one vectorization cycle: stats, projects query, process projects,
     rebuild FAISS, update cycle_end_time.
@@ -188,7 +188,8 @@ async def run_one_cycle(
     Returns:
         (total_processed_delta, total_errors_delta, cycle_activity,
          cycle_step0_s, cycle_step1_query_s, cycle_step1_chunking_s,
-         cycle_step2_s, cycle_step3_s, cycle_chunked_files).
+         cycle_step2_s, cycle_step3_s, cycle_chunked_files,
+         cycle_committed_work).
     """
     from ..faiss_manager import FaissIndexManager
 
@@ -280,6 +281,7 @@ async def run_one_cycle(
     cycle_step2_s = 0.0
     cycle_step3_s = 0.0
     cycle_chunked_files = 0
+    cycle_committed_work = 0
     delta_processed = 0
     delta_errors = 0
 
@@ -347,6 +349,7 @@ async def run_one_cycle(
             cycle_step1_chunking_s,
             cycle_step2_s,
             cycle_chunked_files,
+            cycle_committed_work,
         ) = await process_projects_in_cycle(
             worker,
             database,
@@ -458,4 +461,5 @@ async def run_one_cycle(
         cycle_step2_s,
         cycle_step3_s,
         cycle_chunked_files,
+        cycle_committed_work,
     )

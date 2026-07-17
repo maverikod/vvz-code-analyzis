@@ -15,7 +15,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
@@ -30,6 +30,57 @@ logger = logging.getLogger(__name__)
 # Hard ceiling on poll interval: guards int()/range() from OverflowError when
 # get_backoff_delay() returns infinity or a value too large for C ssize_t.
 _MAX_POLL_INTERVAL = 3600
+
+
+def _next_poll_interval(
+    *,
+    poll_interval: int,
+    actual_poll_interval: int,
+    committed_work: int,
+    consecutive_no_progress: int,
+    max_empty_iterations: int,
+    empty_delay: float,
+) -> Tuple[int, int]:
+    """
+    Decide the sleep interval for the next cycle and the updated no-progress streak.
+
+    Fast-polls (capped at 2s) only while the cycle committed real work — rows
+    actually vectorized/updated (``batch_processed`` + ``co_updated`` totals), not a
+    bare activity flag and not a pending-count delta. When a cycle commits nothing,
+    the no-progress streak grows; once the streak exceeds ``max_empty_iterations``,
+    the sleep grows (doubling) starting from ``empty_delay``, never below the
+    caller-supplied ``actual_poll_interval`` (which already reflects ``poll_interval``
+    and any SVO circuit-breaker backoff), and capped at ``_MAX_POLL_INTERVAL``.
+
+    Args:
+        poll_interval: Configured base interval in seconds.
+        actual_poll_interval: Interval computed so far this cycle (``poll_interval``,
+            possibly raised by circuit-breaker backoff before this call).
+        committed_work: Rows actually vectorized/updated this cycle. Zero means the
+            cycle made no progress.
+        consecutive_no_progress: Streak of prior consecutive no-progress cycles.
+        max_empty_iterations: Streak length allowed before the sleep starts growing.
+        empty_delay: Base delay in seconds the growth starts from.
+
+    Returns:
+        Tuple of (next_actual_poll_interval, next_consecutive_no_progress).
+    """
+    if committed_work > 0:
+        return min(actual_poll_interval, 2), 0
+
+    streak = consecutive_no_progress + 1
+    if streak > max_empty_iterations:
+        # Cap the doubling exponent: for any sane empty_delay, 2**39 already
+        # dwarfs _MAX_POLL_INTERVAL, but an uncapped exponent (streak can grow
+        # without bound while the worker idles) would eventually make the
+        # int->float conversion below raise OverflowError.
+        growth_cycles = min(streak - max_empty_iterations, 40)
+        grown_delay = empty_delay * (2 ** (growth_cycles - 1))
+        actual_poll_interval = min(
+            max(actual_poll_interval, int(grown_delay)),
+            _MAX_POLL_INTERVAL,
+        )
+    return actual_poll_interval, streak
 
 
 async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
@@ -95,6 +146,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
     backoff = 1.0
     backoff_max = 60.0
+    consecutive_no_progress = 0
 
     try:
         logger.info(
@@ -111,7 +163,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             # (re)connect when there is no live client; the error path below sets
             # ``database = None`` (after disconnecting) to request a reconnect.
             if database is None:
-                (database, db_available, backoff, db_status_logged) = (
+                database, db_available, backoff, db_status_logged = (
                     await ensure_database_connection(
                         self,
                         cfg_path,
@@ -155,6 +207,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             cycle_step2_s = 0.0
             cycle_step3_s = 0.0
             cycle_chunked_files = 0
+            cycle_committed_work = 0
             try:
                 (
                     delta_p,
@@ -166,6 +219,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     cycle_step2_s,
                     cycle_step3_s,
                     cycle_chunked_files,
+                    cycle_committed_work,
                 ) = await run_one_cycle(
                     self,
                     database,
@@ -206,6 +260,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 cycle_step2_s = 0.0
                 cycle_step3_s = 0.0
                 cycle_chunked_files = 0
+                cycle_committed_work = 0
 
             total_processed += delta_p
             total_errors += delta_e
@@ -269,8 +324,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                 actual_poll_interval,
                                 backoff_delay,
                             )
-                if cycle_activity:
-                    actual_poll_interval = min(actual_poll_interval, 2)
+                actual_poll_interval, consecutive_no_progress = _next_poll_interval(
+                    poll_interval=poll_interval,
+                    actual_poll_interval=actual_poll_interval,
+                    committed_work=cycle_committed_work,
+                    consecutive_no_progress=consecutive_no_progress,
+                    max_empty_iterations=self.max_empty_iterations,
+                    empty_delay=self.empty_delay,
+                )
 
                 write_worker_status(
                     getattr(self, "status_file_path", None),

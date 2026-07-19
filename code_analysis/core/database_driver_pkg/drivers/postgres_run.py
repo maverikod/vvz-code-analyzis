@@ -20,6 +20,7 @@ from code_analysis.core.database.watch_dir_sql import (
     watch_dir_paths_upsert_null_norm_for_postgres_adapter,
     watch_dirs_upsert_norm_for_postgres_adapter,
 )
+from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 
 from ..exceptions import (
     DatabaseErrorInfo,
@@ -192,6 +193,31 @@ _FILES_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
 )
 
 
+class _PostgresDriverTypeStub:
+    """Minimal stand-in so ``sql_julian_timestamp_now_expr`` resolves its postgres branch.
+
+    ``comprehensive_analysis_results`` INSERT statements resolve the "now" expression
+    client-side via ``sql_julian_timestamp_now_expr`` *before* this adapter ever sees the
+    SQL — on a postgres-backed caller that already yields ``EXTRACT(JULIAN FROM
+    CURRENT_TIMESTAMP)`` with no wrapping parens (unlike ``julianday('now')`` literals used
+    elsewhere in this module, which the adapter itself parenthesizes). Deriving the norm
+    from the real helper (instead of hand-typing the string) keeps the two in sync.
+    """
+
+    _driver_type = "postgres"
+
+
+_COMPREHENSIVE_ANALYSIS_RESULTS_NOW_EXPR = sql_julian_timestamp_now_expr(
+    _PostgresDriverTypeStub()
+)
+
+_COMPREHENSIVE_ANALYSIS_RESULTS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
+    "INSERT OR REPLACE INTO comprehensive_analysis_results "
+    "(file_id, project_id, file_mtime, results_json, summary_json, updated_at) "
+    f"VALUES (?, ?, ?, ?, ?, {_COMPREHENSIVE_ANALYSIS_RESULTS_NOW_EXPR})"
+)
+
+
 # SQLite schema often uses INTEGER 0/1 for these; PostgreSQL uses native BOOLEAN.
 _BOOL_COL_INT_ASSIGN = ("deleted", "has_docstring", "processing_paused")
 
@@ -361,6 +387,17 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
             "has_docstring = EXCLUDED.has_docstring, "
             "deleted = EXCLUDED.deleted, "
             "watch_dir_id = EXCLUDED.watch_dir_id"
+        )
+    if norm == _COMPREHENSIVE_ANALYSIS_RESULTS_INSERT_OR_REPLACE_NORM:
+        return (
+            "INSERT INTO comprehensive_analysis_results "
+            "(file_id, project_id, file_mtime, results_json, summary_json, updated_at) "
+            f"VALUES (?, ?, ?, ?, ?, {_COMPREHENSIVE_ANALYSIS_RESULTS_NOW_EXPR}) "
+            "ON CONFLICT (file_id, file_mtime) DO UPDATE SET "
+            "project_id = EXCLUDED.project_id, "
+            "results_json = EXCLUDED.results_json, "
+            "summary_json = EXCLUDED.summary_json, "
+            "updated_at = EXCLUDED.updated_at"
         )
     return s
 

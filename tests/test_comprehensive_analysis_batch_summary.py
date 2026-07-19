@@ -78,6 +78,27 @@ def test_build_batch_summary_default_trust_counters_zero() -> None:
     assert summary["files_skipped_unreadable_or_missing"] == 0
 
 
+def test_build_batch_summary_save_error_counters_default_zero() -> None:
+    """Callers passing only legacy positional args get save counters as zero."""
+    summary = build_batch_summary(_minimal_results(), 0, 0, 0)
+    assert summary["save_errors"] == 0
+    assert summary["results_persisted"] == 0
+
+
+def test_build_batch_summary_save_error_counters_passthrough() -> None:
+    """save_errors/results_persisted surface explicitly-passed batch-save outcomes."""
+    summary = build_batch_summary(
+        _minimal_results(),
+        2,
+        1,
+        4,
+        save_errors=1,
+        results_persisted=3,
+    )
+    assert summary["save_errors"] == 1
+    assert summary["results_persisted"] == 3
+
+
 @pytest.mark.asyncio
 async def test_run_batch_summary_counter_invariants(tmp_path) -> None:
     """One missing file, one up-to-date skip, one analyzed row: buckets sum to files_total."""

@@ -115,6 +115,8 @@ async def run_batch(
     files_skipped_up_to_date = 0
     # Missing path, not a file, stat() failure, or read_text failure (rows that hit continue before analyze).
     files_skipped_unreadable_or_missing = 0
+    save_errors = 0
+    results_persisted = 0
     t_loop_start = time.perf_counter()
 
     def _avg_eta_suffix(current: int, total: int, start_sec: float) -> str:
@@ -368,12 +370,14 @@ async def run_batch(
                         t_save0 = time.perf_counter()
                         db.save_comprehensive_analysis_results_batch(save_batch)
                         timings_sec["save"] += time.perf_counter() - t_save0
+                        results_persisted += len(save_batch)
                         analysis_logger.info(
                             "Saved batch of %s analysis results",
                             len(save_batch),
                         )
                         save_batch.clear()
                     except Exception as e:
+                        save_errors += 1
                         logger.error(
                             "Failed to save analysis results batch: %s",
                             e,
@@ -409,11 +413,13 @@ async def run_batch(
             t_save0 = time.perf_counter()
             db.save_comprehensive_analysis_results_batch(save_batch)
             timings_sec["save"] += time.perf_counter() - t_save0
+            results_persisted += len(save_batch)
             analysis_logger.info(
                 "Saved final batch of %s analysis results",
                 len(save_batch),
             )
         except Exception as e:
+            save_errors += 1
             logger.error(
                 "Failed to save final analysis results batch: %s",
                 e,
@@ -463,6 +469,8 @@ async def run_batch(
         files_total,
         files_skipped_up_to_date=files_skipped_up_to_date,
         files_skipped_unreadable_or_missing=files_skipped_unreadable_or_missing,
+        save_errors=save_errors,
+        results_persisted=results_persisted,
     )
 
     log_timing("total_elapsed", t_start)

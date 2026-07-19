@@ -222,3 +222,66 @@ def test_legacy_reembed_worker_path_removed() -> None:
     """Chunk-only vectorization owns embedding fill; legacy SVO re-embed is gone."""
     legacy_name = "process_chunks" + "_missing_embedding_params"
     assert not hasattr(batch_processor, legacy_name)
+
+
+def test_adapt_comprehensive_analysis_results_insert_or_replace_to_upsert() -> None:
+    """Postgres-resolved comprehensive_analysis_results save SQL must upsert on the
+    real composite unique key (file_id, file_mtime), not file_id alone."""
+    from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
+    class _PgStub:
+        _driver_type = "postgres"
+
+    now_expr = sql_julian_timestamp_now_expr(_PgStub())
+    # Reproduces the exact runtime SQL text built by
+    # client_api_comprehensive_analysis.py / core/database/comprehensive_analysis.py
+    # when the caller's _driver_type is "postgres" (before this adapter ever sees it).
+    raw = (
+        "INSERT OR REPLACE INTO comprehensive_analysis_results "
+        "(file_id, project_id, file_mtime, results_json, summary_json, updated_at) "
+        f"VALUES (?, ?, ?, ?, ?, {now_expr})"
+    )
+    assert "INSERT OR REPLACE" in raw  # sanity: this is the pre-fix shape
+
+    out = _adapt_sqlite_dml_for_postgres(raw)
+
+    assert "INSERT OR REPLACE" not in out
+    assert "ON CONFLICT (file_id, file_mtime) DO UPDATE SET" in out
+    assert "project_id = EXCLUDED.project_id" in out
+    assert "results_json = EXCLUDED.results_json" in out
+    assert "summary_json = EXCLUDED.summary_json" in out
+    assert "updated_at = EXCLUDED.updated_at" in out
+    # file_mtime is part of the conflict target, not an update column
+    assert "file_mtime = EXCLUDED.file_mtime" not in out
+    assert "VALUES (?, ?, ?, ?, ?," in out
+
+
+def test_adapt_comprehensive_analysis_results_norm_covers_all_three_call_sites() -> (
+    None
+):
+    """The three save call sites build byte-identical SQL after normalization
+    (client_api_comprehensive_analysis.py single+batch, core/database/comprehensive_analysis.py);
+    one allowlist entry must cover all of them regardless of surrounding whitespace/newlines.
+    """
+    from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
+    class _PgStub:
+        _driver_type = "postgres"
+
+    now_expr = sql_julian_timestamp_now_expr(_PgStub())
+    variants = [
+        (
+            "\nINSERT OR REPLACE INTO comprehensive_analysis_results\n"
+            "(file_id, project_id, file_mtime, results_json, summary_json, updated_at)\n"
+            f"VALUES (?, ?, ?, ?, ?, {now_expr})\n"
+        ),
+        (
+            "\n            INSERT OR REPLACE INTO comprehensive_analysis_results\n"
+            "            (file_id, project_id, file_mtime, results_json, summary_json, updated_at)\n"
+            f"            VALUES (?, ?, ?, ?, ?, {now_expr})\n        "
+        ),
+    ]
+    for raw in variants:
+        out = _adapt_sqlite_dml_for_postgres(raw)
+        assert "INSERT OR REPLACE" not in out
+        assert "ON CONFLICT (file_id, file_mtime) DO UPDATE SET" in out

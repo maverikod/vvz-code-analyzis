@@ -75,12 +75,16 @@ def build_batch_summary(
     *,
     files_skipped_up_to_date: int = 0,
     files_skipped_unreadable_or_missing: int = 0,
+    save_errors: int = 0,
+    results_persisted: int = 0,
 ) -> Dict[str, Any]:
     """Build summary_data dict from aggregated results and counts.
 
     Trust counters: ``files_skipped`` remains the legacy key (mtime / up-to-date gate only).
     ``files_skipped_up_to_date`` matches that semantics. ``files_skipped_unreadable_or_missing``
     counts rows skipped before analysis (missing path, not a file, stat/read errors).
+    ``save_errors``/``results_persisted`` surface batch DB-save failures without changing job
+    completed-status semantics.
 
     For a full scan with one pass per DB row:
     ``files_analyzed + files_skipped + files_skipped_unreadable_or_missing == files_total``.
@@ -125,6 +129,8 @@ def build_batch_summary(
         "files_total": files_total,
         "files_skipped_up_to_date": files_skipped_up_to_date,
         "files_skipped_unreadable_or_missing": files_skipped_unreadable_or_missing,
+        "save_errors": save_errors,
+        "results_persisted": results_persisted,
     }
     summary.update(quality_findings_counts(results))
     integrity = results.get("project_integrity") or {}

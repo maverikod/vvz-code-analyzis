@@ -10,9 +10,9 @@ meta:
 trigger: Before session_create, terminal_session_create, or terminal_run.
 session_server_id: code-analysis-server
 terminal_server_id: mcp-terminal
-session_not_universal_file: session_id from session_create is unrelated to
-  universal_file_open / universal_file_edit session_id (in-memory file edit draft).
-  Do not mix the two lifecycles.
+session_not_editor_session: session_id from session_create is unrelated to
+  ai-editor-server edit-session identifiers (universal_file_open/edit were removed
+  from code-analysis-server). Do not mix the two lifecycles.
 forbidden:
   client_generated_session_id: PROHIBITED. Do not invent session_id locally.
     Always call session_create on code-analysis-server and reuse the returned UUID4.
@@ -42,7 +42,7 @@ client_session_lifecycle:
     session_id visibility depends on config sessions.show_session_ids
   4_file_locks_optional: session_open_file(session_id, project_id, file_id) →
     session_close_file(...) when coordinating indexed file_id locks (independent
-    of universal_file_open)
+    of ai-editor edit sessions)
   5_subordinate_optional: subordinate_session_create(parent_session_id, comment,
     server_uuid?) — register leading session on another server instance (e.g.
     mcp-terminal); subordinate_session_list / subordinate_session_delete to audit

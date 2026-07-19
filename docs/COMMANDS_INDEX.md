@@ -27,11 +27,6 @@ email: vasilyvz@gmail.com
 | Command | Class | Source File |
 |---------|-------|-------------|
 | universal_file_preview | UniversalFilePreviewCommand | commands/universal_file_preview_command.py |
-| universal_file_open | UniversalFileOpenCommand | commands/universal_file_edit/open_command.py |
-| universal_file_search | UniversalFileSearchCommand | commands/universal_file_edit/search_command.py |
-| universal_file_edit | UniversalFileEditCommand | commands/universal_file_edit/edit_command.py |
-| universal_file_write | UniversalFileWriteCommand | commands/universal_file_edit/write_command.py |
-| universal_file_close | UniversalFileCloseCommand | commands/universal_file_edit/close_command.py |
 
 Docs: [README.md](commands/file_editing/README.md), [WORKFLOW.md](commands/file_editing/WORKFLOW.md), [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md).
 

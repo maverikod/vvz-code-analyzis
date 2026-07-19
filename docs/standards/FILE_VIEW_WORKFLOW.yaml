@@ -5,9 +5,9 @@ forbidden:
     start_line, end_line, or line index as a navigation target.
   assumptions: PROHIBITED. Never assume file content. Always call 
     universal_file_preview first.
-  reuse_stale_text_node_ref: PROHIBITED for text format after line-targeted edits.
-    Python sidecar stable_id from preview/search is preserved across sibling batch
-    edits; re-preview or universal_file_search after structural parent replace.
+  reuse_stale_text_node_ref: PROHIBITED for text format after line-targeted edits
+    (performed via ai-editor-server). Python sidecar stable_id from preview is
+    preserved across sibling batch edits; re-preview after structural parent replace.
   line_based_editing: PROHIBITED without explicit user approval. Working with 
     raw line numbers requires user permission in chat.
 meta:
@@ -31,9 +31,9 @@ navigation:
     '3': Pass that node_ref in the next call to drill into that node
     '4': Repeat until the target content is fully visible
     size_control: Use selector='0:N' or preview_lines=N to cap response size
-  session_draft: Pass session_id from universal_file_open to preview the 
-    in-memory draft instead of disk
-  session_tree_search: After open, universal_file_search(session_id, query) runs
-    XPath/CSTQuery on the same session CST tree only (Python sidecar). Use for
-    selector-based find; use preview for hierarchical drill-down without query.
+  session_draft: Pass session_id from an active ai-editor-server edit session
+    to preview the in-memory draft instead of disk
+  session_tree_search: Not available on code-analysis-server —
+    universal_file_search is not registered here (session-tree XPath search
+    lives on ai-editor-server). Use preview for hierarchical drill-down.
 trigger: Before opening, reading, or inspecting any project file.

@@ -142,8 +142,9 @@ return structured data; paths in params/results are **project-relative POSIX**.
 | `git_pull` | `project_id`, `remote=origin`, `branch?`, `ff_only=true`, `rebase=false` | `ff_only` default true (safe); conflicts ⇒ `GIT_CONFLICT`, no partial state |
 | `git_push` | `project_id`, `remote=origin`, `branch=<current>`, `set_upstream=false`, `force=false`, `dry_run=false` | protected-branch + force policy (see §5) |
 
-`git_clone` is intentionally **out of v1**: project materialization is owned by
-`create_project` / watch-dir discovery; cloning is a separate concern.
+`git_clone` **is provided** (`code_analysis/commands/git_clone_command.py`, registered
+in `hooks_register_git_github.py`): clones a remote repository into a watch
+directory and registers the resulting working tree as a new project.
 
 ## 5. Safety / guards
 

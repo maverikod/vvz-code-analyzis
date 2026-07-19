@@ -47,12 +47,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 
 | Command | Doc | Purpose |
 |---------|-----|--------|
-| universal_file_preview | [universal_file_preview.md](commands/file_editing/universal_file_preview.md) | Read-only navigation; obtain edit targets |
-| universal_file_open | [universal_file_open.md](commands/file_editing/universal_file_open.md) | Start edit session |
-| universal_file_search | [universal_file_search.md](commands/file_editing/universal_file_search.md) | XPath on open session CST tree (Python) |
-| universal_file_edit | [universal_file_edit.md](commands/file_editing/universal_file_edit.md) | Mutate in-memory draft |
-| universal_file_write | [universal_file_write.md](commands/file_editing/universal_file_write.md) | Preview diff / commit |
-| universal_file_close | [universal_file_close.md](commands/file_editing/universal_file_close.md) | Release session |
+| universal_file_preview | [universal_file_preview.md](commands/file_editing/universal_file_preview.md) | Read-only navigation; obtain node_ref values |
 
 Cross-cutting: [WORKFLOW.md](commands/file_editing/WORKFLOW.md), [PYTHON_EDIT_SEMANTICS.md](commands/file_editing/PYTHON_EDIT_SEMANTICS.md).
 

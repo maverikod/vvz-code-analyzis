@@ -76,10 +76,12 @@ cross_search_lifecycle:
       - search_ast_nodes
       - list_code_entities
 session_tree_search:
-  command: universal_file_search
-  scope: Open edit session CST tree only (Python sidecar).
-  when: Find nodes inside one file draft — not project-wide search.
-  requires: session_id from universal_file_open
+  status: Not available on code-analysis-server — universal_file_search is not
+    registered here (content editing and session-tree search now live on
+    ai-editor-server).
+  alternative: Use project_cross_search (this file's primary_command) for
+    project-wide search, or universal_file_preview for hierarchical
+    drill-down within one file.
 forbidden:
   - Calling fulltext_search, semantic_search, or fs_grep directly without first
     trying project_cross_search (step 1).
@@ -88,5 +90,5 @@ forbidden:
   - Waiting on a slow grep-heavy job when step 2 applies — retry with grep off.
   - Assuming file content without reading it via universal_file_preview.
   - Using cst_find_node or query_cst for AI edit workflows — use
-    universal_file_search inside an open edit session (Python) or
-    universal_file_preview drill-down.
+    universal_file_preview drill-down here; session-tree search lives on
+    ai-editor-server.

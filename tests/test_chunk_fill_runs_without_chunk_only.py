@@ -122,3 +122,19 @@ async def test_fill_still_noop_without_svo_manager() -> None:
 
     assert (updated, errors) == (0, 0)
     assert db.committed_batches == []
+
+
+def test_chunk_select_sql_uses_real_ordinal_column() -> None:
+    """The per-file chunk select must order by code_chunks.chunk_ordinal.
+
+    The column is ``chunk_ordinal`` (schema_definition_tables_mid.py); the
+    pre-1.6.56 SQL said ``cc.ordinal`` and died with UndefinedColumn on
+    PostgreSQL, killing the whole fill step on the first file.
+    """
+    import inspect as _inspect
+
+    from code_analysis.core.vectorization_worker_pkg import batch_processor
+
+    src = _inspect.getsource(batch_processor.process_chunk_only_files)
+    assert "cc.chunk_ordinal" in src
+    assert " cc.ordinal " not in src

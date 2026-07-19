@@ -196,7 +196,7 @@ async def process_chunk_only_files(
         "   AND cc.embedding_vector IS NULL"
         "   AND cc.embedding_model IS NULL"
         "   AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)"
-        " ORDER BY cc.ordinal ASC, cc.id ASC"
+        " ORDER BY cc.chunk_ordinal ASC, cc.id ASC"
     )
 
     # Step 1: file table - files that have un-vectorized chunks.

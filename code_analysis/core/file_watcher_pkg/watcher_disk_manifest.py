@@ -10,11 +10,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from code_analysis.core.file_disk_registration import collect_file_disk_metadata
+from code_analysis.core.file_disk_registration import \
+    collect_file_disk_metadata
 from code_analysis.core.file_identity import relative_path_for_project
-from code_analysis.core.tree_lifecycle.checksum import validate_or_recreate_tree_file
+from code_analysis.core.tree_lifecycle.checksum import \
+    validate_or_recreate_tree_file
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,67 @@ def build_project_disk_manifest(
         )
     rows.sort(key=lambda r: r.relative_path)
     return rows
+
+
+def compute_project_files_signature(
+    project_files: Dict[str, Dict[str, Any]],
+    project_id: str,
+) -> Tuple[int, float, int]:
+    """
+    Cheap per-project change signature from data the scan already collected.
+
+    Uses the same ``project_files`` map (absolute path -> info dict with
+    ``project_id``/``mtime``/``size`` already populated by the directory walk in
+    ``scanner.py``) and the same ``file_project_id`` filter as
+    :func:`build_project_disk_manifest`, so this adds no second walk.
+
+    Args:
+        project_files: Scan result map for the watch dir (absolute path -> info).
+        project_id: Project to compute the signature for.
+
+    Returns:
+        ``(file_count, max_mtime, total_size)`` for files belonging to
+        ``project_id`` within ``project_files``.
+    """
+    file_count = 0
+    max_mtime = 0.0
+    total_size = 0
+    for info in project_files.values():
+        file_project_id = info.get("project_id")
+        if file_project_id and str(file_project_id) != str(project_id):
+            continue
+        file_count += 1
+        mtime = float(info.get("mtime") or 0.0)
+        if mtime > max_mtime:
+            max_mtime = mtime
+        total_size += int(info.get("size") or 0)
+    return file_count, max_mtime, total_size
+
+
+def manifest_rebuild_needed(
+    project_id: str,
+    signature: Tuple[int, float, int],
+    signature_cache: Optional[Dict[str, Tuple[int, float, int]]],
+) -> bool:
+    """
+    Return True when the disk manifest must be rebuilt for ``project_id``.
+
+    True when there is no cache, no prior cached signature for the project, or
+    the freshly computed ``signature`` differs from the cached one.
+
+    Args:
+        project_id: Project to check.
+        signature: Freshly computed signature (see :func:`compute_project_files_signature`).
+        signature_cache: Mutable per-worker cache of the last-seen signature per
+            project id, or None to always force a rebuild.
+
+    Returns:
+        True when the manifest must be rebuilt.
+    """
+    if signature_cache is None:
+        return True
+    cached = signature_cache.get(project_id)
+    return cached != signature
 
 
 def filter_manifest_paths(

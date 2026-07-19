@@ -16,22 +16,22 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, cast
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, cast
 
-from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
-from ..runtime_lock_sessions import register_runtime_session
-from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..docs_indexing_config_load import load_docs_indexing_from_config_path
-from ..venv_path_policy import (
-    allowed_venv_py_files_for_watch_dir,
-    build_ignore_exception_files_for_projects,
-    load_ignore_exceptions_from_config,
-    load_ignore_exceptions_from_config_path,
-)
+from ..project_ignore_policy import \
+    filter_ignore_exception_py_paths_for_watcher
+from ..runtime_lock_sessions import register_runtime_session
+from ..venv_path_policy import (allowed_venv_py_files_for_watch_dir,
+                                build_ignore_exception_files_for_projects,
+                                load_ignore_exceptions_from_config,
+                                load_ignore_exceptions_from_config_path)
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from .multi_project_worker_cycle import run_scan_cycle
 from .multi_project_worker_init import initialize_watch_dirs
 from .multi_project_worker_specs import WatchDirSpec, build_watch_dir_specs
 from .processor import FileChangeProcessor
+from .scan_interval_backoff import next_scan_interval
 from .scanner import scan_directory
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,9 @@ class MultiProjectFileWatcherWorker:
         self._pid = os.getpid()
         # One-time startup DB/disk reconciliation guard (runs before first scan).
         self._startup_reconciled = False
+        # Last-seen per-project disk signature (file_count, max_mtime, total_size)
+        # for the manifest-rebuild short-circuit (bug 673ba07a Defect 1).
+        self._manifest_signature_cache: Dict[str, Tuple[int, float, int]] = {}
 
     def stop(self) -> None:
         """Stop the worker."""
@@ -143,6 +146,9 @@ class MultiProjectFileWatcherWorker:
 
         backoff = 1.0
         backoff_max = 60.0
+        # Idle-backoff state (bug 673ba07a): consecutive scan cycles that queued
+        # no new/changed/deleted files widen the sleep between cycles.
+        no_progress_streak = 0
 
         try:
             while not self._stop_event.is_set():
@@ -287,7 +293,25 @@ class MultiProjectFileWatcherWorker:
                     f"errors: {cycle_stats.get('errors', 0)}"
                 )
 
-                for _ in range(int(self.scan_interval)):
+                real_work = (
+                    cycle_stats.get("new_files", 0)
+                    + cycle_stats.get("changed_files", 0)
+                    + cycle_stats.get("deleted_files", 0)
+                )
+                effective_interval, no_progress_streak = next_scan_interval(
+                    scan_interval=self.scan_interval,
+                    real_work=real_work,
+                    consecutive_no_progress=no_progress_streak,
+                )
+                if no_progress_streak:
+                    logger.debug(
+                        "No file changes for %s cycle(s); next scan in %ss "
+                        "(base scan_interval=%ss)",
+                        no_progress_streak,
+                        effective_interval,
+                        self.scan_interval,
+                    )
+                for _ in range(int(effective_interval)):
                     if self._stop_event.is_set():
                         break
                     await asyncio.sleep(1)
@@ -321,9 +345,8 @@ class MultiProjectFileWatcherWorker:
                 continue
 
             try:
-                from code_analysis.core.watch_dir_settings import (
-                    merge_watch_ignore_patterns,
-                )
+                from code_analysis.core.watch_dir_settings import \
+                    merge_watch_ignore_patterns
 
                 merged_ignore = list(
                     merge_watch_ignore_patterns(
@@ -344,10 +367,8 @@ class MultiProjectFileWatcherWorker:
                 else:
                     exc_patterns = load_ignore_exceptions_from_config()
                 from ..project_discovery import (
-                    DuplicateProjectIdError,
-                    NestedProjectError,
-                    discover_projects_in_directory,
-                )
+                    DuplicateProjectIdError, NestedProjectError,
+                    discover_projects_in_directory)
 
                 try:
                     discovered = discover_projects_in_directory(watch_dir)
@@ -397,10 +418,8 @@ class MultiProjectFileWatcherWorker:
         if not self.config_path:
             return bool(self.watch_dirs)
 
-        from .watch_dirs_config import (
-            apply_runtime_settings_to_worker,
-            load_file_watcher_runtime_settings,
-        )
+        from .watch_dirs_config import (apply_runtime_settings_to_worker,
+                                        load_file_watcher_runtime_settings)
 
         try:
             settings = load_file_watcher_runtime_settings(
@@ -436,10 +455,8 @@ class MultiProjectFileWatcherWorker:
         # before any scanning: build the watch_dir->project->id table, stop the
         # server on duplicate ids, purge orphan projects, then mark missing files.
         if not self._startup_reconciled:
-            from .startup_reconciliation import (
-                StartupReconciliationFatal,
-                run_startup_reconciliation,
-            )
+            from .startup_reconciliation import (StartupReconciliationFatal,
+                                                 run_startup_reconciliation)
 
             self._startup_reconciled = True
             try:

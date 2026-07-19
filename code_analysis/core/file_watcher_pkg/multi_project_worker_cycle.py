@@ -7,12 +7,11 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict
-
-import logging
 
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
@@ -38,11 +37,9 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
     Returns:
         Dictionary with cycle statistics.
     """
-    from ..worker_status_file import (
-        STATUS_OPERATION_IDLE,
-        STATUS_OPERATION_SCANNING,
-        write_worker_status,
-    )
+    from ..worker_status_file import (STATUS_OPERATION_IDLE,
+                                      STATUS_OPERATION_SCANNING,
+                                      write_worker_status)
 
     write_worker_status(
         getattr(worker, "status_file_path", None),
@@ -103,6 +100,7 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
             worker.locks_dir,
             worker._pid,
             config_path=scan_config_path,
+            manifest_signature_cache=getattr(worker, "_manifest_signature_cache", None),
         )
         watch_dir_duration = time.time() - watch_dir_start
 

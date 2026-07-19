@@ -15,43 +15,34 @@ from typing import Any, Dict, Optional, Set, Tuple
 from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
-    persist_projects_root_path_stored_value,
-    resolve_project_root_absolute_str,
-)
+    persist_projects_root_path_stored_value, resolve_project_root_absolute_str)
 
-from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
-from ..watch_dir_access import describe_watch_dir_access
+from ..docs_indexing_config_load import load_docs_indexing_from_config_path
+from ..project_ignore_policy import \
+    filter_ignore_exception_py_paths_for_watcher
+from ..sql_portable import sql_julian_timestamp_now_expr
 from ..venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     build_ignore_exception_files_for_projects,
     load_ignore_exceptions_from_config,
     load_ignore_exceptions_from_config_path,
-    load_venv_site_packages_index_allowlist_from_config,
-)
-from ..sql_portable import sql_julian_timestamp_now_expr
+    load_venv_site_packages_index_allowlist_from_config)
+from ..watch_dir_access import describe_watch_dir_access
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
-from ..docs_indexing_config_load import load_docs_indexing_from_config_path
-from ..worker_project_activity import (
-    get_project_activity,
-    release_project_activity,
-    try_acquire_project_activity,
-)
+from ..worker_project_activity import (get_project_activity,
+                                       release_project_activity,
+                                       try_acquire_project_activity)
 from .lock_manager import LockManager
 from .multi_project_worker_specs import WatchDirSpec
 from .processor import FileChangeProcessor
-from .processor_delta import (
-    compute_project_delta,
-    compute_supplemental_watch_dir_deltas,
-)
+from .processor_delta import (compute_project_delta,
+                              compute_supplemental_watch_dir_deltas)
 from .scanner import iter_watch_dir_project_scans
-from .watcher_project_metadata import (
-    apply_project_updated_at_from_scan,
-    load_projectid_flags_for_insert,
-    refresh_project_metadata_from_projectid,
-)
-from .watcher_soft_deleted_projects import (
-    partition_discovered_projects_by_db_soft_delete,
-)
+from .watcher_project_metadata import (apply_project_updated_at_from_scan,
+                                       load_projectid_flags_for_insert,
+                                       refresh_project_metadata_from_projectid)
+from .watcher_soft_deleted_projects import \
+    partition_discovered_projects_by_db_soft_delete
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +283,7 @@ def scan_watch_dir(
     pid: int,
     *,
     config_path: Optional[Path] = None,
+    manifest_signature_cache: Optional[Dict[str, Tuple[int, float, int]]] = None,
 ) -> Dict[str, Any]:
     """
     Scan a watched directory and process all discovered projects.
@@ -307,17 +299,19 @@ def scan_watch_dir(
         locks_dir: Directory for lock files.
         pid: Process ID for lock acquisition.
         config_path: Optional server ``config.json`` for FAISS index invalidation.
+        manifest_signature_cache: Mutable per-worker cache of last-seen per-project
+            disk signatures; when a project's signature is unchanged, the heavy
+            manifest rebuild and bulk queue are skipped for that project
+            (bug 673ba07a). None disables the short-circuit.
 
     Returns:
         Per-watch-dir scan stats.
     """
     from datetime import datetime
 
-    from ..project_discovery import (
-        DuplicateProjectIdError,
-        NestedProjectError,
-        discover_projects_in_directory,
-    )
+    from ..project_discovery import (DuplicateProjectIdError,
+                                     NestedProjectError,
+                                     discover_projects_in_directory)
 
     stats: Dict[str, Any] = {
         "scanned_dirs": 0,
@@ -584,9 +578,8 @@ def scan_watch_dir(
                                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         else:
-                            from code_analysis.core.server_instance import (
-                                get_server_instance_id,
-                            )
+                            from code_analysis.core.server_instance import \
+                                get_server_instance_id
 
                             sid = get_server_instance_id()
                             database.execute(
@@ -642,7 +635,8 @@ def scan_watch_dir(
             f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
-        from code_analysis.core.watch_dir_settings import merge_watch_ignore_patterns
+        from code_analysis.core.watch_dir_settings import \
+            merge_watch_ignore_patterns
 
         merged_ignore = list(
             merge_watch_ignore_patterns(
@@ -699,10 +693,11 @@ def scan_watch_dir(
 
         from .ignore_pre_scan_purge import (
             apply_ignore_purge_split_to_deltas,
-            run_pre_scan_ignore_purge_for_project,
-        )
+            run_pre_scan_ignore_purge_for_project)
         from .watcher_bulk_sync import bulk_sync_supported
-        from .watcher_disk_manifest import build_project_disk_manifest
+        from .watcher_disk_manifest import (build_project_disk_manifest,
+                                            compute_project_files_signature,
+                                            manifest_rebuild_needed)
 
         project_id_to_root: Dict[str, Path] = {
             p.project_id: Path(p.root_path) for p in discovered_projects
@@ -736,6 +731,21 @@ def scan_watch_dir(
                     config_path=config_path,
                     docs_indexing=docs_indexing_snap,
                 )
+                signature = compute_project_files_signature(project_files, project_id)
+                if not manifest_rebuild_needed(
+                    project_id, signature, manifest_signature_cache
+                ):
+                    logger.debug(
+                        "[MANIFEST SKIP] watch_dir=%s project_id=%s disk signature "
+                        "unchanged (files=%s max_mtime=%s total_size=%s); skipping "
+                        "manifest rebuild and bulk queue",
+                        watch_dir,
+                        project_id,
+                        signature[0],
+                        signature[1],
+                        signature[2],
+                    )
+                    continue
                 manifest = build_project_disk_manifest(
                     project_files, project_id, project_root
                 )
@@ -753,6 +763,10 @@ def scan_watch_dir(
                 project_deltas[project_id] = compute_project_delta(
                     database, project_root, project_id, project_files
                 )
+                if manifest_signature_cache is not None:
+                    # Record only after a successful bulk queue so a failed cycle
+                    # retries the rebuild next time.
+                    manifest_signature_cache[project_id] = signature
             else:
                 project_delta = compute_project_delta(
                     database, project_root, project_id, project_files

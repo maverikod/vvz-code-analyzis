@@ -18,14 +18,15 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from code_analysis.core.docs_markdown_vector_gate import \
+    sql_and_exclude_docs_markdown_chunks
 from code_analysis.core.embedding_input import EmbeddingInput
 from code_analysis.core.faiss_manager import FaissIndexManager
-from code_analysis.core.pgvector_embedding import numpy_embedding_to_pgvector_text
+from code_analysis.core.pgvector_embedding import \
+    numpy_embedding_to_pgvector_text
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
-from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
-from code_analysis.core.docs_markdown_vector_gate import (
-    sql_and_exclude_docs_markdown_chunks,
-)
+from code_analysis.core.worker_db_rpc_priority import \
+    BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 from .timing_log import log_operation_timing
 
@@ -144,7 +145,15 @@ async def process_chunk_only_files(
     self: Any,
     database: Any,
 ) -> Tuple[int, int]:
-    """Vectorize per-file chunk batches that arrived without embeddings (chunk_only mode).
+    """Vectorize per-file chunk batches that arrived without embeddings.
+
+    Runs in EVERY worker mode (bug 673ba07a phase 2). Chunks without embeddings
+    exist not only in ``chunk_only`` mode: the docstring-chunking fallback
+    persists chunk rows locally while the SVO/embedding circuit breaker is open,
+    and no other step ever fetches such rows (STEP 2 requires
+    ``embedding_vector IS NOT NULL``). This step is their only drain: it embeds
+    them in per-file batches (capped by ``max_files_per_pass`` per cycle) and
+    dead-letters chunks that stay unresolved after ``retry_attempts`` cycles.
 
     Correct DB access pattern:
     1. Build file table from DB (read-only query).
@@ -164,9 +173,6 @@ async def process_chunk_only_files(
     Returns:
         Tuple of (updated_count, error_count).
     """
-    if not getattr(self, "chunk_only", False):
-        return 0, 0
-
     svo_mgr = getattr(self, "svo_client_manager", None)
     if not svo_mgr:
         return 0, 0
@@ -469,10 +475,8 @@ async def process_embedding_ready_chunks(
             f"[STEP] Step 5 (embedding_ready): 0 chunks selected "
             f"(criteria: embedding_vector IS NOT NULL AND {ann_pending}, project={scope_desc}, limit={self.batch_size})"
         )
-        from ..worker_status_file import (
-            STATUS_OPERATION_IDLE,
-            write_worker_status,
-        )
+        from ..worker_status_file import (STATUS_OPERATION_IDLE,
+                                          write_worker_status)
 
         write_worker_status(
             getattr(self, "status_file_path", None),

@@ -14,22 +14,17 @@ import logging
 import time
 from typing import Any, List, Tuple
 
+from code_analysis.core.sql_portable import (WHERE_FILES_ACTIVE_F,
+                                             WHERE_HAS_DOCSTRING_F,
+                                             sql_julian_timestamp_now_expr)
+
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
-from ..worker_status_file import (
-    STATUS_OPERATION_CHUNKING,
-    STATUS_OPERATION_VECTORIZING,
-    write_worker_status,
-)
-from .batch_processor import (
-    process_chunk_only_files,
-    process_embedding_ready_chunks,
-)
+from ..worker_status_file import (STATUS_OPERATION_CHUNKING,
+                                  STATUS_OPERATION_VECTORIZING,
+                                  write_worker_status)
+from .batch_processor import (process_chunk_only_files,
+                              process_embedding_ready_chunks)
 from .timing_log import log_operation_timing
-from code_analysis.core.sql_portable import (
-    WHERE_FILES_ACTIVE_F,
-    WHERE_HAS_DOCSTRING_F,
-    sql_julian_timestamp_now_expr,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +78,15 @@ async def process_projects_in_cycle(
             },
         )
         logger.info(
-            "Processing project %s (%s) with %s pending items",
+            "Processing project %s (%s) with %s pending items "
+            "(cat1_unchunked_files=%s cat2_embedded_no_vector=%s "
+            "cat3_unembedded_chunks=%s)",
             project_id,
             root_path,
             pending_count,
+            project.get("cat1_count", "?"),
+            project.get("cat2_count", "?"),
+            project.get("cat3_count", "?"),
         )
 
         faiss_manager = None
@@ -141,9 +141,8 @@ async def process_projects_in_cycle(
                         project_id,
                     )
                 try:
-                    from code_analysis.core.database.watch_dirs_partition import (
-                        current_server_instance_id,
-                    )
+                    from code_analysis.core.database.watch_dirs_partition import \
+                        current_server_instance_id
 
                     sid = current_server_instance_id()
                     t0_step1 = time.time()

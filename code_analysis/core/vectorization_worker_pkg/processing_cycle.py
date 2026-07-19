@@ -16,21 +16,16 @@ import time
 import uuid
 from typing import Any, List, Tuple
 
+from code_analysis.core.docs_markdown_vector_gate import \
+    sql_and_exclude_docs_markdown_chunks
+from code_analysis.core.sql_portable import (WHERE_FILES_ACTIVE,
+                                             WHERE_FILES_ACTIVE_F,
+                                             WHERE_HAS_DOCSTRING_F,
+                                             WHERE_PROCESSING_ACTIVE_P,
+                                             sql_julian_timestamp_now_expr)
+
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
-from ..worker_status_file import (
-    STATUS_OPERATION_IDLE,
-    write_worker_status,
-)
-from code_analysis.core.sql_portable import (
-    WHERE_FILES_ACTIVE,
-    WHERE_FILES_ACTIVE_F,
-    WHERE_HAS_DOCSTRING_F,
-    WHERE_PROCESSING_ACTIVE_P,
-    sql_julian_timestamp_now_expr,
-)
-from code_analysis.core.docs_markdown_vector_gate import (
-    sql_and_exclude_docs_markdown_chunks,
-)
+from ..worker_status_file import STATUS_OPERATION_IDLE, write_worker_status
 from .processing_cycle_projects import process_projects_in_cycle
 
 logger = logging.getLogger(__name__)
@@ -51,6 +46,16 @@ def projects_pending_sql(
     When ``use_pgvector_ann`` is true (PostgreSQL + pgvector), rows that still need
     a DB vector use ``embedding_vec IS NULL`` instead of ``vector_id IS NULL``, and
     the "needs embedding" subquery does not gate on ``vector_id``.
+
+    The result carries a per-category breakdown (``cat1_count``/``cat2_count``/
+    ``cat3_count``) alongside the existing ``pending_count`` aggregate, so callers
+    can log/observe which category is actually stuck instead of only the sum
+    (bug 673ba07a Defect 2). ``cat3_count`` requires BOTH ``embedding_vector`` and
+    ``embedding_model`` to be NULL, matching the only selector that can fetch such
+    rows (``_CHUNK_SELECT_SQL`` in batch_processor.py, which ANDs all three
+    columns) — previously this used OR, so rows with exactly one NULL were
+    counted as pending but could never be selected/drained (Defect 2 alignment
+    fix, kept logically separate from the breakdown-logging change above).
     """
     frag = ""
     if not docs_markdown_embeddings_enabled:
@@ -59,12 +64,9 @@ def projects_pending_sql(
         "cc.embedding_vec IS NULL" if use_pgvector_ann else "cc.vector_id IS NULL"
     )
     needs_emb_prefix = "" if use_pgvector_ann else "cc.vector_id IS NULL AND "
-    return f"""
-SELECT
-    p.id AS project_id,
-    p.root_path,
-    (
-        (SELECT COUNT(DISTINCT f.id)
+
+    # cat1: files with docstrings that have no code_chunks rows yet.
+    cat1_expr = f"""(SELECT COUNT(DISTINCT f.id)
          FROM files f
          WHERE f.project_id = p.id
            AND {WHERE_FILES_ACTIVE_F}
@@ -93,77 +95,42 @@ SELECT
            AND NOT EXISTS (
                SELECT 1 FROM code_chunks cc
                WHERE cc.file_id = f.id
-           ))
-        +
-        (SELECT COUNT(cc.id)
+           ))"""
+
+    # cat2: chunks with an embedding_vector already computed but no DB vector yet.
+    cat2_expr = f"""(SELECT COUNT(cc.id)
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
            AND {WHERE_FILES_ACTIVE_F}{frag}
            AND cc.embedding_vector IS NOT NULL
-           AND {ann_ready_pending})
-        +
-        (SELECT COUNT(cc.id)
+           AND {ann_ready_pending})"""
+
+    # cat3: chunks still needing an embedding at all. AND (not OR) matches
+    # _CHUNK_SELECT_SQL in batch_processor.py — only rows with BOTH columns NULL
+    # are ever fetched/processed.
+    cat3_expr = f"""(SELECT COUNT(cc.id)
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
            AND {WHERE_FILES_ACTIVE_F}{frag}
-           AND {needs_emb_prefix}(cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
-           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
-    ) AS pending_count,
+           AND {needs_emb_prefix}(cc.embedding_vector IS NULL AND cc.embedding_model IS NULL)
+           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))"""
+
+    return f"""
+SELECT
+    p.id AS project_id,
+    p.root_path,
+    {cat1_expr} AS cat1_count,
+    {cat2_expr} AS cat2_count,
+    {cat3_expr} AS cat3_count,
+    ({cat1_expr} + {cat2_expr} + {cat3_expr}) AS pending_count,
     (SELECT MAX(f2.updated_at) FROM files f2
      WHERE f2.project_id = p.id
        AND {WHERE_FILES_ACTIVE_F.replace("f.", "f2.")}) AS max_file_updated_at
 FROM projects p
 WHERE {WHERE_PROCESSING_ACTIVE_P}
-AND (
-    (SELECT COUNT(DISTINCT f.id)
-     FROM files f
-     WHERE f.project_id = p.id
-       AND {WHERE_FILES_ACTIVE_F}
-       AND (
-           {WHERE_HAS_DOCSTRING_F}
-           OR EXISTS (
-               SELECT 1 FROM classes c
-               WHERE c.file_id = f.id
-                 AND c.docstring IS NOT NULL
-                 AND c.docstring != ''
-           )
-           OR EXISTS (
-               SELECT 1 FROM functions fn
-               WHERE fn.file_id = f.id
-                 AND fn.docstring IS NOT NULL
-                 AND fn.docstring != ''
-           )
-           OR EXISTS (
-               SELECT 1 FROM methods m
-               JOIN classes c ON m.class_id = c.id
-               WHERE c.file_id = f.id
-                 AND m.docstring IS NOT NULL
-                 AND m.docstring != ''
-           )
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM code_chunks cc
-           WHERE cc.file_id = f.id
-       ))
-    +
-    (SELECT COUNT(cc.id)
-     FROM code_chunks cc
-     INNER JOIN files f ON cc.file_id = f.id
-     WHERE cc.project_id = p.id
-       AND {WHERE_FILES_ACTIVE_F}{frag}
-       AND cc.embedding_vector IS NOT NULL
-       AND {ann_ready_pending})
-    +
-    (SELECT COUNT(cc.id)
-     FROM code_chunks cc
-     INNER JOIN files f ON cc.file_id = f.id
-     WHERE cc.project_id = p.id
-       AND {WHERE_FILES_ACTIVE_F}{frag}
-       AND {needs_emb_prefix}(cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
-       AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
-) > 0
+AND ({cat1_expr} + {cat2_expr} + {cat3_expr}) > 0
 ORDER BY max_file_updated_at DESC, pending_count ASC, p.id DESC
 """
 

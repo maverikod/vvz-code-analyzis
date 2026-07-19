@@ -20,6 +20,8 @@ from typing import Any, Sequence, TypedDict
 
 def _default_serializer(obj: Any) -> Any:
     """Convert non-JSON types to deterministic serializable form."""
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, Path):

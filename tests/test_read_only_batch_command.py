@@ -12,20 +12,22 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import json
+import uuid
 from typing import Any, Dict, List, Optional, Sequence, cast
 
 import pytest
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from code_analysis.commands.read_only_batch_command import (
-    run_read_only_batch,
     _Invocation,
+    run_read_only_batch,
 )
 from code_analysis.commands.read_only_batch_output import extract_command_fragment
 from code_analysis.commands.read_only_batch_whitelist import (
-    READ_ONLY_BATCH_WHITELIST,
     ERROR_CODE_NOT_WHITELISTED,
+    READ_ONLY_BATCH_WHITELIST,
 )
-from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 class _FakeRegistry:
@@ -260,6 +262,62 @@ async def test_whitelisted_command_not_found_returns_error(tmp_path: Any) -> Non
         "not found" in result.get("error", "").lower()
         or "not registered" in result.get("error", "").lower()
     )
+
+
+@pytest.mark.asyncio
+async def test_nested_uuid_in_success_result_data_is_json_safe(tmp_path: Any) -> None:
+    """Nested uuid.UUID inside dict-of-dicts and list-of-dicts is stringified; result round-trips through json.dumps."""
+    entity_id = uuid.uuid4()
+    related_id = uuid.uuid4()
+    data = {
+        "entity": {"id": entity_id, "name": "Foo"},
+        "related": [{"id": related_id, "name": "Bar"}],
+    }
+    registry = _make_mock_registry(command_responses={"list_code_entities": data})
+    invocations = [
+        {"command": "list_code_entities", "params": {"project_id": "p1"}},
+    ]
+    result = await run_read_only_batch(
+        cast(Sequence[_Invocation], invocations),
+        max_response_bytes=1_000_000,
+        output_dir=str(tmp_path),
+        registry=registry,
+    )
+    assert result.get("inline") is True
+    entry_data = result["results"][0]["result"]["data"]
+    assert entry_data["entity"]["id"] == str(entity_id)
+    assert isinstance(entry_data["entity"]["id"], str)
+    assert entry_data["related"][0]["id"] == str(related_id)
+    assert isinstance(entry_data["related"][0]["id"], str)
+    # Whole result must round-trip through json.dumps without error.
+    json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_file_output_with_nested_uuid_payload(tmp_path: Any) -> None:
+    """Oversized payload with nested UUID goes to file; jsonl line is valid JSON with UUID stringified."""
+    entity_id = uuid.uuid4()
+    big = {
+        "items": [{"id": entity_id, "name": f"entity_{i}"} for i in range(500)],
+    }
+    registry = _make_mock_registry(command_responses={"get_code_entity_info": big})
+    invocations = [{"command": "get_code_entity_info", "params": {"entity_id": "e1"}}]
+    result = await run_read_only_batch(
+        cast(Sequence[_Invocation], invocations),
+        max_response_bytes=50,
+        output_dir=str(tmp_path),
+        registry=registry,
+    )
+    assert result.get("inline") is False
+    assert "output_file" in result
+    output_file = result["output_file"]
+    with open(output_file, "r", encoding="utf-8") as f:
+        line = f.readline()
+    parsed = json.loads(line)
+    assert parsed["command"] == "get_code_entity_info"
+    first_item = parsed["result"]["data"]["items"][0]
+    assert first_item["id"] == str(entity_id)
+    assert isinstance(first_item["id"], str)
 
 
 def test_whitelist_contains_expected_read_only_commands() -> None:

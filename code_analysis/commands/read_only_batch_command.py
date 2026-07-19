@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
 from typing import Any, Optional, Sequence, TypedDict
 
-from mcp_proxy_adapter.commands.command_registry import (
-    CommandRegistry,
-    registry as default_registry,
-)
+from mcp_proxy_adapter.commands.command_registry import CommandRegistry
+from mcp_proxy_adapter.commands.command_registry import registry as default_registry
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .read_only_batch_output import write_oversized_batch_output
@@ -47,13 +49,23 @@ class _ResultEntry(TypedDict, total=False):
 
 
 def _json_safe(value: Any) -> Any:
-    """Return a JSON-serializable value; replace mocks and non-serializable with None or str."""
+    """Recursively return a JSON-serializable value.
+
+    Dicts and lists/tuples are walked recursively so nested non-serializable
+    values (e.g. uuid.UUID returned by the postgres driver) are converted at
+    any depth. Mocks become None (existing behavior); uuid.UUID, datetime,
+    date, Path, Decimal, and any other non-serializable value become str().
+    """
     if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (dict, list)):
         return value
     if type(value).__name__ in ("MagicMock", "Mock"):
         return None
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (uuid.UUID, datetime, date, Path, Decimal)):
+        return str(value)
     try:
         json.dumps(value)
         return value
@@ -82,7 +94,9 @@ def _serialized_size_bytes(results: Sequence[_ResultEntry]) -> int:
         {"command": e.get("command", ""), "result": e.get("result")} for e in results
     ]
     return len(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
     )
 
 

@@ -410,3 +410,284 @@ async def test_project_pip_search_rejects_bad_match_mode(tmp_path: Path) -> None
         )
     assert isinstance(result, ErrorResult)
     assert result.code == "INVALID_PARAMS"
+
+
+@pytest.mark.asyncio
+async def test_project_pip_install_bootstraps_missing_venv_and_retries(
+    tmp_path: Path,
+) -> None:
+    """Missing venv + bootstrap_venv default (true): VenvCreator runs, pip retries, succeeds."""
+    from code_analysis.core.project_bootstrap.venv_creator import VenvResult
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    fake_result = SandboxRunResult(
+        stdout="ok", stderr="", returncode=0, timed_out=False
+    )
+    pip_calls: list[tuple] = []
+    venv_calls: list[tuple] = []
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        if fn is run_pip_in_project_sandbox:
+            pip_calls.append((args, kwargs))
+            if len(pip_calls) == 1:
+                raise VenvNotFoundError("no venv found")
+            return fake_result
+        venv_calls.append((args, kwargs))
+        return fn(*args, **kwargs)
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.write_project_pip_session_log",
+                return_value=_FAKE_PIP_LOG_FIELDS,
+            ):
+                with patch(
+                    "code_analysis.commands.project_pip_commands.VenvCreator"
+                ) as mock_venv_creator_cls:
+                    mock_venv_creator_cls.return_value.create.return_value = VenvResult(
+                        success=True,
+                        venv_path=root / ".venv",
+                        message="Created .venv",
+                    )
+                    cmd = ProjectPipInstallCommand()
+                    result = await cmd.execute(
+                        project_id="00000000-0000-0000-0000-000000000020",
+                        packages=["requests"],
+                    )
+    assert mock_venv_creator_cls.call_args.args[0] == root
+    assert mock_venv_creator_cls.call_args.kwargs["python_executable"] == "python3"
+    assert len(pip_calls) == 2
+    assert len(venv_calls) == 1
+    assert isinstance(result, SuccessResult)
+    assert result.data["stdout"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_project_pip_install_bootstrap_disabled_keeps_venv_not_found(
+    tmp_path: Path,
+) -> None:
+    """bootstrap_venv=false: missing venv fails immediately, VenvCreator never called."""
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        raise VenvNotFoundError("no venv found")
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.VenvCreator"
+            ) as mock_venv_creator_cls:
+                cmd = ProjectPipInstallCommand()
+                result = await cmd.execute(
+                    project_id="00000000-0000-0000-0000-000000000021",
+                    packages=["requests"],
+                    bootstrap_venv=False,
+                )
+    mock_venv_creator_cls.assert_not_called()
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VENV_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_project_pip_install_bootstrap_failure_is_distinguishable(
+    tmp_path: Path,
+) -> None:
+    """VenvCreator failure surfaces as VENV_BOOTSTRAP_FAILED, distinct from VENV_NOT_FOUND."""
+    from code_analysis.core.project_bootstrap.venv_creator import VenvResult
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    pip_calls: list[tuple] = []
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        if fn is run_pip_in_project_sandbox:
+            pip_calls.append((args, kwargs))
+            raise VenvNotFoundError("no venv found")
+        return fn(*args, **kwargs)
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.VenvCreator"
+            ) as mock_venv_creator_cls:
+                mock_venv_creator_cls.return_value.create.return_value = VenvResult(
+                    success=False,
+                    message="Python executable not found: 'python3.99'",
+                    errors=["Python executable not found: 'python3.99'"],
+                )
+                cmd = ProjectPipInstallCommand()
+                result = await cmd.execute(
+                    project_id="00000000-0000-0000-0000-000000000022",
+                    packages=["requests"],
+                    python_executable="python3.99",
+                )
+    assert len(pip_calls) == 1
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VENV_BOOTSTRAP_FAILED"
+    assert result.code != "VENV_NOT_FOUND"
+    assert "python3.99" in result.details["bootstrap_message"]
+    assert result.details["bootstrap_errors"] == [
+        "Python executable not found: 'python3.99'"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_project_pip_list_missing_venv_has_no_bootstrap(tmp_path: Path) -> None:
+    """Read-only commands (e.g. project_pip_list) never attempt venv bootstrap."""
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        raise VenvNotFoundError("no venv found")
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.VenvCreator"
+            ) as mock_venv_creator_cls:
+                result = await ProjectPipListCommand().execute(
+                    project_id="00000000-0000-0000-0000-000000000023",
+                )
+    mock_venv_creator_cls.assert_not_called()
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VENV_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_project_pip_install_retry_venv_not_found_after_bootstrap_is_distinguishable(
+    tmp_path: Path,
+) -> None:
+    """After bootstrap succeeds, retried pip still fails with VenvNotFoundError — message shows bootstrap happened."""
+    from code_analysis.core.project_bootstrap.venv_creator import VenvResult
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    pip_calls: list[tuple] = []
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        if fn is run_pip_in_project_sandbox:
+            pip_calls.append((args, kwargs))
+            raise VenvNotFoundError("no venv found")
+        return fn(*args, **kwargs)
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.write_project_pip_session_log",
+                return_value=_FAKE_PIP_LOG_FIELDS,
+            ):
+                with patch(
+                    "code_analysis.commands.project_pip_commands.VenvCreator"
+                ) as mock_venv_creator_cls:
+                    mock_venv_creator_cls.return_value.create.return_value = VenvResult(
+                        success=True,
+                        venv_path=root / ".venv",
+                        message="Created .venv",
+                    )
+                    cmd = ProjectPipInstallCommand()
+                    result = await cmd.execute(
+                        project_id="00000000-0000-0000-0000-000000000024",
+                        packages=["requests"],
+                    )
+    assert len(pip_calls) == 2
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VENV_NOT_FOUND"
+    assert "bootstrap" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_project_pip_install_retry_value_error_after_bootstrap_is_distinguishable(
+    tmp_path: Path,
+) -> None:
+    """After bootstrap succeeds, retried pip fails with ValueError — message shows bootstrap happened."""
+    from code_analysis.core.project_bootstrap.venv_creator import VenvResult
+    from code_analysis.core.project_sandbox import VenvNotFoundError
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    pip_calls: list[str] = []
+
+    async def fake_to_thread(fn, /, *args, **kwargs):
+        """Return fake to thread."""
+        if fn is run_pip_in_project_sandbox:
+            pip_calls.append("pip_call")
+            if len(pip_calls) == 1:
+                raise VenvNotFoundError("no venv found")
+            raise ValueError(
+                "requirements file not found or not a file: /tmp/missing.txt"
+            )
+        return fn(*args, **kwargs)
+
+    with patch(
+        "code_analysis.commands.project_pip_commands.BaseMCPCommand._resolve_project_root",
+        return_value=root,
+    ):
+        with patch(
+            "code_analysis.commands.project_pip_commands.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            with patch(
+                "code_analysis.commands.project_pip_commands.write_project_pip_session_log",
+                return_value=_FAKE_PIP_LOG_FIELDS,
+            ):
+                with patch(
+                    "code_analysis.commands.project_pip_commands.VenvCreator"
+                ) as mock_venv_creator_cls:
+                    mock_venv_creator_cls.return_value.create.return_value = VenvResult(
+                        success=True,
+                        venv_path=root / ".venv",
+                        message="Created .venv",
+                    )
+                    cmd = ProjectPipInstallCommand()
+                    result = await cmd.execute(
+                        project_id="00000000-0000-0000-0000-000000000025",
+                        packages=["requests"],
+                    )
+    assert len(pip_calls) == 2
+    assert isinstance(result, ErrorResult)
+    assert result.code == "INVALID_PATH"
+    assert "bootstrap" in result.message.lower()

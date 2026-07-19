@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.project_bootstrap import VenvCreator
 from ..core.project_pip_logging import write_project_pip_session_log
 from ..core.project_sandbox import (
     SandboxRunResult,
@@ -187,7 +188,9 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                 "This command is always executed via the job queue because installs may run for a long time; "
                 "poll with ``queue_get_job_status`` using the returned ``job_id``. "
                 "Provide package names and/or a requirements file path relative to the project root. "
-                "Requires ``.venv`` or ``venv`` under the resolved project root."
+                "By default (``bootstrap_venv=true``), a missing ``.venv``/``venv`` is created "
+                "automatically before pip runs and the install is retried once; set "
+                "``bootstrap_venv=false`` to require an existing venv (fails with ``VENV_NOT_FOUND``)."
             ),
             "properties": {
                 "project_id": {
@@ -235,6 +238,29 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                         "If exceeded, the process is killed; see ``timed_out`` in the success payload."
                     ),
                     "examples": [120, 300, 600],
+                },
+                "bootstrap_venv": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional. Default true. "
+                        "If no .venv/venv exists under the project root, create one first "
+                        "using python -m venv (same bootstrap as create_project's create_venv), "
+                        "then retry the pip install once. "
+                        "If false, a missing venv fails immediately with VENV_NOT_FOUND "
+                        "(previous behavior)."
+                    ),
+                    "default": True,
+                    "examples": [True, False],
+                },
+                "python_executable": {
+                    "type": "string",
+                    "description": (
+                        "Optional Python interpreter used only for venv bootstrap "
+                        "when bootstrap_venv creates a new .venv. Default: 'python3'. "
+                        "Ignored when an existing venv is found or bootstrap_venv is false."
+                    ),
+                    "default": "python3",
+                    "examples": ["python3", "python3.11"],
                 },
             },
             "required": ["project_id"],
@@ -291,12 +317,25 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                 "4. Build pip arguments: ``install --no-input``, optional ``--upgrade``, optional ``-r <file>``, then package specs\n"
                 "5. In the queue worker, run ``asyncio.to_thread(run_pip_in_project_sandbox, ...)`` so the pip subprocess "
                 "does not block the worker event loop\n"
-                "6. Persist stdout/stderr to a session file under the server's ``log_dir/project_pip/`` (see "
+                "6. If that call raises ``VenvNotFoundError`` and ``bootstrap_venv`` is true (default), create "
+                "``.venv`` via ``VenvCreator`` (using ``python_executable``) under ``asyncio.to_thread``, then "
+                "retry the pip install exactly once; if ``bootstrap_venv`` is false, fail immediately with "
+                "``VENV_NOT_FOUND``\n"
+                "7. If the bootstrap step itself fails, return ``VENV_BOOTSTRAP_FAILED`` with the bootstrap "
+                "message/errors in ``data`` (never masked as a plain ``VENV_NOT_FOUND``); if bootstrap succeeds "
+                "but the retried pip call still cannot find the interpreter, return ``VENV_NOT_FOUND`` with a "
+                "message noting the bootstrap outcome\n"
+                "8. Persist stdout/stderr to a session file under the server's ``log_dir/project_pip/`` (see "
                 "``pip_output_log_path`` in the result) and return stdout, stderr, returncode, timed_out, and "
                 "``pip_args`` for traceability (in the **completed job** result)\n\n"
                 "Important notes:\n"
                 "- Pip is invoked non-interactively (``--no-input``)\n"
-                "- Without ``.venv``/``venv``, the command returns ``VENV_NOT_FOUND``\n"
+                "- By default (``bootstrap_venv=true``), a missing ``.venv``/``venv`` is created automatically "
+                "(same bootstrap as ``create_project``'s ``create_venv``, using ``python_executable``) and the "
+                "pip install is retried once; set ``bootstrap_venv=false`` to keep the previous hard-stop "
+                "behavior (``VENV_NOT_FOUND``) instead\n"
+                "- If the bootstrap step itself fails, the command returns ``VENV_BOOTSTRAP_FAILED`` with the "
+                "bootstrap message/errors in ``data``; it never masks that as a plain ``VENV_NOT_FOUND``\n"
                 "- Network and index configuration follow the project venv's pip as usual\n"
                 "- ``timeout_seconds`` caps the pip subprocess; the server's queue/job limits may also apply separately"
             ),
@@ -352,6 +391,26 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                     "minimum": 1,
                     "examples": [120, 300, 600],
                 },
+                "bootstrap_venv": {
+                    "description": (
+                        "When true (default), a missing project venv is created automatically "
+                        "before pip runs (same bootstrap as ``create_project``'s ``create_venv``) and "
+                        "the install is retried once. When false, a missing venv fails "
+                        "immediately with ``VENV_NOT_FOUND`` (previous behavior)."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "examples": [True, False],
+                },
+                "python_executable": {
+                    "description": (
+                        "Python interpreter used only when ``bootstrap_venv`` creates a new venv. "
+                        "Ignored if a venv already exists or ``bootstrap_venv`` is false. Default: 'python3'."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["python3", "python3.11"],
+                },
             },
             "usage_examples": [
                 {
@@ -391,9 +450,27 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                     "solution": "Use a path under the project root that exists and is a file.",
                 },
                 "VENV_NOT_FOUND": {
-                    "description": "No ``.venv`` or ``venv`` Python under the project root",
-                    "example": "Fresh checkout without a virtual environment",
-                    "solution": "Create a venv at the project root (e.g. ``python -m venv .venv``).",
+                    "description": (
+                        "No ``.venv``/``venv`` Python under the project root, and either "
+                        "``bootstrap_venv`` is false or the retried pip call after a successful "
+                        "bootstrap still cannot find the interpreter"
+                    ),
+                    "example": "``bootstrap_venv``: false on a fresh checkout without a virtual environment",
+                    "solution": (
+                        "Leave ``bootstrap_venv`` at its default (``true``) so the venv is created "
+                        "automatically, or create one manually (e.g. ``python -m venv .venv``) and retry."
+                    ),
+                },
+                "VENV_BOOTSTRAP_FAILED": {
+                    "description": (
+                        "``bootstrap_venv`` was true and no venv existed, but automatic venv creation "
+                        "itself failed (e.g. ``python_executable`` missing or pip unavailable)"
+                    ),
+                    "example": "``python_executable``: ``'python3.99'`` does not exist on the server",
+                    "solution": (
+                        "Check ``details.bootstrap_message`` / ``details.bootstrap_errors``, fix "
+                        "``python_executable`` or server Python availability, or create the venv manually."
+                    ),
                 },
                 "INTERNAL_ERROR": {
                     "description": "Unexpected failure in the command handler",
@@ -443,13 +520,17 @@ class ProjectPipInstallCommand(BaseMCPCommand):
                     },
                 },
                 "error": {
-                    "description": "Validation, path, venv, or internal error",
+                    "description": "Validation, path, venv, bootstrap, or internal error",
                     "code": (
                         "VALIDATION_ERROR, INVALID_PARAMS, INVALID_PATH, "
-                        "VENV_NOT_FOUND, INTERNAL_ERROR"
+                        "VENV_NOT_FOUND, VENV_BOOTSTRAP_FAILED, INTERNAL_ERROR"
                     ),
                     "message": "Human-readable message",
-                    "data": "Optional structured details for validation errors",
+                    "data": (
+                        "Optional structured details for validation errors, or bootstrap "
+                        "details (``bootstrap_message``/``bootstrap_errors``) for "
+                        "``VENV_BOOTSTRAP_FAILED``"
+                    ),
                 },
             },
             "best_practices": [
@@ -468,9 +549,15 @@ class ProjectPipInstallCommand(BaseMCPCommand):
         requirements_file: Optional[str] = None,
         upgrade: bool = False,
         timeout_seconds: Optional[int] = None,
+        bootstrap_venv: bool = True,
+        python_executable: str = "python3",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Install packages or a requirements file in the project sandbox."""
+        """Install packages or a requirements file in the project sandbox.
+
+        On a missing project venv, bootstraps ``.venv`` via ``VenvCreator`` when
+        ``bootstrap_venv`` is true (default) and retries the pip install once.
+        """
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
             pkgs = _strip_packages(packages)
@@ -506,7 +593,46 @@ class ProjectPipInstallCommand(BaseMCPCommand):
             except ValueError as e:
                 return ErrorResult(code="INVALID_PATH", message=str(e))
             except VenvNotFoundError as e:
-                return ErrorResult(code="VENV_NOT_FOUND", message=str(e))
+                if not bootstrap_venv:
+                    return ErrorResult(code="VENV_NOT_FOUND", message=str(e))
+                venv_result = await asyncio.to_thread(
+                    VenvCreator(root_path, python_executable=python_executable).create
+                )
+                if not venv_result.success:
+                    return ErrorResult(
+                        code="VENV_BOOTSTRAP_FAILED",
+                        message=(
+                            "Automatic venv bootstrap failed before pip install "
+                            f"could run: {venv_result.message}"
+                        ),
+                        details={
+                            "bootstrap_message": venv_result.message,
+                            "bootstrap_errors": venv_result.errors,
+                        },
+                    )
+                try:
+                    result = await asyncio.to_thread(
+                        run_pip_in_project_sandbox,
+                        root_path,
+                        pip_args,
+                        timeout_seconds,
+                    )
+                except ValueError as e_retry:
+                    return ErrorResult(
+                        code="INVALID_PATH",
+                        message=(
+                            "venv bootstrap succeeded but the retried pip "
+                            f"install hit an invalid path: {e_retry}"
+                        ),
+                    )
+                except VenvNotFoundError as e_retry:
+                    return ErrorResult(
+                        code="VENV_NOT_FOUND",
+                        message=(
+                            "venv bootstrap reported success but pip still "
+                            f"cannot find the project interpreter: {e_retry}"
+                        ),
+                    )
             data = {
                 "stdout": result.stdout,
                 "stderr": result.stderr,

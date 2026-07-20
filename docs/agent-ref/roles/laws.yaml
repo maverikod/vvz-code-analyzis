@@ -89,26 +89,22 @@ laws:
     this): GIT operations on the server are NEVER done over the console/ssh without the
     user's explicit permission - server-side git goes exclusively through CA git_* commands.
   delivery_checks: >-
-    DELIVERY DEFINITION - "work delivered to the user" means ALL of the following,
-    in order: (1) VERSION BUMP - increment the project version number by 1 before
-    the delivery build. (2) BUILD SCRIPT - run ./build.sh at the project root; it
-    MUST: run the local unit tests; if the project ships a docker image - build it,
-    tag it with the SAME version, and push it to Docker Hub; build the .deb package.
-    (3) TRANSFER/DEPLOY METHOD - if how to transfer and deploy the artifact has not
-    been established earlier, ASK THE USER before proceeding. (4) DEPLOY - deploy to
-    the testing/production server (one and the same server in this setup).
-    (5) REAL-SERVER PIPELINE - verify the freshly deployed instance with the
-    project's SINGLE test pipeline: the server is present in the mcp-proxy registry
-    (list_servers); every changed/added command AND its related commands respond
-    correctly THROUGH the proxy (call_server), not only in isolation; the main
-    pipeline script - built on the server's own client (or, if none, the adapter's
-    client) - passes against the REAL deployed server. (6) then branch_discipline
-    POST-DEPLOY PROPAGATION applies (merge to main, push through GitHub, server repo
-    git_pull). STANDING INVARIANTS: the project ALWAYS keeps a unit-test suite
-    runnable in the repo (locally or via the server terminal, per
-    variables.file_access profile); there is exactly ONE pre-delivery test pipeline -
-    never multiply pipelines; a missing ./build.sh or pipeline script is a gap to
-    close, not ignore. A task that modified a server is complete only after all of
-    the above pass on the deployed instance. (Owner: the role that delivers to the
-    user — orchestrator/executor level. Coders/testers are not gated on these
-    checks; they gate DELIVERY, not individual steps.)
+    DELIVERY DEFINITION - "work delivered to the user" means, in order: (1) version
+    bump +1 (root pyproject = source of truth); (2) ./build.sh at the project root
+    (local unit tests; docker image build+tag+push when the project ships one; .deb
+    build); (3) client published to PyPI at the same version; (4) deploy to the
+    single testing/production server (method not established earlier -> ASK THE
+    USER first); (5) the ONE real-server test pipeline green against the deployed
+    instance; (6) branch_discipline post-deploy propagation. FULL PROCEDURE,
+    INVARIANTS, AND GOTCHAS: ops/delivery-release.yaml - read it BEFORE the first
+    release action (tooling.yaml trigger). A task that modified a server is complete
+    only after all steps pass. (Owner: the delivering role - orchestrator/executor
+    level; coders/testers gate their own steps, not delivery.)
+  server_client_law: >-
+    A server project MUST ship a client that hides ALL network interaction: callers
+    get results or exceptions - never transport details, URLs, retries, or
+    queued-job envelopes. A project built on mcp-proxy-adapter implements that
+    client as a WRAPPER over the adapter's client, never reimplementing transport.
+    The client is published to PyPI (credentials via ~/.pypirc), and the versions of
+    client, server, and docker image (when one exists) are ALWAYS identical.
+    Release mechanics: ops/delivery-release.yaml.

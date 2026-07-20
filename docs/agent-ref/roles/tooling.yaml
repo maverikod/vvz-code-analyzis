@@ -25,6 +25,7 @@ manuals:
   coder_guide: roles/coder-guide.yaml
   cmd_help:    'call_server(<server>,"help",{cmdname:<command>})'
   modes:       modes.yaml
+  delivery:    ops/delivery-release.yaml
 
 # condition -> MUST read manual(s) BEFORE the first matching action
 triggers:
@@ -43,6 +44,8 @@ triggers:
     read: [rules]   # cas_rules.git_via_ca — git ONLY through CA git_* commands
   - when: the task declares a mode (planning / analysis / refactoring)
     read: [modes]
+  - when: before the first release action of a delivery (version bump, build, publish, deploy, real-server pipeline)
+    read: [delivery]
 
 # error taxonomy — exactly one branch per failure
 errors:

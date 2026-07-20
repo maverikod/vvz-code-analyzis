@@ -157,51 +157,184 @@ def resolve_callee(
     return None
 
 
-def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) -> int:
-    """
-    Build entity_cross_ref inheritance edges from this file's ``classes.bases``.
+def _base_names_from_bases_raw(bases_raw: Any) -> Optional[List[str]]:
+    """Parse a ``classes.bases`` value into simple (last-segment) base names.
 
-    For each class defined in the file, resolves each base class name (project-scoped,
-    same-file preferred, qualified names reduced to the last segment - same convention
-    as ``get_class_hierarchy``) and inserts a ``ref_type='inherit'`` row with the child
-    class as caller and the base class as callee. Unresolved bases (external/stdlib,
-    or simply not found) are skipped - same convention as unresolved usage callees in
-    :func:`build_entity_cross_ref_for_file`.
+    Returns None when ``bases_raw`` is empty/unparseable/not a list (caller skips).
+    """
+    if not bases_raw:
+        return None
+    try:
+        bases = json.loads(bases_raw) if isinstance(bases_raw, str) else bases_raw
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(bases, list):
+        return None
+    names = []
+    for base in bases:
+        name = base.split(".")[-1] if isinstance(base, str) else str(base)
+        if name:
+            names.append(name)
+    return names
+
+
+def _resolve_unique_base_class_id(
+    db: Any, project_id: str, base_name: str
+) -> Optional[Any]:
+    """
+    Resolve a base class name to a class id, project-wide, ONLY when unambiguous.
+
+    Unlike :func:`resolve_callee` (which breaks ties by preferring a same-file
+    match - fine for usages, but risks silently binding an inheritance edge to
+    the wrong same-named class when the real base lives in another file and an
+    unrelated class happens to share its name in the child's own file), this
+    resolves the base class by name across the whole project and returns a hit
+    ONLY when exactly one class with that name exists in the project. Zero or
+    more than one match -> unresolved (None), same "skip, do not guess"
+    convention as other unresolved callees in this module.
+
+    Args:
+        db: Legacy DB facade-like instance.
+        project_id: Project id for scoping.
+        base_name: Simple (unqualified) base class name.
+
+    Returns:
+        The unique class id, or None if zero or ambiguous (>1) matches.
+    """
+    rows = db._fetchall(
+        """
+        SELECT c.id FROM classes c
+        JOIN files f ON c.file_id = f.id
+        WHERE f.project_id = ? AND c.name = ?
+        """,
+        (project_id, base_name),
+    )
+    if len(rows) == 1:
+        return rows[0]["id"]
+    return None
+
+
+def _inherit_edge_exists(db: Any, caller_class_id: Any, callee_class_id: Any) -> bool:
+    """True if a ``ref_type='inherit'`` entity_cross_ref row already links these classes."""
+    rows = db._fetchall(
+        "SELECT 1 FROM entity_cross_ref "
+        "WHERE caller_class_id = ? AND callee_class_id = ? AND ref_type = 'inherit'",
+        (caller_class_id, callee_class_id),
+    )
+    return bool(rows)
+
+
+def _backfill_children_inheritance_for_class(
+    db: Any, project_id: str, parent_class_id: Any, parent_name: str
+) -> int:
+    """
+    Retroactively add inherit edges FROM already-indexed children TO this class.
+
+    ``update_indexes`` processes a project's files in a fixed (sorted) order that
+    has no notion of base-before-derived; when a child's file is (re)indexed
+    before its base class exists in the DB, the forward resolution in
+    :func:`_add_inheritance_cross_ref_for_file` finds nothing for that base name
+    and skips the edge - and nothing else ever revisits that child once the base
+    class is indexed later in the same run. This closes that gap: every time a
+    class is (re)indexed, scan the project for OTHER classes whose ``bases``
+    reference this class's name and add the missing edge for each, regardless
+    of which file was processed first. Idempotent via :func:`_inherit_edge_exists`
+    so re-running (e.g. the base class file touched again later) never duplicates
+    an edge already present.
 
     Args:
         db: Legacy DB facade-like (add_entity_cross_ref semantics).
-        file_id: File id.
-        project_id: Project id for resolve_callee.
+        project_id: Project id for scoping.
+        parent_class_id: Id of the class that may be a base of others.
+        parent_name: Simple (unqualified) name of that class.
 
     Returns:
         Number of entity_cross_ref rows added.
     """
     rows = db._fetchall(
-        "SELECT id, line, bases FROM classes WHERE file_id = ?",
+        """
+        SELECT c.id, c.file_id, c.line, c.bases FROM classes c
+        JOIN files f ON c.file_id = f.id
+        WHERE f.project_id = ? AND c.id != ?
+        """,
+        (project_id, parent_class_id),
+    )
+    added = 0
+    for row in rows:
+        base_names = _base_names_from_bases_raw(row.get("bases"))
+        if not base_names or parent_name not in base_names:
+            continue
+        child_id = row["id"]
+        if _inherit_edge_exists(db, child_id, parent_class_id):
+            continue
+        try:
+            db.add_entity_cross_ref(
+                caller_class_id=child_id,
+                caller_method_id=None,
+                caller_function_id=None,
+                callee_class_id=parent_class_id,
+                callee_method_id=None,
+                callee_function_id=None,
+                ref_type="inherit",
+                file_id=row.get("file_id"),
+                line=row.get("line"),
+            )
+            added += 1
+        except Exception as e:
+            logger.debug(
+                "Failed to backfill inheritance entity_cross_ref child=%s parent=%s: %s",
+                child_id,
+                parent_class_id,
+                e,
+                exc_info=True,
+            )
+    return added
+
+
+def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) -> int:
+    """
+    Build entity_cross_ref inheritance edges to/from this file's classes.
+
+    For each class defined in the file:
+    - Forward: resolves each base name in ``classes.bases`` (qualified names
+      reduced to the last segment, same convention as ``get_class_hierarchy``)
+      via :func:`_resolve_unique_base_class_id` (project-wide, unique-name-only)
+      and inserts a ``ref_type='inherit'`` row (this class = caller, base = callee).
+      Unresolved bases (external/stdlib, not found, or ambiguous - multiple
+      same-named classes in the project) are skipped.
+    - Backward: calls :func:`_backfill_children_inheritance_for_class` so any
+      already-indexed class elsewhere in the project that lists this class as a
+      base gets its edge filled in too - order-independent w.r.t. batch reindex.
+
+    Args:
+        db: Legacy DB facade-like (add_entity_cross_ref semantics).
+        file_id: File id.
+        project_id: Project id for resolution.
+
+    Returns:
+        Number of entity_cross_ref rows added.
+    """
+    rows = db._fetchall(
+        "SELECT id, name, line, bases FROM classes WHERE file_id = ?",
         (file_id,),
     )
     added = 0
     for row in rows:
         class_id = row["id"]
+        class_name = row.get("name")
         line = row["line"]
-        bases_raw = row.get("bases")
-        if not bases_raw:
-            continue
-        try:
-            bases = json.loads(bases_raw) if isinstance(bases_raw, str) else bases_raw
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(bases, list):
-            continue
 
-        for base in bases:
-            base_name = base.split(".")[-1] if isinstance(base, str) else str(base)
-            if not base_name:
+        base_names = _base_names_from_bases_raw(row.get("bases"))
+        for base_name in base_names or []:
+            callee_id = _resolve_unique_base_class_id(db, project_id, base_name)
+            if callee_id is None:
                 continue
-            callee = resolve_callee(db, project_id, file_id, line, "class", base_name)
-            if callee is None:
+            # Another class in this same file, processed earlier in this loop,
+            # may already have backfilled this exact edge via
+            # _backfill_children_inheritance_for_class (e.g. base and child
+            # both defined in the file being indexed) - do not duplicate it.
+            if _inherit_edge_exists(db, class_id, callee_id):
                 continue
-            _, callee_id = callee
             try:
                 db.add_entity_cross_ref(
                     caller_class_id=class_id,
@@ -223,6 +356,11 @@ def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) 
                     e,
                     exc_info=True,
                 )
+
+        if class_name:
+            added += _backfill_children_inheritance_for_class(
+                db, project_id, class_id, class_name
+            )
     return added
 
 
@@ -263,33 +401,38 @@ def build_entity_cross_ref_for_file(
         target_name = row["target_name"]
         target_class = row.get("target_class")
 
-        caller = resolve_caller(db, file_id, line)
-        callee = resolve_callee(
-            db, project_id, file_id, line, target_type, target_name, target_class
-        )
-        if caller is None or callee is None:
-            continue
-
-        caller_type, caller_id = caller
-        callee_type, callee_id = callee
-
-        caller_class_id = caller_method_id = caller_function_id = None
-        if caller_type == "class":
-            caller_class_id = caller_id
-        elif caller_type == "method":
-            caller_method_id = caller_id
-        else:
-            caller_function_id = caller_id
-
-        callee_class_id = callee_method_id = callee_function_id = None
-        if callee_type == "class":
-            callee_class_id = callee_id
-        elif callee_type == "method":
-            callee_method_id = callee_id
-        else:
-            callee_function_id = callee_id
-
+        # A single bad usage row (resolver or insert raising) must never abort
+        # the whole function - that would also skip the inheritance step below
+        # for the entire file, silently, with only a warning one level up in
+        # atomic.py ("do not fail the whole file update"). Wrap the full
+        # per-usage body, not just the insert.
         try:
+            caller = resolve_caller(db, file_id, line)
+            callee = resolve_callee(
+                db, project_id, file_id, line, target_type, target_name, target_class
+            )
+            if caller is None or callee is None:
+                continue
+
+            caller_type, caller_id = caller
+            callee_type, callee_id = callee
+
+            caller_class_id = caller_method_id = caller_function_id = None
+            if caller_type == "class":
+                caller_class_id = caller_id
+            elif caller_type == "method":
+                caller_method_id = caller_id
+            else:
+                caller_function_id = caller_id
+
+            callee_class_id = callee_method_id = callee_function_id = None
+            if callee_type == "class":
+                callee_class_id = callee_id
+            elif callee_type == "method":
+                callee_method_id = callee_id
+            else:
+                callee_function_id = callee_id
+
             db.add_entity_cross_ref(
                 caller_class_id=caller_class_id,
                 caller_method_id=caller_method_id,
@@ -311,5 +454,13 @@ def build_entity_cross_ref_for_file(
                 exc_info=True,
             )
 
-    added += _add_inheritance_cross_ref_for_file(db, file_id, project_id)
+    try:
+        added += _add_inheritance_cross_ref_for_file(db, file_id, project_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to add inheritance entity_cross_ref for file_id=%s: %s",
+            file_id,
+            e,
+            exc_info=True,
+        )
     return added

@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-from code_analysis_client import CodeAnalysisAsyncClient
+from code_analysis_client import CodeAnalysisAsyncClient, JobFailedError
 
 from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
+from _verify_client_all_commands_classifiers import classify_job_failed_error
 
 
 async def call_step_with_data(
@@ -35,6 +36,25 @@ async def call_step_with_data(
     :attr:`Status.FAILED` outcome so one broken step cannot abort the rest of
     its lifecycle or the overall sweep.
 
+    A raised :class:`JobFailedError` gets its own branch, routed through
+    :func:`_verify_client_all_commands_classifiers.classify_job_failed_error`
+    instead of the generic handler below. Root cause this branch fixes
+    (verified empirically against live run logs for ``git_branch_set_upstream``
+    / ``git_branch_track_remote``, jobs ``4914da2b-16dc-4c24-843f-7a6a2656b098``
+    / ``af6947cd-1fa7-4233-abf9-430ae3249789``): before this fix, the generic
+    ``except Exception`` below caught ``JobFailedError`` too and reported it
+    verbatim (``FAILED ... JobFailedError(...: None)``), so the structured
+    inner-error lookup in ``classify_job_failed_error`` /
+    ``_fetch_structured_job_error`` — the retry loop that DOES successfully
+    reclassify the same kind of failure for every Bucket-A command that goes
+    through ``run_bucket_a`` instead of a lifecycle step — was never even
+    called for lifecycle-precomputed commands. It was never a timing/race
+    problem with the retry loop itself (the retries were never reached), and
+    ``exc.job_id`` was never actually ``None`` (the two job ids above prove
+    it) — the ``None`` in the FAILED reason is ``JobFailedError.error``,
+    logged verbatim because nothing ever fetched the real nested error at
+    ``data.result.result.error``.
+
     Args:
         client: Connected async client.
         name: Live command name to invoke.
@@ -48,6 +68,9 @@ async def call_step_with_data(
     """
     try:
         resp = await client.call_validated(name, params)
+    except JobFailedError as exc:
+        outcome = await classify_job_failed_error(client, name, exc, bucket=bucket)
+        return outcome, None
     except Exception as exc:  # noqa: BLE001 - one bad step must not abort the sweep
         return CommandOutcome(name, bucket, Status.FAILED, truncate(repr(exc))), None
     if resp.get("success") is True:

@@ -42,7 +42,41 @@ from code_analysis_client import CodeAnalysisAsyncClient
 client = CodeAnalysisAsyncClient.from_server_config(config_dict, timeout=60.0)
 ```
 
-Queued/long commands: use `client.call_unified(..., expect_queue=True, auto_poll=True)` or the underlying `client.rpc.execute_command_unified(...)`.
+### Queued commands are handled automatically
+
+Every entry point — `call`, `call_validated`, `client.commands.<name>`, and the
+`file_sessions` / `universal_files` facades built on `call_validated` — routes
+through one queue-aware core. If the server's immediate response is a queued-job
+envelope (either deployed shape: `poll_with`/`store: "queuemgr"`, or
+`queued_after_timeout`), the client polls `queue_get_job_status` for you until
+the job reaches a terminal state, then returns the unwrapped inner result — the
+same shape you'd get from a synchronous call. You never see the raw envelope.
+
+```python
+# No special handling needed: queued or not, this returns the real result.
+out = await client.call("some_long_running_command", {...})
+```
+
+Failures raise instead of returning an error envelope:
+
+* `CommandFailedError` — the job completed but the command itself failed
+  (`inner result {"success": false}` / `command_success is False` /
+  `completed_with_error`). Carries `.command`, `.job_id`, `.error`.
+* `JobFailedError` — the job failed/stopped/cancelled, or reported `error`.
+  Carries `.job_id`, `.error`, `.status`.
+* `JobTimeoutError` — only raised when you pass an explicit `timeout` and it
+  elapses; the job keeps running server-side. By default (`timeout=None`) the
+  client polls until the job finishes, however long that takes.
+
+Optional keyword args on `call` / `call_validated` (and their `call_unified*`
+counterparts): `timeout` (seconds, default `None` = wait until terminal),
+`poll_interval` (seconds between polls, default `1.0`), `status_hook` (sync or
+async callable invoked with each poll's status dict).
+
+`call_unified` / `call_unified_validated` are kept as **deprecated aliases** of
+`call` / `call_validated` for backward compatibility — `expect_queue` and
+`auto_poll` are accepted but ignored, since queue handling is now always on.
+Prefer `call` / `call_validated` directly.
 
 ## Validation using the server schema
 
@@ -61,7 +95,7 @@ async with CodeAnalysisAsyncClient(host="127.0.0.1", port=15001) as client:
     client.clear_command_schema_cache()
 ```
 
-Use `call_unified_validated` when you need queue polling. Pass `refresh_schema=True` on a single call to bypass the in-memory schema cache.
+Pass `refresh_schema=True` on a single call to bypass the in-memory schema cache.
 
 ## High-level facades (aligned with live server registry)
 

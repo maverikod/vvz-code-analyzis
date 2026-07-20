@@ -3,7 +3,7 @@
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
 variables:
-  file_access: mcp      # mcp (default) | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline.
+  file_access: local    # mcp (default) | local | local_ide. Governs mcp_only/local_mode/local_ide_mode and the profile-dependent parts of branch_discipline. Set to local by the user 2026-07-20.
   escalation: strict    # strict (default) | off. User pre-sets 'off' -> law escalation_first_error is relaxed.
 
 laws:

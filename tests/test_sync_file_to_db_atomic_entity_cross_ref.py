@@ -39,7 +39,20 @@ from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
 
 @pytest.fixture
 def test_db(tmp_path):
-    """SQLite-backed DatabaseClient facade (in-process RPC), real schema."""
+    """SQLite-backed DatabaseClient facade (in-process RPC), real schema.
+
+    ``test_db._client`` is the plain ``DatabaseClient`` the facade wraps
+    (same underlying connection/schema) - what ``sync_file_to_db_atomic``
+    actually gets from its one real production caller
+    (``update_indexes_analyzer.py`` passes a ``DatabaseClient``, never the
+    facade). Passing ``test_db._client`` (not the facade, which happens to
+    expose both the legacy private methods AND ``execute()``) to
+    ``sync_file_to_db_atomic`` in these tests is what makes them faithfully
+    reproduce the "'DatabaseClient' object has no attribute '_fetchall'" live
+    bug pre-fix, instead of silently passing regardless (the facade's dual
+    surface is exactly why earlier tests in this saga kept passing despite
+    the incompatibility).
+    """
     facade, raw_client = make_sqlite_in_process_legacy_facade(tmp_path)
     try:
         yield facade
@@ -97,7 +110,7 @@ def test_sync_file_to_db_atomic_builds_inheritance_and_usage_cross_ref(
     base_file_id = _insert_file(test_db, project_id, tmp_path, "base.py")
     base_source = "class Base:\n    pass\n"
     base_result = sync_file_to_db_atomic(
-        database=test_db,
+        database=test_db._client,
         project_id=project_id,
         absolute_path=str(tmp_path / "base.py"),
         source_code=base_source,
@@ -130,7 +143,7 @@ def test_sync_file_to_db_atomic_builds_inheritance_and_usage_cross_ref(
     test_db._commit()
 
     child_result = sync_file_to_db_atomic(
-        database=test_db,
+        database=test_db._client,
         project_id=project_id,
         absolute_path=str(tmp_path / "child.py"),
         source_code=child_source,
@@ -166,7 +179,7 @@ def test_sync_file_to_db_atomic_does_not_duplicate_cross_ref_on_reindex(
 
     base_file_id = _insert_file(test_db, project_id, tmp_path, "base.py")
     sync_file_to_db_atomic(
-        database=test_db,
+        database=test_db._client,
         project_id=project_id,
         absolute_path=str(tmp_path / "base.py"),
         source_code="class Base:\n    pass\n",
@@ -181,7 +194,7 @@ def test_sync_file_to_db_atomic_does_not_duplicate_cross_ref_on_reindex(
 
     for _ in range(2):
         result = sync_file_to_db_atomic(
-            database=test_db,
+            database=test_db._client,
             project_id=project_id,
             absolute_path=str(tmp_path / "child.py"),
             source_code=child_source,

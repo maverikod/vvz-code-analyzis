@@ -16,6 +16,26 @@ CALLER_TYPES = ("class", "method", "function")
 CALLEE_TYPES = ("class", "method", "function")
 
 
+def _fetchall(db: Any, sql: str, params: tuple) -> List[Dict[str, Any]]:
+    """
+    Run a SELECT via the portable ``execute()`` interface.
+
+    Every function in this module used to call the private
+    ``_fetchall``/``_execute``/``_commit``/``_lastrowid``/``_in_transaction``
+    quartet, which only ``CodeDatabase`` implements. ``sync_file_to_db_atomic``
+    (the live caller of the whole entity_cross_ref builder chain) passes a
+    ``DatabaseClient``, which has neither those private methods NOR
+    ``add_entity_cross_ref``/``delete_entity_cross_ref_for_file`` as bound
+    methods - every call raised ``AttributeError`` there. Both classes DO
+    implement the public ``execute(sql, params) -> {"data": [...], ...}``
+    (``CodeDatabase.execute``'s own docstring: "work with both DatabaseClient
+    (RPC) and CodeDatabase"); this module now uses only that shared surface.
+    """
+    result = db.execute(sql, params)
+    data = result.get("data") if isinstance(result, dict) else None
+    return list(data) if data else []
+
+
 def add_entity_cross_ref(
     self,
     caller_class_id: Optional[int],
@@ -34,20 +54,24 @@ def add_entity_cross_ref(
     Exactly one of caller_class_id, caller_method_id, caller_function_id must be non-None.
     Exactly one of callee_class_id, callee_method_id, callee_function_id must be non-None.
 
-    Commits only when NOT already inside an active transaction (``_in_transaction()``),
-    same discipline as ``add_class``/``add_method``/``add_function``/``add_usage`` in
-    ``entities.py`` - this function was the one writer in this module missing that
-    guard. This call runs mid-transaction from
-    ``entity_cross_ref_builder.build_entity_cross_ref_for_file`` (itself invoked from
-    ``update_file_data_atomic``, "must be called within an active transaction");
-    an unconditional commit here ends that outer transaction early without resetting
-    ``_transaction_active``, so later statements/commits in the same atomic update
-    proceed against a transaction boundary the caller no longer controls. On SQLite
-    this was invisible because the in-process test facade's ``_commit()`` is a no-op
-    regardless of transaction state; on PostgreSQL ``driver.commit()`` really commits
-    the connection. Confirmed root cause of entity_cross_ref rows being absent on a
-    PostgreSQL-backed deployment while classes/functions/methods/usages (all
-    correctly transaction-guarded) were present.
+    Uses the portable ``self.execute(sql, params)`` (implemented by both
+    ``CodeDatabase`` and ``DatabaseClient`` - see :func:`_fetchall`'s
+    docstring), not the private ``_execute``/``_commit``/``_lastrowid``/
+    ``_in_transaction`` quartet this function used until two rounds of live
+    verification found it broken: first because an unconditional
+    ``self._commit()`` ended the caller's enclosing transaction early on
+    PostgreSQL (invisible on SQLite, whose test facade's ``_commit()`` is an
+    always-no-op), then because ``sync_file_to_db_atomic`` (the actual live
+    caller of the whole entity_cross_ref builder chain, via
+    ``entity_cross_ref_builder.build_entity_cross_ref_for_file``) passes a
+    ``DatabaseClient``, which implements neither those private methods nor
+    this function as a bound method at all. ``self.execute(...)`` with no
+    ``transaction_id`` auto-commits per statement on both layers when called
+    standalone (no wrapping transaction) - exactly how this chain is invoked
+    today - while still respecting an ambient ``CodeDatabase`` transaction
+    transparently for any caller that has one (``CodeDatabase.execute()``
+    delegates to ``_execute()``, which still consults ``_driver_transaction_id()``
+    internally).
 
     Args:
         caller_class_id: Caller class id (or None)
@@ -83,7 +107,7 @@ def add_entity_cross_ref(
     if ref_type not in REF_TYPES:
         raise ValueError(f"ref_type must be one of {REF_TYPES!r}")
 
-    self._execute(
+    result = self.execute(
         """
         INSERT INTO entity_cross_ref (
             caller_class_id, caller_method_id, caller_function_id,
@@ -103,11 +127,9 @@ def add_entity_cross_ref(
             line,
         ),
     )
-    if not self._in_transaction():
-        self._commit()
-    result = self._lastrowid()
-    assert result is not None
-    return result
+    lastrowid = result.get("lastrowid") if isinstance(result, dict) else None
+    assert lastrowid is not None
+    return lastrowid
 
 
 def get_dependencies_by_caller(
@@ -133,7 +155,8 @@ def get_dependencies_by_caller(
     else:
         col = "caller_function_id"
 
-    rows = self._fetchall(
+    rows = _fetchall(
+        self,
         f"""
         SELECT callee_class_id, callee_method_id, callee_function_id,
                ref_type, file_id, line
@@ -186,7 +209,8 @@ def get_dependents_by_callee(
     else:
         col = "callee_function_id"
 
-    rows = self._fetchall(
+    rows = _fetchall(
+        self,
         f"""
         SELECT caller_class_id, caller_method_id, caller_function_id,
                ref_type, file_id, line
@@ -224,9 +248,13 @@ def delete_entity_cross_ref_for_file(self, file_id: Any) -> None:
     - file_id = file_id (reference location), or
     - caller/callee class/method/function belongs to this file.
 
-    Commits only when NOT already inside an active transaction, matching
-    ``add_entity_cross_ref`` (same class of bug fixed there: an unconditional
-    commit here would end an enclosing atomic transaction early).
+    Uses the portable ``self.execute(sql, params)`` throughout (see
+    :func:`_fetchall`'s docstring) - same rationale as ``add_entity_cross_ref``:
+    ``sync_file_to_db_atomic`` (the live caller, via
+    ``entity_cross_ref_builder.build_entity_cross_ref_for_file``) passes a
+    ``DatabaseClient``, which has neither the private ``_fetchall``/
+    ``_execute``/``_commit``/``_in_transaction`` this function used before, nor
+    this function itself as a bound method.
 
     Args:
         file_id: File id to clear cross-refs for (UUID string post-migration;
@@ -234,21 +262,24 @@ def delete_entity_cross_ref_for_file(self, file_id: Any) -> None:
             pre-migration ``int`` this module's other signatures still declare).
     """
     # Get all class_ids for this file
-    class_rows = self._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))
+    class_rows = _fetchall(self, "SELECT id FROM classes WHERE file_id = ?", (file_id,))
     class_ids = [r["id"] for r in class_rows]
 
     # Get all method_ids for those classes
     method_ids: List[int] = []
     if class_ids:
         placeholders = ",".join("?" * len(class_ids))
-        method_rows = self._fetchall(
+        method_rows = _fetchall(
+            self,
             f"SELECT id FROM methods WHERE class_id IN ({placeholders})",
             tuple(class_ids),
         )
         method_ids = [r["id"] for r in method_rows]
 
     # Get all function_ids for this file
-    func_rows = self._fetchall("SELECT id FROM functions WHERE file_id = ?", (file_id,))
+    func_rows = _fetchall(
+        self, "SELECT id FROM functions WHERE file_id = ?", (file_id,)
+    )
     function_ids = [r["id"] for r in func_rows]
 
     # Build DELETE: WHERE file_id = ? OR caller/callee in (ids)
@@ -275,6 +306,4 @@ def delete_entity_cross_ref_for_file(self, file_id: Any) -> None:
         params.extend(function_ids)
 
     where_clause = " OR ".join(conditions)
-    self._execute(f"DELETE FROM entity_cross_ref WHERE {where_clause}", tuple(params))
-    if not self._in_transaction():
-        self._commit()
+    self.execute(f"DELETE FROM entity_cross_ref WHERE {where_clause}", tuple(params))

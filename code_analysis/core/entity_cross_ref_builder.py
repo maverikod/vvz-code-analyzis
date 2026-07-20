@@ -7,12 +7,33 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from .database.entity_cross_ref import add_entity_cross_ref as _add_entity_cross_ref
 
 logger = logging.getLogger(__name__)
 
 
-def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]]:
+def _fetchall(db: Any, sql: str, params: tuple) -> List[Dict[str, Any]]:
+    """
+    Run a SELECT via the portable ``execute()`` interface.
+
+    ``CodeDatabase`` and ``DatabaseClient`` both implement public
+    ``execute(sql, params) -> {"data": [...], ...}`` (see
+    ``CodeDatabase.execute``'s docstring: "work with both DatabaseClient (RPC)
+    and CodeDatabase"). The private ``_fetchall``/``_execute``/``_commit``/
+    ``_lastrowid``/``_in_transaction`` quartet this module used to call only
+    exists on ``CodeDatabase`` - ``sync_file_to_db_atomic`` (the live caller of
+    this whole builder chain) passes a ``DatabaseClient``, which does not have
+    them, so every call raised ``AttributeError`` there (caught by the guarded
+    try/except one level up and logged, hence never adding a single row).
+    """
+    result = db.execute(sql, params)
+    data = result.get("data") if isinstance(result, dict) else None
+    return list(data) if data else []
+
+
+def resolve_caller(db: Any, file_id: Any, line: int) -> Optional[Tuple[str, int]]:
     """
     Resolve (file_id, line) to the containing entity (method, function, or class).
 
@@ -20,7 +41,8 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
     Uses end_line when present; if end_line is NULL, treats entity as single-line (line only).
 
     Args:
-        db: Legacy DB facade-like instance (_execute, _fetchall).
+        db: DB instance exposing the portable ``execute()`` (CodeDatabase or
+            DatabaseClient - see :func:`_fetchall`).
         file_id: File id.
         line: 1-based line number.
 
@@ -30,7 +52,8 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
     candidates: List[Tuple[str, int, int, int]] = []  # (type, id, start, end)
 
     # Methods for this file (via classes)
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         """
         SELECT m.id, m.line, m.end_line
         FROM methods m
@@ -46,7 +69,8 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
             candidates.append(("method", row["id"], start, end))
 
     # Functions for this file
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         "SELECT id, line, end_line FROM functions WHERE file_id = ?",
         (file_id,),
     )
@@ -57,7 +81,8 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
             candidates.append(("function", row["id"], start, end))
 
     # Classes for this file
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         "SELECT id, line, end_line FROM classes WHERE file_id = ?",
         (file_id,),
     )
@@ -86,7 +111,7 @@ def resolve_caller(db: Any, file_id: int, line: int) -> Optional[Tuple[str, int]
 def resolve_callee(
     db: Any,
     project_id: str,
-    file_id: int,
+    file_id: Any,
     line: int,
     target_type: str,
     target_name: str,
@@ -98,7 +123,7 @@ def resolve_callee(
     Prefer same file_id when multiple matches.
 
     Args:
-        db: Legacy DB facade-like instance.
+        db: DB instance exposing the portable execute() (CodeDatabase or DatabaseClient).
         project_id: Project id for scoping.
         file_id: File id where reference occurs (for same-file preference).
         line: Line number (unused; for future use).
@@ -110,7 +135,8 @@ def resolve_callee(
         (entity_type, entity_id) or None if not found.
     """
     if target_type == "class":
-        rows = db._fetchall(
+        rows = _fetchall(
+            db,
             """
             SELECT c.id FROM classes c
             JOIN files f ON c.file_id = f.id
@@ -124,7 +150,8 @@ def resolve_callee(
         return None
 
     if target_type == "function":
-        rows = db._fetchall(
+        rows = _fetchall(
+            db,
             """
             SELECT fn.id FROM functions fn
             JOIN files f ON fn.file_id = f.id
@@ -140,7 +167,8 @@ def resolve_callee(
     if target_type == "method":
         if not target_class:
             return None
-        rows = db._fetchall(
+        rows = _fetchall(
+            db,
             """
             SELECT m.id FROM methods m
             JOIN classes c ON m.class_id = c.id
@@ -194,14 +222,15 @@ def _resolve_unique_base_class_id(
     convention as other unresolved callees in this module.
 
     Args:
-        db: Legacy DB facade-like instance.
+        db: DB instance exposing the portable execute() (CodeDatabase or DatabaseClient).
         project_id: Project id for scoping.
         base_name: Simple (unqualified) base class name.
 
     Returns:
         The unique class id, or None if zero or ambiguous (>1) matches.
     """
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         """
         SELECT c.id FROM classes c
         JOIN files f ON c.file_id = f.id
@@ -216,7 +245,8 @@ def _resolve_unique_base_class_id(
 
 def _inherit_edge_exists(db: Any, caller_class_id: Any, callee_class_id: Any) -> bool:
     """True if a ``ref_type='inherit'`` entity_cross_ref row already links these classes."""
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         "SELECT 1 FROM entity_cross_ref "
         "WHERE caller_class_id = ? AND callee_class_id = ? AND ref_type = 'inherit'",
         (caller_class_id, callee_class_id),
@@ -243,7 +273,7 @@ def _backfill_children_inheritance_for_class(
     an edge already present.
 
     Args:
-        db: Legacy DB facade-like (add_entity_cross_ref semantics).
+        db: DB instance exposing the portable execute() (CodeDatabase or DatabaseClient).
         project_id: Project id for scoping.
         parent_class_id: Id of the class that may be a base of others.
         parent_name: Simple (unqualified) name of that class.
@@ -251,7 +281,8 @@ def _backfill_children_inheritance_for_class(
     Returns:
         Number of entity_cross_ref rows added.
     """
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         """
         SELECT c.id, c.file_id, c.line, c.bases FROM classes c
         JOIN files f ON c.file_id = f.id
@@ -268,7 +299,8 @@ def _backfill_children_inheritance_for_class(
         if _inherit_edge_exists(db, child_id, parent_class_id):
             continue
         try:
-            db.add_entity_cross_ref(
+            _add_entity_cross_ref(
+                db,
                 caller_class_id=child_id,
                 caller_method_id=None,
                 caller_function_id=None,
@@ -311,14 +343,15 @@ def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) 
       base gets its edge filled in too - order-independent w.r.t. batch reindex.
 
     Args:
-        db: Legacy DB facade-like (add_entity_cross_ref semantics).
+        db: DB instance exposing the portable execute() (CodeDatabase or DatabaseClient).
         file_id: File id.
         project_id: Project id for resolution.
 
     Returns:
         Number of entity_cross_ref rows added.
     """
-    rows = db._fetchall(
+    rows = _fetchall(
+        db,
         "SELECT id, name, line, bases FROM classes WHERE file_id = ?",
         (file_id,),
     )
@@ -340,7 +373,8 @@ def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) 
             if _inherit_edge_exists(db, class_id, callee_id):
                 continue
             try:
-                db.add_entity_cross_ref(
+                _add_entity_cross_ref(
+                    db,
                     caller_class_id=class_id,
                     caller_method_id=None,
                     caller_function_id=None,
@@ -390,7 +424,7 @@ def build_entity_cross_ref_for_file(
     not retroactively.
 
     Args:
-        db: Legacy DB facade-like (add_entity_cross_ref, add_usage semantics).
+        db: DB instance exposing the portable execute() (CodeDatabase or DatabaseClient).
         file_id: File id (UUID string post-migration; ``Any`` since callers pass
             the real runtime id, not the legacy pre-migration ``int``).
         project_id: Project id for resolve_callee.
@@ -399,7 +433,8 @@ def build_entity_cross_ref_for_file(
     Returns:
         Number of entity_cross_ref rows added (usages + inheritance).
     """
-    usages = db._fetchall(
+    usages = _fetchall(
+        db,
         "SELECT line, usage_type, target_type, target_name, target_class FROM usages WHERE file_id = ?",
         (file_id,),
     )
@@ -443,7 +478,8 @@ def build_entity_cross_ref_for_file(
             else:
                 callee_function_id = callee_id
 
-            db.add_entity_cross_ref(
+            _add_entity_cross_ref(
+                db,
                 caller_class_id=caller_class_id,
                 caller_method_id=caller_method_id,
                 caller_function_id=caller_function_id,

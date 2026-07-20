@@ -155,7 +155,55 @@ async def wait_for_job(
         await asyncio.sleep(poll_interval)
 
 
-def unwrap_job_result(status_data: Dict[str, Any]) -> Dict[str, Any]:
+_JOB_FAILED_REFETCH_ATTEMPTS = 4
+_JOB_FAILED_REFETCH_SLEEP_SECONDS = 0.5
+
+
+def _extract_inner_command_error(status_data: Dict[str, Any]) -> Any:
+    """Pull the failed command's own structured error out of a job status dict.
+
+    Looks at ``status_data["result"]["result"]["error"]`` first (outer
+    ``result`` is the queue wrapper, inner ``result`` is the command's own
+    result envelope), falling back to ``status_data["result"]["error"]``.
+    Returns ``None`` when neither is present.
+    """
+    result_field = status_data.get("result")
+    if not isinstance(result_field, dict):
+        return None
+    inner_result = result_field.get("result")
+    if isinstance(inner_result, dict) and inner_result.get("error") is not None:
+        return inner_result["error"]
+    if result_field.get("error") is not None:
+        return result_field["error"]
+    return None
+
+
+async def _refetch_inner_command_error(rpc: Any, job_id: str) -> Any:
+    """Re-poll ``queue_get_job_status`` hunting for the inner structured error.
+
+    Write-order gotcha: the queue store writes the job's terminal ``status``
+    slightly BEFORE it writes the ``result`` payload. A caller that reads the
+    status the instant it turns ``failed`` can therefore observe a terminal
+    status with no ``result`` (and no nested inner error) yet, even though the
+    failed command DID record a structured error - it just hasn't landed in
+    the store. Re-fetching a few times with a short sleep gives that second
+    write time to land instead of silently downgrading to ``None``.
+    """
+    for _ in range(_JOB_FAILED_REFETCH_ATTEMPTS):
+        await asyncio.sleep(_JOB_FAILED_REFETCH_SLEEP_SECONDS)
+        resp = await rpc.execute_command("queue_get_job_status", {"job_id": job_id})
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if not isinstance(data, dict):
+            data = resp if isinstance(resp, dict) else {}
+        inner_error = _extract_inner_command_error(data)
+        if inner_error is not None:
+            return inner_error
+    return None
+
+
+async def unwrap_job_result(
+    status_data: Dict[str, Any], *, rpc: Any = None
+) -> Dict[str, Any]:
     """Extract the inner command result from a terminal job status ``data`` dict.
 
     Raises :class:`JobFailedError` when the job itself failed/stopped/cancelled
@@ -163,13 +211,29 @@ def unwrap_job_result(status_data: Dict[str, Any]) -> Dict[str, Any]:
     completed but the inner command result is itself an error envelope.
     Otherwise returns the inner result dict, in the same shape a sync call
     would have returned.
+
+    On job failure, before raising, this tries to attach the failed command's
+    OWN structured error (nested at ``data.result.result.error``, falling
+    back to ``data.result.error``) to ``JobFailedError.error`` instead of the
+    bare queue-level ``error`` field. When that nested error is not yet
+    present in ``status_data`` and ``rpc`` was supplied, it re-fetches the job
+    status up to :data:`_JOB_FAILED_REFETCH_ATTEMPTS` times (see
+    :func:`_refetch_inner_command_error` for the write-order race this rides
+    out). The queue-level ``error`` field is used as a fallback when no
+    structured inner error is ever found; ``JobFailedError.error`` is ``None``
+    only when genuinely nothing was found either way.
     """
     job_id = status_data.get("job_id")
     status = str(status_data.get("status", "")).strip().lower()
     error = status_data.get("error")
 
     if status in _FAILED_JOB_STATUSES or error:
-        raise JobFailedError(job_id, error, status=status)
+        inner_error = _extract_inner_command_error(status_data)
+        if inner_error is None and rpc is not None and job_id:
+            inner_error = await _refetch_inner_command_error(rpc, str(job_id))
+        raise JobFailedError(
+            job_id, inner_error if inner_error is not None else error, status=status
+        )
 
     result_field = status_data.get("result")
     if isinstance(result_field, dict) and "result" in result_field:

@@ -261,14 +261,19 @@ async def classify_job_failed_error(
 ) -> CommandOutcome:
     """Classify a ``JobFailedError`` as a structured expected-error, or keep it FAILED.
 
-    Looks up the failed job's own structured error via
-    :func:`_fetch_structured_job_error`. When found, the command legitimately
-    rejected valid-looking input server-side (e.g. ``git_init`` on a
-    permission-denied path) — that is an expected error, not a tooling
-    failure, so it is reported the same way every other expected-error row
-    is. When no structured inner error is found, the ``JobFailedError`` is
-    reported verbatim as a FAILED outcome, same as before this classification
-    existed.
+    ``JobFailedError.error`` now already carries the failed command's own
+    structured error when ``unwrap_job_result`` (client-side) managed to find
+    it — see ``code_analysis_client.queue_wait.unwrap_job_result``. This uses
+    ``exc.error`` directly when it looks structured (has a ``code`` and/or
+    ``message`` key), and only falls back to the standalone
+    :func:`_fetch_structured_job_error` re-lookup when ``exc.error`` is not a
+    structured dict (e.g. it's the bare queue-level error, or ``None``).
+    Either way, when found, the command legitimately rejected valid-looking
+    input server-side (e.g. ``git_init`` on a permission-denied path) — that
+    is an expected error, not a tooling failure, so it is reported the same
+    way every other expected-error row is. When no structured inner error is
+    found, the ``JobFailedError`` is reported verbatim as a FAILED outcome,
+    same as before this classification existed.
 
     Args:
         client: Connected async client.
@@ -280,7 +285,13 @@ async def classify_job_failed_error(
         EXPECTED_ERROR outcome carrying the structured code+message when
         found; otherwise a FAILED outcome with the ``JobFailedError`` text.
     """
-    structured = await _fetch_structured_job_error(client, exc.job_id)
+    structured: Optional[Dict[str, Any]] = None
+    if isinstance(exc.error, dict) and (
+        exc.error.get("code") or exc.error.get("message")
+    ):
+        structured = exc.error
+    if structured is None:
+        structured = await _fetch_structured_job_error(client, exc.job_id)
     if structured is not None:
         return CommandOutcome(
             name, bucket, Status.EXPECTED_ERROR, truncate(str(structured))

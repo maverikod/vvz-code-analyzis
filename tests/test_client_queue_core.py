@@ -189,7 +189,14 @@ async def test_queued_after_timeout_variant_inner_failure_raises_command_failed(
 
 
 @pytest.mark.asyncio
-async def test_job_failed_status_raises_job_failed_error():
+async def test_job_failed_status_raises_job_failed_error(monkeypatch):
+    from code_analysis_client import queue_wait
+
+    async def fast_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(queue_wait.asyncio, "sleep", fast_sleep)
+
     queued = {
         "success": True,
         "job_id": "j3",
@@ -201,7 +208,10 @@ async def test_job_failed_status_raises_job_failed_error():
         "success": True,
         "data": {"job_id": "j3", "status": "failed", "error": "exploded"},
     }
-    fake = FakeRpc([queued, failed])
+    # No structured inner error ever shows up (no `result` payload at all) —
+    # all 4 refetch attempts also come back bare, so JobFailedError.error
+    # falls back to the flat queue-level "error" string.
+    fake = FakeRpc([queued, failed, failed, failed, failed, failed])
     client = make_client(fake)
 
     with pytest.raises(JobFailedError) as excinfo:
@@ -209,6 +219,114 @@ async def test_job_failed_status_raises_job_failed_error():
 
     assert excinfo.value.job_id == "j3"
     assert excinfo.value.error == "exploded"
+    # queued response + initial status fetch + 4 exhausted refetch attempts
+    assert len(fake.calls) == 6
+
+
+# ---------------------------------------------------------------------------
+# (d2) job failed with the command's own structured error already nested in
+# the first terminal status response -> surfaced verbatim, no refetch needed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_job_failed_with_nested_structured_error_surfaces_it():
+    queued = {
+        "success": True,
+        "job_id": "j7",
+        "status": "pending",
+        "store": "queuemgr",
+        "poll_with": "queue_get_job_status",
+    }
+    failed = {
+        "success": True,
+        "data": {
+            "job_id": "j7",
+            "status": "failed",
+            "result": {
+                "command": "git_init",
+                "result": {
+                    "success": False,
+                    "error": {"code": "PATH_ESCAPES_ROOT", "message": "nope"},
+                },
+                "status": "failed",
+            },
+        },
+    }
+    fake = FakeRpc([queued, failed])
+    client = make_client(fake)
+
+    with pytest.raises(JobFailedError) as excinfo:
+        await client.call("git_init", {}, poll_interval=POLL_INTERVAL)
+
+    assert excinfo.value.job_id == "j7"
+    assert excinfo.value.error == {"code": "PATH_ESCAPES_ROOT", "message": "nope"}
+    # queued response + the single status fetch; no refetch was needed.
+    assert len(fake.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# (d3) status-before-result write-order race: the status turns "failed"
+# before the result payload lands; unwrap_job_result re-fetches until the
+# structured inner error shows up.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_job_failed_status_before_result_race_retries_until_surfaced(
+    monkeypatch,
+):
+    from code_analysis_client import queue_wait
+
+    async def fast_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(queue_wait.asyncio, "sleep", fast_sleep)
+
+    queued = {
+        "success": True,
+        "job_id": "j8",
+        "status": "pending",
+        "store": "queuemgr",
+        "poll_with": "queue_get_job_status",
+    }
+    # wait_for_job's own poll observes the terminal "failed" status, but the
+    # result payload has not landed in the store yet.
+    failed_no_result = {
+        "success": True,
+        "data": {"job_id": "j8", "status": "failed"},
+    }
+    # First refetch attempt: still no result.
+    still_no_result = {
+        "success": True,
+        "data": {"job_id": "j8", "status": "failed"},
+    }
+    # Second refetch attempt: the structured inner error has finally landed.
+    failed_with_result = {
+        "success": True,
+        "data": {
+            "job_id": "j8",
+            "status": "failed",
+            "result": {
+                "command": "git_init",
+                "result": {
+                    "success": False,
+                    "error": {"code": "PATH_ESCAPES_ROOT", "message": "late"},
+                },
+                "status": "failed",
+            },
+        },
+    }
+    fake = FakeRpc([queued, failed_no_result, still_no_result, failed_with_result])
+    client = make_client(fake)
+
+    with pytest.raises(JobFailedError) as excinfo:
+        await client.call("git_init", {}, poll_interval=POLL_INTERVAL)
+
+    assert excinfo.value.job_id == "j8"
+    assert excinfo.value.error == {"code": "PATH_ESCAPES_ROOT", "message": "late"}
+    # queued + wait_for_job's status fetch + 2 refetch attempts
+    assert len(fake.calls) == 4
 
 
 # ---------------------------------------------------------------------------

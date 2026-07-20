@@ -184,7 +184,7 @@ class CodeAnalysisAsyncClient:
             poll_interval=poll_interval,
             status_hook=status_hook,
         )
-        return unwrap_job_result(status)
+        return await unwrap_job_result(status, rpc=self._rpc)
 
     async def call_validated(
         self,

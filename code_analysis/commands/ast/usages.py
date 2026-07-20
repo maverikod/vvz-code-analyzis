@@ -13,31 +13,26 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.cst_tree.models import CSTTree
 from ...core.cst_tree.tree_builder import load_file_to_tree
 from ...core.cst_tree.tree_range_finder import find_node_by_range
 from ...core.file_identity import relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
-def _resolve_cst_node_id_at_line(
-    root_path: Path, file_path: str, line: int
-) -> Optional[str]:
+def _load_tree_for_read(abs_path: Path) -> Optional[CSTTree]:
     """
-    Resolve CST node ID at (file_path, line). Returns UUID4 node_id or None.
+    Load ``abs_path`` into a CST tree for a READ-ONLY lookup (no disk writes).
 
-    No fallback identity by line/range; only valid cst_node_id is returned.
+    Returns None when the file is missing, not a ``.py`` file, or fails to parse -
+    callers treat that as "no cst_node_id available" for every usage in that file.
     """
-    abs_path = (root_path / file_path).resolve()
     if not abs_path.exists() or abs_path.suffix != ".py":
         return None
     try:
-        tree = load_file_to_tree(str(abs_path))
-        node = find_node_by_range(tree.tree_id, line, line, prefer_exact=False)
-        if node and _is_valid_uuid4(node.node_id):
-            return node.node_id
+        return load_file_to_tree(str(abs_path), write_to_disk=False)
     except (FileNotFoundError, ValueError, OSError):
-        pass
-    return None
+        return None
 
 
 def _resolve_usages_with_cst_node_id(
@@ -46,6 +41,11 @@ def _resolve_usages_with_cst_node_id(
     """
     Resolve cst_node_id for each usage by file_path and line. Return only
     usages that have valid UUID4 cst_node_id (no response path without it).
+
+    Builds the CST tree ONCE per distinct file (cached in ``tree_by_path`` for
+    the lifetime of this call) and resolves every usage line of that file
+    against the cached tree, instead of re-parsing per usage record. The read
+    never writes to disk (``load_file_to_tree(..., write_to_disk=False)``).
     """
     by_file: Dict[str, List[Dict[str, Any]]] = {}
     for u in raw_usages:
@@ -54,13 +54,21 @@ def _resolve_usages_with_cst_node_id(
             by_file[fp] = []
         by_file[fp].append(u)
 
+    tree_by_path: Dict[Path, Optional[CSTTree]] = {}
     resolved: List[Dict[str, Any]] = []
     for fpath, group in by_file.items():
+        abs_path = (root_path / fpath).resolve()
+        if abs_path not in tree_by_path:
+            tree_by_path[abs_path] = _load_tree_for_read(abs_path)
+        tree = tree_by_path[abs_path]
+        if tree is None:
+            continue
         for rec in group:
             line = rec.get("line")
             if line is None:
                 continue
-            node_id = _resolve_cst_node_id_at_line(root_path, fpath, line)
+            node = find_node_by_range(tree.tree_id, line, line, prefer_exact=False)
+            node_id = node.node_id if node else None
             if not _is_valid_uuid4(node_id):
                 continue
             out = dict(rec)

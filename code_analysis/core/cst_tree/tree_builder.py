@@ -33,16 +33,24 @@ from .tree_builder_index import (
 logger = logging.getLogger(__name__)
 
 
-def _read_logical_py_source_sync_disk(py_path: Path) -> Tuple[str, PersistedNodeIds]:
+def _read_logical_py_source_sync_disk(
+    py_path: Path, *, write_back: bool = True
+) -> Tuple[str, PersistedNodeIds]:
     """Read Python source, strip persisted node-id markers, write disk if needed.
 
     Call before ``cst.parse_module`` so on-disk bytes match the logical source used
     for SHA snapshots (same policy as ``load_file_to_tree`` / save preflight).
+
+    Args:
+        py_path: Python file to read.
+        write_back: When True (default; preserves existing callers' behavior),
+            rewrite the file on disk when stripping markers changes its content.
+            Read-only callers (e.g. find_usages) pass False to never touch disk.
     """
     raw = py_path.read_text(encoding="utf-8")
     logical, ids = strip_persisted_node_ids(raw)
     logical = strip_inline_node_id_lines_from_source(logical)
-    if logical != raw:
+    if write_back and logical != raw:
         py_path.write_text(logical, encoding="utf-8")
     return logical, ids
 
@@ -87,6 +95,8 @@ def load_file_to_tree(
     node_types: Optional[List[str]] = None,
     max_depth: Optional[int] = None,
     include_children: bool = True,
+    *,
+    write_to_disk: bool = True,
 ) -> CSTTree:
     """
     Load file into CST tree and store in memory.
@@ -96,6 +106,11 @@ def load_file_to_tree(
         node_types: Optional filter by node types (e.g., ["FunctionDef", "ClassDef"])
         max_depth: Optional maximum depth for node filtering
         include_children: Whether to include children information in metadata
+        write_to_disk: When True (default; preserves existing callers' behavior),
+            this call may rewrite the source file (stripping legacy node-id
+            markers) and/or write the ``<file>.py.tree`` sidecar. Read-only
+            callers (e.g. find_usages) pass False so a read never mutates the
+            file system.
 
     Returns:
         CSTTree with tree_id and metadata
@@ -108,7 +123,9 @@ def load_file_to_tree(
     if not is_py and not is_py_tmp:
         raise ValueError(f"File must be a Python file (.py): {file_path}")
 
-    logical_source, persisted_node_ids = _read_logical_py_source_sync_disk(path)
+    logical_source, persisted_node_ids = _read_logical_py_source_sync_disk(
+        path, write_back=write_to_disk
+    )
     module = cst.parse_module(logical_source)
     tree = CSTTree.create(str(path.resolve()), module)
     _finalize_cst_tree(
@@ -122,7 +139,7 @@ def load_file_to_tree(
         include_children=include_children,
         previous_metadata_map=None,
         legacy_persisted=persisted_node_ids,
-        write_sidecar=True,
+        write_sidecar=write_to_disk,
     )
 
     with _trees_lock:

@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 try:
     from mcp_proxy_adapter.client.jsonrpc_client.client import JsonRpcClient
@@ -22,6 +22,12 @@ from code_analysis_client.config import (
     load_server_config,
 )
 from code_analysis_client.file_session import FileSessionClient
+from code_analysis_client.queue_wait import (
+    StatusHook,
+    is_queued_envelope,
+    unwrap_job_result,
+    wait_for_job,
+)
 from code_analysis_client.universal_file import UniversalFileClient
 from code_analysis_client.server_schema import fetch_command_schema_from_server
 from code_analysis_client.validation import (
@@ -141,6 +147,48 @@ class CodeAnalysisAsyncClient:
         self._command_schema_cache[command] = schema
         return schema
 
+    async def _execute(
+        self,
+        command: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        use_cmd_endpoint: bool = False,
+        timeout: Optional[float] = None,
+        poll_interval: float = 1.0,
+        status_hook: Optional[StatusHook] = None,
+    ) -> Dict[str, Any]:
+        """Single queue-aware core every public entry point routes through.
+
+        Runs ``command`` via the raw adapter ``execute_command``. If the
+        immediate response is a queue-service envelope
+        (:func:`code_analysis_client.queue_wait.is_queued_envelope`), polls the
+        job to completion (:func:`~code_analysis_client.queue_wait.wait_for_job`)
+        and returns the unwrapped inner result
+        (:func:`~code_analysis_client.queue_wait.unwrap_job_result`), raising on
+        failure. A non-queued response is returned unchanged.
+        """
+        resp = await self._rpc.execute_command(
+            command,
+            params or {},
+            use_cmd_endpoint=use_cmd_endpoint,
+        )
+        if not is_queued_envelope(resp):
+            return resp
+
+        job_id = resp.get("job_id") or resp.get("jobId")
+        if not job_id:
+            data = resp.get("data")
+            if isinstance(data, dict):
+                job_id = data.get("job_id") or data.get("jobId")
+        status = await wait_for_job(
+            self._rpc,
+            str(job_id),
+            timeout=timeout,
+            poll_interval=poll_interval,
+            status_hook=status_hook,
+        )
+        return unwrap_job_result(status)
+
     async def call_validated(
         self,
         command: str,
@@ -148,16 +196,22 @@ class CodeAnalysisAsyncClient:
         *,
         use_cmd_endpoint: bool = False,
         refresh_schema: bool = False,
+        timeout: Optional[float] = None,
+        poll_interval: float = 1.0,
+        status_hook: Optional[StatusHook] = None,
     ) -> Dict[str, Any]:
-        """``help`` → schema on server, shallow local validation, then ``execute_command``."""
+        """``help`` → schema on server, shallow local validation, then the queue-aware core."""
         schema = await self.get_command_schema(command, refresh=refresh_schema)
         merged = dict(params or {})
         prepared = prepare_params_for_schema(merged, schema)
         validate_params_against_schema(prepared, schema, command_name=command)
-        return await self._rpc.execute_command(
+        return await self._execute(
             command,
             prepared,
             use_cmd_endpoint=use_cmd_endpoint,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            status_hook=status_hook,
         )
 
     async def call_unified_validated(
@@ -171,21 +225,25 @@ class CodeAnalysisAsyncClient:
         auto_poll: bool = True,
         poll_interval: float = 1.0,
         timeout: Optional[float] = None,
-        status_hook: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        status_hook: Optional[StatusHook] = None,
     ) -> Dict[str, Any]:
-        """Same as :meth:`call_validated` but uses ``execute_command_unified``."""
+        """Deprecated alias for :meth:`call_validated`.
+
+        ``expect_queue`` and ``auto_poll`` are accepted only for backward
+        compatibility and are ignored: every path is now queue-aware
+        unconditionally through the shared :meth:`_execute` core (no more
+        adapter ``execute_command_unified``). Prefer :meth:`call_validated`.
+        """
         schema = await self.get_command_schema(command, refresh=refresh_schema)
         merged = dict(params or {})
         prepared = prepare_params_for_schema(merged, schema)
         validate_params_against_schema(prepared, schema, command_name=command)
-        return await self._rpc.execute_command_unified(
+        return await self._execute(
             command,
             prepared,
             use_cmd_endpoint=use_cmd_endpoint,
-            expect_queue=expect_queue,
-            auto_poll=auto_poll,
-            poll_interval=poll_interval,
             timeout=timeout,
+            poll_interval=poll_interval,
             status_hook=status_hook,
         )
 
@@ -195,12 +253,18 @@ class CodeAnalysisAsyncClient:
         params: Optional[Dict[str, Any]] = None,
         *,
         use_cmd_endpoint: bool = False,
+        timeout: Optional[float] = None,
+        poll_interval: float = 1.0,
+        status_hook: Optional[StatusHook] = None,
     ) -> Dict[str, Any]:
-        """Run any registered server command (sync completion)."""
-        return await self._rpc.execute_command(
+        """Run any registered server command; queued jobs are polled to completion."""
+        return await self._execute(
             command,
-            params or {},
+            params,
             use_cmd_endpoint=use_cmd_endpoint,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            status_hook=status_hook,
         )
 
     async def call_unified(
@@ -213,17 +277,21 @@ class CodeAnalysisAsyncClient:
         auto_poll: bool = True,
         poll_interval: float = 1.0,
         timeout: Optional[float] = None,
-        status_hook: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        status_hook: Optional[StatusHook] = None,
     ) -> Dict[str, Any]:
-        """Run a command with optional queue detection and polling (adapter unified path)."""
-        return await self._rpc.execute_command_unified(
+        """Deprecated alias for :meth:`call`.
+
+        ``expect_queue`` and ``auto_poll`` are accepted only for backward
+        compatibility and are ignored: every path is now queue-aware
+        unconditionally through the shared :meth:`_execute` core (no more
+        adapter ``execute_command_unified``). Prefer :meth:`call`.
+        """
+        return await self._execute(
             command,
-            params or {},
+            params,
             use_cmd_endpoint=use_cmd_endpoint,
-            expect_queue=expect_queue,
-            auto_poll=auto_poll,
-            poll_interval=poll_interval,
             timeout=timeout,
+            poll_interval=poll_interval,
             status_hook=status_hook,
         )
 

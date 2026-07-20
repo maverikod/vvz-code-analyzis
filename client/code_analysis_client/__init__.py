@@ -16,7 +16,12 @@ from code_analysis_client.config import (
     adapter_settings_to_jsonrpc_kwargs,
     load_server_config,
 )
-from code_analysis_client.exceptions import ClientValidationError
+from code_analysis_client.exceptions import (
+    ClientValidationError,
+    CommandFailedError,
+    JobFailedError,
+    JobTimeoutError,
+)
 from code_analysis_client.file_session import FileSessionClient, SessionNotFoundError
 from code_analysis_client.server_api import (
     CLIENT_FACADE_COMMANDS,
@@ -43,9 +48,12 @@ __all__ = [
     "CST_REMOVED_COMMANDS",
     "ClientValidationError",
     "CodeAnalysisAsyncClient",
+    "CommandFailedError",
     "FILE_SESSION_COMMANDS",
     "FILE_SESSION_FACADE_METHODS",
     "FileSessionClient",
+    "JobFailedError",
+    "JobTimeoutError",
     "LEGACY_REMOVED_COMMANDS",
     "REMOVED_COMMANDS",
     "SessionNotFoundError",

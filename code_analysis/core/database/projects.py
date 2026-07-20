@@ -72,6 +72,60 @@ def insert_project_row(
     self._commit()
 
 
+def _last_execute_affected_rows(self) -> int:
+    """Return ``affected_rows`` from the most recent ``self._execute`` call, else 0."""
+    last = getattr(self, "_last_execute_result", None)
+    if isinstance(last, dict):
+        affected = last.get("affected_rows")
+        if isinstance(affected, int):
+            return affected
+    return 0
+
+
+def _reclaim_orphan_and_retry_scoped_write(
+    self,
+    sql: str,
+    params: tuple,
+    *,
+    sid: str,
+    project_id: str,
+) -> None:
+    """Run a scoped ``projects`` UPDATE (``WHERE server_instance_id = ? AND id = ?``);
+    reclaim orphan rows on a 0-row no-op.
+
+    A ``projects`` row can exist under a different/rotated ``server_instance_id``
+    (orphan instance after a server reinstall/rebind) while still being the same
+    on-disk project - :func:`get_project`'s global-by-id fallback already reads
+    around this. Without an equivalent on the write side, a scoped write against
+    such a row silently affects 0 rows with no error, while callers that resolved
+    the project via :func:`get_project` believe it exists and the write succeeded.
+
+    If the write affects 0 rows AND a ``projects`` row for ``project_id`` exists
+    globally under a different ``server_instance_id``, reclaim the row to ``sid``
+    (same semantics as ``insert_project_row``'s orphan reclaim in
+    ``client_api_projects.py``) and retry the write once.
+    """
+    self._execute(sql, params)
+    if _last_execute_affected_rows(self):
+        return
+    global_row = self._fetchone(
+        "SELECT server_instance_id FROM projects WHERE id = ?",
+        (project_id,),
+    )
+    if not global_row:
+        return  # genuinely absent; nothing to reclaim
+    other_sid = (
+        global_row.get("server_instance_id") if isinstance(global_row, dict) else None
+    )
+    if other_sid == sid:
+        return  # already ours; scoped write legitimately matched nothing
+    self._execute(
+        "UPDATE projects SET server_instance_id = ? WHERE id = ?",
+        (sid, project_id),
+    )
+    self._execute(sql, params)
+
+
 def sync_project_metadata_from_projectid(
     self,
     root_dir: str | Path,
@@ -97,8 +151,9 @@ def sync_project_metadata_from_projectid(
         return None
 
     sid = current_server_instance_id()
-    self._execute(
-        f"""
+    _reclaim_orphan_and_retry_scoped_write(
+        self,
+        """
         UPDATE projects
         SET deleted = ?,
             processing_paused = ?,
@@ -112,6 +167,8 @@ def sync_project_metadata_from_projectid(
             sid,
             info.project_id,
         ),
+        sid=sid,
+        project_id=info.project_id,
     )
     self._commit()
     return info.project_id

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from code_analysis.core.database.watch_dirs_partition import (
     current_server_instance_id,
@@ -89,6 +89,53 @@ def _project_row_by_id_global(
         priority=priority,
         transaction_id=transaction_id,
     )
+
+
+def _reclaim_orphan_and_retry_scoped_projects_write(
+    database: Any,
+    *,
+    sid: str,
+    project_id: str,
+    write_fn: "Callable[[], int]",
+    priority: int = 0,
+    transaction_id: Optional[str] = None,
+) -> int:
+    """Run a ``projects`` write scoped to ``(server_instance_id, id)``; reclaim orphans.
+
+    ``write_fn`` performs one scoped UPDATE/DELETE against ``projects`` (filtered by
+    ``server_instance_id = sid AND id = project_id``) and returns the affected row
+    count. A ``projects`` row can exist under a different/rotated
+    ``server_instance_id`` (orphan instance after a server reinstall/rebind) while
+    still being the same on-disk project - ``get_project``'s global-by-id fallback
+    (``_project_row_by_id_global``) already reads around this for lookups. Without
+    an equivalent on the write side, a scoped write against such a row silently
+    affects 0 rows with no error, while callers that resolved the project via
+    ``get_project`` believe it exists and the write succeeded.
+
+    If ``write_fn`` affects 0 rows AND a ``projects`` row for ``project_id`` exists
+    globally under a different ``server_instance_id``, reclaim the row to ``sid``
+    (same semantics as ``insert_project_row``'s orphan reclaim) and retry
+    ``write_fn`` once. Returns the final affected-row count (0 when the row is
+    genuinely absent, or when it already belonged to ``sid`` and legitimately
+    matched nothing).
+    """
+    affected = write_fn()
+    if affected:
+        return affected
+    global_row = _project_row_by_id_global(
+        database, project_id, priority=priority, transaction_id=transaction_id
+    )
+    if global_row is None:
+        return 0
+    other_sid = global_row.get("server_instance_id")
+    if other_sid == sid:
+        return 0
+    database.update(
+        "projects",
+        where={"id": project_id},
+        data={"server_instance_id": sid},
+    )
+    return write_fn()
 
 
 def _resolved_project_root_norm(
@@ -300,23 +347,39 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             return None
 
         sid = current_server_instance_id()
-        self.execute(
-            """
-            UPDATE projects
-            SET deleted = ?,
-                processing_paused = ?,
-                comment = ?
-            WHERE server_instance_id = ? AND id = ?
-            """,
-            (
-                bool(info.deleted),
-                bool(info.processing_paused),
-                info.description or None,
-                sid,
-                info.project_id,
-            ),
-            transaction_id=transaction_id,
+
+        def _write() -> int:
+            """Run the scoped UPDATE once; return affected row count."""
+            result = self.execute(
+                """
+                UPDATE projects
+                SET deleted = ?,
+                    processing_paused = ?,
+                    comment = ?
+                WHERE server_instance_id = ? AND id = ?
+                """,
+                (
+                    bool(info.deleted),
+                    bool(info.processing_paused),
+                    info.description or None,
+                    sid,
+                    info.project_id,
+                ),
+                transaction_id=transaction_id,
+                priority=priority,
+            )
+            affected_rows = (
+                result.get("affected_rows", 0) if isinstance(result, dict) else 0
+            )
+            return int(affected_rows) if isinstance(affected_rows, int) else 0
+
+        _reclaim_orphan_and_retry_scoped_projects_write(
+            self,
+            sid=sid,
+            project_id=info.project_id,
+            write_fn=_write,
             priority=priority,
+            transaction_id=transaction_id,
         )
         return info.project_id
 
@@ -415,10 +478,15 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         # Remove id from update data (it's in where clause)
         update_data = {k: v for k, v in data.items() if k != "id"}
         sid = current_server_instance_id()
-        self.update(
-            "projects",
-            where={"server_instance_id": sid, "id": project.id},
-            data=update_data,
+        _reclaim_orphan_and_retry_scoped_projects_write(
+            self,
+            sid=sid,
+            project_id=project.id,
+            write_fn=lambda: self.update(
+                "projects",
+                where={"server_instance_id": sid, "id": project.id},
+                data=update_data,
+            ),
         )
 
         # Fetch updated project

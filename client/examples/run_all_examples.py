@@ -379,13 +379,14 @@ async def ex_rpc_methods(client: CodeAnalysisAsyncClient) -> None:
 async def ex_call_and_unified(client: CodeAnalysisAsyncClient) -> None:
     r"""Section 3b — **Façade** ``call`` / ``call_unified``.
 
-    ``call`` maps directly to ``JsonRpcClient.execute_command`` (single round
-    trip, no queue polling heuristics).
-
-    ``call_unified`` maps to ``execute_command_unified`` — the same JSON-RPC
-    command, but the adapter may treat long-running jobs differently (polling,
-    websocket upgrades, etc.). Here ``expect_queue=False`` keeps the example
-    deterministic for the read-only ``list_projects`` command.
+    Both ``call`` and ``call_unified`` route through the same private
+    queue-aware core (``CodeAnalysisAsyncClient._execute``): if the immediate
+    response is a queued-job envelope it is polled to completion and the
+    inner result is returned, otherwise the response passes through
+    unchanged. ``call_unified`` is kept only as a deprecated alias of
+    ``call`` — its ``expect_queue``/``auto_poll`` kwargs are accepted for
+    backward compatibility but ignored, since queue handling is now always
+    on. Prefer ``call`` directly.
     """
     r1 = await client.call("list_projects", {"include_deleted": False})
     _ok(isinstance(r1, dict), "call must return dict")
@@ -408,11 +409,12 @@ async def ex_validated_client_methods(client: CodeAnalysisAsyncClient) -> None:
     #. ``get_command_schema`` — first call performs ``help(cmdname=…)`` over
        the wire; subsequent calls reuse the in-memory cache until
        ``clear_command_schema_cache`` runs.
-    #. ``call_validated`` — validates then calls ``execute_command``.
-    #. ``call_unified_validated`` — same validation, then
-       ``execute_command_unified``; passes an **async** ``status_hook`` to show
-       how to observe intermediate adapter states (hook body is a no-op aside
-       from recording that it ran).
+    #. ``call_validated`` — validates then runs the shared queue-aware core
+       (polls a queued job to completion and returns the unwrapped result).
+    #. ``call_unified_validated`` — deprecated alias of ``call_validated``
+       (same validation, same core); passes an **async** ``status_hook`` to
+       show how to observe poll status while a queued job runs (hook body is
+       a no-op aside from recording that it ran).
     #. ``clear_command_schema_cache`` + ``get_command_schema(..., refresh=True)``
        — proves operators can flush caches after ``reload`` on the server.
 

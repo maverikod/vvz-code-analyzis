@@ -1,4 +1,11 @@
-"""Client-side errors (no dependency on code_analysis server package)."""
+"""
+Client-side errors: parameter-validation failures and queued-job runtime errors.
+
+No dependency on the code_analysis server package.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
 
 from __future__ import annotations
 
@@ -21,7 +28,31 @@ class ClientValidationError(ValueError):
         self.details = details or {}
 
 
-class JobFailedError(ClientValidationError):
+class QueueJobError(RuntimeError):
+    """Base for queued-job runtime errors (job failure, timeout, command failure).
+
+    Deliberately does **not** inherit :class:`ClientValidationError`. That class
+    represents bad input caught before a call is even sent, and an
+    ``except ClientValidationError:`` handler written for that purpose must not
+    silently swallow a runtime failure that happened server-side after a valid
+    call was queued and polled. Catch ``QueueJobError`` (or its subclasses)
+    separately from parameter-validation errors.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        job_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Initialize with message, the job id involved, and a details payload."""
+        super().__init__(message)
+        self.job_id = job_id
+        self.details = details or {}
+
+
+class JobFailedError(QueueJobError):
     """A queued job failed/stopped/cancelled, or reported an ``error`` status."""
 
     def __init__(
@@ -35,15 +66,14 @@ class JobFailedError(ClientValidationError):
         message = f"Job {job_id!r} failed (status={status!r}): {error!r}"
         super().__init__(
             message,
-            field="job_id",
+            job_id=job_id,
             details={"job_id": job_id, "status": status, "error": error},
         )
-        self.job_id = job_id
         self.error = error
         self.status = status
 
 
-class JobTimeoutError(ClientValidationError):
+class JobTimeoutError(QueueJobError):
     """Polling exceeded ``timeout``; the job keeps running server-side."""
 
     def __init__(self, job_id: Optional[str], timeout: Optional[float]) -> None:
@@ -55,14 +85,13 @@ class JobTimeoutError(ClientValidationError):
         )
         super().__init__(
             message,
-            field="job_id",
+            job_id=job_id,
             details={"job_id": job_id, "timeout": timeout},
         )
-        self.job_id = job_id
         self.timeout = timeout
 
 
-class CommandFailedError(ClientValidationError):
+class CommandFailedError(QueueJobError):
     """A queued command completed but its inner result is an error envelope."""
 
     def __init__(
@@ -72,9 +101,8 @@ class CommandFailedError(ClientValidationError):
         message = f"Command {command!r} failed (job_id={job_id!r}): {error!r}"
         super().__init__(
             message,
-            field="command",
+            job_id=job_id,
             details={"command": command, "job_id": job_id, "error": error},
         )
         self.command = command
-        self.job_id = job_id
         self.error = error

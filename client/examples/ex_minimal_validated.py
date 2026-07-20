@@ -93,8 +93,11 @@ SEE ALSO
 ================================================================================
     * ``client/examples/run_all_examples.py`` — exhaustive narrative of every
       public entry point.
-    * ``code_analysis_client.client.CodeAnalysisAsyncClient.call_unified_validated``
-      — long-running / queued commands with polling.
+    * ``code_analysis_client.client.CodeAnalysisAsyncClient.call_validated``
+      — every call (this one included) already polls a queued job to
+      completion via the shared queue-aware core; pass ``timeout``/
+      ``poll_interval`` for long-running commands. ``call_unified_validated``
+      is kept only as a deprecated alias.
     * Package metadata on PyPI: project **code-analysis-client**.
 
 ================================================================================

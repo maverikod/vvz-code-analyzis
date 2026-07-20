@@ -21,6 +21,7 @@ from code_analysis_client.exceptions import (
     CommandFailedError,
     JobFailedError,
     JobTimeoutError,
+    QueueJobError,
 )
 from code_analysis_client.file_session import FileSessionClient, SessionNotFoundError
 from code_analysis_client.server_api import (
@@ -55,6 +56,7 @@ __all__ = [
     "JobFailedError",
     "JobTimeoutError",
     "LEGACY_REMOVED_COMMANDS",
+    "QueueJobError",
     "REMOVED_COMMANDS",
     "SessionNotFoundError",
     "TRANSFER_FACADE_METHODS",

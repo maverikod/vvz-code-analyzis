@@ -14,9 +14,11 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from code_analysis_client import (
+    ClientValidationError,
     CommandFailedError,
     JobFailedError,
     JobTimeoutError,
+    QueueJobError,
 )
 from code_analysis_client.client import CodeAnalysisAsyncClient
 
@@ -58,6 +60,29 @@ def make_client(fake_rpc: FakeRpc) -> CodeAnalysisAsyncClient:
     client = CodeAnalysisAsyncClient()
     client._rpc = fake_rpc  # type: ignore[attr-defined]  # __slots__ attribute, no network touched
     return client
+
+
+# ---------------------------------------------------------------------------
+# exception hierarchy: queued-job runtime errors must NOT be catchable via
+# ClientValidationError (that would silently swallow runtime job failures in
+# a handler written only for bad-parameter validation errors).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc_type",
+    [JobFailedError, JobTimeoutError, CommandFailedError],
+)
+def test_queue_job_errors_subclass_queue_job_error_not_client_validation_error(
+    exc_type,
+):
+    assert issubclass(exc_type, QueueJobError)
+    assert not issubclass(exc_type, ClientValidationError)
+
+
+def test_queue_job_error_itself_is_not_a_client_validation_error():
+    assert not issubclass(QueueJobError, ClientValidationError)
+    assert issubclass(QueueJobError, RuntimeError)
 
 
 # ---------------------------------------------------------------------------

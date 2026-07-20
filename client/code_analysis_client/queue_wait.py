@@ -54,6 +54,19 @@ def is_queued_envelope(resp: Dict[str, Any]) -> bool:
         are a subset of the known queue-service key set (this subset guard is
         what prevents false positives on commands like ``search`` whose
         legitimate result also carries a ``job_id`` plus real payload keys).
+
+    Known out-of-scope gap: this only recognizes the two deployed variants
+    above, both of which carry an explicit marker (``poll_with``/``store``/
+    ``queued_after_timeout``) or a top-level ``status`` alongside a
+    service-only key set. An initial response whose pending status and
+    ``job_id`` live ONLY under ``data`` with no top-level marker at all (e.g.
+    ``{"success": true, "data": {"job_id": ..., "status": "pending"}}`` and
+    nothing else at top level) is NOT one of the two documented variants and
+    is therefore NOT detected as queued — it would be returned as-is instead
+    of polled. If a third server-side queueing shape ever ships in that form,
+    this function must be extended explicitly; it does not infer queuing from
+    ``data``-nested status alone, to avoid reintroducing false positives on
+    ordinary nested-data command results.
     """
     if not isinstance(resp, dict):
         return False
@@ -80,8 +93,13 @@ def is_queued_envelope(resp: Dict[str, Any]) -> bool:
     return False
 
 
-def _extract_job_id(resp: Dict[str, Any]) -> str:
-    """Pull the job identifier out of a queued envelope (top level or under data)."""
+def extract_job_id(resp: Dict[str, Any]) -> str:
+    """Pull the job identifier out of a queued envelope (top level or under data).
+
+    Public so callers that already confirmed :func:`is_queued_envelope` (e.g.
+    the client core's ``_execute``) reuse this instead of duplicating the
+    top-level/``data``-nested lookup inline.
+    """
     job_id = resp.get("job_id") or resp.get("jobId")
     if not job_id:
         data = resp.get("data")

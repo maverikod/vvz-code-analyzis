@@ -24,6 +24,7 @@ from code_analysis_client.config import (
 from code_analysis_client.file_session import FileSessionClient
 from code_analysis_client.queue_wait import (
     StatusHook,
+    extract_job_id,
     is_queued_envelope,
     unwrap_job_result,
     wait_for_job,
@@ -175,14 +176,10 @@ class CodeAnalysisAsyncClient:
         if not is_queued_envelope(resp):
             return resp
 
-        job_id = resp.get("job_id") or resp.get("jobId")
-        if not job_id:
-            data = resp.get("data")
-            if isinstance(data, dict):
-                job_id = data.get("job_id") or data.get("jobId")
+        job_id = extract_job_id(resp)
         status = await wait_for_job(
             self._rpc,
-            str(job_id),
+            job_id,
             timeout=timeout,
             poll_interval=poll_interval,
             status_hook=status_hook,

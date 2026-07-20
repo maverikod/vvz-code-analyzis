@@ -75,11 +75,16 @@ def _project_row_by_id_global(
     priority: int = 0,
     transaction_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Fetch a ``projects`` row by ``id`` without ``server_instance_id`` filter."""
+    """Fetch a ``projects`` row by ``id`` without ``server_instance_id`` filter.
+
+    Selects every column (not a fixed subset) so callers that need a fully
+    hydrated row - e.g. ``get_project``'s scoped-miss fallback - can build a
+    complete :class:`~code_analysis.core.database_client.objects.project.Project`
+    from it, not just the columns ``insert_project_row``'s reclaim path reads.
+    """
     return _execute_select_first_row(
         database,
-        "SELECT id, server_instance_id, root_path, name, comment, watch_dir_id "
-        "FROM projects WHERE id = ? LIMIT 1",
+        "SELECT * FROM projects WHERE id = ? LIMIT 1",
         (project_id,),
         priority=priority,
         transaction_id=transaction_id,
@@ -351,6 +356,16 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
     def get_project(self, project_id: str) -> Optional[Project]:
         """Get project by ID.
 
+        Looks up ``project_id`` scoped to the current ``server_instance_id``
+        first. When that scoped lookup misses, falls back to an unscoped
+        global-by-id lookup (:func:`_project_row_by_id_global`): a
+        ``projects`` row can exist under a different/rotated
+        ``server_instance_id`` (orphan instance after a server
+        reinstall/rebind) while still being the same on-disk project.
+        Without this fallback, ``get_project`` could disagree with
+        unscoped readers (e.g. ``BaseMCPCommand._resolve_project_root``)
+        about whether the project exists.
+
         Args:
             project_id: Project identifier
 
@@ -366,10 +381,14 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             "projects",
             where={"server_instance_id": sid, "id": project_id},
         )
-        if not rows:
-            return None
+        if rows:
+            row = enrich_project_dict_resolve_root_path(dict(rows[0]), self)
+            return db_row_to_object(row, Project)
 
-        row = enrich_project_dict_resolve_root_path(dict(rows[0]), self)
+        global_row = _project_row_by_id_global(self, project_id)
+        if global_row is None:
+            return None
+        row = enrich_project_dict_resolve_root_path(dict(global_row), self)
         return db_row_to_object(row, Project)
 
     def update_project(self, project: Project) -> Project:

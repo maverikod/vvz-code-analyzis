@@ -11,6 +11,7 @@ from code_analysis.core.database_client.client_api_projects import (
     _ClientAPIProjectsMixin,
     _project_row_by_id_global,
 )
+from code_analysis.core.database_client.objects.project import Project
 
 
 class _ProjectsClient(_ClientAPIProjectsMixin):
@@ -32,6 +33,20 @@ class _ProjectsClient(_ClientAPIProjectsMixin):
         """Execute the command."""
         self._execute_calls.append((sql, params or ()))
         return {"data": []}
+
+    def select(
+        self,
+        table_name: str,
+        where: Optional[Dict[str, Any]] = None,
+        columns: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        *,
+        priority: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Scoped select stub; overridden per-test where relevant."""
+        return []
 
 
 def test_project_row_by_id_global_parses_execute_result() -> None:
@@ -220,3 +235,62 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
     ):
         with pytest.raises(ValueError, match="server_instance_id=server-a"):
             client.insert_project_row("pid-1", "vast_srv", "vast_srv")
+
+
+@patch(
+    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    return_value="server-b",
+)
+def test_get_project_scoped_miss_falls_back_to_global_by_id(
+    _sid_mock: MagicMock,
+) -> None:
+    """get_project: sid-scoped select misses -> falls back to the global-by-id row.
+
+    Regression for planner todo b235f6da: a projects row registered under a
+    different/rotated server_instance_id (orphan instance) must still be
+    found by get_project, matching BaseMCPCommand._resolve_project_root's
+    unscoped read semantics.
+    """
+    client = _ProjectsClient()
+    # Scoped (server_instance_id="server-b") select always misses.
+    client.select = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+    def _exec(
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
+    ) -> Dict[str, Any]:
+        """Global-by-id lookup hits a row registered under server-a."""
+        client._execute_calls.append((sql, params or ()))
+        if "FROM projects WHERE id =" in sql:
+            return {
+                "data": [
+                    {
+                        "id": "pid-orphan",
+                        "server_instance_id": "server-a",
+                        "root_path": "orphan_proj",
+                        "name": "orphan_proj",
+                        "comment": None,
+                        "watch_dir_id": None,
+                    }
+                ]
+            }
+        return {"data": []}
+
+    client.execute = _exec  # type: ignore[method-assign]
+
+    with patch(
+        "code_analysis.core.database_client.client_api_projects."
+        "enrich_project_dict_resolve_root_path",
+        side_effect=lambda row, _db: dict(row),
+    ):
+        project = client.get_project("pid-orphan")
+
+    assert isinstance(project, Project)
+    assert project.id == "pid-orphan"
+    assert project.root_path == "orphan_proj"
+    client.select.assert_called_once_with(
+        "projects", where={"server_instance_id": "server-b", "id": "pid-orphan"}
+    )

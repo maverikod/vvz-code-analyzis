@@ -179,6 +179,17 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
     """
     Get project by ID.
 
+    Looks up ``project_id`` scoped to the current ``server_instance_id`` first.
+    When that scoped lookup misses, falls back to an unscoped by-id lookup:
+    a ``projects`` row can exist under a different/rotated
+    ``server_instance_id`` (orphan instance after a server reinstall/rebind)
+    while still being the same on-disk project. Without this fallback,
+    commands that resolve the same project_id through different code paths
+    (some scoped, some not, e.g. ``BaseMCPCommand._resolve_project_root``)
+    could disagree about whether the project exists. Mirrors
+    ``DatabaseClient.get_project``'s fallback to
+    ``_project_row_by_id_global`` (client_api_projects.py).
+
     Args:
         project_id: Project ID (UUID4 string)
 
@@ -190,6 +201,11 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         f"SELECT * FROM projects p WHERE {where_sql} AND p.id = ?",
         where_params + (project_id,),
     )
+    if not row:
+        row = self._fetchone(
+            "SELECT * FROM projects p WHERE p.id = ?",
+            (project_id,),
+        )
     if not row:
         return None
     if isinstance(row, dict):

@@ -34,6 +34,21 @@ def add_entity_cross_ref(
     Exactly one of caller_class_id, caller_method_id, caller_function_id must be non-None.
     Exactly one of callee_class_id, callee_method_id, callee_function_id must be non-None.
 
+    Commits only when NOT already inside an active transaction (``_in_transaction()``),
+    same discipline as ``add_class``/``add_method``/``add_function``/``add_usage`` in
+    ``entities.py`` - this function was the one writer in this module missing that
+    guard. This call runs mid-transaction from
+    ``entity_cross_ref_builder.build_entity_cross_ref_for_file`` (itself invoked from
+    ``update_file_data_atomic``, "must be called within an active transaction");
+    an unconditional commit here ends that outer transaction early without resetting
+    ``_transaction_active``, so later statements/commits in the same atomic update
+    proceed against a transaction boundary the caller no longer controls. On SQLite
+    this was invisible because the in-process test facade's ``_commit()`` is a no-op
+    regardless of transaction state; on PostgreSQL ``driver.commit()`` really commits
+    the connection. Confirmed root cause of entity_cross_ref rows being absent on a
+    PostgreSQL-backed deployment while classes/functions/methods/usages (all
+    correctly transaction-guarded) were present.
+
     Args:
         caller_class_id: Caller class id (or None)
         caller_method_id: Caller method id (or None)
@@ -88,7 +103,8 @@ def add_entity_cross_ref(
             line,
         ),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
@@ -208,6 +224,10 @@ def delete_entity_cross_ref_for_file(self, file_id: int) -> None:
     - file_id = file_id (reference location), or
     - caller/callee class/method/function belongs to this file.
 
+    Commits only when NOT already inside an active transaction, matching
+    ``add_entity_cross_ref`` (same class of bug fixed there: an unconditional
+    commit here would end an enclosing atomic transaction early).
+
     Args:
         file_id: File id to clear cross-refs for.
     """
@@ -254,4 +274,5 @@ def delete_entity_cross_ref_for_file(self, file_id: int) -> None:
 
     where_clause = " OR ".join(conditions)
     self._execute(f"DELETE FROM entity_cross_ref WHERE {where_clause}", tuple(params))
-    self._commit()
+    if not self._in_transaction():
+        self._commit()

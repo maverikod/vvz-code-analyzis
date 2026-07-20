@@ -281,10 +281,14 @@ def _backfill_children_inheritance_for_class(
             )
             added += 1
         except Exception as e:
-            logger.debug(
-                "Failed to backfill inheritance entity_cross_ref child=%s parent=%s: %s",
+            logger.warning(
+                "Failed to backfill inheritance entity_cross_ref: child_class_id=%s "
+                "parent_class_id=%s project_id=%s file_id=%s line=%s: %s",
                 child_id,
                 parent_class_id,
+                project_id,
+                row.get("file_id"),
+                row.get("line"),
                 e,
                 exc_info=True,
             )
@@ -349,9 +353,14 @@ def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) 
                 )
                 added += 1
             except Exception as e:
-                logger.debug(
-                    "Failed to add inheritance entity_cross_ref for %s at line %s: %s",
+                logger.warning(
+                    "Failed to add inheritance entity_cross_ref: caller_class_id=%s "
+                    "base_name=%s callee_class_id=%s project_id=%s file_id=%s line=%s: %s",
+                    class_id,
                     base_name,
+                    callee_id,
+                    project_id,
+                    file_id,
                     line,
                     e,
                     exc_info=True,
@@ -446,10 +455,15 @@ def build_entity_cross_ref_for_file(
             )
             added += 1
         except Exception as e:
-            logger.debug(
-                "Failed to add entity_cross_ref for %s at line %s: %s",
-                target_name,
+            logger.warning(
+                "Failed to add usage-based entity_cross_ref: project_id=%s file_id=%s "
+                "line=%s usage_type=%s target_type=%s target_name=%s: %s",
+                project_id,
+                file_id,
                 line,
+                usage_type,
+                target_type,
+                target_name,
                 e,
                 exc_info=True,
             )
@@ -458,7 +472,8 @@ def build_entity_cross_ref_for_file(
         added += _add_inheritance_cross_ref_for_file(db, file_id, project_id)
     except Exception as e:
         logger.warning(
-            "Failed to add inheritance entity_cross_ref for file_id=%s: %s",
+            "Failed to add inheritance entity_cross_ref for project_id=%s file_id=%s: %s",
+            project_id,
             file_id,
             e,
             exc_info=True,

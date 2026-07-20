@@ -285,3 +285,100 @@ def test_adapt_comprehensive_analysis_results_norm_covers_all_three_call_sites()
         out = _adapt_sqlite_dml_for_postgres(raw)
         assert "INSERT OR REPLACE" not in out
         assert "ON CONFLICT (file_id, file_mtime) DO UPDATE SET" in out
+
+
+# --- entity_cross_ref writer: PostgreSQL dialect guard (bug: rows silently
+# absent on a PostgreSQL-backed deployment; card investigated 2026-07-20/21).
+# Root cause turned out to be transaction discipline (add_entity_cross_ref
+# committing unconditionally instead of guarding with _in_transaction(), see
+# tests/test_entity_cross_ref_transaction_discipline.py), NOT a SQL dialect
+# problem - these statements were already portable. Kept here anyway (same
+# precedent as ed6896f8's test_adapt_comprehensive_analysis_results_insert_or_replace_to_upsert)
+# as a permanent tripwire: if anyone later adds SQLite-only syntax to
+# entity_cross_ref_builder.py or entity_cross_ref.py, this catches it before
+# a PostgreSQL deployment does.
+
+
+def _schema_tables_for_pg_adapter():
+    """Real schema table metadata, the same dict passed to _maybe_append_returning
+    at runtime by PostgreSQLDriver.connect() (self._schema_tables = get_schema_definition()["tables"]).
+    """
+    from code_analysis.core.database.schema_definition import get_schema_definition
+
+    return get_schema_definition()["tables"]
+
+
+def test_entity_cross_ref_insert_has_no_sqlite_only_dml_and_gets_returning() -> None:
+    """add_entity_cross_ref's INSERT is plain portable SQL (no INSERT OR
+    REPLACE/IGNORE) and the generic RETURNING-append path finds entity_cross_ref's
+    single-column UUID primary key so add_entity_cross_ref's _lastrowid() contract
+    is satisfiable on PostgreSQL."""
+    from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
+        _maybe_append_returning,
+        _sqlite_qmarks_to_psycopg,
+    )
+
+    raw = """
+        INSERT INTO entity_cross_ref (
+            caller_class_id, caller_method_id, caller_function_id,
+            callee_class_id, callee_method_id, callee_function_id,
+            ref_type, file_id, line
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    adapted = _adapt_sqlite_dml_for_postgres(raw)
+    assert adapted.strip() == raw.strip(), "no sqlite-only DML to translate here"
+    assert "INSERT OR REPLACE" not in adapted
+    assert "INSERT OR IGNORE" not in adapted
+
+    with_returning = _maybe_append_returning(adapted, _schema_tables_for_pg_adapter())
+    assert with_returning.rstrip().endswith("RETURNING id")
+
+    stmt, params = _sqlite_qmarks_to_psycopg(
+        with_returning, (1, None, None, 2, None, None, "inherit", 3, 4)
+    )
+    assert "?" not in stmt
+    assert stmt.count("%s") == 9
+    assert params == (1, None, None, 2, None, None, "inherit", 3, 4)
+
+
+def test_entity_cross_ref_delete_has_no_sqlite_only_dml() -> None:
+    """delete_entity_cross_ref_for_file's DELETE (dynamic IN-clause WHERE) is
+    plain portable SQL - no rewriting should trigger."""
+    raw = (
+        "DELETE FROM entity_cross_ref WHERE file_id = ? OR "
+        "caller_class_id IN (?,?) OR callee_class_id IN (?,?)"
+    )
+    adapted = _adapt_sqlite_dml_for_postgres(raw)
+    assert adapted == raw
+
+
+def test_entity_cross_ref_builder_selects_have_no_sqlite_only_dml() -> None:
+    """Every read statement in entity_cross_ref_builder.py (resolve_caller,
+    resolve_callee, and the newer inheritance-resolution helpers) is plain
+    portable SQL - _adapt_sqlite_dml_for_postgres must not need to (and does
+    not) rewrite any of them."""
+    statements = [
+        # resolve_caller
+        "SELECT m.id, m.line, m.end_line FROM methods m "
+        "JOIN classes c ON m.class_id = c.id WHERE c.file_id = ?",
+        "SELECT id, line, end_line FROM functions WHERE file_id = ?",
+        "SELECT id, line, end_line FROM classes WHERE file_id = ?",
+        # resolve_callee ("class" branch - the ORDER BY boolean expression is
+        # standard PostgreSQL, not a SQLite-ism, and needs no rewriting)
+        "SELECT c.id FROM classes c JOIN files f ON c.file_id = f.id "
+        "WHERE f.project_id = ? AND c.name = ? ORDER BY (c.file_id = ?) DESC",
+        # _resolve_unique_base_class_id
+        "SELECT c.id FROM classes c JOIN files f ON c.file_id = f.id "
+        "WHERE f.project_id = ? AND c.name = ?",
+        # _inherit_edge_exists
+        "SELECT 1 FROM entity_cross_ref WHERE caller_class_id = ? "
+        "AND callee_class_id = ? AND ref_type = 'inherit'",
+        # _backfill_children_inheritance_for_class
+        "SELECT c.id, c.file_id, c.line, c.bases FROM classes c "
+        "JOIN files f ON c.file_id = f.id WHERE f.project_id = ? AND c.id != ?",
+        # _add_inheritance_cross_ref_for_file
+        "SELECT id, name, line, bases FROM classes WHERE file_id = ?",
+    ]
+    for raw in statements:
+        adapted = _adapt_sqlite_dml_for_postgres(raw)
+        assert adapted == raw, f"unexpected rewrite for: {raw!r} -> {adapted!r}"

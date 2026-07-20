@@ -432,11 +432,15 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                         "entity_type": "Entity type that was searched",
                         "entity_name": "Entity name that was searched",
                         "entities": (
-                            "List of entity dictionaries from database. Each contains file_path and valid UUID4 cst_node_id.\n"
+                            "List of entity dictionaries from database. Each contains a "
+                            "project-relative POSIX file_path; cst_node_id is a UUID4 string "
+                            "once the indexer has populated it, otherwise null (nullable, "
+                            "best-effort - not required for the entity to be returned).\n"
                             "- For classes: name, file_path, line, bases, docstring, cst_node_id, and other class fields\n"
                             "- For functions: name, file_path, line, parameters, docstring, cst_node_id, and other function fields\n"
                             "- For methods: name, class_name, file_path, line, parameters, docstring, cst_node_id, and other method fields\n"
-                            "- Only entities with valid cst_node_id (UUID4) are returned"
+                            "- All entities matching entity_type/entity_name (and file_path/line/target_class "
+                            "filters) are returned regardless of cst_node_id"
                         ),
                         "count": "Number of matching entities found",
                     },

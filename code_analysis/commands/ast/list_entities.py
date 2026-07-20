@@ -320,13 +320,15 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                             "List of entity dictionaries. Each entity includes:\n"
                             "- id: Database primary key of the entity row (UUID string after DB UUID migration)\n"
                             "- file_id: Foreign key to files.id (UUID string after migration)\n"
-                            "- file_path: Path relative to project root (required)\n"
-                            "- cst_node_id: Valid UUID4 CST node identifier (required, non-empty)\n"
+                            "- file_path: Project-relative POSIX path (required)\n"
+                            "- cst_node_id: CST node identifier once the indexer has populated it "
+                            "(UUID4 string); null/empty when not yet indexed with CST data - not "
+                            "guaranteed present or valid\n"
                             "- type: Entity type ('class', 'function', or 'method')\n"
                             "- For classes: name, line, bases, docstring, and other class fields\n"
                             "- For functions: name, line, parameters, docstring, and other function fields\n"
                             "- For methods: name, class_name, line, parameters, docstring, and other method fields\n"
-                            "- Only entities with persisted cst_node_id are returned; no fallback to line-only identity"
+                            "- All entities matching the filters are returned regardless of cst_node_id"
                         ),
                         "count": "Number of entities found",
                     },

@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import json
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,20 +15,7 @@ from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
 from ...core.cst_tree.tree_builder import load_file_to_tree
 from ...core.cst_tree.tree_range_finder import find_node_by_range
-
-
-def _is_valid_uuid4(value: Optional[str]) -> bool:
-    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
-    if not value or not isinstance(value, str):
-        return False
-    s = value.strip()
-    if not s:
-        return False
-    try:
-        u = uuid.UUID(s, version=4)
-        return str(u) == s
-    except (ValueError, TypeError):
-        return False
+from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
 def _resolve_cst_node_id_at_line(

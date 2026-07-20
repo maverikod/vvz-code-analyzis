@@ -8,22 +8,10 @@ email: vasilyvz@gmail.com
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ...core.uuid_validation import is_valid_uuid4
+
 CALLER_TYPES = ("class", "method", "function")
 CALLEE_TYPES = ("class", "method", "function")
-
-
-def is_valid_uuid4(value: Optional[str]) -> bool:
-    """Return True if value is non-empty and valid UUID4 string."""
-    if not value or not isinstance(value, str):
-        return False
-    s = value.strip()
-    if not s:
-        return False
-    try:
-        u = uuid.UUID(s, version=4)
-        return str(u) == s
-    except (ValueError, TypeError):
-        return False
 
 
 def _bind_entity_id_for_cross_ref(entity_id: Any) -> Any:

@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import uuid
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -13,20 +12,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
-
-
-def _is_valid_uuid4(value: Optional[str]) -> bool:
-    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
-    if not value or not isinstance(value, str):
-        return False
-    s = value.strip()
-    if not s:
-        return False
-    try:
-        u = uuid.UUID(s, version=4)
-        return str(u) == s
-    except (ValueError, TypeError):
-        return False
+from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
 class GetClassHierarchyMCPCommand(BaseMCPCommand):

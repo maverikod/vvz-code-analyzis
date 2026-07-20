@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.git_worktree_commands import (
     GitAddCommand,
@@ -133,27 +133,76 @@ async def test_git_add_stages_selected_paths(
 
 
 @pytest.mark.asyncio
-async def test_git_init_creates_missing_path(tmp_path: Path) -> None:
-    """Verify git_init follows git init behavior for a missing path."""
-    target = tmp_path / "new_repo"
+async def test_git_init_creates_missing_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify git_init follows git init behavior for a missing project-relative path."""
+    _patch_root(GitInitCommand, tmp_path, monkeypatch)
 
-    result = await GitInitCommand().execute(path=str(target))
+    result = await GitInitCommand().execute(project_id=PROJECT_ID, path="new_repo")
 
     assert isinstance(result, SuccessResult)
     assert result.data["success"] is True
-    assert result.data["path"] == str(target)
-    assert (target / ".git").is_dir()
+    assert result.data["path"] == "new_repo"
+    assert (tmp_path / "new_repo" / ".git").is_dir()
 
 
 @pytest.mark.asyncio
-async def test_git_init_reinitializes_existing_repo(repo: Path) -> None:
-    """Verify git_init succeeds when the path is already a repository."""
-    result = await GitInitCommand().execute(path=str(repo))
+async def test_git_init_reinitializes_existing_repo(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify git_init succeeds when the project root is already a repository."""
+    _patch_root(GitInitCommand, repo, monkeypatch)
+
+    result = await GitInitCommand().execute(project_id=PROJECT_ID)
 
     assert isinstance(result, SuccessResult)
     assert result.data["success"] is True
-    assert result.data["path"] == str(repo)
+    assert result.data["path"] == "."
     assert (repo / ".git").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_git_init_without_project_id_returns_structured_error() -> None:
+    """git_init with no project context must NEVER fall back to the process cwd.
+
+    Regression for the live incident: git_init with path='.' and no project
+    context previously resolved against the server process's cwd (e.g.
+    /etc/casmgr) and tried to git-init it. project_id is now required.
+    """
+    result = await GitInitCommand().execute(path=".")
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_git_init_rejects_path_escaping_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path that escapes the resolved project root is rejected, never passed to git."""
+    _patch_root(GitInitCommand, tmp_path, monkeypatch)
+
+    result = await GitInitCommand().execute(
+        project_id=PROJECT_ID, path="../escape_attempt"
+    )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VALIDATION_ERROR"
+    assert not (tmp_path.parent / "escape_attempt" / ".git").exists()
+
+
+@pytest.mark.asyncio
+async def test_git_init_rejects_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absolute path is rejected even with a valid project context."""
+    _patch_root(GitInitCommand, tmp_path, monkeypatch)
+
+    result = await GitInitCommand().execute(project_id=PROJECT_ID, path="/etc/casmgr")
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VALIDATION_ERROR"
 
 
 @pytest.mark.asyncio

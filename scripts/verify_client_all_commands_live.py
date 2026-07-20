@@ -161,8 +161,15 @@ async def main() -> int:
         "protocol": "https",
         "ssl": {"cert": args.cert, "key": args.key, "ca": args.ca},
     }
+    # timeout=120.0 (default is 60.0): read-only Bucket-A commands issued
+    # late in a run (project_pip_check / project_pip_list, right after the
+    # project_pip_install venv-bootstrap job) observed a bare httpx
+    # ReadTimeout('') under server load at the 60s default. This timeout
+    # applies to every HTTP request the client makes, including queued-job
+    # status polling, so doubling it is a plain headroom increase, not a
+    # behavior change for any command that was already completing in time.
     async with CodeAnalysisAsyncClient.from_adapter_settings(
-        settings, check_hostname=False
+        settings, check_hostname=False, timeout=120.0
     ) as client:
         try:
             await client.rpc.health()

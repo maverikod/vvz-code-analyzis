@@ -324,9 +324,10 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     from ...core.git_remote_ops import run_git_subprocess
 
                     if is_git_available():
+                        resolved_project_root = project_root.resolve()
                         returncode, stdout, stderr, timed_out = run_git_subprocess(
-                            ["git", "init", str(project_root)],
-                            cwd=pathlib.Path.cwd(),
+                            ["git", "init", str(resolved_project_root)],
+                            cwd=resolved_project_root,
                             env=None,
                             timeout_seconds=30.0,
                         )

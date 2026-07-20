@@ -130,25 +130,57 @@ async def rebuild_from_database_impl(
     loaded_count = 0
     missing_embeddings = 0
 
+    # Pass 1: resolve embeddings from the DB-stored embedding_vector where possible;
+    # collect the (rare - the fetch SQL already requires embedding_vector IS NOT
+    # NULL) chunks with a missing/unparseable stored vector for a single batched
+    # SVO fallback call instead of one SVO round-trip per chunk.
+    resolved: Dict[Any, np.ndarray] = {}
+    svo_fallback_items: List[Tuple[str, Any, Any]] = []
+
+    for chunk in chunks:
+        if chunk.get("vector_id") is None:
+            continue
+        chunk_id = chunk.get("id")
+        embedding_vector_json = chunk.get("embedding_vector")
+        if embedding_vector_json:
+            try:
+                embedding_list = json.loads(embedding_vector_json)
+                resolved[chunk_id] = np.array(embedding_list, dtype="float32")
+                continue
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse embedding_vector for chunk %s: %s",
+                    chunk_id,
+                    e,
+                )
+        if svo_client_manager:
+            svo_fallback_items.append(
+                (chunk.get("chunk_text", ""), chunk_id, chunk.get("embedding_model"))
+            )
+        else:
+            logger.debug(
+                "Skipping chunk %s: no embedding in database and no SVO client",
+                chunk_id,
+            )
+
+    if svo_fallback_items:
+        logger.info(
+            "Batch-fetching %d embedding(s) from SVO for chunks with missing/"
+            "unparseable stored embedding_vector",
+            len(svo_fallback_items),
+        )
+        resolved.update(
+            await _fetch_embeddings_from_svo_batch(
+                svo_fallback_items, database, svo_client_manager
+            )
+        )
+
+    # Pass 2: add every resolved embedding to the FAISS index, in original order.
     for chunk in chunks:
         vector_id = chunk.get("vector_id")
-        embedding_vector_json = chunk.get("embedding_vector")
-        chunk_text = chunk.get("chunk_text", "")
-        chunk_id = chunk.get("id")
-        embedding_model = chunk.get("embedding_model")
-
         if vector_id is None:
             continue
-
-        embedding_array = await _embedding_from_chunk(
-            chunk,
-            embedding_vector_json,
-            chunk_text,
-            chunk_id,
-            embedding_model,
-            database,
-            svo_client_manager,
-        )
+        embedding_array = resolved.get(chunk.get("id"))
         if embedding_array is None:
             missing_embeddings += 1
             continue
@@ -215,72 +247,42 @@ def _fetch_chunks_for_rebuild(
     return chunks
 
 
-async def _embedding_from_chunk(
-    chunk: Dict[str, Any],
-    embedding_vector_json: Any,
-    chunk_text: str,
-    chunk_id: Any,
-    embedding_model: Any,
-    database: DatabaseClient,
-    svo_client_manager: Optional[Any],
-) -> Optional[np.ndarray]:
-    """Get embedding array from chunk: DB first, then SVO if missing. Returns None if unavailable."""
-    embedding_array = None
-
-    if embedding_vector_json:
-        try:
-            embedding_list = json.loads(embedding_vector_json)
-            embedding_array = np.array(embedding_list, dtype="float32")
-        except Exception as e:
-            logger.warning(
-                "Failed to parse embedding_vector for chunk %s: %s",
-                chunk.get("id"),
-                e,
-            )
-
-    if embedding_array is None and svo_client_manager:
-        embedding_array = await _fetch_embedding_from_svo(
-            chunk_text,
-            chunk_id,
-            embedding_model,
-            database,
-            svo_client_manager,
-            chunk.get("id"),
-        )
-    elif embedding_array is None:
-        logger.debug(
-            "Skipping chunk %s: no embedding in database and no SVO client",
-            chunk.get("id"),
-        )
-
-    return embedding_array
-
-
-async def _fetch_embedding_from_svo(
-    chunk_text: str,
-    chunk_id: Any,
-    embedding_model: Any,
+async def _fetch_embeddings_from_svo_batch(
+    items: List[Tuple[str, Any, Any]],
     database: DatabaseClient,
     svo_client_manager: Any,
-    chunk_id_log: Any,
-) -> Optional[np.ndarray]:
-    """Request embedding from SVO; optionally save to DB. Returns array or None."""
+) -> Dict[Any, np.ndarray]:
+    """Batch-request embeddings from SVO for chunks with no usable stored vector.
+
+    ``items`` is a list of ``(chunk_text, chunk_id, embedding_model)``. Issues a
+    single ``svo_client_manager.get_embeddings`` call for every item (rather than
+    one call per chunk) and saves each successful result back to
+    ``code_chunks.embedding_vector`` / ``embedding_model``. Returns a
+    ``chunk_id -> embedding array`` map covering only the chunks that succeeded;
+    a failure of the whole batch call (e.g. SVO unavailable) yields an empty map
+    and every affected chunk is reported as a missing embedding by the caller.
+    """
+    if not items:
+        return {}
 
     try:
-        tmp = EmbeddingInput(text=chunk_text)
-        chunks_with_emb = await svo_client_manager.get_embeddings([tmp])
-        if (
-            not chunks_with_emb
-            or getattr(chunks_with_emb[0], "embedding", None) is None
-        ):
-            return None
-        embedding = getattr(chunks_with_emb[0], "embedding")
-        if embedding is None:
-            return None
-        embedding_array: np.ndarray = np.array(embedding, dtype="float32")
-        save_model = (
-            getattr(chunks_with_emb[0], "embedding_model", None) or embedding_model
+        inputs = [EmbeddingInput(text=text) for text, _chunk_id, _model in items]
+        chunks_with_emb = await svo_client_manager.get_embeddings(inputs)
+    except Exception as e:
+        logger.warning(
+            "Failed to get embeddings from SVO for %d chunk(s): %s",
+            len(items),
+            e,
         )
+        return {}
+
+    result: Dict[Any, np.ndarray] = {}
+    for (_text, chunk_id, embedding_model), tmp in zip(items, chunks_with_emb):
+        embedding = getattr(tmp, "embedding", None)
+        if embedding is None:
+            continue
+        embedding_array = np.array(embedding, dtype="float32")
+        save_model = getattr(tmp, "embedding_model", None) or embedding_model
         if save_model and str(save_model).strip():
             try:
                 embedding_json = json.dumps(embedding_array.tolist())
@@ -289,16 +291,16 @@ async def _fetch_embedding_from_svo(
                     (embedding_json, save_model, chunk_id),
                 )
             except Exception as e:
-                logger.warning("Failed to save embedding to database: %s", e)
+                logger.warning(
+                    "Failed to save recovered embedding for chunk %s: %s",
+                    chunk_id,
+                    e,
+                )
         else:
             logger.warning(
-                "Embedding service returned no model; not saving vector to DB"
+                "Embedding service returned no model for chunk %s; not saving "
+                "vector to DB",
+                chunk_id,
             )
-        return embedding_array
-    except Exception as e:
-        logger.warning(
-            "Failed to get embedding from SVO for chunk %s: %s",
-            chunk_id_log,
-            e,
-        )
-        return None
+        result[chunk_id] = embedding_array
+    return result

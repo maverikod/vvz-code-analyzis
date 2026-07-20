@@ -283,6 +283,15 @@ def relocate_project_root_after_disk_move(
     Updates only the ``projects`` row: resolved ``root_path``, directory ``name``
     (immediate child folder under the watch dir), and optionally ``watch_dir_id``.
     File rows keep project-relative paths; they are not rewritten on relocate.
+
+    ``projects`` reads/writes here are scoped to the current
+    ``server_instance_id``. A row can exist under a different/rotated
+    ``server_instance_id`` (orphan instance after a server reinstall/rebind)
+    while still being the same on-disk project - reads fall back to the
+    unscoped global-by-id lookup (mirrors :func:`get_project`'s fallback) and
+    writes reclaim the orphan row before retrying
+    (:func:`_reclaim_orphan_and_retry_scoped_write`, the same helper
+    :func:`sync_project_metadata_from_projectid` uses).
     """
     try:
         _now = sql_julian_timestamp_now_expr(self)
@@ -300,10 +309,13 @@ def relocate_project_root_after_disk_move(
     sid = current_server_instance_id()
     if old_r == new_r:
         if new_watch_dir_id is not None:
-            self._execute(
+            _reclaim_orphan_and_retry_scoped_write(
+                self,
                 f"UPDATE projects SET watch_dir_id = ?, updated_at = {_now} "
                 "WHERE server_instance_id = ? AND id = ?",
                 (new_watch_dir_id, sid, project_id),
+                sid=sid,
+                project_id=project_id,
             )
             self._commit()
         return True
@@ -312,6 +324,13 @@ def relocate_project_root_after_disk_move(
         "SELECT watch_dir_id FROM projects WHERE server_instance_id = ? AND id = ?",
         (sid, project_id),
     )
+    if cur is None:
+        global_cur = self._fetchone(
+            "SELECT watch_dir_id FROM projects WHERE id = ?",
+            (project_id,),
+        )
+        if global_cur is not None:
+            cur = global_cur
     effective_wd = (
         str(new_watch_dir_id)
         if new_watch_dir_id is not None
@@ -350,9 +369,17 @@ def relocate_project_root_after_disk_move(
         )
         return False
 
-    if not self._fetchone(
-        "SELECT id FROM projects WHERE server_instance_id = ? AND id = ?",
-        (sid, project_id),
+    if (
+        self._fetchone(
+            "SELECT id FROM projects WHERE server_instance_id = ? AND id = ?",
+            (sid, project_id),
+        )
+        is None
+        and self._fetchone(
+            "SELECT id FROM projects WHERE id = ?",
+            (project_id,),
+        )
+        is None
     ):
         logger.warning(
             "relocate_project_root_after_disk_move: project %s not found", project_id
@@ -361,16 +388,22 @@ def relocate_project_root_after_disk_move(
 
     new_name = new_r.name
     if new_watch_dir_id is not None:
-        self._execute(
+        _reclaim_orphan_and_retry_scoped_write(
+            self,
             "UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
             f"updated_at = {_now} WHERE server_instance_id = ? AND id = ?",
             (new_stored, new_name, new_watch_dir_id, sid, project_id),
+            sid=sid,
+            project_id=project_id,
         )
     else:
-        self._execute(
+        _reclaim_orphan_and_retry_scoped_write(
+            self,
             f"UPDATE projects SET root_path = ?, name = ?, updated_at = {_now} "
             "WHERE server_instance_id = ? AND id = ?",
             (new_stored, new_name, sid, project_id),
+            sid=sid,
+            project_id=project_id,
         )
 
     self._commit()

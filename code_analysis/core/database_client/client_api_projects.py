@@ -601,6 +601,15 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
 
         Optionally sets ``watch_dir_id``. File rows are not updated; paths stay
         project-relative.
+
+        ``projects`` reads/writes here are scoped to the current
+        ``server_instance_id``. A row can exist under a different/rotated
+        ``server_instance_id`` (orphan instance after a server reinstall/rebind)
+        while still being the same on-disk project - reads fall back to the
+        unscoped global-by-id lookup (:func:`_project_row_by_id_global`, mirrors
+        ``get_project``'s fallback) and writes reclaim the orphan row before
+        retrying (:func:`_reclaim_orphan_and_retry_scoped_projects_write`, same
+        helper ``update_project``/``sync_project_metadata_from_projectid`` use).
         """
         try:
             old_r = Path(old_root_path).expanduser().resolve()
@@ -625,15 +634,33 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
                 return row0 if isinstance(row0, dict) else None
             return None
 
+        def _affected_rows(result: Any) -> int:
+            """Return ``affected_rows`` from a ``self.execute`` UPDATE result."""
+            affected = result.get("affected_rows", 0) if isinstance(result, dict) else 0
+            return int(affected) if isinstance(affected, int) else 0
+
         now_sql = sql_julian_timestamp_now_expr(self)
         sid = current_server_instance_id()
 
         if old_r == new_r:
             if new_watch_dir_id is not None:
-                self.execute(
-                    f"UPDATE projects SET watch_dir_id = ?, updated_at = {now_sql} "
-                    "WHERE server_instance_id = ? AND id = ?",
-                    (new_watch_dir_id, sid, project_id),
+
+                def _write_watch_dir_only() -> int:
+                    """Scoped ``watch_dir_id``-only UPDATE; returns affected row count."""
+                    return _affected_rows(
+                        self.execute(
+                            f"UPDATE projects SET watch_dir_id = ?, "
+                            f"updated_at = {now_sql} "
+                            "WHERE server_instance_id = ? AND id = ?",
+                            (new_watch_dir_id, sid, project_id),
+                        )
+                    )
+
+                _reclaim_orphan_and_retry_scoped_projects_write(
+                    self,
+                    sid=sid,
+                    project_id=project_id,
+                    write_fn=_write_watch_dir_only,
                 )
             return True
 
@@ -641,6 +668,10 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             "SELECT watch_dir_id FROM projects WHERE server_instance_id = ? AND id = ?",
             (sid, project_id),
         )
+        if cur is None:
+            global_cur = _project_row_by_id_global(self, project_id)
+            if global_cur is not None:
+                cur = global_cur
         effective_wd = (
             str(new_watch_dir_id)
             if new_watch_dir_id is not None
@@ -679,9 +710,13 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             )
             return False
 
-        if not _fetchone(
-            "SELECT id FROM projects WHERE server_instance_id = ? AND id = ?",
-            (sid, project_id),
+        if (
+            _fetchone(
+                "SELECT id FROM projects WHERE server_instance_id = ? AND id = ?",
+                (sid, project_id),
+            )
+            is None
+            and _project_row_by_id_global(self, project_id) is None
         ):
             logger.warning(
                 "relocate_project_root_after_disk_move: project %s not found",
@@ -691,17 +726,36 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
 
         new_name = new_r.name
         if new_watch_dir_id is not None:
-            self.execute(
-                f"UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
-                f"updated_at = {now_sql} WHERE server_instance_id = ? AND id = ?",
-                (new_stored, new_name, new_watch_dir_id, sid, project_id),
-            )
+
+            def _write_root() -> int:
+                """Scoped root-relocation UPDATE incl. ``watch_dir_id``."""
+                return _affected_rows(
+                    self.execute(
+                        f"UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
+                        f"updated_at = {now_sql} WHERE server_instance_id = ? AND id = ?",
+                        (new_stored, new_name, new_watch_dir_id, sid, project_id),
+                    )
+                )
+
         else:
-            self.execute(
-                f"UPDATE projects SET root_path = ?, name = ?, updated_at = {now_sql} "
-                "WHERE server_instance_id = ? AND id = ?",
-                (new_stored, new_name, sid, project_id),
-            )
+
+            def _write_root() -> int:
+                """Scoped root-relocation UPDATE (``watch_dir_id`` unchanged)."""
+                return _affected_rows(
+                    self.execute(
+                        f"UPDATE projects SET root_path = ?, name = ?, "
+                        f"updated_at = {now_sql} "
+                        "WHERE server_instance_id = ? AND id = ?",
+                        (new_stored, new_name, sid, project_id),
+                    )
+                )
+
+        _reclaim_orphan_and_retry_scoped_projects_write(
+            self,
+            sid=sid,
+            project_id=project_id,
+            write_fn=_write_root,
+        )
 
         logger.info(
             "relocate_project_root_after_disk_move: project_id=%s root %s -> %s "

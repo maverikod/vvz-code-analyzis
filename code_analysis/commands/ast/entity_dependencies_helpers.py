@@ -91,8 +91,6 @@ def get_entity_dependencies_via_execute(
     for r in rows:
         d = row_to_dict(r)
         cst_node_id = d.get("cst_node_id")
-        if not is_valid_uuid4(cst_node_id):
-            continue
         if d.get("callee_class_id") is not None:
             callee_type, callee_id = "class", d["callee_class_id"]
         elif d.get("callee_method_id") is not None:
@@ -100,16 +98,16 @@ def get_entity_dependencies_via_execute(
         else:
             callee_type, callee_id = "function", d["callee_function_id"]
         file_id = d.get("file_id")
-        out.append(
-            {
-                "callee_entity_type": callee_type,
-                "callee_entity_id": callee_id,
-                "ref_type": d.get("ref_type", ""),
-                "file_path": path_by_id.get(file_id, ""),
-                "line": d.get("line"),
-                "cst_node_id": cst_node_id,
-            }
-        )
+        entry: Dict[str, Any] = {
+            "callee_entity_type": callee_type,
+            "callee_entity_id": callee_id,
+            "ref_type": d.get("ref_type", ""),
+            "file_path": path_by_id.get(file_id, ""),
+            "line": d.get("line"),
+        }
+        if is_valid_uuid4(cst_node_id):
+            entry["cst_node_id"] = cst_node_id
+        out.append(entry)
     return out
 
 
@@ -210,8 +208,6 @@ def get_entity_dependents_via_execute(
     for r in rows:
         d = row_to_dict(r)
         cst_node_id = d.get("cst_node_id")
-        if not is_valid_uuid4(cst_node_id):
-            continue
         if d.get("caller_class_id") is not None:
             caller_type, caller_id = "class", d["caller_class_id"]
         elif d.get("caller_method_id") is not None:
@@ -219,14 +215,14 @@ def get_entity_dependents_via_execute(
         else:
             caller_type, caller_id = "function", d["caller_function_id"]
         file_id = d.get("file_id")
-        out.append(
-            {
-                "caller_entity_type": caller_type,
-                "caller_entity_id": caller_id,
-                "ref_type": d.get("ref_type", ""),
-                "file_path": path_by_id.get(file_id, ""),
-                "line": d.get("line"),
-                "cst_node_id": cst_node_id,
-            }
-        )
+        entry: Dict[str, Any] = {
+            "caller_entity_type": caller_type,
+            "caller_entity_id": caller_id,
+            "ref_type": d.get("ref_type", ""),
+            "file_path": path_by_id.get(file_id, ""),
+            "line": d.get("line"),
+        }
+        if is_valid_uuid4(cst_node_id):
+            entry["cst_node_id"] = cst_node_id
+        out.append(entry)
     return out

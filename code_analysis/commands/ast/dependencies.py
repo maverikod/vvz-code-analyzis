@@ -158,25 +158,23 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     cst_node_id = _get_containing_cst_node_id(
                         db, row["file_id"], row["line"]
                     )
-                    if not cst_node_id:
-                        continue
-                    results.append(
-                        {
-                            "type": "import",
-                            "file_path": relative_path_for_indexed_row(
-                                {
-                                    "path": row.get("file_path"),
-                                    "relative_path": row.get("file_relative_path"),
-                                },
-                                root_path,
-                            ),
-                            "cst_node_id": cst_node_id,
-                            "line": row["line"],
-                            "module": row.get("module"),
-                            "name": row["name"],
-                            "import_type": row["import_type"],
-                        }
-                    )
+                    entry: Dict[str, Any] = {
+                        "type": "import",
+                        "file_path": relative_path_for_indexed_row(
+                            {
+                                "path": row.get("file_path"),
+                                "relative_path": row.get("file_relative_path"),
+                            },
+                            root_path,
+                        ),
+                        "line": row["line"],
+                        "module": row.get("module"),
+                        "name": row["name"],
+                        "import_type": row["import_type"],
+                    }
+                    if cst_node_id:
+                        entry["cst_node_id"] = cst_node_id
+                    results.append(entry)
 
             # For classes: also search for inheritance (classes that inherit from this class)
             if entity_type in ("class", None):
@@ -210,24 +208,22 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
 
                     if entity_name in bases:
                         node_id = row.get("cst_node_id")
-                        if not _is_valid_uuid4(node_id):
-                            continue
-                        results.append(
-                            {
-                                "type": "inheritance",
-                                "file_path": relative_path_for_indexed_row(
-                                    {
-                                        "path": row.get("file_path"),
-                                        "relative_path": row.get("file_relative_path"),
-                                    },
-                                    root_path,
-                                ),
-                                "cst_node_id": node_id,
-                                "line": row["line"],
-                                "class_name": row["name"],
-                                "bases": bases,
-                            }
-                        )
+                        entry = {
+                            "type": "inheritance",
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
+                            "line": row["line"],
+                            "class_name": row["name"],
+                            "bases": bases,
+                        }
+                        if _is_valid_uuid4(node_id):
+                            entry["cst_node_id"] = node_id
+                        results.append(entry)
 
             # Also try usages table (may be empty, but check anyway)
             if entity_type in ("class", "function", "method", None):
@@ -259,25 +255,23 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     cst_node_id = _get_containing_cst_node_id(
                         db, row["file_id"], row["line"]
                     )
-                    if not cst_node_id:
-                        continue
-                    results.append(
-                        {
-                            "type": "usage",
-                            "file_path": relative_path_for_indexed_row(
-                                {
-                                    "path": row.get("file_path"),
-                                    "relative_path": row.get("file_relative_path"),
-                                },
-                                root_path,
-                            ),
-                            "cst_node_id": cst_node_id,
-                            "line": row["line"],
-                            "target_name": row["target_name"],
-                            "target_type": row["target_type"],
-                            "target_class": row.get("target_class"),
-                        }
-                    )
+                    entry = {
+                        "type": "usage",
+                        "file_path": relative_path_for_indexed_row(
+                            {
+                                "path": row.get("file_path"),
+                                "relative_path": row.get("file_relative_path"),
+                            },
+                            root_path,
+                        ),
+                        "line": row["line"],
+                        "target_name": row["target_name"],
+                        "target_type": row["target_type"],
+                        "target_class": row.get("target_class"),
+                    }
+                    if cst_node_id:
+                        entry["cst_node_id"] = cst_node_id
+                    results.append(entry)
 
             # Apply limit and offset to final results
             if limit:

@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
 import logging
 from typing import Any, List, Optional, Tuple
 
@@ -156,15 +157,90 @@ def resolve_callee(
     return None
 
 
+def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) -> int:
+    """
+    Build entity_cross_ref inheritance edges from this file's ``classes.bases``.
+
+    For each class defined in the file, resolves each base class name (project-scoped,
+    same-file preferred, qualified names reduced to the last segment - same convention
+    as ``get_class_hierarchy``) and inserts a ``ref_type='inherit'`` row with the child
+    class as caller and the base class as callee. Unresolved bases (external/stdlib,
+    or simply not found) are skipped - same convention as unresolved usage callees in
+    :func:`build_entity_cross_ref_for_file`.
+
+    Args:
+        db: Legacy DB facade-like (add_entity_cross_ref semantics).
+        file_id: File id.
+        project_id: Project id for resolve_callee.
+
+    Returns:
+        Number of entity_cross_ref rows added.
+    """
+    rows = db._fetchall(
+        "SELECT id, line, bases FROM classes WHERE file_id = ?",
+        (file_id,),
+    )
+    added = 0
+    for row in rows:
+        class_id = row["id"]
+        line = row["line"]
+        bases_raw = row.get("bases")
+        if not bases_raw:
+            continue
+        try:
+            bases = json.loads(bases_raw) if isinstance(bases_raw, str) else bases_raw
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(bases, list):
+            continue
+
+        for base in bases:
+            base_name = base.split(".")[-1] if isinstance(base, str) else str(base)
+            if not base_name:
+                continue
+            callee = resolve_callee(db, project_id, file_id, line, "class", base_name)
+            if callee is None:
+                continue
+            _, callee_id = callee
+            try:
+                db.add_entity_cross_ref(
+                    caller_class_id=class_id,
+                    caller_method_id=None,
+                    caller_function_id=None,
+                    callee_class_id=callee_id,
+                    callee_method_id=None,
+                    callee_function_id=None,
+                    ref_type="inherit",
+                    file_id=file_id,
+                    line=line,
+                )
+                added += 1
+            except Exception as e:
+                logger.debug(
+                    "Failed to add inheritance entity_cross_ref for %s at line %s: %s",
+                    base_name,
+                    line,
+                    e,
+                    exc_info=True,
+                )
+    return added
+
+
 def build_entity_cross_ref_for_file(
     db: Any, file_id: int, project_id: str, source_code: str
 ) -> int:
     """
-    Build entity_cross_ref rows for a file from its usages.
+    Build entity_cross_ref rows for a file from its usages and class inheritance.
 
     Fetches usages for file_id, resolves caller and callee for each usage,
-    and inserts into entity_cross_ref when both are resolved.
-    On failure for a single usage, logs and continues.
+    and inserts into entity_cross_ref when both are resolved. Also derives
+    inheritance edges from this file's classes.bases (see
+    :func:`_add_inheritance_cross_ref_for_file`). On failure for a single
+    usage/inheritance edge, logs and continues.
+
+    Note: this only runs on (re-)index of the file - existing projects only get
+    inheritance rows once their files are re-indexed (update_indexes / file change),
+    not retroactively.
 
     Args:
         db: Legacy DB facade-like (add_entity_cross_ref, add_usage semantics).
@@ -173,7 +249,7 @@ def build_entity_cross_ref_for_file(
         source_code: Unused; for future context.
 
     Returns:
-        Number of entity_cross_ref rows added.
+        Number of entity_cross_ref rows added (usages + inheritance).
     """
     usages = db._fetchall(
         "SELECT line, usage_type, target_type, target_name, target_class FROM usages WHERE file_id = ?",
@@ -234,4 +310,6 @@ def build_entity_cross_ref_for_file(
                 e,
                 exc_info=True,
             )
+
+    added += _add_inheritance_cross_ref_for_file(db, file_id, project_id)
     return added

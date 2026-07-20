@@ -9,6 +9,14 @@ the design note above ``teardown_fixtures``); the abort message is enriched
 with the real trash folder name via a read-only ``list_trashed_projects``
 lookup, which is always safe to call.
 
+``project_set_mark_del`` teardown is idempotent: if the project is already
+absent (a "not found in database" rejection, see ``_ALREADY_ABSENT_MARKER``),
+that is logged and treated as a successful delete rather than an abort — this
+is the sole caller of ``project_set_mark_del`` in the whole verifier (see
+``_verify_client_all_commands_catalog.BUCKET_B_REASONS``), so an "already
+absent" outcome only happens on a re-run against a stale fixture or a
+teardown retry, never mid-sweep. Any other failure still aborts loudly.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -21,6 +29,12 @@ from code_analysis_client import CodeAnalysisAsyncClient
 
 from _verify_client_all_commands_catalog import schema_has_project_id
 from _verify_client_all_commands_fixtures import FixtureContext
+
+# Same marker _verify_client_all_commands_fixtures_registration.py polls for:
+# the server's rejection text when a project_id no longer has a DB row. Used
+# here to make project_set_mark_del teardown idempotent — if some earlier
+# step already deleted the disposable project, teardown must not abort.
+_ALREADY_ABSENT_MARKER = "not found in database"
 
 
 async def _lookup_trash_folder_name(
@@ -65,6 +79,9 @@ async def teardown_fixtures(
     Applies the same project_id-in-schema scoping gate to both
     ``project_set_mark_del`` and ``permanently_delete_from_trash`` before
     calling them; aborts loudly instead of guessing if either fails the gate.
+    ``project_set_mark_del`` itself is idempotent to an "already absent"
+    rejection (see module docstring) — that case is logged and treated as
+    success, not an abort.
 
     Args:
         client: Connected async client.
@@ -120,14 +137,28 @@ async def teardown_fixtures(
             "project_set_mark_del", {"project_id": fixtures.project_id}
         )
     except Exception as exc:
-        print(f"TEARDOWN ABORTED: project_set_mark_del raised: {exc!r}")
-        return False
-    if not mark_resp.get("success"):
-        print(
-            "TEARDOWN ABORTED: project_set_mark_del returned failure: "
-            f"{mark_resp.get('error')!r}"
-        )
-        return False
+        if _ALREADY_ABSENT_MARKER in str(exc).lower():
+            print(
+                "OK    teardown: project_set_mark_del found project "
+                f"{fixtures.project_id} already-deleted: {exc!r}"
+            )
+        else:
+            print(f"TEARDOWN ABORTED: project_set_mark_del raised: {exc!r}")
+            return False
+    else:
+        if not mark_resp.get("success"):
+            error_text = str(mark_resp.get("error"))
+            if _ALREADY_ABSENT_MARKER in error_text.lower():
+                print(
+                    "OK    teardown: project_set_mark_del found project "
+                    f"{fixtures.project_id} already-deleted: {error_text}"
+                )
+            else:
+                print(
+                    "TEARDOWN ABORTED: project_set_mark_del returned failure: "
+                    f"{mark_resp.get('error')!r}"
+                )
+                return False
 
     # NOTE (design judgment call): the live permanently_delete_from_trash schema
     # takes `trash_folder_name` (a direct child of trash_dir), not `project_id`.

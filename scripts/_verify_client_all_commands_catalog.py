@@ -120,7 +120,7 @@ ADAPTER_SAFE_TO_EXECUTE: FrozenSet[str] = frozenset(
     {"echo", "health", "help", "queue_health", "queue_list_jobs", "plugins", "roletest"}
 )
 
-# Fixed Bucket B list (25 entries) — NEVER invoked. Schema fetch only.
+# Fixed Bucket B list (26 entries) — NEVER invoked. Schema fetch only.
 BUCKET_B_REASONS: Dict[str, str] = {
     "reload": "process-wide adapter control command, out of project scope",
     "load": "process-wide adapter module lifecycle command",
@@ -143,6 +143,10 @@ BUCKET_B_REASONS: Dict[str, str] = {
     "rotate_all_logs": "global log rotation, side effect on shared server logs",
     "rotate_worker_logs": (
         "global worker log rotation, side effect on shared server logs"
+    ),
+    "project_set_mark_del": (
+        "destroys the shared disposable fixture project mid-run (trash + DB "
+        "clear); invoked exactly once by teardown instead"
     ),
     "git_push": "mutates a remote repository outside disposable sandbox control",
     "git_branch_push": (

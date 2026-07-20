@@ -120,7 +120,7 @@ ADAPTER_SAFE_TO_EXECUTE: FrozenSet[str] = frozenset(
     {"echo", "health", "help", "queue_health", "queue_list_jobs", "plugins", "roletest"}
 )
 
-# Fixed Bucket B list (26 entries) — NEVER invoked. Schema fetch only.
+# Fixed Bucket B list (27 entries) — NEVER invoked. Schema fetch only.
 BUCKET_B_REASONS: Dict[str, str] = {
     "reload": "process-wide adapter control command, out of project scope",
     "load": "process-wide adapter module lifecycle command",
@@ -131,6 +131,10 @@ BUCKET_B_REASONS: Dict[str, str] = {
     "proxy_registration": "process-wide proxy registration control command",
     "start_repair_worker": "global worker lifecycle control",
     "stop_repair_worker": "global worker lifecycle control",
+    "backup_database": (
+        "database-wide pg_dump; heavy global op, exceeds sync transport timeout "
+        "(ReadTimeout observed); never invoked"
+    ),
     "restore_database": "database-wide integrity operation risk",
     "repair_sqlite_database": "database-wide integrity operation risk",
     "run_uuid_identity_migration": "one-time global DB migration, irreversible risk",

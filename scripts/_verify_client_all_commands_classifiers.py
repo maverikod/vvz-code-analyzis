@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-from code_analysis_client import CodeAnalysisAsyncClient
+from code_analysis_client import CodeAnalysisAsyncClient, JobFailedError
 from code_analysis_client.server_api import (
     CST_REMOVED_COMMANDS,
     EDITING_REMOVED_COMMANDS,
@@ -192,6 +192,81 @@ def synthesize_params(
     return params, None
 
 
+async def _fetch_structured_job_error(
+    client: CodeAnalysisAsyncClient, job_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    """Fetch a failed queued command's own structured error via its job status.
+
+    ``JobFailedError.error`` only carries the queue-level error (populated
+    when the worker/job itself crashed); a command that legitimately rejected
+    its input (e.g. ``git_init`` on a path without permissions) reports its
+    own structured error nested at ``data.result.result.error`` instead of at
+    the top level of ``JobFailedError``. ``queue_get_job_status`` itself
+    always returns synchronously (never queued), so this is a plain call, not
+    another poll.
+
+    Args:
+        client: Connected async client.
+        job_id: The failed job's id (``JobFailedError.job_id``); ``None``
+            skips the lookup.
+
+    Returns:
+        The command's structured error dict (has a ``code`` and/or
+        ``message`` key) if one is found, else ``None``.
+    """
+    if not job_id:
+        return None
+    try:
+        resp = await client.call("queue_get_job_status", {"job_id": job_id})
+    except Exception:  # noqa: BLE001 - best-effort, falls back to the FAILED status
+        return None
+    if not isinstance(resp, dict) or resp.get("success") is not True:
+        return None
+    data = resp.get("data")
+    result_field = data.get("result") if isinstance(data, dict) else None
+    inner = result_field.get("result") if isinstance(result_field, dict) else None
+    error = inner.get("error") if isinstance(inner, dict) else None
+    if isinstance(error, dict) and (error.get("code") or error.get("message")):
+        return error
+    return None
+
+
+async def classify_job_failed_error(
+    client: CodeAnalysisAsyncClient,
+    name: str,
+    exc: JobFailedError,
+    *,
+    bucket: Bucket = Bucket.BUCKET_A,
+) -> CommandOutcome:
+    """Classify a ``JobFailedError`` as a structured expected-error, or keep it FAILED.
+
+    Looks up the failed job's own structured error via
+    :func:`_fetch_structured_job_error`. When found, the command legitimately
+    rejected valid-looking input server-side (e.g. ``git_init`` on a
+    permission-denied path) — that is an expected error, not a tooling
+    failure, so it is reported the same way every other expected-error row
+    is. When no structured inner error is found, the ``JobFailedError`` is
+    reported verbatim as a FAILED outcome, same as before this classification
+    existed.
+
+    Args:
+        client: Connected async client.
+        name: Live command name that raised ``exc``.
+        exc: The ``JobFailedError`` raised by ``call``/``call_validated``.
+        bucket: Classification bucket to attach to the outcome.
+
+    Returns:
+        EXPECTED_ERROR outcome carrying the structured code+message when
+        found; otherwise a FAILED outcome with the ``JobFailedError`` text.
+    """
+    structured = await _fetch_structured_job_error(client, exc.job_id)
+    if structured is not None:
+        return CommandOutcome(
+            name, bucket, Status.EXPECTED_ERROR, truncate(str(structured))
+        )
+    return CommandOutcome(name, bucket, Status.FAILED, truncate(repr(exc)))
+
+
 async def run_bucket_a(
     client: CodeAnalysisAsyncClient, name: str, fixtures: FixtureContext
 ) -> CommandOutcome:
@@ -204,7 +279,10 @@ async def run_bucket_a(
 
     Returns:
         Outcome reflecting execution result, a legitimate rejection, a missing
-        generic provider, or an unexpected failure.
+        generic provider, or an unexpected failure. A ``JobFailedError`` from
+        the client's auto-polling is classified via
+        :func:`classify_job_failed_error` rather than reported as a blanket
+        FAILED.
     """
     try:
         schema = await client.get_command_schema(name)
@@ -220,6 +298,8 @@ async def run_bucket_a(
         return CommandOutcome(name, early.bucket, early.status, early.reason)
     try:
         resp = await client.call_validated(name, params)
+    except JobFailedError as exc:
+        return await classify_job_failed_error(client, name, exc)
     except Exception as exc:
         return CommandOutcome(name, Bucket.BUCKET_A, Status.FAILED, truncate(repr(exc)))
     if resp.get("success") is True:

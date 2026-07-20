@@ -4,10 +4,14 @@ Disposable-project teardown for the live-server all-commands verifier.
 Closes the sweep-wide session and purges the disposable project created by
 ``_verify_client_all_commands_fixtures.seed_fixtures``, or — per the
 operator's ``--keep-project`` flag — leaves it in place for manual inspection.
-Trash purge always aborts loudly rather than guessing a trash folder name (see
-the design note above ``teardown_fixtures``); the abort message is enriched
-with the real trash folder name via a read-only ``list_trashed_projects``
-lookup, which is always safe to call.
+Trash purge resolves the disposable project's trash folder name via a
+read-only ``list_trashed_projects`` lookup (always safe to call) and passes it
+straight to ``permanently_delete_from_trash``, which takes ``trash_folder_name``
+(a direct child of ``trash_dir``), not ``project_id``. A purge failure, or a
+folder name that fails to resolve, is logged as a WARN rather than an abort:
+by that point ``project_set_mark_del`` has already succeeded, so the project
+is out of the DB either way, and trash is a safe holding area for manual (or
+``clear_trash``) cleanup later.
 
 ``project_set_mark_del`` teardown is idempotent: if the project is already
 absent (a "not found in database" rejection, see ``_ALREADY_ABSENT_MARKER``),
@@ -76,12 +80,14 @@ async def teardown_fixtures(
 ) -> bool:
     """Close the session and purge the disposable project (unless kept).
 
-    Applies the same project_id-in-schema scoping gate to both
-    ``project_set_mark_del`` and ``permanently_delete_from_trash`` before
-    calling them; aborts loudly instead of guessing if either fails the gate.
-    ``project_set_mark_del`` itself is idempotent to an "already absent"
-    rejection (see module docstring) — that case is logged and treated as
-    success, not an abort.
+    Applies the project_id-in-schema scoping gate to ``project_set_mark_del``
+    before calling it, and aborts loudly instead of guessing if it fails the
+    gate. ``project_set_mark_del`` itself is idempotent to an "already
+    absent" rejection (see module docstring) — that case is logged and
+    treated as success, not an abort. ``permanently_delete_from_trash`` is
+    scoped by ``trash_folder_name`` (resolved via ``list_trashed_projects``,
+    not a project_id-schema gate); its failure, or an unresolved folder name,
+    is a WARN, not an abort — the project is already out of the DB by then.
 
     Args:
         client: Connected async client.
@@ -93,15 +99,21 @@ async def teardown_fixtures(
 
     Returns:
         True if teardown completed cleanly (or was explicitly skipped via
-        ``keep_project``); False if any step failed or a safety gate aborted
-        the purge.
+        ``keep_project``), including when ``project_set_mark_del`` succeeded
+        (or was already-absent) but the trash purge only WARNed; False if
+        ``session_delete`` failed or ``project_set_mark_del`` failed/aborted.
     """
     ok = True
 
     if fixtures.session_id:
         try:
+            # force=true: fixtures.session_id is used generically across the
+            # sweep (e.g. as the session_id fixture value for whichever
+            # command's coverage exercises session_open_file), so a file lock
+            # legitimately outliving that coverage is expected here, not a
+            # teardown defect — session_delete must not reject on it.
             resp = await client.call_validated(
-                "session_delete", {"session_id": fixtures.session_id}
+                "session_delete", {"session_id": fixtures.session_id, "force": True}
             )
             if not resp.get("success"):
                 print(f"WARN  teardown: session_delete failed: {resp.get('error')!r}")
@@ -160,50 +172,47 @@ async def teardown_fixtures(
                 )
                 return False
 
-    # NOTE (design judgment call): the live permanently_delete_from_trash schema
-    # takes `trash_folder_name` (a direct child of trash_dir), not `project_id`.
-    # The gate below therefore fails by construction against the current live
-    # schema. Per the teardown contract this must abort loudly rather than
-    # fabricate a trash folder name — the disposable project is left in trash
-    # for the operator (or clear_trash / a manual permanently_delete_from_trash
-    # call) to purge. This is expected, not a bug in this verifier.
-    try:
-        purge_schema = await client.get_command_schema("permanently_delete_from_trash")
-    except Exception as exc:
+    # The live permanently_delete_from_trash schema takes `trash_folder_name`
+    # (a direct child of trash_dir), not `project_id`. The name is already
+    # knowable via the same read-only list_trashed_projects lookup used above
+    # for the (now-removed) abort message, so purge proactively instead of
+    # refusing: by this point project_set_mark_del already succeeded (or the
+    # project was already absent), so a purge failure only leaves the project
+    # sitting in trash — a safe holding area, not a DB-consistency problem —
+    # and is therefore a WARN, never an abort.
+    trash_folder_name = await _lookup_trash_folder_name(client, fixtures)
+    if not trash_folder_name:
         print(
-            "TEARDOWN ABORTED after mark-del: could not fetch schema for "
-            f"permanently_delete_from_trash: {exc!r}. project_id={fixtures.project_id} "
-            f"({fixtures.project_name}) is now in trash; purge it manually."
+            "WARN  teardown: could not resolve trash_folder_name via "
+            f"list_trashed_projects for project_id={fixtures.project_id} "
+            f"({fixtures.project_name}); trash purge skipped, project remains in "
+            "trash (safe holding area) for manual/clear_trash cleanup."
         )
-        return False
-    if not schema_has_project_id(purge_schema):
-        trash_folder_name = await _lookup_trash_folder_name(client, fixtures)
-        folder_hint = (
-            f"trash_folder_name={trash_folder_name!r}"
-            if trash_folder_name
-            else "trash_folder_name could not be resolved via list_trashed_projects"
-        )
-        print(
-            "TEARDOWN ABORTED after mark-del: permanently_delete_from_trash schema has "
-            "no project_id property (it takes trash_folder_name instead) — refusing to "
-            f"guess. project_id={fixtures.project_id} ({fixtures.project_name}) is now "
-            f"in trash; {folder_hint}. Purge manually via "
-            "permanently_delete_from_trash(trash_folder_name=...)."
-        )
-        return False
+        return ok
 
     try:
         purge_resp = await client.call_validated(
-            "permanently_delete_from_trash", {"project_id": fixtures.project_id}
+            "permanently_delete_from_trash", {"trash_folder_name": trash_folder_name}
         )
     except Exception as exc:
-        print(f"TEARDOWN ABORTED: permanently_delete_from_trash raised: {exc!r}")
-        return False
+        print(
+            "WARN  teardown: permanently_delete_from_trash raised: "
+            f"{exc!r}. project_id={fixtures.project_id} ({fixtures.project_name}) "
+            f"remains in trash (trash_folder_name={trash_folder_name!r})."
+        )
+        return ok
     if not purge_resp.get("success"):
         print(
-            "TEARDOWN ABORTED: permanently_delete_from_trash returned failure: "
-            f"{purge_resp.get('error')!r}"
+            "WARN  teardown: permanently_delete_from_trash returned failure: "
+            f"{purge_resp.get('error')!r}. project_id={fixtures.project_id} "
+            f"({fixtures.project_name}) remains in trash "
+            f"(trash_folder_name={trash_folder_name!r})."
         )
-        return False
+        return ok
 
+    print(
+        f"OK    teardown: permanently_delete_from_trash purged "
+        f"trash_folder_name={trash_folder_name!r} "
+        f"(project_id={fixtures.project_id}, {fixtures.project_name})"
+    )
     return ok

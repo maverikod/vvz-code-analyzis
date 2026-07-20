@@ -1,42 +1,52 @@
 # code_analysis — TOOLING mechanics. Read ONLY by tool-using roles (researcher, context_former, coder, tester).
 # Orchestrator and conscience do NOT use tools and do NOT read this file.
-# Keys of `manuals:` are referenced by the roles' `standards:` lists — keep them in sync.
-#
-# Access-mode note: these manuals govern LOCAL Claude Code sessions (native tools).
-# Agents that reach this repo REMOTELY through the code-analysis server follow the
-# server-mode standards instead: docs/standards/SEARCH_WORKFLOW.yaml,
-# FILE_EDIT_WORKFLOW.yaml, FILE_VIEW_WORKFLOW.yaml, TERMINAL_WORKFLOW.yaml.
 
 meta:
-  path: project-relative POSIX preferred; stay inside the repository; no ".."
+  file_access: mcp_only            # default; laws.variables.file_access=local flips to the local_mode profile (see laws.yaml)
+  call: 'mcp__claude_ai_MCP-Proxy__call_server(server_id, copy_number=1, command, params)'
+  path: project-relative POSIX only; no host paths; no ".."
+  servers: {ca: code-analysis-server, editor: ai-editor-server, term: mcp-terminal}
 
 # Source of truth. Read on trigger; do not paraphrase from memory.
+# SHIPPED WITH THE TEMPLATE (never delete): rules, coder_guide, modes, and the live
+# server manuals fetched via info/help calls.
+# PROJECT-SPECIFIC (the three {{PROJECT_STANDARDS_DIR}} entries below): fill the
+# placeholder with your project's manual paths, or — if your project has no such
+# document — delete the entry AND remove its name from the `standards` lists in
+# roles/coder.yaml, roles/tester.yaml, roles/context_former.yaml: a dangling name
+# there sends agents hunting for a file that does not exist.
 manuals:
-  search:     docs/standards/LOCAL_CODE_SEARCH_STANDARD.yaml   # how to search / analyze code locally
-  edit:       docs/standards/LOCAL_EDITING_STANDARD.yaml       # editing conventions and constraints
-  terminal:   docs/standards/LOCAL_TERMINAL_STANDARD.yaml      # venv, quality gate, tests, pip rules
-  docstrings: docs/standards/PYTHON_DOCSTRING_STANDARD.md      # docstring format for Python code
-  planning:   docs/standards/planning/README.md                # multi-level plan stack (G/T/A)
-  cmd_help:   "the failing tool's own help or schema (--help, tool docs)"
+  rules:       roles/tooling-rules.yaml
+  editor:      'call_server(editor,"info")'
+  terminal:    'call_server(term,"info")'
+  ca_search:   'docs/standards/SEARCH_WORKFLOW.yaml'
+  ca_fs:       'docs/standards/FILE_VIEW_WORKFLOW.yaml'
+  ca_edit:     'docs/standards/FILE_EDIT_WORKFLOW.yaml'
+  coder_guide: roles/coder-guide.yaml
+  cmd_help:    'call_server(<server>,"help",{cmdname:<command>})'
+  modes:       modes.yaml
 
 # condition -> MUST read manual(s) BEFORE the first matching action
 triggers:
-  - when: before first edit/write of a project file
-    read: [edit]
-  - when: before first edit that adds or changes Python docstrings / public API
-    read: [docstrings]
+  - when: always — before the first tool call of the task
+    read: [rules]
+  - when: before first open/edit/write/close of a project file
+    read: [editor, ca_edit]
+  - when: before first fs move/copy/remove or text-file create
+    read: [ca_fs]
   - when: code analysis or code search
-    read: [search]
-    order: {1_structured_code_analysis: first, 2_plain_text_search: only_if_step1_missed}
-  - when: before first terminal command (python, pip, tests, linters)
+    read: [ca_search]
+    order: {1_ast_and_code_analysis: first, 2_cross_search: only_if_step1_missed}
+  - when: before first sandbox or host terminal command
     read: [terminal]
-  - when: authoring or editing a development plan
-    read: [planning]
+  - when: before first git operation on the server-side project
+    read: [rules]   # cas_rules.git_via_ca — git ONLY through CA git_* commands
+  - when: the task declares a mode (planning / analysis / refactoring)
+    read: [modes]
 
 # error taxonomy — exactly one branch per failure
 errors:
-  unknown:   'command/tool does not exist -> do NOT guess; consult the tool''s help/catalog, pick an existing command; check its schema via cmd_help.'
-  misuse:    'wrong/unknown params or bad usage -> MANDATORY cmd_help for the failing command; fix to schema; retry once; still bad -> escalate.'
-  tool_fail: 'internal tool failure (crash, 5xx-style error) = the TOOL failed -> STOP; escalate; no retry, no workaround.'
-  infra:     'environment down, timeout, connection refused, permission wall -> STOP on first occurrence; escalate {exact_call, verbatim_error, question}.'
-  law:       'Any tool error -> stop + escalate. Only "misuse" is self-fixable, only via cmd_help.'
+  misuse:   'wrong/unknown params or bad usage (VALIDATION_ERROR-style) -> MANDATORY call_server(<same server>,"help",{cmdname:<failing command>}); fix to schema; retry once; still bad -> escalate.'
+  tool_5xx: 'HTTP 500 / internal server error = the TOOL failed -> STOP; escalate to user; no retry, no workaround.'
+  infra:    'transport/session/proxy down, timeout, conn refused, 502, WAF 403, -32602 -> STOP on first occurrence; escalate {exact_call, verbatim_error, question}.'
+  law:      'Any tool error -> stop + escalate. Only "misuse" is self-fixable, only via cmd_help.'

@@ -374,7 +374,7 @@ def _add_inheritance_cross_ref_for_file(db: Any, file_id: int, project_id: str) 
 
 
 def build_entity_cross_ref_for_file(
-    db: Any, file_id: int, project_id: str, source_code: str
+    db: Any, file_id: Any, project_id: str, source_code: str
 ) -> int:
     """
     Build entity_cross_ref rows for a file from its usages and class inheritance.
@@ -391,7 +391,8 @@ def build_entity_cross_ref_for_file(
 
     Args:
         db: Legacy DB facade-like (add_entity_cross_ref, add_usage semantics).
-        file_id: File id.
+        file_id: File id (UUID string post-migration; ``Any`` since callers pass
+            the real runtime id, not the legacy pre-migration ``int``).
         project_id: Project id for resolve_callee.
         source_code: Unused; for future context.
 

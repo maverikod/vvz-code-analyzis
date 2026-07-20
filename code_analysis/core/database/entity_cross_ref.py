@@ -216,7 +216,7 @@ def get_dependents_by_callee(
     return result
 
 
-def delete_entity_cross_ref_for_file(self, file_id: int) -> None:
+def delete_entity_cross_ref_for_file(self, file_id: Any) -> None:
     """
     Delete all entity_cross_ref rows for a file and its entities.
 
@@ -229,7 +229,9 @@ def delete_entity_cross_ref_for_file(self, file_id: int) -> None:
     commit here would end an enclosing atomic transaction early).
 
     Args:
-        file_id: File id to clear cross-refs for.
+        file_id: File id to clear cross-refs for (UUID string post-migration;
+            ``Any`` here since callers pass the real runtime id, not the legacy
+            pre-migration ``int`` this module's other signatures still declare).
     """
     # Get all class_ids for this file
     class_rows = self._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))

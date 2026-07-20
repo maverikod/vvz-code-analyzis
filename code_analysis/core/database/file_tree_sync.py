@@ -274,6 +274,55 @@ def sync_file_to_db_atomic(
                         exc_info=True,
                     )
 
+        # Build entity_cross_ref (dependency/inheritance edges) for this file, now
+        # that its classes/functions/methods rows are committed (and any usages
+        # rows already present for this file_id - sync_file_to_db_atomic itself
+        # does not write usages; the update_indexes caller tracks those in a
+        # separate step). Mirrors update_file_data_atomic's integration
+        # (core/database/files/atomic.py) - that function stayed correctly
+        # transaction-guarded but had NO live caller, so entity_cross_ref was
+        # never written by any indexing/save pipeline.
+        #
+        # No explicit begin/commit/rollback_transaction here on purpose: this
+        # module is a hard "one logical write RPC per file" contract (see
+        # tests/test_logical_write_sync_path_contract.py, a guardrail against a
+        # past regression that split one save into multiple begin_transaction /
+        # execute_batch / commit round-trips). Calling delete_entity_cross_ref_for_file
+        # / build_entity_cross_ref_for_file here with no surrounding transaction
+        # means _in_transaction() is False, so add_entity_cross_ref's (and
+        # delete_entity_cross_ref_for_file's) own per-call commit guard commits
+        # each statement individually - correct and safe standalone behavior
+        # (same as calling add_class/add_usage/etc. outside a transaction), it
+        # just does not get the extra all-or-nothing atomicity a wrapping
+        # transaction would add across the several cross-ref edges of one file.
+        # A failure here must never fail the file sync itself, same "do not
+        # fail the whole file update" contract as atomic.py.
+        try:
+            from ..entity_cross_ref_builder import build_entity_cross_ref_for_file
+            from .entity_cross_ref import delete_entity_cross_ref_for_file
+
+            delete_entity_cross_ref_for_file(database, file_id)
+            cross_ref_added = build_entity_cross_ref_for_file(
+                database, file_id, project_id, source_code
+            )
+            logger.debug(
+                "[SAVE_PATH] sync_file_to_db_atomic built %s entity cross-ref row(s) "
+                "for project_id=%s file_id=%s path=%s",
+                cross_ref_added,
+                project_id,
+                file_id,
+                absolute_path,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to build entity_cross_ref for project_id=%s file_id=%s path=%s: %s",
+                project_id,
+                file_id,
+                absolute_path,
+                e,
+                exc_info=True,
+            )
+
         result["success"] = True
         result["snapshot"] = 1
         result["roots"] = 1

@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.file_identity import relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
@@ -82,7 +83,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
 
             # Get all classes for the project
             query = """
-                SELECT c.*, f.path as file_path
+                SELECT c.*, f.path as file_path, f.relative_path as file_relative_path
                 FROM classes c
                 JOIN files f ON c.file_id = f.id
                 WHERE f.project_id = ?
@@ -117,9 +118,15 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 class_info = row
                 class_name_val = class_info["name"]
                 node_id = class_info.get("cst_node_id")
-                file_path_val = class_info.get("file_path")
-                if not file_path_val:
+                if not class_info.get("file_path"):
                     continue
+                file_path_val = relative_path_for_indexed_row(
+                    {
+                        "path": class_info.get("file_path"),
+                        "relative_path": class_info.get("file_relative_path"),
+                    },
+                    root_path,
+                )
 
                 bases_str = class_info.get("bases")
                 # Parse bases (JSON array or string)

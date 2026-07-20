@@ -13,6 +13,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.file_identity import relative_path_for_indexed_row
 from .graph_entity_nodes import (
     build_entity_nodes_call_graph,
     build_entity_nodes_hierarchy,
@@ -176,7 +177,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
         limit = call_params.get("limit")
 
         try:
-            _ = self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             try:
                 proj_id = project_id
@@ -190,7 +191,8 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                 if graph_type == "hierarchy":
                     result = db.execute(
                         """
-                        SELECT c.name, c.bases, f.path AS file_path, c.cst_node_id
+                        SELECT c.name, c.bases, f.path AS file_path, f.relative_path,
+                               c.cst_node_id
                         FROM classes c
                         JOIN files f ON f.id = c.file_id
                         WHERE f.project_id = ?
@@ -198,7 +200,9 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         (proj_id,),
                     )
                     rows = result.get("data", [])
-                    entity_nodes = build_entity_nodes_hierarchy(rows, _is_valid_uuid4)
+                    entity_nodes = build_entity_nodes_hierarchy(
+                        rows, _is_valid_uuid4, root_path
+                    )
 
                     for r in rows:
                         child = r.get("name") if hasattr(r, "get") else r["name"]
@@ -234,18 +238,30 @@ class ExportGraphMCPCommand(BaseMCPCommand):
 
                     result = db.execute(
                         """
-                        SELECT f.path AS file_path, u.target_name, u.target_class
+                        SELECT f.path AS file_path, f.relative_path, u.target_name,
+                               u.target_class
                         FROM usages u
                         JOIN files f ON f.id = u.file_id
                         WHERE f.project_id = ?
-                        """
-                        + where_extra,
+                        """ + where_extra,
                         tuple(params),
                     )
                     rows = result.get("data", [])
                     for r in rows:
-                        src = (
+                        raw_src = (
                             r.get("file_path") if hasattr(r, "get") else r["file_path"]
+                        )
+                        raw_rel = (
+                            r.get("relative_path")
+                            if hasattr(r, "get")
+                            else r["relative_path"]
+                        )
+                        src = (
+                            relative_path_for_indexed_row(
+                                {"path": raw_src, "relative_path": raw_rel}, root_path
+                            )
+                            if raw_src
+                            else raw_src
                         )
                         target_name = (
                             r.get("target_name")
@@ -272,7 +288,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
 
                     to_node_ids = {str(e["to"]) for e in edges}
                     entity_nodes = build_entity_nodes_call_graph(
-                        db, proj_id, to_node_ids, _is_valid_uuid4
+                        db, proj_id, to_node_ids, _is_valid_uuid4, root_path
                     )
 
                 else:
@@ -284,18 +300,29 @@ class ExportGraphMCPCommand(BaseMCPCommand):
 
                     result = db.execute(
                         """
-                        SELECT f.path AS file_path, i.module, i.name
+                        SELECT f.path AS file_path, f.relative_path, i.module, i.name
                         FROM imports i
                         JOIN files f ON f.id = i.file_id
                         WHERE f.project_id = ?
-                        """
-                        + where_extra,
+                        """ + where_extra,
                         tuple(params),
                     )
                     rows = result.get("data", [])
                     for r in rows:
-                        src = (
+                        raw_src = (
                             r.get("file_path") if hasattr(r, "get") else r["file_path"]
+                        )
+                        raw_rel = (
+                            r.get("relative_path")
+                            if hasattr(r, "get")
+                            else r["relative_path"]
+                        )
+                        src = (
+                            relative_path_for_indexed_row(
+                                {"path": raw_src, "relative_path": raw_rel}, root_path
+                            )
+                            if raw_src
+                            else raw_src
                         )
                         module = r.get("module") if hasattr(r, "get") else r["module"]
                         name = r.get("name") if hasattr(r, "get") else r["name"]

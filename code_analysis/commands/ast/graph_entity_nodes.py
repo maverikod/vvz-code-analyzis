@@ -14,6 +14,8 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from ...core.file_identity import PathLike, relative_path_for_indexed_row
+
 
 def resolve_usage_target_cst_node_id(
     db: Any,
@@ -57,7 +59,11 @@ def resolve_usage_target_cst_node_id(
         return None
     if not row:
         return None
-    cid = row["cst_node_id"] if isinstance(row, dict) else getattr(row, "cst_node_id", None)
+    cid = (
+        row["cst_node_id"]
+        if isinstance(row, dict)
+        else getattr(row, "cst_node_id", None)
+    )
     path = row["path"] if isinstance(row, dict) else getattr(row, "path", None)
     if cid is None or path is None:
         return None
@@ -69,15 +75,18 @@ def resolve_usage_target_cst_node_id(
 def build_entity_nodes_hierarchy(
     rows: List[Any],
     is_valid_uuid4: Callable[[Any], bool],
+    project_root: Optional[PathLike] = None,
 ) -> List[Dict[str, str]]:
     """Build entity_nodes from hierarchy query rows (classes with file_path, cst_node_id).
 
     Only includes entries with valid UUID4 cst_node_id and non-empty file_path.
     Aligns with snapshot node identity: cst_node_id equals file_tree_snapshot_nodes.node_id.
+    ``file_path`` in the output is project-relative POSIX.
 
     Args:
-        rows: Rows from SELECT c.name, c.bases, f.path, c.cst_node_id ...
+        rows: Rows from SELECT c.name, c.bases, f.path, f.relative_path, c.cst_node_id ...
         is_valid_uuid4: Predicate for valid UUID4 string.
+        project_root: Project root, used for the legacy-row relative-path fallback.
 
     Returns:
         List of {"node_id", "file_path", "cst_node_id"} dicts; all have valid UUID4.
@@ -92,10 +101,14 @@ def build_entity_nodes_hierarchy(
         node_id_str = str(name)
         if not is_valid_uuid4(cid) or not file_path_val:
             continue
+        relative_path_val = r.get("relative_path") if hasattr(r, "get") else None
         out.append(
             {
                 "node_id": node_id_str,
-                "file_path": str(file_path_val),
+                "file_path": relative_path_for_indexed_row(
+                    {"path": file_path_val, "relative_path": relative_path_val},
+                    project_root,
+                ),
                 "cst_node_id": str(cid).strip(),
             }
         )
@@ -107,18 +120,21 @@ def build_entity_nodes_call_graph(
     project_id: str,
     to_node_ids: Set[str],
     is_valid_uuid4: Callable[[Any], bool],
+    project_root: Optional[PathLike] = None,
 ) -> List[Dict[str, str]]:
     """Resolve call_graph 'to' node ids to entities with file_path and cst_node_id.
 
     Queries classes, functions, methods with valid cst_node_id and appends
     matching entity payloads. Only includes entries with valid UUID4.
     cst_node_id aligns with file_tree_snapshot_nodes.node_id for tree correlation.
+    ``file_path`` in the output is project-relative POSIX.
 
     Args:
         db: Database driver with execute() returning {"data": list of rows}.
         project_id: Project UUID.
         to_node_ids: Set of destination node id strings (e.g. "Class.method" or "func").
         is_valid_uuid4: Predicate for valid UUID4 string.
+        project_root: Project root, used for the legacy-row relative-path fallback.
 
     Returns:
         List of {"node_id", "file_path", "cst_node_id"} dicts; all have valid UUID4.
@@ -126,7 +142,7 @@ def build_entity_nodes_call_graph(
     out: List[Dict[str, str]] = []
     classes_res = db.execute(
         """
-        SELECT c.name, f.path AS file_path, c.cst_node_id
+        SELECT c.name, f.path AS file_path, f.relative_path, c.cst_node_id
         FROM classes c
         JOIN files f ON f.id = c.file_id
         WHERE f.project_id = ? AND c.cst_node_id IS NOT NULL
@@ -136,7 +152,7 @@ def build_entity_nodes_call_graph(
     )
     funcs_res = db.execute(
         """
-        SELECT func.name, f.path AS file_path, func.cst_node_id
+        SELECT func.name, f.path AS file_path, f.relative_path, func.cst_node_id
         FROM functions func
         JOIN files f ON f.id = func.file_id
         WHERE f.project_id = ? AND func.cst_node_id IS NOT NULL
@@ -147,7 +163,7 @@ def build_entity_nodes_call_graph(
     methods_res = db.execute(
         """
         SELECT m.name AS method_name, c.name AS class_name,
-               f.path AS file_path, m.cst_node_id
+               f.path AS file_path, f.relative_path, m.cst_node_id
         FROM methods m
         JOIN classes c ON c.id = m.class_id
         JOIN files f ON f.id = c.file_id
@@ -167,7 +183,10 @@ def build_entity_nodes_call_graph(
             out.append(
                 {
                     "node_id": node_id_str,
-                    "file_path": str(fpath),
+                    "file_path": relative_path_for_indexed_row(
+                        {"path": fpath, "relative_path": row.get("relative_path")},
+                        project_root,
+                    ),
                     "cst_node_id": str(cid).strip(),
                 }
             )
@@ -182,7 +201,10 @@ def build_entity_nodes_call_graph(
             out.append(
                 {
                     "node_id": node_id_str,
-                    "file_path": str(fpath),
+                    "file_path": relative_path_for_indexed_row(
+                        {"path": fpath, "relative_path": row.get("relative_path")},
+                        project_root,
+                    ),
                     "cst_node_id": str(cid).strip(),
                 }
             )
@@ -198,7 +220,10 @@ def build_entity_nodes_call_graph(
             out.append(
                 {
                     "node_id": node_id_str,
-                    "file_path": str(fpath),
+                    "file_path": relative_path_for_indexed_row(
+                        {"path": fpath, "relative_path": row.get("relative_path")},
+                        project_root,
+                    ),
                     "cst_node_id": str(cid).strip(),
                 }
             )

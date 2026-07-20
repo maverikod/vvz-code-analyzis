@@ -44,6 +44,37 @@ def is_database_path_stored_absolute(stored: str) -> bool:
     return Path(s).is_absolute()
 
 
+def relative_path_for_indexed_row(
+    row: Mapping[str, Any], project_root: PathLike | None = None
+) -> str:
+    """
+    Normalized project-relative POSIX path for a ``files`` row, for use in
+    command responses (``file_path`` must be relative, never a host path).
+
+    Active rows store the project-relative POSIX path in ``relative_path``
+    (written by ``DatabaseClient.add_file``). Legacy rows may have an empty
+    ``relative_path`` while ``path`` holds either the project-relative value
+    or (older legacy) an absolute filesystem path. When ``relative_path`` is
+    empty:
+    - if ``project_root`` is given and ``path`` is an absolute path under it,
+      the relative path is derived from ``path`` and ``project_root``;
+    - otherwise ``path`` is returned as-is (best effort; may still be an
+      absolute legacy path when the project root is unknown/unresolved).
+    """
+    raw_rel = (row.get("relative_path") or "").strip()
+    if raw_rel:
+        return _posix_relative_key(raw_rel)
+    raw_path = (row.get("path") or "").strip()
+    if not raw_path:
+        return ""
+    if project_root is not None and is_database_path_stored_absolute(raw_path):
+        try:
+            return relative_path_for_project(raw_path, project_root)
+        except ValueError:
+            return raw_path
+    return _posix_relative_key(raw_path)
+
+
 def absolute_path_for_indexed_file(
     project_root: PathLike, row: Mapping[str, Any]
 ) -> str:

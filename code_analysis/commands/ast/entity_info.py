@@ -12,10 +12,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.file_identity import PathLike, relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
-def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _normalize_entities(
+    rows: List[Dict[str, Any]], project_root: Optional[PathLike] = None
+) -> List[Dict[str, Any]]:
     """Return entities that have a file_path, normalizing ``cst_node_id``.
 
     A missing/invalid ``cst_node_id`` no longer drops the entity: that column is
@@ -24,6 +27,10 @@ def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ENTITY_NOT_FOUND for symbols that plainly exist. We keep the row and expose
     ``cst_node_id`` as a valid UUID4 string or ``None``. See
     TZ-CA-INDEX-INTEGRITY-001.
+
+    ``file_path`` is normalized to project-relative POSIX via
+    :func:`relative_path_for_indexed_row` (the row's absolute ``path`` is not
+    exposed to callers).
     """
     entities: List[Dict[str, Any]] = []
     for row in rows:
@@ -34,6 +41,13 @@ def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized = dict(row)
         normalized["cst_node_id"] = (
             cst_node_id if _is_valid_uuid4(cst_node_id) else None
+        )
+        normalized["file_path"] = relative_path_for_indexed_row(
+            {
+                "path": normalized.pop("file_path", None),
+                "relative_path": normalized.pop("file_relative_path", None),
+            },
+            project_root,
         )
         entities.append(normalized)
     return entities
@@ -125,7 +139,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
             params = []
 
             if entity_type == "class":
-                query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE c.name = ? AND f.project_id = ?"
+                query = "SELECT c.*, f.path as file_path, f.relative_path as file_relative_path FROM classes c JOIN files f ON c.file_id = f.id WHERE c.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
                     resolution = resolve_project_file_record(
@@ -147,7 +161,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     query += " AND c.line = ?"
                     params.append(line)
             elif entity_type == "function":
-                query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE func.name = ? AND f.project_id = ?"
+                query = "SELECT func.*, f.path as file_path, f.relative_path as file_relative_path FROM functions func JOIN files f ON func.file_id = f.id WHERE func.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
                     resolution = resolve_project_file_record(
@@ -169,7 +183,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     query += " AND func.line = ?"
                     params.append(line)
             elif entity_type == "method":
-                query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE m.name = ? AND f.project_id = ?"
+                query = "SELECT m.*, c.name as class_name, f.path as file_path, f.relative_path as file_relative_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE m.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
                     resolution = resolve_project_file_record(
@@ -204,7 +218,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
             rows = result.get("data", [])
             db.disconnect()
 
-            entities = _normalize_entities(rows)
+            entities = _normalize_entities(rows, root_path)
             if entities:
                 return SuccessResult(
                     data={

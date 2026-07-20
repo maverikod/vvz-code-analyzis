@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ...core.file_identity import PathLike, relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4
 
 CALLER_TYPES = ("class", "method", "function")
@@ -32,26 +33,31 @@ def row_to_dict(row: Any) -> Dict[str, Any]:
     return dict(row)
 
 
-def path_by_file_ids(db: Any, file_ids: List[Any]) -> Dict[Any, str]:
-    """Build mapping file_id -> path by querying files table."""
+def path_by_file_ids(
+    db: Any, file_ids: List[Any], project_root: Optional[PathLike] = None
+) -> Dict[Any, str]:
+    """Build mapping file_id -> project-relative POSIX path by querying files table."""
     ids = [fid for fid in file_ids if fid is not None]
     if not ids:
         return {}
     placeholders = ",".join("?" * len(ids))
     result = db.execute(
-        f"SELECT id, path FROM files WHERE id IN ({placeholders})",
+        f"SELECT id, path, relative_path FROM files WHERE id IN ({placeholders})",
         tuple(ids),
     )
     rows = result.get("data") or []
     path_by_id: Dict[Any, str] = {}
     for r in rows:
         d = row_to_dict(r)
-        path_by_id[d["id"]] = d.get("path", "")
+        path_by_id[d["id"]] = relative_path_for_indexed_row(d, project_root)
     return path_by_id
 
 
 def get_entity_dependencies_via_execute(
-    db: Any, entity_type: str, entity_id: Any
+    db: Any,
+    entity_type: str,
+    entity_id: Any,
+    project_root: Optional[PathLike] = None,
 ) -> List[Dict[str, Any]]:
     """Get dependencies by querying entity_cross_ref (caller -> callee)."""
     if entity_type == "class":
@@ -80,7 +86,7 @@ def get_entity_dependencies_via_execute(
     file_ids = list(
         {row_to_dict(r).get("file_id") for r in rows if row_to_dict(r).get("file_id")}
     )
-    path_by_id = path_by_file_ids(db, file_ids)
+    path_by_id = path_by_file_ids(db, file_ids, project_root)
     out: List[Dict[str, Any]] = []
     for r in rows:
         d = row_to_dict(r)
@@ -167,7 +173,10 @@ def resolve_entity_id_by_name(
 
 
 def get_entity_dependents_via_execute(
-    db: Any, entity_type: str, entity_id: Any
+    db: Any,
+    entity_type: str,
+    entity_id: Any,
+    project_root: Optional[PathLike] = None,
 ) -> List[Dict[str, Any]]:
     """Get dependents by querying entity_cross_ref (callee -> caller)."""
     if entity_type == "class":
@@ -196,7 +205,7 @@ def get_entity_dependents_via_execute(
     file_ids = list(
         {row_to_dict(r).get("file_id") for r in rows if row_to_dict(r).get("file_id")}
     )
-    path_by_id = path_by_file_ids(db, file_ids)
+    path_by_id = path_by_file_ids(db, file_ids, project_root)
     out: List[Dict[str, Any]] = []
     for r in rows:
         d = row_to_dict(r)

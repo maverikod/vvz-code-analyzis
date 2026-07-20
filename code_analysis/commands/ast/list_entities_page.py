@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
+from ...core.file_identity import PathLike, relative_path_for_indexed_row
+
 # Entity-listing predicate (kept as a per-alias template so callers are unchanged).
 # Historically this required a populated ``cst_node_id``, but that column is NULL
 # for every indexed entity across all projects (the indexer never populates it),
@@ -112,14 +114,21 @@ def fetch_code_entities_page(
     file_id: Optional[Any],
     limit: int,
     offset: int,
+    project_root: Optional[PathLike] = None,
 ) -> List[dict[str, Any]]:
-    """Fetch one page of entities ordered by file_path, line."""
+    """Fetch one page of entities ordered by file_path, line.
+
+    ``file_path`` in each returned entity is project-relative POSIX (derived
+    from ``files.relative_path``, with a ``project_root``-aware legacy
+    fallback via :func:`relative_path_for_indexed_row`).
+    """
     if entity_type == "class":
         return _fetch_typed(
             db,
             entity_kind="class",
             sql=f"""
-            SELECT c.*, f.path AS file_path FROM classes c
+            SELECT c.*, f.path AS file_path, f.relative_path AS file_relative_path
+            FROM classes c
             JOIN files f ON c.file_id = f.id
             WHERE f.project_id = ? AND {_CST_WHERE.format(alias='c')}
             """,
@@ -128,13 +137,15 @@ def fetch_code_entities_page(
             project_id=project_id,
             limit=limit,
             offset=offset,
+            project_root=project_root,
         )
     if entity_type == "function":
         return _fetch_typed(
             db,
             entity_kind="function",
             sql=f"""
-            SELECT func.*, f.path AS file_path FROM functions func
+            SELECT func.*, f.path AS file_path, f.relative_path AS file_relative_path
+            FROM functions func
             JOIN files f ON func.file_id = f.id
             WHERE f.project_id = ? AND {_CST_WHERE.format(alias='func')}
             """,
@@ -143,11 +154,14 @@ def fetch_code_entities_page(
             project_id=project_id,
             limit=limit,
             offset=offset,
+            project_root=project_root,
         )
     if entity_type == "method":
         extra, extra_params = _file_filter_sql("c.file_id", file_id)
         sql = f"""
-            SELECT m.*, c.name AS class_name, f.path AS file_path FROM methods m
+            SELECT m.*, c.name AS class_name, f.path AS file_path,
+                   f.relative_path AS file_relative_path
+            FROM methods m
             JOIN classes c ON m.class_id = c.id
             JOIN files f ON c.file_id = f.id
             WHERE f.project_id = ? AND {_CST_WHERE.format(alias='m')}
@@ -156,7 +170,7 @@ def fetch_code_entities_page(
             LIMIT ? OFFSET ?
         """
         params: List[Any] = [project_id, *extra_params, limit, offset]
-        return _rows_to_entities(db, "method", sql, params)
+        return _rows_to_entities(db, "method", sql, params, project_root=project_root)
 
     ff_c, ff_c_params = _file_filter_sql("c.file_id", file_id)
     ff_f, ff_f_params = _file_filter_sql("func.file_id", file_id)
@@ -165,20 +179,20 @@ def fetch_code_entities_page(
         SELECT * FROM (
             SELECT 'class' AS type, c.id, c.file_id, c.name, c.line, c.bases,
                    c.docstring, c.cst_node_id, f.path AS file_path,
-                   NULL AS class_name
+                   f.relative_path AS file_relative_path, NULL AS class_name
             FROM classes c
             JOIN files f ON c.file_id = f.id
             WHERE f.project_id = ? AND {_CST_WHERE.format(alias='c')}{ff_c}
             UNION ALL
             SELECT 'function', func.id, func.file_id, func.name, func.line,
                    func.args, func.docstring, func.cst_node_id,
-                   f.path, NULL
+                   f.path, f.relative_path, NULL
             FROM functions func
             JOIN files f ON func.file_id = f.id
             WHERE f.project_id = ? AND {_CST_WHERE.format(alias='func')}{ff_f}
             UNION ALL
             SELECT 'method', m.id, c.file_id, m.name, m.line, m.args,
-                   m.docstring, m.cst_node_id, f.path, c.name
+                   m.docstring, m.cst_node_id, f.path, f.relative_path, c.name
             FROM methods m
             JOIN classes c ON m.class_id = c.id
             JOIN files f ON c.file_id = f.id
@@ -203,7 +217,15 @@ def fetch_code_entities_page(
     for row in rows:
         if not row.get("file_path"):
             continue
-        entities.append(dict(row))
+        entity = dict(row)
+        entity["file_path"] = relative_path_for_indexed_row(
+            {
+                "path": entity.pop("file_path", None),
+                "relative_path": entity.pop("file_relative_path", None),
+            },
+            project_root,
+        )
+        entities.append(entity)
     return entities
 
 
@@ -234,12 +256,15 @@ def _fetch_typed(
     project_id: str,
     limit: int,
     offset: int,
+    project_root: Optional[PathLike] = None,
 ) -> List[dict[str, Any]]:
     """Return fetch typed."""
     extra, extra_params = _file_filter_sql(file_column, file_id)
     full_sql = sql.strip() + extra + " ORDER BY f.path, line LIMIT ? OFFSET ?"
     params = [project_id, *extra_params, limit, offset]
-    return _rows_to_entities(db, entity_kind, full_sql, params)
+    return _rows_to_entities(
+        db, entity_kind, full_sql, params, project_root=project_root
+    )
 
 
 def _rows_to_entities(
@@ -247,6 +272,8 @@ def _rows_to_entities(
     entity_kind: str,
     sql: str,
     params: List[Any],
+    *,
+    project_root: Optional[PathLike] = None,
 ) -> List[dict[str, Any]]:
     """Return rows to entities."""
     result = db.execute(sql, tuple(params))
@@ -255,5 +282,13 @@ def _rows_to_entities(
     for row in rows:
         if not row.get("file_path"):
             continue
-        entities.append({"type": entity_kind, **row})
+        entity = {"type": entity_kind, **row}
+        entity["file_path"] = relative_path_for_indexed_row(
+            {
+                "path": entity.pop("file_path", None),
+                "relative_path": entity.pop("file_relative_path", None),
+            },
+            project_root,
+        )
+        entities.append(entity)
     return entities

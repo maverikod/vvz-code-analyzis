@@ -182,7 +182,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
     ) -> SuccessResult:
         """Execute the command."""
         try:
-            self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             if entity_type not in CALLER_TYPES:
                 return ErrorResult(
@@ -204,7 +204,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                         message=f"Entity not found: {entity_type!r} {entity_name!r}",
                         code="ENTITY_NOT_FOUND",
                     )
-            deps = get_entity_dependencies_via_execute(db, entity_type, eid)
+            deps = get_entity_dependencies_via_execute(db, entity_type, eid, root_path)
             return SuccessResult(data={"dependencies": deps})
         except Exception as e:
             return self._handle_error(
@@ -299,7 +299,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
     ) -> SuccessResult:
         """Execute the command."""
         try:
-            self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             if entity_type not in CALLEE_TYPES:
                 return ErrorResult(
@@ -321,7 +321,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                         message=f"Entity not found: {entity_type!r} {entity_name!r}",
                         code="ENTITY_NOT_FOUND",
                     )
-            deps = get_entity_dependents_via_execute(db, entity_type, eid)
+            deps = get_entity_dependents_via_execute(db, entity_type, eid, root_path)
             return SuccessResult(data={"dependents": deps})
         except Exception as e:
             return self._handle_error(

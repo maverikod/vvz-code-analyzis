@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.file_identity import relative_path_for_indexed_row
 
 
 class SearchASTNodesMCPCommand(BaseMCPCommand):
@@ -72,7 +73,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
             if not node_type or node_type in ("ClassDef", "class"):
                 # Search classes
                 query = """
-                    SELECT c.*, f.path as file_path
+                    SELECT c.*, f.path as file_path, f.relative_path as file_relative_path
                     FROM classes c
                     JOIN files f ON c.file_id = f.id
                     WHERE f.project_id = ?
@@ -117,7 +118,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                         {
                             "node_type": "ClassDef",
                             "name": row["name"],
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "line": row["line"],
                             "docstring": row.get("docstring"),
                         }
@@ -126,7 +133,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
             if not node_type or node_type in ("FunctionDef", "function"):
                 # Search functions
                 query = """
-                    SELECT func.*, f.path as file_path
+                    SELECT func.*, f.path as file_path, f.relative_path as file_relative_path
                     FROM functions func
                     JOIN files f ON func.file_id = f.id
                     WHERE f.project_id = ?
@@ -171,7 +178,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                         {
                             "node_type": "FunctionDef",
                             "name": row["name"],
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "line": row["line"],
                             "docstring": row.get("docstring"),
                         }
@@ -180,7 +193,8 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
             if not node_type or node_type in ("method"):
                 # Search methods
                 query = """
-                    SELECT m.*, c.name as class_name, f.path as file_path
+                    SELECT m.*, c.name as class_name, f.path as file_path,
+                           f.relative_path as file_relative_path
                     FROM methods m
                     JOIN classes c ON m.class_id = c.id
                     JOIN files f ON c.file_id = f.id
@@ -227,7 +241,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                             "node_type": "FunctionDef",
                             "name": row["name"],
                             "class_name": row.get("class_name"),
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "line": row["line"],
                             "docstring": row.get("docstring"),
                         }

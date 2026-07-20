@@ -15,6 +15,7 @@ from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
 from ...core.cst_tree.tree_builder import load_file_to_tree
 from ...core.cst_tree.tree_range_finder import find_node_by_range
+from ...core.file_identity import relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
@@ -167,7 +168,8 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             # Search in imports table for class/function usages
             if target_type in ("class", "function", None):
                 import_query = """
-                    SELECT i.*, f.path as file_path, f.id as file_id
+                    SELECT i.*, f.path as file_path, f.relative_path as file_relative_path,
+                           f.id as file_id
                     FROM imports i
                     JOIN files f ON i.file_id = f.id
                     WHERE f.project_id = ? AND i.name = ?
@@ -192,7 +194,13 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     raw_usages.append(
                         {
                             "file_id": row["file_id"],
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "line": row["line"],
                             "target_name": row["name"],
                             "target_type": target_type or "import",
@@ -206,7 +214,8 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             # For classes: search for inheritance (classes that inherit from target)
             if target_type in ("class", None):
                 inheritance_query = """
-                    SELECT c.*, f.path as file_path, f.id as file_id
+                    SELECT c.*, f.path as file_path, f.relative_path as file_relative_path,
+                           f.id as file_id
                     FROM classes c
                     JOIN files f ON c.file_id = f.id
                     WHERE f.project_id = ? AND c.bases LIKE ?
@@ -242,7 +251,13 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                         raw_usages.append(
                             {
                                 "file_id": row["file_id"],
-                                "file_path": row["file_path"],
+                                "file_path": relative_path_for_indexed_row(
+                                    {
+                                        "path": row.get("file_path"),
+                                        "relative_path": row.get("file_relative_path"),
+                                    },
+                                    root_path,
+                                ),
                                 "line": row["line"],
                                 "target_name": target_name,
                                 "target_type": "class",
@@ -255,7 +270,8 @@ class FindUsagesMCPCommand(BaseMCPCommand):
 
             # Also try usages table (may be empty, but check anyway)
             query = """
-                SELECT u.*, f.path as file_path, f.id as file_id
+                SELECT u.*, f.path as file_path, f.relative_path as file_relative_path,
+                       f.id as file_id
                 FROM usages u
                 JOIN files f ON u.file_id = f.id
                 WHERE f.project_id = ?
@@ -293,7 +309,13 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 raw_usages.append(
                     {
                         "file_id": row["file_id"],
-                        "file_path": row["file_path"],
+                        "file_path": relative_path_for_indexed_row(
+                            {
+                                "path": row.get("file_path"),
+                                "relative_path": row.get("file_relative_path"),
+                            },
+                            root_path,
+                        ),
                         "line": row["line"],
                         "target_name": row["target_name"],
                         "target_type": row["target_type"],

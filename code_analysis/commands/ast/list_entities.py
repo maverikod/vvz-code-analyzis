@@ -132,6 +132,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 file_id=resolved_file_id,
                 limit=page_size,
                 offset=offset,
+                project_root=root_path,
             )
             db.disconnect()
 

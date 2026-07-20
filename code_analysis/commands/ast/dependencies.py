@@ -12,6 +12,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.exceptions import ValidationError
+from ...core.file_identity import relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
 
@@ -125,7 +126,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
         offset = int(params.get("offset", 0))
 
         try:
-            self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database_from_config(auto_analyze=False)
 
             # Find dependencies from database
@@ -138,7 +139,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # Search in imports table for class/function/module dependencies
             if entity_type in ("class", "function", "module", None):
                 import_query = """
-                    SELECT i.*, f.path as file_path
+                    SELECT i.*, f.path as file_path, f.relative_path as file_relative_path
                     FROM imports i
                     JOIN files f ON i.file_id = f.id
                     WHERE f.project_id = ? AND (i.name = ? OR i.module LIKE ?)
@@ -162,7 +163,13 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     results.append(
                         {
                             "type": "import",
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "cst_node_id": cst_node_id,
                             "line": row["line"],
                             "module": row.get("module"),
@@ -174,7 +181,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # For classes: also search for inheritance (classes that inherit from this class)
             if entity_type in ("class", None):
                 inheritance_query = """
-                    SELECT c.*, f.path as file_path
+                    SELECT c.*, f.path as file_path, f.relative_path as file_relative_path
                     FROM classes c
                     JOIN files f ON c.file_id = f.id
                     WHERE f.project_id = ? AND c.bases LIKE ?
@@ -208,7 +215,13 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                         results.append(
                             {
                                 "type": "inheritance",
-                                "file_path": row["file_path"],
+                                "file_path": relative_path_for_indexed_row(
+                                    {
+                                        "path": row.get("file_path"),
+                                        "relative_path": row.get("file_relative_path"),
+                                    },
+                                    root_path,
+                                ),
                                 "cst_node_id": node_id,
                                 "line": row["line"],
                                 "class_name": row["name"],
@@ -219,7 +232,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # Also try usages table (may be empty, but check anyway)
             if entity_type in ("class", "function", "method", None):
                 usage_query = """
-                    SELECT u.*, f.path as file_path
+                    SELECT u.*, f.path as file_path, f.relative_path as file_relative_path
                     FROM usages u
                     JOIN files f ON u.file_id = f.id
                     WHERE f.project_id = ? AND u.target_name = ?
@@ -251,7 +264,13 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     results.append(
                         {
                             "type": "usage",
-                            "file_path": row["file_path"],
+                            "file_path": relative_path_for_indexed_row(
+                                {
+                                    "path": row.get("file_path"),
+                                    "relative_path": row.get("file_relative_path"),
+                                },
+                                root_path,
+                            ),
                             "cst_node_id": cst_node_id,
                             "line": row["line"],
                             "target_name": row["target_name"],

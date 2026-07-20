@@ -300,9 +300,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                         )
                         continue
 
-                    project_id = BaseMCPCommand._get_or_create_project(
-                        db, str(scan_root), scan_root.name
-                    )
+                    project_id = BaseMCPCommand._get_project_id(db, scan_root)
                     py_files = list(iter_python_files(scan_root))
                     dir_stats = {
                         "root_dir": str(scan_root),

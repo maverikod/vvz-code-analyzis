@@ -14,6 +14,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient, JobFailedError
@@ -192,6 +193,10 @@ def synthesize_params(
     return params, None
 
 
+_STRUCTURED_ERROR_LOOKUP_ATTEMPTS = 4
+_STRUCTURED_ERROR_LOOKUP_RETRY_DELAY_SECONDS = 0.5
+
+
 async def _fetch_structured_job_error(
     client: CodeAnalysisAsyncClient, job_id: Optional[str]
 ) -> Optional[Dict[str, Any]]:
@@ -205,6 +210,17 @@ async def _fetch_structured_job_error(
     always returns synchronously (never queued), so this is a plain call, not
     another poll.
 
+    Root cause (verified empirically against jobs a176e3c4/9552bc44): the
+    queue store writes the job's terminal ``status`` (which is what makes
+    ``call_validated`` raise ``JobFailedError``) slightly before it writes
+    ``data.result.result`` — the inner command-error payload. A lookup made
+    immediately after the raise can therefore race that second write and see
+    ``status: failed`` with no inner error yet, even though the very same job
+    reliably has one moments later. To ride out that race, this retries the
+    lookup up to :data:`_STRUCTURED_ERROR_LOOKUP_ATTEMPTS` times, sleeping
+    :data:`_STRUCTURED_ERROR_LOOKUP_RETRY_DELAY_SECONDS` between attempts,
+    and returns as soon as a structured error dict shows up.
+
     Args:
         client: Connected async client.
         job_id: The failed job's id (``JobFailedError.job_id``); ``None``
@@ -212,22 +228,27 @@ async def _fetch_structured_job_error(
 
     Returns:
         The command's structured error dict (has a ``code`` and/or
-        ``message`` key) if one is found, else ``None``.
+        ``message`` key) if one is found within the retry budget, else
+        ``None``.
     """
     if not job_id:
         return None
-    try:
-        resp = await client.call("queue_get_job_status", {"job_id": job_id})
-    except Exception:  # noqa: BLE001 - best-effort, falls back to the FAILED status
-        return None
-    if not isinstance(resp, dict) or resp.get("success") is not True:
-        return None
-    data = resp.get("data")
-    result_field = data.get("result") if isinstance(data, dict) else None
-    inner = result_field.get("result") if isinstance(result_field, dict) else None
-    error = inner.get("error") if isinstance(inner, dict) else None
-    if isinstance(error, dict) and (error.get("code") or error.get("message")):
-        return error
+    for attempt in range(_STRUCTURED_ERROR_LOOKUP_ATTEMPTS):
+        try:
+            resp = await client.call("queue_get_job_status", {"job_id": job_id})
+        except Exception:  # noqa: BLE001 - best-effort, falls back to the FAILED status
+            resp = None
+        if isinstance(resp, dict) and resp.get("success") is True:
+            data = resp.get("data")
+            result_field = data.get("result") if isinstance(data, dict) else None
+            inner = (
+                result_field.get("result") if isinstance(result_field, dict) else None
+            )
+            error = inner.get("error") if isinstance(inner, dict) else None
+            if isinstance(error, dict) and (error.get("code") or error.get("message")):
+                return error
+        if attempt < _STRUCTURED_ERROR_LOOKUP_ATTEMPTS - 1:
+            await asyncio.sleep(_STRUCTURED_ERROR_LOOKUP_RETRY_DELAY_SECONDS)
     return None
 
 

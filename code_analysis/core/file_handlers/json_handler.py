@@ -218,7 +218,11 @@ class JsonFileHandler(BaseFileHandler):
         before_text = ""
         if abs_path.exists():
             before_text = abs_path.read_text(encoding="utf-8")
-        after_text = _serialize_document(data)
+        # Persist the incoming bytes verbatim (parsed `data` above is used only to
+        # validate the JSON and to build the tree for DB metadata/registration) —
+        # do NOT re-serialize via json.dumps here, or the on-disk bytes would drift
+        # from what the caller uploaded (formatting, key order, whitespace).
+        after_text = content
 
         changed = before_text != after_text
         diff_payload = diff_data_for_text_mutation(
@@ -274,6 +278,7 @@ class JsonFileHandler(BaseFileHandler):
                 database=database,
                 backup=request.backup,
                 create_parent_dirs=create_parent_dirs,
+                verbatim_content=after_text,
             )
         finally:
             remove_tree(tid)

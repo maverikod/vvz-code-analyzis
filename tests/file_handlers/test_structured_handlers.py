@@ -275,10 +275,11 @@ def test_json_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
 
 
 def test_json_save_dry_run_serializes_without_write(tmp_path: Path) -> None:
-    """Verify test json save dry run serializes without write."""
+    """dry_run 'serialized' must be the incoming content VERBATIM, not re-dumped."""
     f = tmp_path / "save.json"
     f.write_text('{"a": 1}\n', encoding="utf-8")
     raw_before = f.read_text(encoding="utf-8")
+    content = '{"a": 2}'
     req = FileHandlerRequest(
         project_id="p1",
         file_path="save.json",
@@ -288,15 +289,72 @@ def test_json_save_dry_run_serializes_without_write(tmp_path: Path) -> None:
         diff=True,
         extra={
             "absolute_path": f,
-            "content": '{"a": 2}',
+            "content": content,
         },
     )
     out = JsonFileHandler().save(req)
     assert out.success is True
     assert f.read_text(encoding="utf-8") == raw_before
     ser = out.data.get("serialized", "")
-    assert json.loads(ser) == {"a": 2}
+    assert ser == content, "dry_run must expose the verbatim content, not a re-dump"
     assert "diff" in out.data
+
+
+def test_json_save_byte_identical_custom_indent_no_trailing_newline(
+    tmp_path: Path,
+) -> None:
+    """save() persists uploaded JSON bytes unchanged (4-space indent, no trailing newline).
+
+    The handler's own canonical form is json.dumps(indent=2) + "\\n"; this input
+    deliberately uses a different indent and omits the trailing newline so a
+    silent re-serialization would fail the byte-identity assertion.
+    """
+    f = tmp_path / "cfg.json"
+    content = '{\n    "a": 1,\n    "b": 2\n}'
+    db = MagicMock()
+    req = FileHandlerRequest(
+        project_id="p1",
+        file_path="cfg.json",
+        handler_id="json",
+        operation="save",
+        extra={
+            "absolute_path": f,
+            "root_dir": tmp_path,
+            "database": db,
+            "content": content,
+        },
+    )
+    with patch(
+        "code_analysis.core.file_handlers.text_handler.persist_plain_text_file_metadata",
+        return_value={"success": True, "file_id": "f1"},
+    ) as persist:
+        out = JsonFileHandler().save(req)
+    assert out.success is True
+    assert f.read_bytes() == content.encode("utf-8")
+    # Metadata must be computed from the same verbatim bytes actually written
+    # (json_saver.save_json_tree_to_file calls persist_plain_text_file_metadata
+    # with source_code= as a keyword argument).
+    persist.assert_called_once()
+    assert persist.call_args.kwargs["source_code"] == content
+
+
+def test_json_save_rejects_invalid_json_before_write(tmp_path: Path) -> None:
+    """Malformed JSON is still rejected (validation still parses before persisting)."""
+    f = tmp_path / "bad.json"
+    req = FileHandlerRequest(
+        project_id="p1",
+        file_path="bad.json",
+        handler_id="json",
+        operation="save",
+        extra={
+            "absolute_path": f,
+            "root_dir": tmp_path,
+            "content": "{not valid json",
+        },
+    )
+    out = JsonFileHandler().save(req)
+    assert out.success is False
+    assert not f.exists()
 
 
 def test_json_handler_registration_ready() -> None:
@@ -465,27 +523,88 @@ def test_yaml_replace_dry_run_leaves_file_unchanged(tmp_path: Path) -> None:
 
 
 def test_yaml_save_round_trip_dry_run(tmp_path: Path) -> None:
-    """Verify test yaml save round trip dry run."""
+    """dry_run 'serialized' must be the incoming content VERBATIM, not a re-dump.
+
+    Uses non-trivial content (banner comment, inline comment) so a lossy
+    yaml.safe_load -> yaml.safe_dump round-trip (which drops comments) would
+    fail this assertion; trivial content like "a: 2\\n" would pass either way.
+    """
     f = tmp_path / "f.yaml"
     f.write_text("a: 1\n", encoding="utf-8")
+    content = "# banner comment\na: 2  # inline comment\n"
     req = FileHandlerRequest(
         project_id="p1",
         file_path="f.yaml",
         handler_id="yaml",
         operation="save",
         dry_run=True,
+        diff=True,
         extra={
             "absolute_path": f,
             "root_dir": tmp_path,
-            "content": "a: 2\n",
+            "content": content,
         },
     )
     raw = f.read_text(encoding="utf-8")
     out = YamlFileHandler().save(req)
     assert out.success is True
+    assert out.changed is True
     assert f.read_text(encoding="utf-8") == raw
     ser = out.data.get("serialized", "")
-    assert yaml.safe_load(ser) == {"a": 2}, "dry_run must expose serialized after state"
+    assert ser == content, "dry_run must expose the verbatim content, not a re-dump"
+
+
+def test_yaml_save_byte_identical_with_comments_and_flow_style(tmp_path: Path) -> None:
+    """save() persists uploaded YAML bytes unchanged: comments/quotes/flow style survive."""
+    f = tmp_path / "cfg.yaml"
+    content = (
+        "# banner comment\n"
+        'name: "abc-123"  # inline comment\n'
+        "flow: { a: 1, b: 2 }\n"
+    )
+    db = MagicMock()
+    req = FileHandlerRequest(
+        project_id="p1",
+        file_path="cfg.yaml",
+        handler_id="yaml",
+        operation="save",
+        extra={
+            "absolute_path": f,
+            "root_dir": tmp_path,
+            "database": db,
+            "normalized_path": "cfg.yaml",
+            "content": content,
+        },
+    )
+    with patch(
+        "code_analysis.core.file_handlers.yaml_handler.persist_plain_text_file_metadata",
+        return_value={"success": True, "file_id": "f1"},
+    ) as persist:
+        out = YamlFileHandler().save(req)
+    assert out.success is True
+    assert f.read_bytes() == content.encode("utf-8")
+    # Metadata must be computed from the same verbatim bytes actually written.
+    persist.assert_called_once()
+    assert persist.call_args.args[-1] == content
+
+
+def test_yaml_save_rejects_invalid_yaml_before_write(tmp_path: Path) -> None:
+    """Malformed YAML is still rejected (validation still parses before persisting)."""
+    f = tmp_path / "bad.yaml"
+    req = FileHandlerRequest(
+        project_id="p1",
+        file_path="bad.yaml",
+        handler_id="yaml",
+        operation="save",
+        extra={
+            "absolute_path": f,
+            "root_dir": tmp_path,
+            "content": "a: [1, 2\n",
+        },
+    )
+    out = YamlFileHandler().save(req)
+    assert out.success is False
+    assert not f.exists()
 
 
 def test_yaml_nested_replace_yaml_path_dry_run(tmp_path: Path) -> None:

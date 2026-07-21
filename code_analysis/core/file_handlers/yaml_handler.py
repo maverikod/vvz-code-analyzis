@@ -379,7 +379,11 @@ class YamlFileHandler(BaseFileHandler):
                 request=request,
             )
         try:
-            data = _load_yaml_document(content)
+            # Parse only to VALIDATE the incoming YAML (reject malformed input
+            # exactly as before). The parsed structure is intentionally discarded —
+            # persisted bytes come from `content` verbatim, never from a re-dump,
+            # so comments/anchors/quoting/flow-style/key-order survive round-trip.
+            _load_yaml_document(content)
         except ValueError as e:
             return standard_error_result(
                 code=VALIDATION_FAILED,
@@ -395,7 +399,7 @@ class YamlFileHandler(BaseFileHandler):
         before_text = ""
         if abs_path.exists():
             before_text = abs_path.read_text(encoding="utf-8")
-        after_text = _serialize_document(data)
+        after_text = content
 
         changed = before_text != after_text
         diff_payload = diff_data_for_text_mutation(

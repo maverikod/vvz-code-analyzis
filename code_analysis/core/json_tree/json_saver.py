@@ -78,12 +78,21 @@ def save_json_tree_to_file(
     database: Any,
     backup: bool = True,
     create_parent_dirs: bool = True,
+    verbatim_content: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Atomic write (.tmp + replace), optional backup, files-table metadata only.
 
     JSON is not Python source: metadata sync uses ``persist_plain_text_file_metadata``
     (no AST/CST/entity batch indexing).
+
+    ``verbatim_content``, when given, is written to disk byte-for-byte instead of a
+    fresh ``json.dumps(tree.root_data)`` re-serialization. Used by the full-file
+    ``JsonFileHandler.save()`` path so uploaded/edited bytes persist unchanged
+    (comments/formatting outside JSON's own grammar do not apply, but key order,
+    spacing, and any non-canonical-but-valid formatting the source used are
+    preserved). Pointer/node-id mutation paths (``replace`` / ``delete``) do not
+    pass this and keep re-serializing ``tree.root_data`` as before.
 
     Git commits are handled by the MCP command layer (commit_after_write / config).
     """
@@ -123,7 +132,9 @@ def save_json_tree_to_file(
             "error_code": "PARENT_DIR_MISSING",
         }
 
-    source_code = _serialize_document(tree.root_data)
+    source_code = (
+        verbatim_content if verbatim_content is not None else _serialize_document(tree.root_data)
+    )
     backup_uuid: Optional[str] = None
     backup_manager: Optional[BackupManager] = None
     temp_file: Optional[Path] = None

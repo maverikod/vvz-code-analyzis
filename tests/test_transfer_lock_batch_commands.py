@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.project_file_advisory_lock_batch_command import (
     ProjectFileAdvisoryLockBatchCommand,
 )
@@ -436,3 +437,74 @@ async def test_transfer_upload_save_registers_and_returns_file_id(
     assert result.data["file_id"] == "id:incoming.py"
     assert target.is_file()
     assert database.get_file_by_path(str(target), "project-1") is not None
+
+
+@pytest.mark.asyncio
+async def test_transfer_upload_save_yaml_writes_bytes_identical(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """project_file_transfer_upload_save persists a YAML upload byte-for-byte.
+
+    Regression test for bug a3d06ff7: the structured YAML/JSON save() handlers
+    used to round-trip content through yaml.safe_load/yaml.safe_dump (or
+    json.loads/json.dumps), silently dropping comments, quoting, and flow
+    style. Unlike test_transfer_upload_save_registers_and_returns_file_id
+    above, this test does NOT monkeypatch UniversalFileSaveCommand.execute -
+    it exercises the real save pipeline (ProjectFileTransferUploadSaveCommand
+    -> UniversalFileSaveCommand -> YamlFileHandler.save()) end to end so a
+    regression in the handler's verbatim-write contract would be caught here.
+    """
+    database = _FakeDatabase(tmp_path)
+    target = tmp_path / "config" / "svc.yaml"
+    yaml_content = (
+        "# banner comment\n"
+        'name: "abc-123"  # inline comment\n'
+        "flow: { a: 1, b: 2 }\n"
+    )
+
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands."
+        "_read_completed_upload_text",
+        lambda _tid: (yaml_content, "identity"),
+    )
+    # persist_plain_text_file_metadata needs a real DB (transactions, files-table
+    # UPDATE/INSERT SQL) that _FakeDatabase does not implement; the DB metadata
+    # sync is not what this regression test is about, so it is stubbed out. The
+    # on-disk bytes assertion below exercises the real handler write path.
+    monkeypatch.setattr(
+        "code_analysis.core.file_handlers.yaml_handler.persist_plain_text_file_metadata",
+        lambda *args, **kwargs: {"success": True, "file_id": "yaml-file-1"},
+    )
+
+    # Patch at the BaseMCPCommand class level (not just the outer `cmd` instance):
+    # ProjectFileTransferUploadSaveCommand.execute() constructs its own
+    # UniversalFileSaveCommand() internally to perform the real write, and that
+    # second instance also calls self._open_database_from_config() /
+    # self._resolve_file_path_from_project() (the latter needs a real Project
+    # row with watch_dir_id, which _FakeDatabase's plain SimpleNamespace does
+    # not model — short-circuit it to the already-known absolute path, same
+    # pattern as test_universal_file_save_command.py).
+    monkeypatch.setattr(
+        BaseMCPCommand,
+        "_open_database_from_config",
+        lambda self, auto_analyze=False: database,
+    )
+    monkeypatch.setattr(
+        BaseMCPCommand,
+        "_resolve_file_path_from_project",
+        lambda self, db, pid, fp, require_exists=False: target,
+    )
+
+    cmd = ProjectFileTransferUploadSaveCommand()
+    result = await cmd.execute(
+        transfer_id="upload-yaml-1",
+        project_id="project-1",
+        file_path="config/svc.yaml",
+        lock_mode="none",
+        unlock_after_write=False,
+    )
+
+    assert isinstance(result, SuccessResult)
+    assert target.is_file()
+    assert target.read_bytes() == yaml_content.encode("utf-8")

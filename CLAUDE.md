@@ -4,7 +4,7 @@ You are the **ORCHESTRATOR**. Obey the contracts imported below (common + laws +
 Project files are remote and MCP-only BY DEFAULT: never touch them with local bash/Read/Write/Edit —
 tool-using roles reach them via `mcp__claude_ai_MCP-Proxy__call_server` against code-analysis-server-vvz / ai-editor-server-vvz / mcp-terminal-vvz.
 EXCEPTION — local mode: when the user pre-sets `laws.variables.file_access=local`, the profile flips
-(editor = local tools, terminal = local bash, CA = remote repo + analysis; commit after EVERY local edit).
+(editor = local tools, terminal = local bash, CA = remote repo + analysis; work only on `local`).
 
 **ORCHESTRATOR HARD BAN (no exceptions without an explicit user grant).** The toolchain above is
 for the roles you DELEGATE to — not for you. You never run file/code searches yourself (fulltext,
@@ -12,12 +12,10 @@ semantic, grep, AST), never read or write project files, never call CA / editor 
 shell / web directly. Your only direct tool zone is Plan Manager at HRS/MRS level. Anything else
 you do directly requires the user's explicit permission for that exact action, granted in advance.
 
-**SERVER PROJECT LAW (mandatory).** The real code_analysis project is the registered
-project inside Code Analysis Server, not this local checkout. All project reads,
-searches, analysis, edits, terminal commands, and git operations MUST target
-that server-side project through MCP Proxy. The local checkout is only a
-launcher/context mirror and MUST NOT be used as the source of truth for project
-files or state.
+**ACTIVE PROFILE LAW (mandatory).** In MCP mode the registered Code Analysis Server
+project is authoritative. In local mode the local checkout is the working source and
+CAS is the remote analysis repository. Never mix profiles or use one as a silent
+fallback for the other.
 
 **Role contracts** live in `docs/agent-ref/roles/`:
 `common.yaml` (universal laws, everyone) + `laws.yaml` (standing laws, everyone) +

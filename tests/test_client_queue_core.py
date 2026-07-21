@@ -19,6 +19,7 @@ from code_analysis_client import (
     JobFailedError,
     JobTimeoutError,
     QueueJobError,
+    QueuedJob,
 )
 from code_analysis_client.client import CodeAnalysisAsyncClient
 
@@ -493,4 +494,195 @@ async def test_queue_get_job_status_call_does_not_recurse():
     result = await client.call("queue_get_job_status", {"job_id": "jX"})
 
     assert result == status_resp
+    assert len(fake.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# (j) auto_poll=False + queued envelope -> returns QueuedJob; .wait() resolves
+# to the same payload the default (auto_poll=True) path returns.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_poll_false_returns_queued_job_and_wait_matches_default_path():
+    queued = {
+        "success": True,
+        "job_id": "j9",
+        "status": "pending",
+        "message": "queued",
+        "store": "queuemgr",
+        "poll_with": "queue_get_job_status",
+    }
+    pending1 = {"success": True, "data": {"job_id": "j9", "status": "pending"}}
+    completed = {
+        "success": True,
+        "data": {
+            "job_id": "j9",
+            "status": "completed",
+            "result": {
+                "command": "some_cmd",
+                "result": {"success": True, "data": {"value": 42}},
+                "status": "completed",
+            },
+            "command_success": True,
+        },
+    }
+    fake = FakeRpc([queued, pending1, completed])
+    client = make_client(fake)
+
+    handle = await client.call("some_cmd", {"x": 1}, auto_poll=False)
+
+    assert isinstance(handle, QueuedJob)
+    assert handle.job_id == "j9"
+    assert handle.envelope == queued
+    assert len(fake.calls) == 1  # no polling happened yet
+
+    result = await handle.wait(poll_interval=POLL_INTERVAL)
+
+    assert result == {"success": True, "data": {"value": 42}}
+    assert len(fake.calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# (k) auto_poll=False + synchronous (non-queued) response -> plain domain
+# result, exactly like the default path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_poll_false_with_sync_response_returns_plain_result():
+    resp = {"success": True, "data": {"foo": "bar"}}
+    fake = FakeRpc([resp])
+    client = make_client(fake)
+
+    result = await client.call("some_cmd", {"x": 1}, auto_poll=False)
+
+    assert result == resp
+    assert not isinstance(result, QueuedJob)
+    assert len(fake.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# (l) QueuedJob.wait() on a job that ultimately failed -> JobFailedError,
+# same as the default auto-polling path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_queued_job_wait_job_failed_raises_job_failed_error(monkeypatch):
+    from code_analysis_client import queue_wait
+
+    async def fast_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(queue_wait.asyncio, "sleep", fast_sleep)
+
+    queued = {
+        "success": True,
+        "job_id": "j10",
+        "status": "pending",
+        "store": "queuemgr",
+        "poll_with": "queue_get_job_status",
+    }
+    failed = {
+        "success": True,
+        "data": {"job_id": "j10", "status": "failed", "error": "exploded"},
+    }
+    fake = FakeRpc([queued, failed, failed, failed, failed, failed])
+    client = make_client(fake)
+
+    handle = await client.call("boom_cmd", {}, auto_poll=False)
+    assert isinstance(handle, QueuedJob)
+
+    with pytest.raises(JobFailedError) as excinfo:
+        await handle.wait(poll_interval=POLL_INTERVAL)
+
+    assert excinfo.value.job_id == "j10"
+    assert excinfo.value.error == "exploded"
+
+
+# ---------------------------------------------------------------------------
+# (m) QueuedJob.wait() on a job whose inner command failed -> CommandFailedError,
+# same as the default auto-polling path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_queued_job_wait_command_failed_raises_command_failed_error():
+    queued = {
+        "success": True,
+        "job_id": "j11",
+        "status": "pending",
+        "queued_after_timeout": True,
+    }
+    completed_with_failure = {
+        "success": True,
+        "data": {
+            "job_id": "j11",
+            "status": "completed",
+            "result": {
+                "command": "broken_cmd",
+                "result": {"success": False, "message": "boom"},
+                "status": "completed",
+            },
+            "command_success": False,
+        },
+    }
+    fake = FakeRpc([queued, completed_with_failure])
+    client = make_client(fake)
+
+    handle = await client.call("broken_cmd", {}, auto_poll=False)
+    assert isinstance(handle, QueuedJob)
+
+    with pytest.raises(CommandFailedError) as excinfo:
+        await handle.wait(poll_interval=POLL_INTERVAL)
+
+    assert excinfo.value.job_id == "j11"
+    assert excinfo.value.command == "broken_cmd"
+    assert excinfo.value.error == {"success": False, "message": "boom"}
+
+
+# ---------------------------------------------------------------------------
+# (n) default auto_poll (omitted, i.e. True) behaves exactly like the
+# pre-change behavior — regression guard.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_default_auto_poll_matches_pre_change_behavior():
+    resp = {"success": True, "data": {"foo": "bar"}}
+    fake = FakeRpc([resp])
+    client = make_client(fake)
+
+    result = await client.call("some_cmd", {"x": 1})
+
+    assert result == resp
+    assert not isinstance(result, QueuedJob)
+
+
+# ---------------------------------------------------------------------------
+# (o) deprecated alias call_unified(auto_poll=False) forwards to the core
+# (now LIVE again) and emits DeprecationWarning.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_unified_auto_poll_false_forwards_and_warns():
+    queued = {
+        "success": True,
+        "job_id": "j12",
+        "status": "pending",
+        "store": "queuemgr",
+        "poll_with": "queue_get_job_status",
+    }
+    fake = FakeRpc([queued])
+    client = make_client(fake)
+
+    with pytest.deprecated_call():
+        handle = await client.call_unified(
+            "some_cmd", {"x": 1}, auto_poll=False, expect_queue=True
+        )
+
+    assert isinstance(handle, QueuedJob)
+    assert handle.job_id == "j12"
     assert len(fake.calls) == 1

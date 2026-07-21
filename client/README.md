@@ -73,9 +73,34 @@ counterparts): `timeout` (seconds, default `None` = wait until terminal),
 `poll_interval` (seconds between polls, default `1.0`), `status_hook` (sync or
 async callable invoked with each poll's status dict).
 
+`call` / `call_validated` also take `auto_poll` (default `True`, matching the
+behavior above exactly). Pass `auto_poll=False` to opt out of automatic
+polling: a non-queued response still comes back as the plain domain result,
+but a queued-job response comes back immediately as a `QueuedJob` handle
+instead of blocking until the job finishes.
+
+```python
+from code_analysis_client import QueuedJob
+
+result = await client.call("some_long_running_command", {...}, auto_poll=False)
+if isinstance(result, QueuedJob):
+    # do other work here, then block on it whenever you're ready
+    result = await result.wait()
+# `result` is now the same dict shape a default (auto_poll=True) call returns
+```
+
+`QueuedJob` exposes `.job_id`, `.envelope` (the raw queue-service response),
+and two async methods: `.wait(timeout=None, poll_interval=1.0, status_hook=None)`
+— polls to completion and returns/raises exactly like the default path — and
+`.status()` — a single `queue_get_job_status` fetch without polling to
+completion.
+
 `call_unified` / `call_unified_validated` are kept as **deprecated aliases** of
-`call` / `call_validated` for backward compatibility — `expect_queue` and
-`auto_poll` are accepted but ignored, since queue handling is now always on.
+`call` / `call_validated` for backward compatibility and emit
+`DeprecationWarning` on every call. `expect_queue` remains accepted-and-ignored
+(documented no-op). `auto_poll` is the one canonical switch and is forwarded
+straight through to `call` / `call_validated` — `auto_poll=False` on an alias
+returns a `QueuedJob` the same way it does on the non-deprecated method.
 Prefer `call` / `call_validated` directly.
 
 ## Validation using the server schema

@@ -24,6 +24,13 @@ from code_analysis_client.exceptions import (
     QueueJobError,
 )
 from code_analysis_client.file_session import FileSessionClient, SessionNotFoundError
+from code_analysis_client.queue_wait import (
+    QueuedJob,
+    extract_job_id,
+    is_queued_envelope,
+    unwrap_job_result,
+    wait_for_job,
+)
 from code_analysis_client.server_api import (
     CLIENT_FACADE_COMMANDS,
     CST_REMOVED_COMMANDS,
@@ -57,6 +64,7 @@ __all__ = [
     "JobTimeoutError",
     "LEGACY_REMOVED_COMMANDS",
     "QueueJobError",
+    "QueuedJob",
     "REMOVED_COMMANDS",
     "SessionNotFoundError",
     "TRANSFER_FACADE_METHODS",
@@ -65,11 +73,15 @@ __all__ = [
     "ValidatedCommandsProxy",
     "adapter_settings_from_server_config",
     "adapter_settings_to_jsonrpc_kwargs",
+    "extract_job_id",
     "fetch_command_schema_from_server",
+    "is_queued_envelope",
     "load_server_config",
     "parse_schema_from_help_payload",
     "prepare_params_for_schema",
+    "unwrap_job_result",
     "validate_params_against_schema",
+    "wait_for_job",
 ]
 
 

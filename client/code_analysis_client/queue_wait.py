@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional, Union
 
 from code_analysis_client.exceptions import (
@@ -254,3 +255,54 @@ async def unwrap_job_result(
         raise CommandFailedError(command, job_id, inner)
 
     return inner if isinstance(inner, dict) else {"result": inner}
+
+
+@dataclass
+class QueuedJob:
+    """Handle for a queued job returned when ``auto_poll=False`` opts out of automatic polling.
+
+    Returned by the client's queue-aware core (``CodeAnalysisAsyncClient._execute``)
+    in place of polling to completion when the immediate server response is a
+    queued-job envelope (:func:`is_queued_envelope`) and the caller passed
+    ``auto_poll=False``. Encapsulates all envelope-shape quirks (the job id may
+    live top-level or nested under ``data``, see :func:`extract_job_id`) behind
+    :meth:`wait` / :meth:`status` so callers never need to touch the raw envelope.
+    """
+
+    job_id: str
+    envelope: Dict[str, Any]
+    rpc: Any = field(repr=False)
+
+    async def wait(
+        self,
+        *,
+        timeout: Optional[float] = None,
+        poll_interval: float = 1.0,
+        status_hook: Optional[StatusHook] = None,
+    ) -> Dict[str, Any]:
+        """Poll the job to completion and return what ``_execute`` would have returned.
+
+        Delegates to the same :func:`wait_for_job` + :func:`unwrap_job_result`
+        pair the auto-polling path uses, so failures raise the identical
+        :class:`~code_analysis_client.exceptions.JobFailedError` /
+        :class:`~code_analysis_client.exceptions.CommandFailedError` /
+        :class:`~code_analysis_client.exceptions.JobTimeoutError`.
+        """
+        status = await wait_for_job(
+            self.rpc,
+            self.job_id,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            status_hook=status_hook,
+        )
+        return await unwrap_job_result(status, rpc=self.rpc)
+
+    async def status(self) -> Dict[str, Any]:
+        """One-shot ``queue_get_job_status`` fetch (no polling to completion)."""
+        resp = await self.rpc.execute_command(
+            "queue_get_job_status", {"job_id": self.job_id}
+        )
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if not isinstance(data, dict):
+            data = resp if isinstance(resp, dict) else {}
+        return data

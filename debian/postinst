@@ -127,6 +127,25 @@ create_layout() {
     chown -R 999:999 "${DATA_DIR}/postgres/data" "${DATA_DIR}/postgres/cache" 2>/dev/null || true
 }
 
+patch_container_ulimits() {
+    # /etc/casmgr/docker-compose.yml is a dpkg conffile (debian/conffiles);
+    # an upgrade with --force-confold keeps the OLD file even though the
+    # shipped template (docker/docker-compose.allinone.yml) already carries
+    # a ulimits.nofile block. Patch the deployed file in place, raise-only
+    # (never lowers an existing higher value), idempotent (safe to run on
+    # every install/upgrade). No host-side /etc/security/limits.d entry is
+    # installed: casmgr runs entirely inside the container, the host's
+    # fs.file-max is effectively unbounded on modern kernels, and it is the
+    # CONTAINER PROCESS's own soft/hard nofile that actually gates casmgr —
+    # so that is the only limit this package manages.
+    [[ -f "$COMPOSE_FILE" ]] || return 0
+    if [[ -x "${BIN}/casmgr-compose-ulimit-patch" ]]; then
+        "${BIN}/casmgr-compose-ulimit-patch" "$COMPOSE_FILE"
+    else
+        echo "WARNING: casmgr-compose-ulimit-patch helper missing; nofile ulimits not verified" >&2
+    fi
+}
+
 fix_mtls_permissions() {
     local mtls="${CONFIG_DIR}/mtls"
     [[ -d "$mtls" ]] || return 0
@@ -297,6 +316,7 @@ if [[ "$1" == "configure" ]]; then
     create_user
     write_uid_gid_env
     create_layout
+    patch_container_ulimits
     fix_mtls_permissions
     provision_image
     migrate_legacy_service

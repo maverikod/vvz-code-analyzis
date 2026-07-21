@@ -22,6 +22,14 @@ services:
     stop_grace_period: 60s
     env_file:
       - /var/casmgr/secrets/.env
+    # Raise-only: match the host's existing hard nofile ceiling (see
+    # debian/postinst, which patches this in place for upgrades since this
+    # file is a dpkg conffile and a fresh template alone never reaches an
+    # already-installed host).
+    ulimits:
+      nofile:
+        soft: 524288
+        hard: 524288
     environment:
       CASMGR_CONFIG: /etc/casmgr/config.json
       CASMGR_SECRETS: /var/casmgr/secrets

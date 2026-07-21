@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Idempotent, raise-only patch: ensure a compose service's nofile ulimits
+are at least TARGET.
+
+Why this exists: /etc/casmgr/docker-compose.yml is a dpkg conffile (see
+debian/conffiles). Shipping a new docker/docker-compose.allinone.yml
+template with a `ulimits:` block only helps a FRESH install — dpkg upgrades
+run with --force-confold and leave an existing, customer-modified-or-not
+compose file untouched. This script is what actually reaches upgraded
+hosts: debian/postinst runs it against the deployed compose file on every
+configure (fresh install and upgrade alike).
+
+RAISE-ONLY: an existing soft/hard value at or above --target is left
+untouched; only values below target (or a missing ulimits/nofile block)
+are changed. Never lowers anything. Safe to run repeatedly (no-op once
+the file already satisfies the target).
+
+Usage:
+    casmgr-compose-ulimit-patch [COMPOSE_PATH] [--service NAME] [--target N]
+
+Exits 0 in all handled cases (missing file, no service found, no change
+needed, or a successful patch) and prints what it did/found to stdout so
+postinst output documents the outcome. A pre-patch backup is written next
+to the target as `<path>.bak` whenever a change is actually applied.
+"""
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+DEFAULT_COMPOSE = "/etc/casmgr/docker-compose.yml"
+DEFAULT_SERVICE = "casmgr"
+DEFAULT_TARGET = 524288
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _find_service_block(
+    lines: list[str], service: str
+) -> tuple[int, int, int] | None:
+    """Locate `service:` directly under a top-level `services:` mapping.
+
+    Returns (service_line_idx, block_start_idx, block_end_idx): block_start
+    and block_end bound the service's OWN property lines (block_start is the
+    line right after the `service:` key; block_end is exclusive). Returns
+    None if `services:` or the named service is not found.
+    """
+    services_idx = None
+    for i, line in enumerate(lines):
+        if line.rstrip("\n") == "services:" and _indent(line) == 0:
+            services_idx = i
+            break
+    if services_idx is None:
+        return None
+
+    svc_indent = None
+    svc_idx = None
+    for i in range(services_idx + 1, len(lines)):
+        raw = lines[i]
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        ind = _indent(raw)
+        if ind == 0:
+            break  # left the services: mapping entirely
+        if svc_indent is None:
+            svc_indent = ind
+        if ind < svc_indent:
+            break
+        if ind == svc_indent and stripped == f"{service}:":
+            svc_idx = i
+            break
+    if svc_idx is None or svc_indent is None:
+        return None
+
+    block_end = len(lines)
+    for i in range(svc_idx + 1, len(lines)):
+        raw = lines[i]
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if _indent(raw) <= svc_indent:
+            block_end = i
+            break
+    return svc_idx, svc_idx + 1, block_end
+
+
+def patch_compose(
+    text: str, service: str = DEFAULT_SERVICE, target: int = DEFAULT_TARGET
+) -> tuple[str, bool, list[str]]:
+    """Return (new_text, changed, log_lines). Raise-only; see module docstring."""
+    lines = text.splitlines(keepends=True)
+    found = _find_service_block(lines, service)
+    log: list[str] = []
+    if found is None:
+        log.append(f"service '{service}:' not found under services: — no changes made")
+        return text, False, log
+
+    svc_idx, start, end = found
+    prop_indent = None
+    for i in range(start, end):
+        stripped = lines[i].strip()
+        if stripped and not stripped.startswith("#"):
+            prop_indent = _indent(lines[i])
+            break
+    if prop_indent is None:
+        prop_indent = _indent(lines[svc_idx]) + 2
+
+    ulimits_idx = None
+    for i in range(start, end):
+        if lines[i].strip() == "ulimits:" and _indent(lines[i]) == prop_indent:
+            ulimits_idx = i
+            break
+
+    if ulimits_idx is None:
+        block = (
+            f"{' ' * prop_indent}ulimits:\n"
+            f"{' ' * (prop_indent + 2)}nofile:\n"
+            f"{' ' * (prop_indent + 4)}soft: {target}\n"
+            f"{' ' * (prop_indent + 4)}hard: {target}\n"
+        )
+        lines.insert(end, block)
+        log.append(f"added ulimits.nofile soft/hard={target} to service '{service}'")
+        return "".join(lines), True, log
+
+    ulim_indent = prop_indent
+    ulim_end = end
+    for i in range(ulimits_idx + 1, end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if _indent(lines[i]) <= ulim_indent:
+            ulim_end = i
+            break
+
+    nofile_idx = None
+    nofile_indent = ulim_indent + 2
+    for i in range(ulimits_idx + 1, ulim_end):
+        if lines[i].strip() == "nofile:":
+            nofile_idx = i
+            nofile_indent = _indent(lines[i])
+            break
+
+    if nofile_idx is None:
+        block = (
+            f"{' ' * nofile_indent}nofile:\n"
+            f"{' ' * (nofile_indent + 2)}soft: {target}\n"
+            f"{' ' * (nofile_indent + 2)}hard: {target}\n"
+        )
+        lines.insert(ulim_end, block)
+        log.append(f"added ulimits.nofile soft/hard={target} to service '{service}'")
+        return "".join(lines), True, log
+
+    nofile_end = ulim_end
+    for i in range(nofile_idx + 1, ulim_end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if _indent(lines[i]) <= nofile_indent:
+            nofile_end = i
+            break
+
+    changed = False
+    for key in ("soft", "hard"):
+        key_idx = None
+        for i in range(nofile_idx + 1, nofile_end):
+            if lines[i].strip().startswith(f"{key}:"):
+                key_idx = i
+                break
+        if key_idx is None:
+            val_indent = nofile_indent + 2
+            lines.insert(nofile_end, f"{' ' * val_indent}{key}: {target}\n")
+            nofile_end += 1
+            changed = True
+            log.append(f"added ulimits.nofile.{key}={target}")
+            continue
+        raw_line = lines[key_idx]
+        val_str = raw_line.split(":", 1)[1].strip()
+        try:
+            cur = int(val_str)
+        except ValueError:
+            log.append(
+                f"ulimits.nofile.{key} has non-integer value {val_str!r} — left untouched"
+            )
+            continue
+        if cur < target:
+            val_indent = _indent(raw_line)
+            lines[key_idx] = f"{' ' * val_indent}{key}: {target}\n"
+            changed = True
+            log.append(f"raised ulimits.nofile.{key} {cur} -> {target}")
+        else:
+            log.append(f"ulimits.nofile.{key}={cur} already >= {target} — untouched")
+
+    if not changed:
+        log.append("no changes needed (already >= target)")
+    return "".join(lines), changed, log
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("compose_path", nargs="?", default=DEFAULT_COMPOSE)
+    parser.add_argument("--service", default=DEFAULT_SERVICE)
+    parser.add_argument("--target", type=int, default=DEFAULT_TARGET)
+    args = parser.parse_args(argv)
+
+    path = Path(args.compose_path)
+    if not path.is_file():
+        print(
+            f"casmgr-compose-ulimit-patch: {path} not found — skipping",
+            file=sys.stderr,
+        )
+        return 0
+
+    original = path.read_text(encoding="utf-8")
+    new_text, changed, log = patch_compose(
+        original, service=args.service, target=args.target
+    )
+    for line in log:
+        print(f"casmgr-compose-ulimit-patch: {line}")
+
+    if not changed:
+        return 0
+
+    backup = path.with_name(path.name + ".bak")
+    shutil.copy2(path, backup)
+    path.write_text(new_text, encoding="utf-8")
+    print(f"casmgr-compose-ulimit-patch: backed up pre-patch file to {backup}")
+    print(f"casmgr-compose-ulimit-patch: wrote patched {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

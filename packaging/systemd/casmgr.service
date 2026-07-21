@@ -9,6 +9,9 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/etc/casmgr
+# Raise the unit's own nofile ceiling to match the container ulimits below
+# (docker itself, and anything the compose invocation forks, inherits this).
+LimitNOFILE=524288
 ExecStartPre=-/bin/sh -c 'docker network inspect smart-assistant >/dev/null 2>&1 || docker network create smart-assistant'
 ExecStartPre=-/usr/bin/docker compose -f /etc/casmgr/docker-compose.yml pull
 ExecStart=/usr/bin/docker compose -f /etc/casmgr/docker-compose.yml up -d

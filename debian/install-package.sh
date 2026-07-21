@@ -41,6 +41,8 @@ install -m 755 "${CURDIR}/packaging/bin/casmgr-pg-set-password" \
     "${ST}/usr/lib/casmgr/bin/"
 install -m 755 "${CURDIR}/packaging/bin/casmgr-install-server-config" \
     "${ST}/usr/lib/casmgr/bin/"
+install -m 755 "${CURDIR}/packaging/bin/casmgr-compose-ulimit-patch" \
+    "${ST}/usr/lib/casmgr/bin/"
 
 install -d "${ST}/usr/share/casmgr"
 if [[ -f "${CURDIR}/debian/casmgr-docker-image" ]]; then

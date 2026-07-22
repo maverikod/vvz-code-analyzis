@@ -17,6 +17,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..database_client.file_data_batch import build_file_data_atomic_batches
+from ..database_driver_pkg.domain.files import get_file_by_path
 from .logical_write_submit import submit_logical_write_or_fallback
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,9 @@ def sync_file_to_db_atomic(
     fails (no partial success). Used by both tree-save and background-indexing callers.
 
     Args:
-        database: CodeDatabase-like instance with get_file_by_path and
-            execute_logical_write_operation (one composite RPC on SQLite client).
+        database: Driver-shaped instance (``execute``/``execute_batch``/
+            ``execute_logical_write_operation``); ``get_file_by_path`` is resolved via
+            the driver-direct domain free function, not a bound method.
         project_id: Project ID.
         absolute_path: Absolute normalized file path.
         source_code: Full source code of the file.
@@ -146,7 +148,7 @@ def sync_file_to_db_atomic(
         )
 
         if file_id is None:
-            file_record = database.get_file_by_path(absolute_path, project_id)
+            file_record = get_file_by_path(database, absolute_path, project_id)
             if not file_record:
                 result["error"] = f"File not found in database: {absolute_path}"
                 return result

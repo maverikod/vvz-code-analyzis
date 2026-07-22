@@ -1,5 +1,5 @@
 """
-Standalone file reindex via BaseDatabaseDriver and DatabaseClient.
+Standalone file reindex via BaseDatabaseDriver, driver-direct (stage 2).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -50,28 +50,6 @@ def _is_fk_or_integrity_error(exc: BaseException) -> bool:
     return "foreign key" in msg or "integrity" in msg
 
 
-def _driver_type_for_inprocess_client(driver: BaseDatabaseDriver) -> Optional[str]:
-    """Infer :class:`DatabaseClient` ``driver_type`` for portable SQL (PostgreSQL only).
-
-    Duck-typed on purpose: ``driver`` here is whatever the caller passed as its own
-    ``driver``-shaped object. Pre-flip (Stage 2), callers that go through
-    :func:`index_file_via_driver` directly (not via the RPC handler) may pass the
-    existing :class:`~code_analysis.core.database_client.client.DatabaseClient`
-    itself rather than a raw :class:`PostgreSQLDriver` -- an ``isinstance`` check alone
-    would silently return ``None`` for that (still-correct) case. Post-flip it is
-    always a real ``PostgreSQLDriver``. Trust an existing ``_driver_type == "postgres"``
-    attribute first; fall back to ``isinstance`` for a bare driver with no such attribute.
-    """
-    from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
-
-    existing = getattr(driver, "_driver_type", None)
-    if existing == "postgres":
-        return "postgres"
-    if isinstance(driver, PostgreSQLDriver):
-        return "postgres"
-    return None
-
-
 def _analyze_result_to_update_file_data_dict(
     raw: Dict[str, Any], abs_file_path: str
 ) -> Dict[str, Any]:
@@ -120,8 +98,8 @@ def update_file_data_via_driver(
     """
     Update database records for a file using a :class:`BaseDatabaseDriver`.
 
-    Builds an in-process :class:`~code_analysis.core.database_client.client.DatabaseClient`
-    over ``driver`` and delegates to :func:`~code_analysis.commands.update_indexes_analyzer.analyze_file`.
+    Hands ``driver`` straight to :func:`~code_analysis.commands.update_indexes_analyzer.analyze_file`
+    (driver-direct, stage 2 layer collapse — no DatabaseClient/RPC bridge).
     Prefer this in driver-owning processes instead of :meth:`CodeDatabase.update_file_data`.
 
     Args:
@@ -136,34 +114,19 @@ def update_file_data_via_driver(
         (``success``, ``file_path``, optional ``skipped``, ``error``, …).
     """
     from code_analysis.commands.update_indexes_analyzer import analyze_file
-    from code_analysis.core.database_client.client import DatabaseClient
-    from code_analysis.core.database_client.in_process_rpc_client import (
-        InProcessRpcClient,
-    )
-    from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
-    handlers = RPCHandlers(driver)
-    ipc = InProcessRpcClient(handlers)
-    ipc.connect()
-    client = DatabaseClient(
-        rpc_client=ipc,
-        driver_type=_driver_type_for_inprocess_client(driver),
+    path_obj = Path(file_path)
+    raw = analyze_file(
+        database=driver,
+        file_path=path_obj,
+        project_id=project_id,
+        root_path=root_dir,
+        force=True,
+        docs_indexing=docs_indexing,
+        server_config_path=server_config_path,
+        skip_file_edit_lock=skip_file_edit_lock,
     )
-    try:
-        path_obj = Path(file_path)
-        raw = analyze_file(
-            database=client,
-            file_path=path_obj,
-            project_id=project_id,
-            root_path=root_dir,
-            force=True,
-            docs_indexing=docs_indexing,
-            server_config_path=server_config_path,
-            skip_file_edit_lock=skip_file_edit_lock,
-        )
-        return _analyze_result_to_update_file_data_dict(raw, str(path_obj.resolve()))
-    finally:
-        ipc.disconnect(close_driver=False)
+    return _analyze_result_to_update_file_data_dict(raw, str(path_obj.resolve()))
 
 
 def index_file_via_driver(

@@ -91,16 +91,3 @@ def test_should_analyze_file_exactly_at_tolerance_boundary_skip() -> None:
     assert out["reason"] == "equal_within_tolerance"
     assert out["db_mtime"] == 1000.0
     assert out["disk_mtime"] == 1000.05
-
-
-def test_is_analysis_up_to_date_inverses_should_analyze() -> None:
-    """is_analysis_up_to_date is True when should_analyze is False."""
-    db = _MockDbForGate({"data": [{"file_mtime": 1000.0}]})
-    gate_skip = db.should_analyze_file(1, 1000.0, tolerance=0.1)
-    assert gate_skip["should_analyze"] is False
-    assert db.is_analysis_up_to_date(1, 1000.0, tolerance=0.1) is True
-
-    db2 = _MockDbForGate({"data": []})
-    gate_analyze = db2.should_analyze_file(1, 1000.0)
-    assert gate_analyze["should_analyze"] is True
-    assert db2.is_analysis_up_to_date(1, 1000.0) is False

@@ -7,7 +7,7 @@ reinstall/rebind) while still being the same on-disk project.
 tests/test_database_projects_get_project_global_fallback.py and
 tests/test_insert_project_row_global_id.py) and the scoped-write reclaim helper
 (see tests/test_scoped_project_write_orphan_reclaim.py, fixing
-``update_project``/``sync_project_metadata_from_projectid``) already read/write
+``sync_project_metadata_from_projectid``) already read/write
 around this defect class elsewhere. ``relocate_project_root_after_disk_move``
 previously had neither: its scoped "project not found" guard returned False
 for a row that exists globally under a different server_instance_id, and its

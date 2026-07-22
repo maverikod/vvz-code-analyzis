@@ -33,12 +33,7 @@ from ..sql_portable import (
     sql_julian_timestamp_now_expr,
 )
 from .client_base import _DatabaseClientBase
-from .objects.mappers import (
-    db_row_to_object,
-    db_rows_to_objects,
-    get_table_name_for_object,
-    object_to_db_row,
-)
+from .objects.mappers import db_row_to_object, db_rows_to_objects
 from .objects.project import Project
 
 logger = logging.getLogger(__name__)
@@ -383,39 +378,6 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         )
         return info.project_id
 
-    def create_project(self, project: Project) -> Project:
-        """Create new project in database.
-
-        Args:
-            project: Project object to create
-
-        Returns:
-            Created Project object with updated timestamps
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-            ValueError: If project data is invalid
-        """
-        table_name = get_table_name_for_object(project)
-        if table_name is None:
-            raise ValueError("Unknown table for Project object")
-
-        data = _project_row_root_path_for_write(self, object_to_db_row(project))
-        self.insert(table_name, data)
-
-        # Fetch created project to get all fields including timestamps
-        sid = current_server_instance_id()
-        rows = self.select(
-            table_name,
-            where={"server_instance_id": sid, "id": project.id},
-        )
-        if not rows:
-            raise ValueError(f"Failed to create project {project.id}")
-
-        row = enrich_project_dict_resolve_root_path(dict(rows[0]), self)
-        return db_row_to_object(row, Project)
-
     def get_project(self, project_id: str) -> Optional[Project]:
         """Get project by ID.
 
@@ -453,60 +415,6 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             return None
         row = enrich_project_dict_resolve_root_path(dict(global_row), self)
         return db_row_to_object(row, Project)
-
-    def update_project(self, project: Project) -> Project:
-        """Update existing project in database.
-
-        Args:
-            project: Project object with updated data
-
-        Returns:
-            Updated Project object
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-            ValueError: If project not found
-        """
-        # Check if project exists
-        existing = self.get_project(project.id)
-        if existing is None:
-            raise ValueError(f"Project {project.id} not found")
-
-        # Update project
-        data = _project_row_root_path_for_write(self, object_to_db_row(project))
-        # Remove id from update data (it's in where clause)
-        update_data = {k: v for k, v in data.items() if k != "id"}
-        sid = current_server_instance_id()
-        _reclaim_orphan_and_retry_scoped_projects_write(
-            self,
-            sid=sid,
-            project_id=project.id,
-            write_fn=lambda: self.update(
-                "projects",
-                where={"server_instance_id": sid, "id": project.id},
-                data=update_data,
-            ),
-        )
-
-        # Fetch updated project
-        return self.get_project(project.id) or project
-
-    def delete_project(self, project_id: str) -> bool:
-        """Delete project from database.
-
-        Args:
-            project_id: Project identifier
-
-        Returns:
-            True if project was deleted, False if not found
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-        """
-        affected_rows = self.delete("projects", where={"id": project_id})
-        return affected_rows > 0
 
     def list_projects(self, *, include_deleted: bool = False) -> List[Project]:
         """List projects in database.
@@ -609,7 +517,7 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         unscoped global-by-id lookup (:func:`_project_row_by_id_global`, mirrors
         ``get_project``'s fallback) and writes reclaim the orphan row before
         retrying (:func:`_reclaim_orphan_and_retry_scoped_projects_write`, same
-        helper ``update_project``/``sync_project_metadata_from_projectid`` use).
+        helper ``sync_project_metadata_from_projectid`` uses).
         """
         try:
             old_r = Path(old_root_path).expanduser().resolve()

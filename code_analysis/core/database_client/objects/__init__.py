@@ -22,8 +22,6 @@ from .mappers import (
     objects_from_table,
 )
 from .project import Project
-from .tree_action import TreeAction
-from .xpath_filter import XPathFilter
 
 __all__ = [
     # Base
@@ -53,7 +51,4 @@ __all__ = [
     "objects_from_table",
     "get_object_class_for_table",
     "get_table_name_for_object",
-    # Other
-    "XPathFilter",
-    "TreeAction",
 ]

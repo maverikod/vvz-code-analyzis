@@ -49,25 +49,6 @@ class _ClientSchemaMixin(_DatabaseClientBase):
         response = self.rpc_client.call("drop_table", {"table_name": table_name})
         return self._extract_success(response)
 
-    def alter_table(self, table_name: str, changes: Dict[str, Any]) -> bool:
-        """Alter table.
-
-        Args:
-            table_name: Name of table to alter
-            changes: Dictionary with table changes
-
-        Returns:
-            True if table was altered successfully
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-        """
-        response = self.rpc_client.call(
-            "alter_table", {"table_name": table_name, "changes": changes}
-        )
-        return self._extract_success(response)
-
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get table information.
 
@@ -90,20 +71,6 @@ class _ClientSchemaMixin(_DatabaseClientBase):
         if isinstance(result_data, dict):
             return result_data.get("data", [])
         return []
-
-    def get_schema_version(self) -> str:
-        """Get database schema version.
-
-        Returns:
-            Schema version string
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-        """
-        response = self.rpc_client.call("get_schema_version", {})
-        result_data = self._extract_result_data(response)
-        return result_data.get("version", "")
 
     def sync_schema(
         self,

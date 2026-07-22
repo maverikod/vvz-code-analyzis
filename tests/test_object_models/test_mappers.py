@@ -24,7 +24,6 @@ from code_analysis.core.database_client.objects import (
     Project,
     Usage,
     VectorIndex,
-    XPathFilter,
     db_row_to_object,
     db_rows_to_objects,
     get_object_class_for_table,
@@ -103,78 +102,3 @@ class TestMappers:
         file_obj = File(project_id="test", path="/test")
         table_name = get_table_name_for_object(file_obj)
         assert table_name == "files"
-
-
-class TestXPathFilter:
-    """Test XPathFilter object model."""
-
-    def test_create_xpath_filter_minimal(self):
-        """Test creating XPathFilter with minimal required fields."""
-        filter_obj = XPathFilter(selector="function[name='test']")
-        assert filter_obj.selector == "function[name='test']"
-        assert filter_obj.node_type is None
-        assert filter_obj.name is None
-
-    def test_create_xpath_filter_full(self):
-        """Test creating XPathFilter with all fields."""
-        filter_obj = XPathFilter(
-            selector="class[name='Test']",
-            node_type="class",
-            name="Test",
-            qualname="module.Test",
-            start_line=10,
-            end_line=20,
-        )
-        assert filter_obj.selector == "class[name='Test']"
-        assert filter_obj.node_type == "class"
-        assert filter_obj.name == "Test"
-        assert filter_obj.qualname == "module.Test"
-        assert filter_obj.start_line == 10
-        assert filter_obj.end_line == 20
-
-    def test_xpath_filter_empty_selector(self):
-        """Test XPathFilter with empty selector raises error."""
-        with pytest.raises(ValueError, match="selector cannot be empty"):
-            XPathFilter(selector="")
-
-    def test_xpath_filter_invalid_selector(self):
-        """Test XPathFilter with invalid selector raises error."""
-        with pytest.raises(ValueError, match="Invalid selector syntax"):
-            XPathFilter(selector="invalid[selector")
-
-    def test_xpath_filter_to_dict(self):
-        """Test converting XPathFilter to dictionary."""
-        filter_obj = XPathFilter(
-            selector="function[name='test']",
-            node_type="function",
-            start_line=5,
-        )
-        result = filter_obj.to_dict()
-        assert result["selector"] == "function[name='test']"
-        assert result["node_type"] == "function"
-        assert result["start_line"] == 5
-        assert "name" not in result
-        assert "end_line" not in result
-
-    def test_xpath_filter_from_dict(self):
-        """Test creating XPathFilter from dictionary."""
-        data = {
-            "selector": "class[name='Test']",
-            "node_type": "class",
-            "qualname": "module.Test",
-            "start_line": 10,
-            "end_line": 20,
-        }
-        filter_obj = XPathFilter.from_dict(data)
-        assert filter_obj.selector == "class[name='Test']"
-        assert filter_obj.node_type == "class"
-        assert filter_obj.qualname == "module.Test"
-        assert filter_obj.start_line == 10
-        assert filter_obj.end_line == 20
-
-    def test_xpath_filter_str(self):
-        """Test string representation of XPathFilter."""
-        filter_obj = XPathFilter(selector="function[name='test']", start_line=5)
-        str_repr = str(filter_obj)
-        assert "selector='function[name='test']'" in str_repr
-        assert "start_line=5" in str_repr

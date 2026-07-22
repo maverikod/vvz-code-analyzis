@@ -24,7 +24,6 @@ from code_analysis.core.database_client.objects import (
     Project,
     Usage,
     VectorIndex,
-    XPathFilter,
     db_row_to_object,
     db_rows_to_objects,
     get_object_class_for_table,

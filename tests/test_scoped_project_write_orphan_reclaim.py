@@ -18,8 +18,10 @@ the row to the current server_instance_id (same semantics as
 
 Covers both call sites the fix touched:
 - ``code_analysis.core.database_client.client_api_projects`` (the RPC/production
-  ``DatabaseClient`` layer: ``update_project`` and
-  ``sync_project_metadata_from_projectid``).
+  ``DatabaseClient`` layer: ``sync_project_metadata_from_projectid``). It
+  originally also covered ``update_project``, but that method was deleted as
+  dead code (stage 2 dead-code cleanup, sub-step A1; zero production callers)
+  along with its dedicated tests here.
 - ``code_analysis.core.database.projects`` (the ``CodeDatabase`` driver leaf
   shared by sqlite+postgres per the project's driver-chain invariant:
   ``sync_project_metadata_from_projectid``).
@@ -37,7 +39,6 @@ from code_analysis.core.database import projects as leaf_projects_mod
 from code_analysis.core.database_client.client_api_projects import (
     _ClientAPIProjectsMixin,
 )
-from code_analysis.core.database_client.objects.project import Project
 
 _SID = "server-current"
 _OTHER_SID = "server-orphaned-from"
@@ -115,7 +116,7 @@ class _FakeProjectsTable(_ClientAPIProjectsMixin):
     def update(
         self, table_name: str, where: Dict[str, Any], data: Dict[str, Any]
     ) -> int:
-        """Generic scoped UPDATE used by ``update_project`` and the reclaim helper."""
+        """Generic scoped UPDATE used by the reclaim helper."""
         self.update_calls.append((table_name, dict(where), dict(data)))
         if table_name != "projects":
             return 0
@@ -262,90 +263,6 @@ def test_sync_project_metadata_normal_write_unaffected(
     assert rows[pid]["deleted"] is True
     assert rows[pid]["comment"] == "ok"
     assert client.update_calls == []  # no reclaim - the scoped write matched directly
-
-
-@patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
-    return_value=_SID,
-)
-@patch(
-    "code_analysis.core.database_client.client_api_projects.enrich_project_dict_resolve_root_path",
-    side_effect=_enrich_identity,
-)
-@patch(
-    "code_analysis.core.database_client.client_api_projects._project_row_root_path_for_write",
-    side_effect=lambda _db, data: dict(data),
-)
-def test_update_project_reclaims_orphan_row(
-    _rp_mock: Any, _enrich_mock: Any, _sid_mock: Any
-) -> None:
-    """update_project: orphan row found via get_project's global fallback -> reclaimed on write."""
-    pid = "pid-orphan-2"
-    rows = {
-        pid: {
-            "id": pid,
-            "server_instance_id": _OTHER_SID,
-            "root_path": "proj2",
-            "name": "proj2",
-            "comment": "old",
-            "watch_dir_id": None,
-            "deleted": False,
-            "processing_paused": False,
-        }
-    }
-    client = _FakeProjectsTable(rows)
-
-    updated = Project(id=pid, root_path="proj2", name="proj2", comment="new comment")
-    result = client.update_project(updated)
-
-    assert isinstance(result, Project)
-    assert rows[pid]["server_instance_id"] == _SID
-    assert rows[pid]["comment"] == "new comment"
-
-
-@patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
-    return_value=_SID,
-)
-@patch(
-    "code_analysis.core.database_client.client_api_projects.enrich_project_dict_resolve_root_path",
-    side_effect=_enrich_identity,
-)
-@patch(
-    "code_analysis.core.database_client.client_api_projects._project_row_root_path_for_write",
-    side_effect=lambda _db, data: dict(data),
-)
-def test_update_project_normal_write_unaffected(
-    _rp_mock: Any, _enrich_mock: Any, _sid_mock: Any
-) -> None:
-    """update_project: row already owned by current instance -> single write, no reclaim."""
-    pid = "pid-normal-2"
-    rows = {
-        pid: {
-            "id": pid,
-            "server_instance_id": _SID,
-            "root_path": "proj3",
-            "name": "proj3",
-            "comment": "old",
-            "watch_dir_id": None,
-            "deleted": False,
-            "processing_paused": False,
-        }
-    }
-    client = _FakeProjectsTable(rows)
-
-    updated = Project(id=pid, root_path="proj3", name="proj3", comment="new comment")
-    result = client.update_project(updated)
-
-    assert isinstance(result, Project)
-    assert rows[pid]["comment"] == "new comment"
-    assert client.update_calls == [
-        (
-            "projects",
-            {"server_instance_id": _SID, "id": pid},
-            client.update_calls[0][2],
-        )
-    ]  # exactly one UPDATE call - the direct one, no reclaim retry
 
 
 # ─────────────────────────────────────────────────────────────────────────

@@ -104,27 +104,6 @@ class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
             "disk_mtime": disk_mtime,
         }
 
-    def is_analysis_up_to_date(
-        self,
-        file_id: int,
-        file_mtime: float,
-        tolerance: float = 0.1,
-    ) -> bool:
-        """Check if comprehensive analysis results are up-to-date for a file.
-
-        Uses same semantics as should_analyze_file: True = skip, False = analyze.
-
-        Args:
-            file_id: File ID.
-            file_mtime: Current file modification time.
-            tolerance: Time tolerance in seconds (default: 0.1).
-
-        Returns:
-            True if analysis is up-to-date (skip), False otherwise (analyze).
-        """
-        gate = self.should_analyze_file(file_id, file_mtime, tolerance)
-        return not gate["should_analyze"]
-
     def get_comprehensive_analysis_results(
         self,
         file_id: int,

@@ -268,80 +268,6 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         )
         return new_id
 
-    def save_ast_tree(
-        self,
-        file_id: int,
-        project_id: str,
-        ast_json: str,
-        ast_hash: str,
-        file_mtime: float,
-        overwrite: bool = False,
-    ) -> int:
-        """Save AST tree for a file. Returns ast_tree id."""
-        _now = sql_julian_timestamp_now_expr(self)
-        if overwrite:
-            self.execute(
-                "DELETE FROM ast_trees WHERE file_id = ?",
-                (file_id,),
-            )
-        if not overwrite:
-            result = self.execute(
-                "SELECT id FROM ast_trees WHERE file_id = ? AND ast_hash = ?",
-                (file_id, ast_hash),
-            )
-            rows = result.get("data", [])
-            if rows:
-                existing_id = rows[0].get("id")
-                self.execute(
-                    f"UPDATE ast_trees SET ast_json = ?, file_mtime = ?, "
-                    f"updated_at = {_now} WHERE id = ?",
-                    (ast_json, file_mtime, existing_id),
-                )
-                return existing_id
-        result = self.execute(
-            "INSERT INTO ast_trees (file_id, project_id, ast_json, ast_hash, file_mtime) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (file_id, project_id, ast_json, ast_hash, file_mtime),
-        )
-        return result.get("lastrowid", 0) or 0
-
-    def save_cst_tree(
-        self,
-        file_id: int,
-        project_id: str,
-        cst_code: str,
-        cst_hash: str,
-        file_mtime: float,
-        overwrite: bool = False,
-    ) -> int:
-        """Save CST tree (source code) for a file. Returns cst_tree id."""
-        _now = sql_julian_timestamp_now_expr(self)
-        if overwrite:
-            self.execute(
-                "DELETE FROM cst_trees WHERE file_id = ?",
-                (file_id,),
-            )
-        if not overwrite:
-            result = self.execute(
-                "SELECT id FROM cst_trees WHERE file_id = ? AND cst_hash = ?",
-                (file_id, cst_hash),
-            )
-            rows = result.get("data", [])
-            if rows:
-                existing_id = rows[0].get("id")
-                self.execute(
-                    f"UPDATE cst_trees SET cst_code = ?, file_mtime = ?, "
-                    f"updated_at = {_now} WHERE id = ?",
-                    (cst_code, file_mtime, existing_id),
-                )
-                return existing_id
-        result = self.execute(
-            "INSERT INTO cst_trees (file_id, project_id, cst_code, cst_hash, file_mtime) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (file_id, project_id, cst_code, cst_hash, file_mtime),
-        )
-        return result.get("lastrowid", 0) or 0
-
     def add_code_content(
         self,
         file_id: int,
@@ -516,22 +442,6 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
 
         # Fetch updated file
         return self.get_file(file.id) or file
-
-    def delete_file(self, file_id: int) -> bool:
-        """Delete file from database.
-
-        Args:
-            file_id: File identifier
-
-        Returns:
-            True if file was deleted, False if not found
-
-        Raises:
-            RPCClientError: If RPC call fails
-            RPCResponseError: If response contains error
-        """
-        affected_rows = self.delete("files", where={"id": file_id})
-        return affected_rows > 0
 
     def get_project_file_rows(
         self, project_id: str, include_deleted: bool = False

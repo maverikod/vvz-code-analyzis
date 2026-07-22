@@ -16,10 +16,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol, Tuple, TYPE_CHECKING, cast
+from typing import Any, Dict, List, Optional, Protocol, Tuple, cast
 
-if TYPE_CHECKING:
-    from code_analysis.core.database.base import CodeDatabase
+# NOTE: CodeDatabase (the class this facade used to be typed against) was
+# deleted as dead code (stage 2 dead-code cleanup, sub-step A1) - it had zero
+# production instantiations. This facade, and the ``db`` param it wraps, are
+# now reachable only via that already-dead CodeDatabase-monkeypatch chain
+# (see core/database/files/trash.py); kept per task scope (KEEP the ~30
+# underlying core/database/*.py modules) and duck-typed as ``Any`` below.
 
 
 class TrashSqlDriver(Protocol):
@@ -48,7 +52,7 @@ class TrashCodeDatabaseDriverFacade:
 
     __slots__ = ("_db", "_trash_facade_underlying_driver")
 
-    def __init__(self, db: CodeDatabase) -> None:
+    def __init__(self, db: Any) -> None:
         """Initialize the instance."""
         self._db = db
         self._trash_facade_underlying_driver = db.driver
@@ -82,6 +86,6 @@ class TrashCodeDatabaseDriverFacade:
         )
 
 
-def trash_driver_for_codedatabase(db: CodeDatabase) -> TrashCodeDatabaseDriverFacade:
+def trash_driver_for_codedatabase(db: Any) -> TrashCodeDatabaseDriverFacade:
     """Return trash driver for codedatabase."""
     return TrashCodeDatabaseDriverFacade(db)

@@ -12,13 +12,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from .client_api_ast_cst import _ClientAPIASTCSTMixin
 from .client_api_attributes import _ClientAPIAttributesMixin
 from .client_api_classes_functions import _ClientAPIClassesFunctionsMixin
 from .client_api_comprehensive_analysis import (
     _ClientAPIComprehensiveAnalysisMixin,
 )
-from .client_api_duplicates_stats import _ClientAPIDuplicatesStatsMixin
 from .client_api_files import _ClientAPIFilesMixin
 from .client_api_integrity import _ClientAPIIntegrityMixin
 from .client_api_issues_usages import _ClientAPIIssuesUsagesMixin
@@ -45,11 +43,9 @@ class DatabaseClient(
     _ClientAPIComprehensiveAnalysisMixin,
     _ClientAPIIntegrityMixin,
     _ClientAPIAttributesMixin,
-    _ClientAPIASTCSTMixin,
     _ClientAPIClassesFunctionsMixin,
     _ClientAPIMethodsImportsMixin,
     _ClientAPIIssuesUsagesMixin,
-    _ClientAPIDuplicatesStatsMixin,
 ):
     """Database client for RPC-based database operations.
 

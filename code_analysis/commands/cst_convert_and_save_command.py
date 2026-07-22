@@ -23,6 +23,7 @@ from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.database_driver_pkg.domain.ast_cst import save_ast, save_cst
 from ..core.database_driver_pkg.domain.files import create_file
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
@@ -284,7 +285,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                 try:
                     # Parse AST JSON to dict for save_ast
                     ast_data = json.loads(ast_json)
-                    ast_saved = database.save_ast(file_id, ast_data)
+                    ast_saved = save_ast(database, file_id, ast_data)
                     if not ast_saved:
                         return ErrorResult(
                             message="Failed to save AST",
@@ -312,7 +313,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
 
                 # Save CST tree to database
                 try:
-                    cst_saved = database.save_cst(file_id, source_code)
+                    cst_saved = save_cst(database, file_id, source_code)
                     if not cst_saved:
                         return ErrorResult(
                             message="Failed to save CST",

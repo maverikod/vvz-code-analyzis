@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.database_driver_pkg.domain.files import (
+    get_file_by_id,
+    get_project_file_rows,
+)
 from ...core.exceptions import ValidationError
 from ..ast.file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
@@ -161,7 +165,7 @@ class ComprehensiveAnalysisResultsMCPCommand(BaseMCPCommand):
                         )
                     rows = [file_record]
                 elif file_id:
-                    file_record = db.get_file_by_id(str(file_id))
+                    file_record = get_file_by_id(db, str(file_id))
                     if not file_record or file_record.get("project_id") != project_id:
                         return ErrorResult(
                             message=f"File not found in project: {file_id}",
@@ -169,7 +173,7 @@ class ComprehensiveAnalysisResultsMCPCommand(BaseMCPCommand):
                         )
                     rows = [file_record]
                 else:
-                    rows = db.get_project_file_rows(project_id, include_deleted=False)
+                    rows = get_project_file_rows(db, project_id, include_deleted=False)
 
                 items_all: List[Dict[str, Any]] = []
                 files_with_saved_results = 0

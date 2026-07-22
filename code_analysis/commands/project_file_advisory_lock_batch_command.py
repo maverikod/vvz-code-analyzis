@@ -23,6 +23,7 @@ from .project_file_advisory_lock_batch_metadata import (
 from .project_file_advisory_lock_batch_schema import (
     get_project_file_advisory_lock_batch_schema,
 )
+from ..core.database_driver_pkg.domain.files import get_file_by_path
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
@@ -250,8 +251,8 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
                 str(exc),
                 details=getattr(exc, "details", None) or {},
             )
-        row = database.get_file_by_path(
-            str(abs_path), project_id, include_deleted=False
+        row = get_file_by_path(
+            database, str(abs_path), project_id, include_deleted=False
         )
         if not row:
             return self._item_error(

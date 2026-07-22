@@ -23,6 +23,7 @@ from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.database_driver_pkg.domain.files import create_file
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 
@@ -275,7 +276,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     )
 
                     # Create file in database
-                    created_file = database.create_file(file_obj)
+                    created_file = create_file(database, file_obj)
                     file_id = created_file.id
                     logger.info(f"Added file to database: file_id={file_id}")
 

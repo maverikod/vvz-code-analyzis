@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.file_identity import relative_path_for_indexed_row
 
 
@@ -93,7 +94,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     else:
                         file_path = str(file_path_obj)
 
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    file_record = get_file_by_path(db, file_path, proj_id)
                     if not file_record:
                         result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
@@ -153,7 +154,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     else:
                         file_path = str(file_path_obj)
 
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    file_record = get_file_by_path(db, file_path, proj_id)
                     if not file_record:
                         result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
@@ -215,7 +216,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     else:
                         file_path = str(file_path_obj)
 
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    file_record = get_file_by_path(db, file_path, proj_id)
                     if not file_record:
                         result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",

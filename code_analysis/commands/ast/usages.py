@@ -16,6 +16,7 @@ from ...core.exceptions import ValidationError
 from ...core.cst_tree.models import CSTTree
 from ...core.cst_tree.tree_builder import load_file_to_tree
 from ...core.cst_tree.tree_range_finder import find_node_by_range
+from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.file_identity import relative_path_for_indexed_row
 from ...core.uuid_validation import is_valid_uuid4 as _is_valid_uuid4
 
@@ -185,7 +186,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 import_params = [proj_id, target_name]
 
                 if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    file_record = get_file_by_path(db, file_path, proj_id)
                     if file_record:
                         import_query += " AND i.file_id = ?"
                         import_params.append(file_record["id"])
@@ -231,7 +232,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 inheritance_params = [proj_id, f"%{target_name}%"]
 
                 if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    file_record = get_file_by_path(db, file_path, proj_id)
                     if file_record:
                         inheritance_query += " AND c.file_id = ?"
                         inheritance_params.append(file_record["id"])
@@ -299,7 +300,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 params.append(target_class)
 
             if file_path:
-                file_record = db.get_file_by_path(file_path, proj_id)
+                file_record = get_file_by_path(db, file_path, proj_id)
                 if file_record:
                     query += " AND u.file_id = ?"
                     params.append(file_record["id"])

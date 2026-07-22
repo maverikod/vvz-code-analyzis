@@ -20,6 +20,13 @@ from typing import Any, Callable, Coroutine, Dict, Optional
 from ..core.constants import FILE_MODIFICATION_TOLERANCE
 from ..core.database.file_tree_sync import sync_file_to_db_atomic
 from ..core.database.files.helpers import _last_modified_to_unix
+from ..core.database_driver_pkg.domain.files import (
+    add_code_content,
+    add_file,
+    add_usage,
+    get_file_by_path,
+    mark_file_needs_chunking,
+)
 from ..core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from ..core.docs_indexing_eligibility import is_docs_markdown_eligible
 from ..core.docstring_chunker_pkg.docstring_chunker import DocstringChunker
@@ -92,7 +99,8 @@ def _mirror_markdown_into_code_content_fulltext(
             )
     database.execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
     heading = _docs_virtual_docstring_for_fts(relative_path, file_body)
-    database.add_code_content(
+    add_code_content(
+        database,
         file_id,
         "file",
         relative_path,
@@ -284,7 +292,7 @@ def analyze_file(
 
         abs_file_path = str(file_path.resolve())
         tol = FILE_MODIFICATION_TOLERANCE
-        file_record = database.get_file_by_path(abs_file_path, project_id)
+        file_record = get_file_by_path(database, abs_file_path, project_id)
         if file_record and not force:
             db_lm = _last_modified_to_unix(file_record.get("last_modified"))
             if db_lm is not None and abs(db_lm - file_mtime) <= tol:
@@ -367,7 +375,8 @@ def analyze_file(
             db_lm = _last_modified_to_unix(file_record.get("last_modified"))
             need_row_update = force or db_lm is None or abs(db_lm - file_mtime) > tol
             if need_row_update:
-                file_id = database.add_file(
+                file_id = add_file(
+                    database,
                     abs_file_path,
                     lines,
                     file_mtime,
@@ -375,7 +384,8 @@ def analyze_file(
                     project_id,
                 )
         else:
-            file_id = database.add_file(
+            file_id = add_file(
+                database,
                 abs_file_path,
                 lines,
                 file_mtime,
@@ -504,7 +514,8 @@ def analyze_file(
                 """Return add usage callback."""
                 nonlocal usages_added
                 try:
-                    database.add_usage(
+                    add_usage(
+                        database,
                         file_id=file_id,
                         line=usage_record["line"],
                         usage_type=usage_record["usage_type"],
@@ -534,7 +545,7 @@ def analyze_file(
                 exc_info=True,
             )
 
-        database.mark_file_needs_chunking(abs_file_path, project_id)
+        mark_file_needs_chunking(database, abs_file_path, project_id)
 
         entities_updated = sync_result.get("entities_updated", 0)
         return {

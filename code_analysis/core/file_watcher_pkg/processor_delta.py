@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import AbstractSet, Any, Dict, List, Optional, Set
 
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from code_analysis.core.database_driver_pkg.domain.files import get_project_files
 from code_analysis.core.project_root_path import (
     resolve_projects_root_path_row_to_absolute_str,
 )
@@ -111,8 +112,8 @@ def compute_project_delta(
         if get_raw is not None:
             db_files_list = get_raw(project_id, include_deleted=False)
         else:
-            db_files_list = database.get_project_files(
-                project_id, include_deleted=False
+            db_files_list = get_project_files(
+                database, project_id, include_deleted=False
             )
         db_files = []
         for f in db_files_list:
@@ -276,8 +277,8 @@ def compute_supplemental_watch_dir_deltas(
                         if get_raw is not None:
                             gone_db_list = get_raw(db_project_id, include_deleted=False)
                         else:
-                            gone_db_list = database.get_project_files(
-                                db_project_id, include_deleted=False
+                            gone_db_list = get_project_files(
+                                database, db_project_id, include_deleted=False
                             )
                         if gone_db_list:
                             all_deleted = list(
@@ -307,8 +308,8 @@ def compute_supplemental_watch_dir_deltas(
                     if get_raw is not None:
                         sup_db_list = get_raw(db_project_id, include_deleted=False)
                     else:
-                        sup_db_list = database.get_project_files(
-                            db_project_id, include_deleted=False
+                        sup_db_list = get_project_files(
+                            database, db_project_id, include_deleted=False
                         )
                     if not sup_db_list:
                         continue

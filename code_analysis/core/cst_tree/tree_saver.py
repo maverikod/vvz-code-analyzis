@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 from ..backup_manager import BackupManager
+from ..database_driver_pkg.domain.files import create_file, update_file
 from ..file_lock import file_lock
 from .models import CSTTree, TreeNodeMetadata, TreeOperation
 from .tree_builder import (
@@ -308,7 +309,7 @@ def save_tree_to_file(
                     last_modified=last_modified,
                     has_docstring=has_docstring,
                 )
-                updated_file = database.update_file(file_obj)
+                updated_file = update_file(database, file_obj)
                 file_id = updated_file.id
             else:
                 file_obj = File(
@@ -318,7 +319,7 @@ def save_tree_to_file(
                     last_modified=last_modified,
                     has_docstring=has_docstring,
                 )
-                created_file = database.create_file(file_obj)
+                created_file = create_file(database, file_obj)
                 file_id = created_file.id
             timings["db_file_record"] = time.perf_counter() - t0
 

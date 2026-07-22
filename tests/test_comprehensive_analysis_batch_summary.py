@@ -47,6 +47,27 @@ def _empty_file_results() -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _patch_get_project_files_to_db_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the domain ``get_project_files`` call site back to ``db.get_project_files``.
+
+    ``run_batch`` calls the driver-direct free function (stage-2 layer
+    collapse), which reads through ``driver.select`` - a primitive the bare
+    ``MagicMock()`` db in this module does not model.
+    """
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_mcp.execute_batch.get_project_files",
+        lambda driver, project_id, include_deleted=False, limit=None, offset=None: (
+            driver.get_project_files(
+                project_id,
+                include_deleted=include_deleted,
+                limit=limit,
+                offset=offset,
+            )
+        ),
+    )
+
+
 def test_build_batch_summary_includes_trust_counters_and_sum() -> None:
     """Summary exposes new keys; analyzed + skipped + unreadable/missing equals total."""
     results = _minimal_results()

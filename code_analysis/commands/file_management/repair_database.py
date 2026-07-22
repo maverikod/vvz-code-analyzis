@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 else:
     DatabaseClient = Any
 
+from ...core.database_driver_pkg.domain.files import get_project_files
 from ...core.sql_portable import sql_julian_timestamp_now_expr
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ class RepairDatabaseCommand:
                     f"workers, {len(workers_stopped.get('errors', []))} errors"
                 )
             # Get all files from database
-            all_files = self.database.get_project_files(self.project_id)
+            all_files = get_project_files(self.database, self.project_id)
             logger.info(f"Found {len(all_files)} files in database")
 
             # Get all files in project directory

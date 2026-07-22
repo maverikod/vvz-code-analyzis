@@ -18,6 +18,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .refactor import RefactorCommand as InternalRefactorCommand
 from ..core.backup_manager import BackupManager
+from ..core.database_driver_pkg.domain.files import add_file
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -509,7 +510,8 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                         try:
                             rel_init_path = str(init_file.relative_to(root_path))
                             init_content = init_file.read_text(encoding="utf-8")
-                            db.add_file(
+                            add_file(
+                                db,
                                 path=str(init_file.resolve()),
                                 lines=len(init_content.splitlines()),
                                 # Force index_file() to perform full AST/CST extraction.
@@ -544,7 +546,8 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                                     module_content = module_path.read_text(
                                         encoding="utf-8"
                                     )
-                                    db.add_file(
+                                    add_file(
+                                        db,
                                         path=str(module_path.resolve()),
                                         lines=len(module_content.splitlines()),
                                         # Force index_file() to perform full AST/CST extraction.

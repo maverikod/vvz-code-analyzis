@@ -119,6 +119,28 @@ def _skip_project_lookup() -> Any:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _patch_domain_files_to_fake_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route domain free-function call sites back to ``_FakeAnalysisResultsDb`` methods.
+
+    The command calls the driver-direct free functions (stage-2 layer
+    collapse), which read through ``driver.select``/``driver.execute`` -
+    primitives ``_FakeAnalysisResultsDb`` does not implement (it exposes the
+    old bound-method shape directly). Redirect the call sites to the fake's
+    own methods instead of exercising real SQL composition.
+    """
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_results_mcp.command.get_file_by_id",
+        lambda driver, file_id: driver.get_file_by_id(file_id),
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_results_mcp.command.get_project_file_rows",
+        lambda driver, project_id, include_deleted=False: driver.get_project_file_rows(
+            project_id, include_deleted=include_deleted
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_project_result_key_returns_only_non_empty_saved_findings(
     tmp_path: Path,

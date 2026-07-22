@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.database_driver_pkg.domain.files import get_project_files
 from ...core.sql_portable import WHERE_FILES_ACTIVE
 from .batch_one_file import analyze_one_file_in_batch
 from .batch_summary import build_batch_summary, _merge_project_integrity_summary
@@ -169,7 +170,8 @@ async def run_batch(
 
     while True:
         if proj_id:
-            project_files = db.get_project_files(
+            project_files = get_project_files(
+                db,
                 proj_id,
                 include_deleted=False,
                 limit=batch_size,

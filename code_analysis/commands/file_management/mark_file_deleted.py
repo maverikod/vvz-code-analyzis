@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from ...core.database_driver_pkg.domain.files import add_file, get_file_by_path
 from ...core.database_driver_pkg.domain.projects import get_project
 
 if TYPE_CHECKING:
@@ -143,8 +144,8 @@ class MarkFileDeletedCommand:
             absolute_path = (project_root / relative_file_path).resolve()
             result["file_path"] = relative_file_path
 
-            existing_row = self.database.get_file_by_path(
-                str(absolute_path), self.project_id, include_deleted=True
+            existing_row = get_file_by_path(
+                self.database, str(absolute_path), self.project_id, include_deleted=True
             )
             result["db_lookup_found"] = bool(existing_row)
 
@@ -152,7 +153,8 @@ class MarkFileDeletedCommand:
                 result["fs_fallback_used"] = True
                 if absolute_path.exists() and absolute_path.is_file():
                     result["file_existed_on_disk"] = True
-                    file_id = self.database.add_file(
+                    file_id = add_file(
+                        self.database,
                         path=str(absolute_path),
                         lines=self._line_count_for_file(absolute_path),
                         last_modified=absolute_path.stat().st_mtime,

@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ...core.database_driver_pkg.domain.files import get_project_file_rows
 from ...core.database_driver_pkg.domain.projects import get_project
 from .path_mask_match import filter_rows_by_mask, relative_path_posix
 
@@ -75,8 +76,8 @@ class MarkFilesDeletedByMaskCommand:
 
         root_path = proj.root_path
         project_root = Path(str(root_path))
-        rows = self.database.get_project_file_rows(
-            self.project_id, include_deleted=False
+        rows = get_project_file_rows(
+            self.database, self.project_id, include_deleted=False
         )
         matched = filter_rows_by_mask(rows, project_root, self.path_mask)
         result["matched"] = len(matched)

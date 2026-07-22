@@ -24,6 +24,7 @@ from ..core.backup_manager import BackupManager
 from ..core.database.file_edit_lock import release_file_edit_lock
 from ..core.database_client.file_data_batch import update_file_data_atomic_batch
 from ..core.database_client.objects.base import BaseObject
+from ..core.database_driver_pkg.domain.files import create_file
 from ..core.sql_portable import sql_julian_timestamp_now_expr
 from .compose_cst_db import delete_file_data, restore_file_data
 
@@ -160,7 +161,7 @@ def update_file_record(
             last_modified=time.time(),
             has_docstring=has_docstring,
         )
-        created_file = database.create_file(file_obj)
+        created_file = create_file(database, file_obj)
         return created_file.id
 
     now_sql = sql_julian_timestamp_now_expr(database)

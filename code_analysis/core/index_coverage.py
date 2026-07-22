@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
+from code_analysis.core.database_driver_pkg.domain.files import get_file_by_path
 from code_analysis.core.structure_extraction.format_registry import (
     is_supported_extension,
 )
@@ -65,7 +66,7 @@ class IndexCoverageService:
                 reason="unsupported_format",
             )
         abs_path = (self._root / rel).resolve()
-        row = self._db.get_file_by_path(str(abs_path), self._project_id)
+        row = get_file_by_path(self._db, str(abs_path), self._project_id)
         if row is None:
             return IndexedCoverage(
                 file_path=rel,

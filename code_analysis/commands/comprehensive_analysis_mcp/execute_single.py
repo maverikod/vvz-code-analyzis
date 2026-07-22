@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.duplicate_detector import DuplicateDetector
 from ..base_mcp_command import BaseMCPCommand
 from .batch_summary import _merge_project_integrity_summary, quality_findings_counts
@@ -71,7 +72,7 @@ async def run_single_file(
     file_project_id = proj_id
 
     if proj_id:
-        file_record = db.get_file_by_path(abs_path, proj_id, include_deleted=False)
+        file_record = get_file_by_path(db, abs_path, proj_id, include_deleted=False)
         if file_record:
             file_id = file_record["id"]
             file_project_id = proj_id
@@ -79,8 +80,8 @@ async def run_single_file(
                 f"Found file in project: file_id={file_id}, project_id={file_project_id}"
             )
         else:
-            file_record_deleted = db.get_file_by_path(
-                abs_path, proj_id, include_deleted=True
+            file_record_deleted = get_file_by_path(
+                db, abs_path, proj_id, include_deleted=True
             )
             if file_record_deleted and file_record_deleted.get("deleted"):
                 analysis_logger.warning(

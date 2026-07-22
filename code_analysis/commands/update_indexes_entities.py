@@ -13,6 +13,13 @@ from typing import Any, Dict, Tuple
 from ..core.complexity_analyzer import calculate_complexity
 from ..core.cst_tree.tree_builder import create_tree_from_code
 from ..core.cst_tree.tree_range_finder import find_node_by_range
+from ..core.database_driver_pkg.domain.files import (
+    add_class,
+    add_code_content,
+    add_function,
+    add_import,
+    add_method,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +156,8 @@ def index_entities(
             module_symbols.extend(_names_from_assign_like(item))
 
     try:
-        database.add_code_content(
+        add_code_content(
+            database,
             file_id=file_id,
             entity_type="file",
             entity_name=str(rel_path),
@@ -177,7 +185,8 @@ def index_entities(
             if nm == "_":
                 continue
             try:
-                database.add_code_content(
+                add_code_content(
+                    database,
                     file_id=file_id,
                     entity_type="variable",
                     entity_name=nm,
@@ -214,7 +223,8 @@ def index_entities(
                 raise ValueError(
                     f"No CST node found for class {node.name!r} at line {node.lineno}-{end_line_class} in {rel_path}"
                 )
-            class_id = database.add_class(
+            class_id = add_class(
+                database,
                 file_id,
                 node.name,
                 node.lineno,
@@ -228,7 +238,8 @@ def index_entities(
 
             try:
                 class_src = ast.get_source_segment(file_content, node)
-                database.add_code_content(
+                add_code_content(
+                    database,
                     file_id=file_id,
                     entity_type="class",
                     entity_name=node.name,
@@ -273,7 +284,8 @@ def index_entities(
                         raise ValueError(
                             f"No CST node found for method {node.name!r}.{item.name!r} at line {item.lineno}-{end_line_method} in {rel_path}"
                         )
-                    method_id = database.add_method(
+                    method_id = add_method(
+                        database,
                         class_id,
                         item.name,
                         item.lineno,
@@ -287,7 +299,8 @@ def index_entities(
 
                     try:
                         method_src = ast.get_source_segment(file_content, item)
-                        database.add_code_content(
+                        add_code_content(
+                            database,
                             file_id=file_id,
                             entity_type="method",
                             entity_name=f"{node.name}.{item.name}",
@@ -316,7 +329,8 @@ def index_entities(
                             continue
                         try:
                             a_src = ast.get_source_segment(file_content, item) or ""
-                            database.add_code_content(
+                            add_code_content(
+                                database,
                                 file_id=file_id,
                                 entity_type="attribute",
                                 entity_name=f"{node.name}.{aname}",
@@ -362,7 +376,8 @@ def index_entities(
                 raise ValueError(
                     f"No CST node found for function {node.name!r} at line {node.lineno}-{end_line_func} in {rel_path}"
                 )
-            function_id = database.add_function(
+            function_id = add_function(
+                database,
                 file_id,
                 node.name,
                 node.lineno,
@@ -376,7 +391,8 @@ def index_entities(
 
             try:
                 func_src = ast.get_source_segment(file_content, node)
-                database.add_code_content(
+                add_code_content(
+                    database,
                     file_id=file_id,
                     entity_type="function",
                     entity_name=node.name,
@@ -396,13 +412,13 @@ def index_entities(
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                database.add_import(file_id, alias.name, None, "import", node.lineno)
+                add_import(database, file_id, alias.name, None, "import", node.lineno)
                 imports_added += 1
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             for alias in node.names:
-                database.add_import(
-                    file_id, alias.name, module, "import_from", node.lineno
+                add_import(
+                    database, file_id, alias.name, module, "import_from", node.lineno
                 )
                 imports_added += 1
 

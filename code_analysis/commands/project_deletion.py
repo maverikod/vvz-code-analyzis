@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from ..core.database_driver_pkg.domain.files import get_project_files
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.trash_utils import (
     build_trash_folder_name,
@@ -154,7 +155,7 @@ class DeleteProjectCommand:
         root_path = project.root_path or "Unknown"
 
         # Get statistics before deletion
-        files = self.database.get_project_files(self.project_id, include_deleted=True)
+        files = get_project_files(self.database, self.project_id, include_deleted=True)
         file_count = len(files)
 
         # Count chunks

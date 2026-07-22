@@ -250,6 +250,12 @@ async def test_project_file_advisory_lock_batch_partial_failures(
         "code_analysis.commands.project_file_advisory_lock_batch_command.get_project",
         lambda driver, project_id: driver.get_project(project_id),
     )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_advisory_lock_batch_command.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
 
     result = await cmd.execute(
         items=[

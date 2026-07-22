@@ -53,6 +53,7 @@ from ..core.client_sessions import (
     touch_or_error,
 )
 from ..core.database_client.client import DatabaseClient
+from ..core.database_driver_pkg.domain.files import get_file_by_path
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
@@ -391,7 +392,7 @@ def _resolve_by_file_path(
             code="PATH_ERROR",
             details={"file_path": rel_posix},
         )
-    row = database.get_file_by_path(str(abs_path), pid, include_deleted=False)
+    row = get_file_by_path(database, str(abs_path), pid, include_deleted=False)
     if row and row.get("deleted"):
         return ErrorResult(
             message="File is marked deleted in the database",

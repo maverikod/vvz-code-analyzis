@@ -41,7 +41,12 @@ def test_analyze_file_skipped_when_db_mtime_matches_disk() -> None:
         db = _Db()
         with patch(
             "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
-        ) as sync_mock:
+        ) as sync_mock, patch(
+            "code_analysis.commands.update_indexes_analyzer.get_file_by_path",
+            lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+                path, project_id
+            ),
+        ):
             out = analyze_file(
                 database=db,
                 file_path=path,
@@ -88,7 +93,18 @@ def test_analyze_file_succeeds_when_db_last_modified_is_none() -> None:
         db = _Db()
         with patch(
             "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
-        ) as sync_mock:
+        ) as sync_mock, patch(
+            "code_analysis.commands.update_indexes_analyzer.get_file_by_path",
+            lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+                path, project_id
+            ),
+        ), patch(
+            "code_analysis.commands.update_indexes_analyzer.add_file",
+            lambda driver, *a, **k: driver.add_file(*a, **k),
+        ), patch(
+            "code_analysis.commands.update_indexes_analyzer.mark_file_needs_chunking",
+            lambda driver, *a, **k: driver.mark_file_needs_chunking(*a, **k),
+        ):
             sync_mock.return_value = {"success": True, "entities_updated": 0}
             out = analyze_file(
                 database=db,

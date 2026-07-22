@@ -11,6 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
+from code_analysis.core.database_driver_pkg.domain.files import (
+    create_file,
+    update_file,
+)
 from code_analysis.core.database_driver_pkg.exceptions import TransactionError
 
 from .base import (
@@ -255,7 +259,7 @@ def persist_plain_text_file_metadata(
                     last_modified=last_modified,
                     has_docstring=False,
                 )
-                database.update_file(file_obj)
+                update_file(database, file_obj)
             else:
                 file_obj = File(
                     project_id=project_id,
@@ -264,7 +268,7 @@ def persist_plain_text_file_metadata(
                     last_modified=last_modified,
                     has_docstring=False,
                 )
-                created = database.create_file(file_obj)
+                created = create_file(database, file_obj)
                 file_id = created.id
         except Exception as e:  # noqa: BLE001
             return {"success": False, "error": str(e), **base}
@@ -329,7 +333,7 @@ def persist_plain_text_file_metadata(
         has_docstring=False,
     )
     try:
-        created = database.create_file(file_obj)
+        created = create_file(database, file_obj)
     except Exception as e:  # noqa: BLE001
         return {"success": False, "error": str(e), **base}
     file_id = created.id

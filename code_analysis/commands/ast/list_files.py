@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import (
 )
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.database_driver_pkg.domain.files import get_project_file_rows
 from ..file_management.relative_path_list_pattern import (
     canonical_relative_path,
     effective_listing_pattern,
@@ -286,7 +287,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             id_by_key: Dict[str, str] = {}
             try:
                 db = self._open_database_from_config(auto_analyze=False)
-                rows = db.get_project_file_rows(project_id, include_deleted=False)
+                rows = get_project_file_rows(db, project_id, include_deleted=False)
                 id_by_key = _build_file_id_lookup(list(rows or []))
             except Exception:
                 id_by_key = {}

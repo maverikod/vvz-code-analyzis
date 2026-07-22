@@ -34,6 +34,22 @@ def _empty_results() -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def _patch_get_file_by_path_to_db_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the domain ``get_file_by_path`` call site back to ``db.get_file_by_path``.
+
+    ``run_single_file`` calls the driver-direct free function (stage-2 layer
+    collapse), which reads through ``driver.select``/``driver.execute`` -
+    primitives the bare ``MagicMock()`` db in this module does not model.
+    """
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_mcp.execute_single.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_single_file_runs_mypy_when_mtime_gate_would_skip_cached_row(
     tmp_path,

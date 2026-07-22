@@ -23,16 +23,42 @@ from code_analysis.commands.file_management.mark_file_deleted import (
 def _patch_get_project_to_fake_db_method(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Route the domain ``get_project`` call site back to ``_FakeDB.get_project``.
+    """Route domain free-function call sites back to ``_FakeDB`` bound methods.
 
-    ``MarkFileDeletedCommand`` calls the driver-direct free function (stage-2
-    layer collapse), which reads through ``driver.select``/``driver.execute`` -
-    primitives this lightweight test double does not implement. Every test in
-    this module supplies its own ``get_project`` shortcut instead, so redirect
-    the call site to it rather than reimplementing SQL primitives on the fake.
+    ``MarkFileDeletedCommand`` calls the driver-direct free functions (stage-2
+    layer collapse: ``get_project`` from the "projects" pass, ``get_file_by_path``
+    and ``add_file`` from the "files" pass), which read through
+    ``driver.select``/``driver.execute`` - primitives this lightweight test
+    double does not implement. Every test in this module supplies its own
+    ``get_project``/``get_file_by_path``/``add_file`` shortcuts instead, so
+    redirect the call sites to them rather than reimplementing SQL primitives
+    on the fake. ``get_file_by_path`` and ``add_file`` are patched both at the
+    ``mark_file_deleted`` import site (the command's own direct calls) and at
+    the ``domain.files`` import site (the internal ``get_project`` lookup and
+    the recursive ``get_file_by_path`` call ``add_file`` makes internally).
     """
     monkeypatch.setattr(
         "code_analysis.commands.file_management.mark_file_deleted.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.mark_file_deleted.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.mark_file_deleted.add_file",
+        lambda driver, path, lines, last_modified, has_docstring, project_id: driver.add_file(
+            path=path,
+            lines=lines,
+            last_modified=last_modified,
+            has_docstring=has_docstring,
+            project_id=project_id,
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.domain.files.get_project",
         lambda driver, project_id: driver.get_project(project_id),
     )
 

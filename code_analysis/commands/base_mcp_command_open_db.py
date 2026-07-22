@@ -90,7 +90,7 @@ def open_database_once_for_shared(
         driver_type = (dc or {}).get("type") if isinstance(dc, dict) else "postgres"
 
         logger.info(
-            "DB entrypoint: driver=%s -> in-process RPCHandlers + PostgreSQL (no Unix RPC)",
+            "DB entrypoint: driver=%s -> driver-direct PostgreSQL (no RPC layer)",
             driver_type,
         )
 

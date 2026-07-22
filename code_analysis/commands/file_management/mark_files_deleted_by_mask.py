@@ -9,17 +9,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from ...core.database.files.trash_standalone import mark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.files import get_project_file_rows
 from ...core.database_driver_pkg.domain.projects import get_project
 from .path_mask_match import filter_rows_by_mask, relative_path_posix
 
-if TYPE_CHECKING:
-    from ...core.database_client.client import DatabaseClient
-else:
-    DatabaseClient = Any
+# Driver-direct (stage 2): DatabaseClient class removed; "database" params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production).
+# Kept as an Any alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

@@ -6,12 +6,16 @@ email: vasilyvz@gmail.com
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from ..core.database_client.client import DatabaseClient
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.project_root_path import resolve_project_root_absolute_str
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so the existing type annotation does not need rewriting.
+DatabaseClient = Any
 
 
 def resolve_under_project_root(

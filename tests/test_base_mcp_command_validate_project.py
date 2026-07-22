@@ -20,9 +20,6 @@ import pytest
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.cst_save_tree_command import CSTSaveTreeCommand
-from code_analysis.core.database_client.client_api_projects import (
-    _ClientAPIProjectsMixin,
-)
 from code_analysis.core.database_client.exceptions import (
     ConnectionError as DBConnectionError,
 )
@@ -31,13 +28,14 @@ from code_analysis.core.exceptions import ValidationError
 _VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
 
 
-class _ScopedMissGlobalHitDb(_ClientAPIProjectsMixin):
+class _ScopedMissGlobalHitDb:
     """Real ``get_project`` (scoped-select-miss -> global-by-id-hit fallback).
 
     Simulates an orphan project row registered under a different/rotated
     ``server_instance_id`` (e.g. after a server reinstall). Exercises the
-    ACTUAL ``_ClientAPIProjectsMixin.get_project`` fallback logic - not a
-    mocked return value - so this is a regression test for planner todo
+    ACTUAL driver-direct ``domain.projects.get_project`` fallback logic (a
+    duck-typed driver double implementing only ``select``/``execute``, not a
+    mocked return value) - so this is a regression test for planner todo
     b235f6da: ``BaseMCPCommand._validate_project_id_exists`` must not reject
     a project_id that ``_resolve_project_root`` (unscoped) can see.
     """

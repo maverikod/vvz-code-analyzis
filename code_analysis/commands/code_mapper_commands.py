@@ -9,10 +9,14 @@ import logging
 from typing import Dict, List, Any, Optional
 
 from ..core.constants import DEFAULT_MAX_FILE_LINES
-from ..core.database_client.client import DatabaseClient
 from ..core.sql_portable import WHERE_FILES_ACTIVE
 
 logger = logging.getLogger(__name__)
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 
 class ListLongFilesCommand:

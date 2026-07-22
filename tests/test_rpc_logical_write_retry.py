@@ -1,10 +1,10 @@
-"""Unit tests for RPC full-transaction logical write retry.
+"""Unit tests for the PostgreSQL full-transaction logical write retry (driver-direct).
 
 The retry/transaction-orchestration loop lives on
-``PostgreSQLDriver.execute_logical_write_operation`` (stage-2 driver-prep); the RPC
-handler (``handle_execute_logical_write_operation``) now only validates params,
-delegates to ``self.driver.execute_logical_write_operation``, and translates the
-plain return value / raised exceptions back into ``SuccessResult`` / ``ErrorResult``.
+``PostgreSQLDriver.execute_logical_write_operation`` (stage-2 driver-prep, now
+called directly - the RPC handler that used to wrap it in a
+``SuccessResult``/``ErrorResult`` wire envelope was deleted along with the rest
+of the RPC/client stack, stage 2 layer collapse physical deletion).
 ``FakeLogicalWriteDriver`` below borrows the *real* driver method (instead of
 re-implementing the loop) so these tests exercise the actual retry logic, driven
 through the fake's own recorded primitives (``begin_transaction``, ``execute_batch``,
@@ -19,15 +19,12 @@ from unittest.mock import patch
 
 import pytest
 
-from code_analysis.core.database_client.protocol import (
-    ErrorCode,
-    ErrorResult,
-    SuccessResult,
-)
 from code_analysis.core.database_driver_pkg.drivers import postgres as postgres_mod
 from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
-from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
-from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+from code_analysis.core.database_driver_pkg.exceptions import (
+    DriverOperationError,
+    TransientDatabaseError,
+)
 from code_analysis.core.retry_policy import RetryPolicy
 
 SqlBatch = list[tuple[str, Optional[tuple[Any, ...]]]]
@@ -150,20 +147,15 @@ def _run_handler(
     driver: FakeLogicalWriteDriver,
     batches: list[SqlBatch],
     **extra: Any,
-) -> SuccessResult | ErrorResult:
-    """Return run handler."""
-    params: dict[str, Any] = {
-        "batches": [
-            [
-                {"sql": sql, "params": list(p) if p is not None else None}
-                for sql, p in batch
-            ]
-            for batch in batches
-        ]
-    }
-    params.update(extra)
-    h = RPCHandlers(driver)  # type: ignore[arg-type]
-    return h.handle_execute_logical_write_operation(params)
+) -> dict[str, Any]:
+    """Call the driver directly (stage 2: no RPC handler / wire envelope).
+
+    Returns the unwrapped success payload or raises (``TransientDatabaseError`` /
+    ``DriverOperationError``) - see ``PostgreSQLDriver.execute_logical_write_operation``.
+    """
+    program: dict[str, Any] = {"batches": batches}
+    program.update(extra)
+    return driver.execute_logical_write_operation(program)  # type: ignore[arg-type]
 
 
 @patch.object(postgres_mod.time, "sleep")
@@ -178,9 +170,7 @@ def test_retry_replays_whole_transaction_from_beginning(
     d.fail_transient_on_batch2_session1 = True
     b = _batches_two()
     r = _run_handler(d, b)
-    assert isinstance(r, SuccessResult)
-    assert r.data is not None
-    assert "batch_results" in r.data
+    assert "batch_results" in r
     assert len(d.calls) >= 2
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 2, "second attempt must open a new transaction"
@@ -220,16 +210,15 @@ def test_commit_outcome_unknown_is_not_retried() -> None:
     )
     d.commit_outcome_unknown_once = True
     b = _batches_one()
-    r = _run_handler(d, b)
-    assert isinstance(r, ErrorResult)
-    assert r.error_code == ErrorCode.DATABASE_ERROR
-    assert r.details is not None
-    assert r.details.get("commit_outcome_unknown") is True
-    assert r.details.get("retryable") is False
+    with pytest.raises(TransientDatabaseError) as raised:
+        _run_handler(d, b)
+    details = raised.value.to_details()
+    assert details.get("commit_outcome_unknown") is True
+    assert details.get("retryable") is False
     # Regression guard: the old handler always passed the CURRENT loop attempt
     # (attempt_1based), not whatever default TransientDatabaseError.attempts was;
     # this early-exit fires on the first attempt.
-    assert r.details.get("attempts") == 1
+    assert details.get("attempts") == 1
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1
     rolls = [c for c in d.calls if c[0] == "rollback_transaction"]
@@ -244,15 +233,14 @@ def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
     )
     d.fail_transient_on_batch1_every_attempt = True
     b = _batches_one()
-    r = _run_handler(d, b)
-    assert isinstance(r, ErrorResult)
-    assert r.error_code == ErrorCode.DATABASE_ERROR
-    assert r.details is not None
-    assert r.details.get("attempts") == 2
-    assert r.details.get("sqlstate") == "40P01"
-    assert r.details.get("error_kind") == "deadlock"
-    assert r.details.get("retryable") is True
-    assert r.details.get("commit_outcome_unknown") is False
+    with pytest.raises(TransientDatabaseError) as raised:
+        _run_handler(d, b)
+    details = raised.value.to_details()
+    assert details.get("attempts") == 2
+    assert details.get("sqlstate") == "40P01"
+    assert details.get("error_kind") == "deadlock"
+    assert details.get("retryable") is True
+    assert details.get("commit_outcome_unknown") is False
 
 
 @patch.object(postgres_mod.time, "sleep")
@@ -266,10 +254,13 @@ def test_operation_name_is_forwarded_to_error_details_and_logs(
     )
     d.fail_transient_on_batch1_every_attempt = True
     b = _batches_one()
-    r = _run_handler(d, b, operation_name="index_upsert")
-    assert isinstance(r, ErrorResult)
-    assert r.details is not None
-    assert r.details.get("operation_name") == "index_upsert"
+    with pytest.raises(TransientDatabaseError) as raised:
+        _run_handler(d, b, operation_name="index_upsert")
+    # operation_name is a to_details() call-site argument (a caller concern, not
+    # stored on the exception) - callers such as the deleted RPC handler forwarded
+    # it explicitly; verify that translation still round-trips correctly.
+    details = raised.value.to_details(operation_name="index_upsert")
+    assert details.get("operation_name") == "index_upsert"
     joined = " ".join(rec.message for rec in caplog.records)
     assert "[DB_RETRY]" in joined
     assert "operation=execute_logical_write_operation" in joined
@@ -292,9 +283,7 @@ def test_project_id_and_lock_scope_are_metadata_only_in_this_step() -> None:
         lock_scope="project_read",
         operation_name="m",
     )
-    assert isinstance(r, SuccessResult)
-    assert r.data is not None
-    meta = r.data.get("metadata")
+    meta = r.get("metadata")
     assert meta == {
         "operation_name": "m",
         "project_id": "p1",
@@ -313,16 +302,17 @@ def test_rollback_failure_stops_retry(_sleep: Any) -> None:
     d.fail_transient_on_batch1_every_attempt = True
     d.rollback_raises_after_transient = True
     b = _batches_one()
-    r = _run_handler(d, b)
-    assert isinstance(r, ErrorResult)
-    assert "rollback failed" in r.description
-    assert r.details is not None
-    assert r.details.get("error_kind") == "rollback_failed"
-    assert r.details.get("retryable") is False
-    # Regression guard: the old handler's details dict always carried "attempts"
-    # (the current loop's attempt_1based) and the BARE rollback exception's own
-    # text in "message" (not the wrapped "rollback failed: ..." description).
-    assert r.details.get("attempts") == 1
-    assert r.details.get("message") == "rollback failed"
+    with pytest.raises(DriverOperationError) as raised:
+        _run_handler(d, b)
+    e = raised.value
+    assert "rollback failed" in str(e)
+    # Regression guard: the driver attaches the current loop's attempt_1based
+    # dynamically (DriverOperationError has no such field), and chains from the
+    # BARE rollback exception (__cause__) rather than embedding its text in the
+    # wrapped message - callers such as the deleted RPC handler read both back
+    # exactly this way (see PostgreSQLDriver.execute_logical_write_operation).
+    assert getattr(e, "attempts", None) == 1
+    assert e.__cause__ is not None
+    assert str(e.__cause__) == "rollback failed"
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1, "no further attempt after failed rollback"

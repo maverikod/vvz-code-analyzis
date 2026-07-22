@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .database_client.client import DatabaseClient
 from .faiss_manager_rebuild import rebuild_from_database_impl
 from .faiss_manager_sync import check_index_sync_impl
 
@@ -31,6 +30,11 @@ except ImportError:
     faiss = None
 
 logger = logging.getLogger(__name__)
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` params below
+# are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 
 class FaissIndexManager:

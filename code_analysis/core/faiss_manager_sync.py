@@ -7,7 +7,10 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, Set, Tuple
 
-from .database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so the existing type annotation does not need rewriting.
+DatabaseClient = Any
 
 
 def check_index_sync_impl(

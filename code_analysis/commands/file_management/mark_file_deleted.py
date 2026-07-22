@@ -7,16 +7,16 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING, cast
+from typing import Any, Dict, Optional, cast
 
 from ...core.database.files.trash_standalone import mark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.files import add_file, get_file_by_path
 from ...core.database_driver_pkg.domain.projects import get_project
 
-if TYPE_CHECKING:
-    from ...core.database_client.client import DatabaseClient
-else:
-    DatabaseClient = Any
+# Driver-direct (stage 2): DatabaseClient class removed; "database" params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production).
+# Kept as an Any alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

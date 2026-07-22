@@ -6,11 +6,12 @@ categories (rpc_connect_refused, sqlite_db_locked), retry budget, and delay
 curve. Used by save path and RPC call sites to retry only on transient errors.
 
 Preferred input for *new* retry decisions (especially PostgreSQL) is the structured
-``details`` dict on :class:`ErrorResult` from the database driver RPC
-(see ``rpc_handlers_base`` and related), mapping fields such as
-``retryable`` and ``commit_outcome_unknown``. Do not parse SQLSTATE or driver
-phrases in client code. String helpers such as :func:`is_sqlite_db_locked` remain
-only as a backward-compatibility path for older SQLite text-only errors.
+detail dict a driver-raised exception exposes via ``.to_details()``
+(:class:`~code_analysis.core.database_driver_pkg.exceptions.TransientDatabaseError`;
+formerly forwarded through the now-deleted RPC ``ErrorResult.details``), mapping
+fields such as ``retryable`` and ``commit_outcome_unknown``. Do not parse SQLSTATE
+or driver phrases in client code. String helpers such as :func:`is_sqlite_db_locked`
+remain only as a backward-compatibility path for older SQLite text-only errors.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -79,7 +80,6 @@ def is_rpc_connect_refused(exc: BaseException) -> bool:
 
     Matches: ConnectionRefusedError, or ConnectionError (from this package)
     with cause/errno indicating connection refused (e.g. Errno 111).
-    Detected at RPCClient._create_connection / _send_request.
 
     Args:
         exc: Exception to classify.

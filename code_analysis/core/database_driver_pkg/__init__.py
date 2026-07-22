@@ -1,8 +1,12 @@
 """
-Database driver package for RPC-based database operations.
+Database driver package (stage 2: driver-direct architecture).
 
-RPC server, request queue, drivers, serialization. Contract (protocol, request/result
-types) lives in code_analysis.core.database_client.protocol.
+Holds the PostgreSQL driver, its domain free functions, and driver-level
+exceptions. The RPC transport (server, request queue, wire serialization,
+handler mixins) was deleted once every caller was repointed to hand commands
+a connected driver directly instead of going through it -- there was never a
+real out-of-process boundary for PostgreSQL (see
+:mod:`code_analysis.core.database_client.factory`).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,30 +19,15 @@ from .exceptions import (
     DriverError,
     DriverNotFoundError,
     DriverOperationError,
-    RequestQueueError,
-    RequestQueueFullError,
-    RequestTimeoutError,
-    RPCServerError,
     TransactionError,
 )
-from .request_queue import RequestPriority, RequestQueue
-from .rpc_server import RPCServer
-from .runner import run_database_driver
 
 __all__ = [
     "BaseDatabaseDriver",
     "create_driver",
-    "RPCServer",
-    "RequestQueue",
-    "RequestPriority",
-    "run_database_driver",
     "DriverError",
     "DriverConnectionError",
     "DriverOperationError",
     "DriverNotFoundError",
-    "RequestQueueError",
-    "RequestQueueFullError",
-    "RequestTimeoutError",
-    "RPCServerError",
     "TransactionError",
 ]

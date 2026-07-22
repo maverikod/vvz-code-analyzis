@@ -10,7 +10,7 @@ import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 
 from ..core.database_driver_pkg.domain.files import get_project_files
 from ..core.database_driver_pkg.domain.projects import get_project
@@ -24,10 +24,10 @@ from .clear_project_data_impl import (
     mark_project_deleted_impl,
 )
 
-if TYPE_CHECKING:
-    from ..core.database_client.client import DatabaseClient
-else:
-    DatabaseClient = Any
+# Driver-direct (stage 2): DatabaseClient class removed; "database" params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production).
+# Kept as an Any alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

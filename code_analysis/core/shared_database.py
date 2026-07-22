@@ -18,7 +18,10 @@ import os
 import threading
 from typing import Any, Optional, cast
 
-from .database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; the shared object held
+# here is a duck-typed driver-shaped instance (PostgreSQLDriver in production).
+# Kept as an ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 _lock = threading.Lock()
 _client: Optional[DatabaseClient] = None

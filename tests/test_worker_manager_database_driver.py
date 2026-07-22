@@ -54,14 +54,14 @@ class TestWorkerManagerDatabaseDriver:
         assert status["driver_type"] is None
         assert "not running" in status["message"].lower()
 
-    def test_database_driver_socket_path_without_db_path(
-        self, worker_manager, tmp_path
-    ):
-        """Test socket path generation when db_path is not in config."""
-        logs_dir = tmp_path / "logs"
-        logs_dir.mkdir(parents=True, exist_ok=True)
+    def test_start_database_driver_no_longer_supported(self, worker_manager, tmp_path):
+        """start_database_driver is a stub (stage 2: subprocess/RPC driver deleted).
 
-        # Driver config without path
+        PostgreSQL always runs in-process (see
+        code_analysis.main_workers.startup_database_driver); this facade method
+        now returns an explicit failure instead of spawning the deleted
+        subprocess/RPC driver architecture.
+        """
         driver_config = {
             "type": "postgres",
             "config": {
@@ -74,12 +74,9 @@ class TestWorkerManagerDatabaseDriver:
             driver_config=driver_config,
             log_path=str(tmp_path / "driver.log"),
         )
-        assert result.success is True
+        assert result.success is False
+        assert "no longer supported" in result.message.lower()
 
-        # Get status to check generated socket path
+        # No worker was registered; status still reports not-running.
         status = worker_manager.get_database_driver_status()
-        assert status["socket_path"] is not None
-        assert "postgres_driver.sock" in status["socket_path"]
-
-        # Cleanup
-        worker_manager.stop_database_driver(timeout=2.0)
+        assert status["running"] is False

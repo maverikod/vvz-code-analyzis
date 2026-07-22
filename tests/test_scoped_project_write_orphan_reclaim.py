@@ -17,9 +17,9 @@ the row to the current server_instance_id (same semantics as
 ``insert_project_row``'s orphan reclaim) and retry the write once.
 
 Covers both call sites the fix touched:
-- ``code_analysis.core.database_client.client_api_projects`` (the RPC/production
-  ``DatabaseClient`` layer: ``sync_project_metadata_from_projectid``). It
-  originally also covered ``update_project``, but that method was deleted as
+- ``code_analysis.core.database_driver_pkg.domain.projects`` (driver-direct
+  free function, stage 2 layer collapse: ``sync_project_metadata_from_projectid``).
+  It originally also covered ``update_project``, but that method was deleted as
   dead code (stage 2 dead-code cleanup, sub-step A1; zero production callers)
   along with its dedicated tests here.
 - ``code_analysis.core.database.projects`` (the ``CodeDatabase`` driver leaf
@@ -36,8 +36,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
 from code_analysis.core.database import projects as leaf_projects_mod
-from code_analysis.core.database_client.client_api_projects import (
-    _ClientAPIProjectsMixin,
+from code_analysis.core.database_driver_pkg.domain.projects import (
+    sync_project_metadata_from_projectid,
 )
 
 _SID = "server-current"
@@ -45,12 +45,12 @@ _OTHER_SID = "server-orphaned-from"
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# client_api_projects.py (RPC / production DatabaseClient layer)
+# database_driver_pkg/domain/projects.py (driver-direct free function, stage 2)
 # ─────────────────────────────────────────────────────────────────────────
 
 
-class _FakeProjectsTable(_ClientAPIProjectsMixin):
-    """In-memory ``projects`` table behind the real ``_ClientAPIProjectsMixin`` code."""
+class _FakeProjectsTable:
+    """In-memory ``projects`` table behind the real driver-direct free function."""
 
     def __init__(self, rows: Dict[str, Dict[str, Any]]) -> None:
         """Seed the fake table; ``rows`` is mutated in place by writes."""
@@ -134,11 +134,11 @@ def _enrich_identity(row: Dict[str, Any], _db: Any) -> Dict[str, Any]:
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 @patch(
-    "code_analysis.core.database_client.client_api_projects.enrich_project_dict_resolve_root_path",
+    "code_analysis.core.database_driver_pkg.domain.projects.enrich_project_dict_resolve_root_path",
     side_effect=_enrich_identity,
 )
 def test_sync_project_metadata_reclaims_orphan_row(
@@ -178,7 +178,7 @@ def test_sync_project_metadata_reclaims_orphan_row(
         info.description = "trashed"
         load_info_mock.return_value = info
 
-        result = client.sync_project_metadata_from_projectid(str(project_dir))
+        result = sync_project_metadata_from_projectid(client, str(project_dir))
 
     assert result == pid
     # Reclaimed to the current server instance and the sync write actually landed.
@@ -192,7 +192,7 @@ def test_sync_project_metadata_reclaims_orphan_row(
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 def test_sync_project_metadata_row_absent_globally_unchanged(
@@ -215,14 +215,14 @@ def test_sync_project_metadata_row_absent_globally_unchanged(
         info.description = None
         load_info_mock.return_value = info
 
-        result = client.sync_project_metadata_from_projectid(str(project_dir))
+        result = sync_project_metadata_from_projectid(client, str(project_dir))
 
     assert result == pid
     assert client.update_calls == []  # no reclaim attempted; row never existed
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 def test_sync_project_metadata_normal_write_unaffected(
@@ -257,7 +257,7 @@ def test_sync_project_metadata_normal_write_unaffected(
         info.description = "ok"
         load_info_mock.return_value = info
 
-        result = client.sync_project_metadata_from_projectid(str(project_dir))
+        result = sync_project_metadata_from_projectid(client, str(project_dir))
 
     assert result == pid
     assert rows[pid]["deleted"] is True

@@ -7,12 +7,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from code_analysis.main_server_presentation import resolve_server_presentation
 
-if TYPE_CHECKING:
-    from code_analysis.core.database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so the existing type annotation does not need rewriting.
+DatabaseClient = Any
 
 
 def _project_relative_path(file_row: Mapping[str, Any]) -> str:

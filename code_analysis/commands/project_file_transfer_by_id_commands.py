@@ -53,7 +53,6 @@ from ..core.client_sessions import (
     touch_or_error,
 )
 from ..core.database.file_purge_cascade import purge_file_ids_cascade_via_client
-from ..core.database_client.client import DatabaseClient
 from ..core.database_driver_pkg.domain.files import get_file_by_path
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
@@ -74,6 +73,11 @@ from ..core.transfer_lock_registry import (
 
 logger = logging.getLogger(__name__)
 install_transfer_lock_hooks()
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` params below
+# are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 
 def _validate_client_session_id(

@@ -23,10 +23,11 @@ The fix applies the same two remedies used elsewhere in this function:
   ``_reclaim_orphan_and_retry_scoped_write`` helpers - reused, not duplicated.
 
 Covers both layers per the project's dual-layer driver-chain convention:
-- ``code_analysis.core.database_client.client_api_projects`` (the RPC/production
-  ``DatabaseClient`` layer - the layer the live file-watcher relocate call path
-  actually invokes, see ``core/file_watcher_pkg/multi_project_worker_init.py``
-  via ``create_worker_database_client``; primary test target).
+- ``code_analysis.core.database_driver_pkg.domain.projects`` (driver-direct
+  free function, stage 2 layer collapse - the layer the live file-watcher
+  relocate call path actually invokes, see
+  ``core/file_watcher_pkg/multi_project_worker_init.py`` via
+  ``create_worker_database_client``; primary test target).
 - ``code_analysis.core.database.projects`` (the ``CodeDatabase`` driver leaf
   shared by sqlite+postgres per the project's driver-chain invariant).
 
@@ -41,8 +42,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
 from code_analysis.core.database import projects as leaf_projects_mod
-from code_analysis.core.database_client.client_api_projects import (
-    _ClientAPIProjectsMixin,
+from code_analysis.core.database_driver_pkg.domain.projects import (
+    relocate_project_root_after_disk_move,
 )
 
 _SID = "server-current"
@@ -55,15 +56,15 @@ def _norm_su(sql: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# client_api_projects.py (RPC / production DatabaseClient layer)
+# database_driver_pkg/domain/projects.py (driver-direct free function, stage 2)
 # ─────────────────────────────────────────────────────────────────────────
 
 
-class _FakeClientRelocateTable(_ClientAPIProjectsMixin):
-    """In-memory ``projects`` table behind the real ``_ClientAPIProjectsMixin`` code.
+class _FakeClientRelocateTable:
+    """In-memory ``projects`` table behind the real driver-direct free function.
 
     Implements only ``.execute()`` / ``.update()`` - the real public surface of
-    ``DatabaseClient`` (it has no ``_fetchall``/``_execute`` privates).
+    a driver-shaped object (no ``_fetchall``/``_execute`` privates).
     """
 
     def __init__(self, rows: Dict[str, Dict[str, Any]]) -> None:
@@ -147,7 +148,7 @@ class _FakeClientRelocateTable(_ClientAPIProjectsMixin):
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 def test_client_relocate_reclaims_orphan_row(_sid_mock: Any, tmp_path: Path) -> None:
@@ -168,8 +169,8 @@ def test_client_relocate_reclaims_orphan_row(_sid_mock: Any, tmp_path: Path) -> 
     }
     client = _FakeClientRelocateTable(rows)
 
-    result = client.relocate_project_root_after_disk_move(
-        pid, str(old_root), str(new_root)
+    result = relocate_project_root_after_disk_move(
+        client, pid, str(old_root), str(new_root)
     )
 
     assert result is True
@@ -183,7 +184,7 @@ def test_client_relocate_reclaims_orphan_row(_sid_mock: Any, tmp_path: Path) -> 
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 def test_client_relocate_normal_write_unaffected(
@@ -206,8 +207,8 @@ def test_client_relocate_normal_write_unaffected(
     }
     client = _FakeClientRelocateTable(rows)
 
-    result = client.relocate_project_root_after_disk_move(
-        pid, str(old_root), str(new_root)
+    result = relocate_project_root_after_disk_move(
+        client, pid, str(old_root), str(new_root)
     )
 
     assert result is True
@@ -216,7 +217,7 @@ def test_client_relocate_normal_write_unaffected(
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value=_SID,
 )
 def test_client_relocate_row_absent_globally_returns_false(
@@ -230,8 +231,8 @@ def test_client_relocate_row_absent_globally_returns_false(
     new_root.mkdir(parents=True)
     client = _FakeClientRelocateTable({})
 
-    result = client.relocate_project_root_after_disk_move(
-        pid, str(old_root), str(new_root)
+    result = relocate_project_root_after_disk_move(
+        client, pid, str(old_root), str(new_root)
     )
 
     assert result is False

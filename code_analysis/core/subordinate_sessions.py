@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from code_analysis.core.client_sessions import (
     SessionNotFoundError,
@@ -20,8 +20,10 @@ from code_analysis.core.client_sessions import (
 )
 from code_analysis.core.uuid_validation import is_valid_uuid4
 
-if TYPE_CHECKING:
-    from code_analysis.core.database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` params below
+# are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

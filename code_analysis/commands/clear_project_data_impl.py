@@ -13,15 +13,15 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List
 
 from ..core.database.logical_write_program import LogicalWriteProgramV1, SqlParamPair
 from ..core.sql_portable import database_has_sqlite_code_content_fts
 
-if TYPE_CHECKING:
-    from ..core.database_client.client import DatabaseClient
-else:
-    DatabaseClient = Any
+# Driver-direct (stage 2): DatabaseClient class removed; "database" params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production).
+# Kept as an Any alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

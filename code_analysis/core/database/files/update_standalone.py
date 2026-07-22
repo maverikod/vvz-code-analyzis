@@ -21,8 +21,9 @@ class IndexFileError(Exception):
 
     Carries ``error_code`` (``"NOT_FOUND"`` | ``"DATABASE_ERROR"`` | ``"VALIDATION_ERROR"``)
     so callers that need to reproduce the previous RPC ``ErrorResult`` mapping
-    (:mod:`~code_analysis.core.database_driver_pkg.rpc_handlers_index_file`, now a thin
-    delegate to this function) can do so exactly.
+    (formerly ``database_driver_pkg.rpc_handlers_index_file``, a thin delegate to
+    this function, deleted along with the rest of the RPC/client stack -- stage 2
+    layer collapse) can do so exactly.
     """
 
     def __init__(self, message: str, error_code: str = "DATABASE_ERROR") -> None:
@@ -142,9 +143,10 @@ def index_file_via_driver(
     Full file index (AST, CST, entities, code_content) directly on ``driver``.
 
     Stage-2 layer collapse: relocated verbatim from the RPC ``index_file`` handler
-    (:mod:`~code_analysis.core.database_driver_pkg.rpc_handlers_index_file`, which is
-    now a thin delegate to this function) so the whole ``index_file`` operation is one
-    driver-package function instead of split across a handler file and this module.
+    (formerly ``database_driver_pkg.rpc_handlers_index_file``, a thin delegate to
+    this function, deleted along with the rest of the RPC/client stack) so the
+    whole ``index_file`` operation is one driver-package function instead of split
+    across a handler file and this module.
 
     Resolves the project root via the canonical 3-component scheme
     (watch_dir_paths.absolute_path / projects.name / files.relative_path), calls

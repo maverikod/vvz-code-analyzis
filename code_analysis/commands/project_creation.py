@@ -14,18 +14,18 @@ import sys
 import uuid
 import zipfile as _zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..core.database_client.client import DatabaseClient
-else:
-    DatabaseClient = Any
+from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis.core.database.watch_dirs_query import get_watch_dir_absolute_path
 from code_analysis.core.database_driver_pkg.domain.projects import insert_project_row
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
 
 logger = logging.getLogger(__name__)
+
+# Driver-direct (stage 2): DatabaseClient class removed; "database" params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production).
+# Kept as an Any alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 
 class CreateProjectCommand:

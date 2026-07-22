@@ -17,7 +17,6 @@ from ..core.database.watch_dirs_query import (
     resolve_watch_dir_id_for_project_root,
     watch_dir_exists,
 )
-from ..core.database_client.client import DatabaseClient
 from ..core.database_driver_pkg.domain.projects import get_project, insert_project_row
 from ..core.constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 from ..core.exceptions import (
@@ -35,6 +34,11 @@ from ..core.shared_database import get_shared_database
 from .base_mcp_command_resolve_path import resolve_file_path_from_project
 
 logger = logging.getLogger(__name__)
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database``/``db`` params
+# below are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept
+# as an ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 
 def _get_socket_path_from_db_path(db_path: Path) -> str:

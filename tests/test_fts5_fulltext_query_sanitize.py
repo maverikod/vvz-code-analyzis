@@ -5,7 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from code_analysis.core.database_client.client_api_search import (
+from code_analysis.core.database_driver_pkg.domain.search import (
     plain_query_to_fts5_match,
 )
 

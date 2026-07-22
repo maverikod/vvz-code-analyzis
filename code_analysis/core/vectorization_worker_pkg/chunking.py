@@ -11,7 +11,7 @@ import ast
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import Any, Dict, List
 
 from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from code_analysis.core.file_identity import absolute_path_for_indexed_file
@@ -19,8 +19,10 @@ from code_analysis.core.resolve_indexed_file_path import resolve_indexed_file_pa
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
 from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
-if TYPE_CHECKING:
-    from ..database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so the existing type annotation does not need rewriting.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

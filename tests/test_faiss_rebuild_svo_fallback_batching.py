@@ -25,13 +25,12 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pytest
 
 from code_analysis.core import faiss_manager_rebuild
-from code_analysis.core.database_client.client import DatabaseClient
 
 
 def _embedding_for_text(text: str) -> List[float]:
@@ -156,7 +155,7 @@ async def test_svo_fallback_uses_single_batched_call_for_multiple_chunks() -> No
     svo = _FakeSvoManager()
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), svo, project_id=None
+        manager, database, svo, project_id=None
     )
 
     assert loaded == 5
@@ -189,7 +188,7 @@ async def test_db_resolved_chunks_skip_svo_entirely() -> None:
     svo = _FakeSvoManager()
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), svo, project_id=None
+        manager, database, svo, project_id=None
     )
 
     assert loaded == 3
@@ -214,7 +213,7 @@ async def test_mixed_db_and_svo_fallback_batches_only_the_fallback_subset() -> N
     svo = _FakeSvoManager()
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), svo, project_id=None
+        manager, database, svo, project_id=None
     )
 
     assert loaded == 4
@@ -246,7 +245,7 @@ async def test_svo_batch_failure_reports_missing_without_raising() -> None:
     database = _FakeDatabase(chunks)
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), _FailingSvo(), project_id=None
+        manager, database, _FailingSvo(), project_id=None
     )
 
     assert loaded == 0
@@ -285,7 +284,7 @@ async def test_svo_partial_none_embedding_counts_as_missing() -> None:
     database = _FakeDatabase(chunks)
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), _PartialNoneSvo(), project_id=None
+        manager, database, _PartialNoneSvo(), project_id=None
     )
 
     assert loaded == 1
@@ -331,7 +330,7 @@ async def test_svo_fewer_results_than_requested_truncates_safely() -> None:
     database = _FakeDatabase(chunks)
 
     loaded = await faiss_manager_rebuild.rebuild_from_database_impl(
-        manager, cast(DatabaseClient, database), _TruncatingSvo(), project_id=None
+        manager, database, _TruncatingSvo(), project_id=None
     )
 
     assert loaded == 2

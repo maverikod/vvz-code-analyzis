@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from .database_driver_pkg.domain.files import get_file_by_id
 from .database_driver_pkg.domain.projects import get_project
 
-if TYPE_CHECKING:
-    from code_analysis.core.database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` params below
+# are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

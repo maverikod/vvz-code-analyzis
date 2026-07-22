@@ -182,14 +182,12 @@ class _FakeBatchClient:
 
 
 def _save_batch(client: Any, items: Any) -> None:
-    """Invoke the real mixin method against a fake client."""
-    from code_analysis.core.database_client.client_api_comprehensive_analysis import (
-        _ClientAPIComprehensiveAnalysisMixin,
+    """Invoke the real driver-direct free function against a fake driver."""
+    from code_analysis.core.database_driver_pkg.domain.comprehensive_analysis import (
+        save_comprehensive_analysis_results_batch,
     )
 
-    _ClientAPIComprehensiveAnalysisMixin.save_comprehensive_analysis_results_batch(
-        client, items
-    )
+    save_comprehensive_analysis_results_batch(client, items)
 
 
 def test_caller_rolls_back_on_failure(fake_psycopg: List[_FakeConn]) -> None:

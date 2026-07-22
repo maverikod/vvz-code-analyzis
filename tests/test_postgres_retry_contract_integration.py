@@ -15,11 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_analysis.core.database_client.protocol import (
-    ErrorCode,
-    ErrorResult,
-    SuccessResult,
-)
 from code_analysis.core.database_driver_pkg.drivers import postgres as postgres_mod
 from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
@@ -27,7 +22,6 @@ from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
     classify_postgres_error,
 )
 from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
-from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 from code_analysis.core.retry_policy import RetryPolicy
 
 _PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
@@ -157,20 +151,17 @@ def _run_logical_write(
     driver: FakeLogicalWriteDriver,
     batches: list[SqlBatch],
     **extra: Any,
-) -> SuccessResult | ErrorResult:
-    """Return run logical write."""
-    params: dict[str, Any] = {
-        "batches": [
-            [
-                {"sql": sql, "params": list(p) if p is not None else None}
-                for sql, p in batch
-            ]
-            for batch in batches
-        ]
-    }
-    params.update(extra)
-    h = RPCHandlers(driver)  # type: ignore[arg-type]
-    return h.handle_execute_logical_write_operation(params)
+) -> dict[str, Any]:
+    """Call the driver directly (stage 2: no RPC handler / wire envelope).
+
+    ``execute_logical_write_operation`` takes ``LogicalWriteProgramV1`` in its
+    native shape (batches of ``(sql, params)`` tuples); returns the unwrapped
+    success payload or raises (``TransientDatabaseError`` /
+    ``DriverOperationError``) - see ``PostgreSQLDriver.execute_logical_write_operation``.
+    """
+    program: dict[str, Any] = {"batches": batches}
+    program.update(extra)
+    return driver.execute_logical_write_operation(program)  # type: ignore[arg-type]
 
 
 def _pg_driver() -> PostgreSQLDriver:
@@ -228,9 +219,9 @@ def test_postgres_rpc_error_result_has_structured_details(
         policy=RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0)
     )
     d.fail_transient_on_batch1_every_attempt = True
-    r = _run_logical_write(d, _batches_one())
-    assert isinstance(r, ErrorResult)
-    assert r.details is not None
+    with pytest.raises(TransientDatabaseError) as raised:
+        _run_logical_write(d, _batches_one())
+    details = raised.value.to_details()
     for key in (
         "sqlstate",
         "error_kind",
@@ -238,7 +229,7 @@ def test_postgres_rpc_error_result_has_structured_details(
         "attempts",
         "commit_outcome_unknown",
     ):
-        assert key in r.details, f"missing {key} in ErrorResult.details: {r.details!r}"
+        assert key in details, f"missing {key} in TransientDatabaseError.to_details(): {details!r}"
 
 
 @patch.object(postgres_mod.time, "sleep")
@@ -253,7 +244,7 @@ def test_postgres_retry_log_has_required_fields(
     d.fail_transient_on_batch2_session1 = True
     b = _batches_two()
     r = _run_logical_write(d, b)
-    assert isinstance(r, SuccessResult)
+    assert "batch_results" in r and "transaction_id" in r
     found = [r for r in caplog.records if "[DB_RETRY]" in r.getMessage()]
     assert found, "expected [DB_RETRY] log line on first transient before retry"
     text = found[0].getMessage()
@@ -324,12 +315,11 @@ def test_postgres_commit_outcome_unknown_not_retried(
     )
     d.commit_outcome_unknown_once = True
     b = _batches_one()
-    r = _run_logical_write(d, b)
-    assert isinstance(r, ErrorResult)
-    assert r.error_code == ErrorCode.DATABASE_ERROR
-    assert r.details is not None
-    assert r.details.get("commit_outcome_unknown") is True
-    assert r.details.get("retryable") is False
-    assert r.details.get("attempts") == 1
+    with pytest.raises(TransientDatabaseError) as raised:
+        _run_logical_write(d, b)
+    details = raised.value.to_details()
+    assert details.get("commit_outcome_unknown") is True
+    assert details.get("retryable") is False
+    assert details.get("attempts") == 1
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1

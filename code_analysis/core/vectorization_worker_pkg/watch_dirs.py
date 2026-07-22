@@ -11,15 +11,17 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import Any, List
 
 from code_analysis.core.database.file_edit_lock import editing_lock_holder_is_alive
 
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
-if TYPE_CHECKING:
-    from ..database_client.client import DatabaseClient
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` below is a
+# duck-typed driver-shaped object (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so the existing type annotation does not need rewriting.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

@@ -11,12 +11,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .database_client.client import DatabaseClient
 from .embedding_input import EmbeddingInput
 from code_analysis.core.docs_markdown_vector_gate import (
     DOCS_MARKDOWN_SOURCE_TYPE,
     sql_and_exclude_docs_markdown_chunks,
 )
+
+# Driver-direct (stage 2): DatabaseClient class removed; ``database`` params below
+# are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept as an
+# ``Any`` alias so existing type annotations do not need per-site rewrites.
+DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

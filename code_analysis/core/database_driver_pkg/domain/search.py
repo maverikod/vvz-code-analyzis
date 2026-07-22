@@ -1,14 +1,13 @@
 """
 Full-text search, ported driver-direct (stage 2 layer collapse, Part 1).
 
-Free-function port of ``code_analysis.core.database_client.client_api_search``'s
-``_ClientAPISearchMixin.full_text_search``/``_full_text_search_postgresql``. Takes
-``driver: Any`` (duck-typed against ``execute`` - see
-scratchpad/stage2-parity-spike.md) instead of ``self``.
+Free-function port of the former ``code_analysis.core.database_client.client_api_search``
+module's ``_ClientAPISearchMixin.full_text_search``/``_full_text_search_postgresql``.
+Takes ``driver: Any`` (duck-typed against ``execute``) instead of ``self``.
 
-``plain_query_to_fts5_match`` was already a module-level free function in
-``client_api_search.py`` (not a mixin method) - re-exported here unchanged so
-callers of this module do not also need to import from the client package.
+``plain_query_to_fts5_match`` was already a module-level free function in that
+now-deleted module (not a mixin method) - moved here verbatim (stage 2 client/RPC
+stack physical deletion) since it has no dependency on the deleted transport.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -16,16 +15,51 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
-
-from code_analysis.core.database_client.client_api_search import (
-    plain_query_to_fts5_match,
-)
 
 __all__ = ["plain_query_to_fts5_match", "full_text_search"]
 
 # PostgreSQL rejects inputs longer than ~1 MiB for to_tsvector(); UTF-8 can be 4 bytes/char.
 _PG_TSVECTOR_INPUT_MAX_CHARS = 200_000
+
+# FTS5 MATCH "column:term" only allows these code_content_fts column names; any other
+# "word:" is treated as a column filter and can raise "no such column: <name>".
+_ALLOWED_FTS5_MATCH_COLUMNS = frozenset(
+    {"entity_type", "entity_name", "content", "docstring"}
+)
+
+_FTS5_BOGUS_COLUMN_COLON = re.compile(r"(^|\s)([\w.-]+):(\S+)")
+
+
+def plain_query_to_fts5_match(query: str) -> Optional[str]:
+    """Turn free-text user input into a safe FTS5 MATCH string for code_content_fts.
+
+    - Strips; empty / whitespace-only -> None.
+    - Replaces ``/`` with space (path-like queries).
+    - Replaces ``unknown:token`` patterns where ``unknown`` is not a real FTS column
+      with ``unknown token`` so FTS5 does not interpret a bogus column name.
+    """
+    s = (query or "").strip()
+    if not s:
+        return None
+    s = s.replace("/", " ")
+
+    def _colon_repl(m: "re.Match[str]") -> str:
+        """Return colon repl."""
+        prefix, col, rest = m.group(1), m.group(2), m.group(3)
+        if col.lower() in _ALLOWED_FTS5_MATCH_COLUMNS:
+            return m.group(0)
+        return f"{prefix}{col} {rest}"
+
+    s = _FTS5_BOGUS_COLUMN_COLON.sub(_colon_repl, s)
+    # Hyphens between word chars: FTS5 can mis-parse tokens (e.g. "mcp-proxy-adapter"
+    # may raise "no such column: proxy"). Plain-text search: split hyphenated words.
+    s = re.sub(r"(?<=[\w])-(?=[\w])", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return None
+    return s
 
 
 def _full_text_search_postgresql(

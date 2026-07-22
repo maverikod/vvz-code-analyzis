@@ -1,4 +1,4 @@
-"""insert_project_row: global id lookup and orphan reclaim via DatabaseClient RPC."""
+"""insert_project_row: global id lookup and orphan reclaim (driver-direct, stage 2)."""
 
 from __future__ import annotations
 
@@ -7,14 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_analysis.core.database_client.client_api_projects import (
-    _ClientAPIProjectsMixin,
+from code_analysis.core.database_driver_pkg.domain.projects import (
     _project_row_by_id_global,
+    get_project,
+    insert_project_row,
 )
 from code_analysis.core.database_client.objects.project import Project
 
 
-class _ProjectsClient(_ClientAPIProjectsMixin):
+class _ProjectsClient:
     """Represent ProjectsClient."""
 
     def __init__(self) -> None:
@@ -78,11 +79,11 @@ def test_project_row_by_id_global_parses_execute_result() -> None:
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value="server-b",
 )
 @patch(
-    "code_analysis.core.database_client.client_api_projects.sql_julian_timestamp_now_expr",
+    "code_analysis.core.database_driver_pkg.domain.projects.sql_julian_timestamp_now_expr",
     return_value="julianday('now')",
 )
 def test_insert_project_row_reclaims_orphan_without_insert(
@@ -91,7 +92,6 @@ def test_insert_project_row_reclaims_orphan_without_insert(
 ) -> None:
     """Verify test insert project row reclaims orphan without insert."""
     client = _ProjectsClient()
-    client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
 
     def _exec(
         sql: str,
@@ -115,24 +115,29 @@ def test_insert_project_row_reclaims_orphan_without_insert(
         return {"data": []}
 
     client.execute = _exec  # type: ignore[method-assign]
-    client.insert_project_row(
-        "pid-1",
-        "vast_srv",
-        "vast_srv",
-        comment="AI Admin",
-        watch_dir_id="wd-1",
-    )
+    with patch(
+        "code_analysis.core.database_driver_pkg.domain.projects.get_project",
+        return_value=None,
+    ):
+        insert_project_row(
+            client,
+            "pid-1",
+            "vast_srv",
+            "vast_srv",
+            comment="AI Admin",
+            watch_dir_id="wd-1",
+        )
     sqls = [c[0] for c in client._execute_calls]
     assert any("UPDATE projects" in s for s in sqls)
     assert not any("INSERT INTO projects" in s for s in sqls)
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value="server-b",
 )
 @patch(
-    "code_analysis.core.database_client.client_api_projects.sql_julian_timestamp_now_expr",
+    "code_analysis.core.database_driver_pkg.domain.projects.sql_julian_timestamp_now_expr",
     return_value="julianday('now')",
 )
 def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
@@ -141,7 +146,6 @@ def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
 ) -> None:
     """Verify test insert project row reassigns same disk root from other instance."""
     client = _ProjectsClient()
-    client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
     root = "/home/vasilyvz/projects/tools/vast_srv"
 
     def _exec(
@@ -169,11 +173,19 @@ def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
 
     client.execute = _exec  # type: ignore[method-assign]
 
-    with patch(
-        "code_analysis.core.database_client.client_api_projects.resolve_project_root_absolute_str",
-        side_effect=lambda **_kw: root,
+    with (
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.projects.get_project",
+            return_value=None,
+        ),
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.projects."
+            "resolve_project_root_absolute_str",
+            side_effect=lambda **_kw: root,
+        ),
     ):
-        client.insert_project_row(
+        insert_project_row(
+            client,
             "pid-1",
             "vast_srv",
             "vast_srv",
@@ -186,11 +198,11 @@ def test_insert_project_row_reassigns_same_disk_root_from_other_instance(
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value="server-b",
 )
 @patch(
-    "code_analysis.core.database_client.client_api_projects.sql_julian_timestamp_now_expr",
+    "code_analysis.core.database_driver_pkg.domain.projects.sql_julian_timestamp_now_expr",
     return_value="julianday('now')",
 )
 def test_insert_project_row_rejects_id_on_other_server_instance(
@@ -199,7 +211,6 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
 ) -> None:
     """Verify test insert project row rejects id on other server instance."""
     client = _ProjectsClient()
-    client.get_project = MagicMock(return_value=None)  # type: ignore[method-assign]
 
     def _exec(
         sql: str,
@@ -229,16 +240,23 @@ def test_insert_project_row_rejects_id_on_other_server_instance(
         return "/home/vast_srv"
 
     client.execute = _exec  # type: ignore[method-assign]
-    with patch(
-        "code_analysis.core.database_client.client_api_projects.resolve_project_root_absolute_str",
-        side_effect=_resolve,
+    with (
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.projects.get_project",
+            return_value=None,
+        ),
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.projects."
+            "resolve_project_root_absolute_str",
+            side_effect=_resolve,
+        ),
     ):
         with pytest.raises(ValueError, match="server_instance_id=server-a"):
-            client.insert_project_row("pid-1", "vast_srv", "vast_srv")
+            insert_project_row(client, "pid-1", "vast_srv", "vast_srv")
 
 
 @patch(
-    "code_analysis.core.database_client.client_api_projects.current_server_instance_id",
+    "code_analysis.core.database_driver_pkg.domain.projects.current_server_instance_id",
     return_value="server-b",
 )
 def test_get_project_scoped_miss_falls_back_to_global_by_id(
@@ -282,11 +300,11 @@ def test_get_project_scoped_miss_falls_back_to_global_by_id(
     client.execute = _exec  # type: ignore[method-assign]
 
     with patch(
-        "code_analysis.core.database_client.client_api_projects."
+        "code_analysis.core.database_driver_pkg.domain.projects."
         "enrich_project_dict_resolve_root_path",
         side_effect=lambda row, _db: dict(row),
     ):
-        project = client.get_project("pid-orphan")
+        project = get_project(client, "pid-orphan")
 
     assert isinstance(project, Project)
     assert project.id == "pid-orphan"

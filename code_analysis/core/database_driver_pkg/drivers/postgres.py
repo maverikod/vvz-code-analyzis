@@ -731,11 +731,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     ) -> Dict[str, Any]:
         """Run multiple execute_batch steps in one transaction, with full-tx retry.
 
-        Direct-driver counterpart of the RPC ``execute_logical_write_operation``
-        handler (``rpc_handlers_schema.handle_execute_logical_write_operation``,
-        which now delegates here). Sources retry policy from ``self._retry_policy``
-        (set in ``connect()``), not the RPC-only ``_write_retry_policy`` /
-        ``_driver_config`` lookup the handler used to read.
+        Formerly delegated-to by the RPC ``execute_logical_write_operation`` handler
+        (``rpc_handlers_schema.handle_execute_logical_write_operation``, deleted along
+        with the rest of the RPC/client stack, stage 2 layer collapse); this is now
+        the sole implementation, called directly. Sources retry policy from
+        ``self._retry_policy`` (set in ``connect()``), not the RPC-only
+        ``_write_retry_policy`` / ``_driver_config`` lookup the old handler used to read.
 
         Returns the unwrapped success payload (``batch_results`` / ``transaction_id``
         / ``metadata``). Raises on failure instead of building an RPC Result envelope,

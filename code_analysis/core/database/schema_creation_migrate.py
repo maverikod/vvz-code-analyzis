@@ -390,41 +390,29 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not add editing_pid column to files: {e}")
 
-    try:
-        from code_analysis.core.database.migrations.watch_dirs_server_instance import (
-            migrate_watch_dirs_server_instance,
-        )
+    from code_analysis.core.database.migrations.watch_dirs_server_instance import (
+        migrate_watch_dirs_server_instance,
+    )
 
-        migrate_watch_dirs_server_instance(db)
-    except Exception as e:
-        logger.warning("watch_dirs_server_instance migration failed: %s", e)
+    migrate_watch_dirs_server_instance(db)
 
-    try:
-        from code_analysis.core.database.migrations.watch_dirs_deleted_column import (
-            migrate_watch_dirs_deleted_column,
-        )
+    from code_analysis.core.database.migrations.watch_dirs_deleted_column import (
+        migrate_watch_dirs_deleted_column,
+    )
 
-        migrate_watch_dirs_deleted_column(db)
-    except Exception as e:
-        logger.warning("watch_dirs_deleted_column migration failed: %s", e)
+    migrate_watch_dirs_deleted_column(db)
 
-    try:
-        from code_analysis.core.database.migrations.projects_root_segment_postgres import (
-            migrate_projects_root_segment_postgres,
-        )
+    from code_analysis.core.database.migrations.projects_root_segment_postgres import (
+        migrate_projects_root_segment_postgres,
+    )
 
-        migrate_projects_root_segment_postgres(db)
-    except Exception as e:
-        logger.debug("projects_root_segment_postgres migration skipped: %s", e)
+    migrate_projects_root_segment_postgres(db)
 
-    try:
-        from code_analysis.core.database.migrations.projects_root_path_per_server_instance import (
-            migrate_projects_root_path_per_server_instance,
-        )
+    from code_analysis.core.database.migrations.projects_root_path_per_server_instance import (
+        migrate_projects_root_path_per_server_instance,
+    )
 
-        migrate_projects_root_path_per_server_instance(db)
-    except Exception as e:
-        logger.debug("projects_root_path_per_server_instance migration skipped: %s", e)
+    migrate_projects_root_path_per_server_instance(db)
 
 
 def run_uuid_migration_phase2(db: Any, *, skip_preflight: bool = False) -> Any:
@@ -462,21 +450,3 @@ def run_uuid_migration_phase6_swap_postgres(db: Any, **kwargs: Any) -> Any:
     )
 
     return _p6(db, **kwargs)
-
-
-def run_uuid_migration_phases_3_to_5_sqlite(db: Any, **kwargs: Any) -> Any:
-    """Facade: SQLite shadow copy + validate — see migrations package."""
-    from code_analysis.core.database.migrations.uuid_identity_sqlite_data_migrate import (
-        run_uuid_migration_phases_3_to_5_sqlite as _s345,
-    )
-
-    return _s345(db, **kwargs)
-
-
-def run_uuid_migration_phase6_swap_sqlite(db: Any, **kwargs: Any) -> Any:
-    """Facade: SQLite rename swap + optional FTS rebuild — destructive; see implementation."""
-    from code_analysis.core.database.migrations.uuid_identity_sqlite_data_migrate import (
-        run_uuid_migration_phase6_swap_sqlite as _s6,
-    )
-
-    return _s6(db, **kwargs)

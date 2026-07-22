@@ -38,7 +38,6 @@ from ..core.storage_paths import (
     resolve_storage_paths,
 )
 from ..core.shared_database import get_shared_database
-from .base_mcp_command_open_db import ensure_database_integrity
 from .base_mcp_command_resolve_path import resolve_file_path_from_project
 
 logger = logging.getLogger(__name__)
@@ -103,11 +102,6 @@ class BaseMCPCommand(Command):
         if getattr(cls, "use_queue", False) or not offload_enabled():
             return await super().run(**kwargs)
         return await offload_command_run(super().run, kwargs)
-
-    @staticmethod
-    def _ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
-        """Ensure SQLite physical integrity; delegates to open_db module."""
-        return ensure_database_integrity(db_path)
 
     @staticmethod
     def _open_database_from_config(auto_analyze: bool = False) -> DatabaseClient:

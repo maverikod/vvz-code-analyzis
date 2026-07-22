@@ -436,8 +436,8 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "description": "General error during AST retrieval",
                     "example": "Database error, JSON parsing error, or corrupted data",
                     "solution": (
-                        "Check database integrity, verify file_path parameter, ensure AST data "
-                        "is valid. Try repair_sqlite_database if database is corrupted."
+                        "Check database connectivity, verify file_path parameter, ensure AST data "
+                        "is valid. Try restore_database if database is corrupted."
                     ),
                 },
             },

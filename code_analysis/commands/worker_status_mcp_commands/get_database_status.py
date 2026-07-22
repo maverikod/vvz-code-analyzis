@@ -65,7 +65,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             dc = get_driver_config(config_data)
             driver_type = (dc or {}).get("type") if isinstance(dc, dict) else None
             if not isinstance(driver_type, str):
-                driver_type = "sqlite_proxy"
+                driver_type = "postgres"
 
             code_analysis_config = config_data.get("code_analysis", config_data)
             vector_ann_backend = effective_vector_search_backend(

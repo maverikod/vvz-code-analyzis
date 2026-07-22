@@ -240,17 +240,17 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self._pool_read_size = int(config.get("pool_read_size", 2))
             query_log_path = config.get("query_log_path")
             if query_log_path:
-                from ..sqlite_query_journal import (
+                from ..query_journal import (
                     DEFAULT_JOURNAL_BACKUP_COUNT,
                     DEFAULT_JOURNAL_MAX_BYTES,
-                    SQLiteQueryJournal,
+                    QueryJournal,
                 )
 
                 max_bytes = config.get("query_log_max_bytes", DEFAULT_JOURNAL_MAX_BYTES)
                 backup_count = config.get(
                     "query_log_backup_count", DEFAULT_JOURNAL_BACKUP_COUNT
                 )
-                self._query_journal = SQLiteQueryJournal(
+                self._query_journal = QueryJournal(
                     Path(query_log_path),
                     max_bytes=max_bytes,
                     backup_count=backup_count,

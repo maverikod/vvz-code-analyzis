@@ -120,8 +120,8 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "case": "Database connection error",
                         "message": "Error connecting to database",
                         "solution": (
-                            "Check database file permissions. "
-                            "Verify database is not corrupted (use get_database_corruption_status)."
+                            "Check PostgreSQL connectivity and credentials. "
+                            "Verify database is reachable (use backup_database to test)."
                         ),
                     },
                     {

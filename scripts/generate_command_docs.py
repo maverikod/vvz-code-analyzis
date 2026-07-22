@@ -198,21 +198,9 @@ COMMAND_MAP = [
         "log_viewer",
     ),
     (
-        "get_database_corruption_status",
-        "code_analysis.commands.database_integrity_mcp_commands",
-        "GetDatabaseCorruptionStatusMCPCommand",
-        "database_integrity",
-    ),
-    (
         "backup_database",
         "code_analysis.commands.database_integrity_mcp_commands",
         "BackupDatabaseMCPCommand",
-        "database_integrity",
-    ),
-    (
-        "repair_sqlite_database",
-        "code_analysis.commands.database_integrity_mcp_commands",
-        "RepairSQLiteDatabaseMCPCommand",
         "database_integrity",
     ),
     (

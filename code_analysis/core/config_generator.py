@@ -19,10 +19,12 @@ from code_analysis.core.search_session.policy import (
 )
 
 from .constants import (
+    DEFAULT_DB_DRIVER_TYPE,
     DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES,
     DEFAULT_SERVER_PORT,
 )
 from .docs_indexing_defaults import default_docs_indexing_dict
+from .exceptions import ConfigurationError
 
 
 def _resolve_optional_path(path: Optional[str], anchors: List[Path]) -> Optional[str]:
@@ -139,8 +141,9 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             queue_max_concurrent: Maximum concurrent jobs
             queue_retention_seconds: Completed job retention in seconds
             code_analysis_db_path: Database path for code_analysis section
-            code_analysis_driver_type: Driver type (sqlite, sqlite_proxy, etc.)
-            code_analysis_driver_path: Driver database path (sqlite only)
+            code_analysis_driver_type: Driver type; only "postgres" is supported
+            code_analysis_driver_path: Unused (kept for CLI/API compatibility);
+                SQLite support was removed
             code_analysis_pg_host: PostgreSQL host (when driver is postgres)
             code_analysis_pg_port: PostgreSQL port
             code_analysis_pg_dbname: PostgreSQL database name
@@ -250,43 +253,40 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         db_path = code_analysis_db_path or "data/code_analysis.db"
         config["code_analysis"]["db_path"] = db_path
 
-        # Add database.driver section if driver type is specified
-        driver_type = code_analysis_driver_type or "sqlite_proxy"
+        # Add database.driver section. SQLite support was removed; PostgreSQL only.
+        driver_type = code_analysis_driver_type or DEFAULT_DB_DRIVER_TYPE
 
         if "database" not in config["code_analysis"]:
             config["code_analysis"]["database"] = {}
 
-        if driver_type == "postgres":
-            config["code_analysis"]["database"]["driver"] = {
-                "type": "postgres",
-                "config": {
-                    "host": code_analysis_pg_host or "127.0.0.1",
-                    "port": (
-                        int(code_analysis_pg_port)
-                        if code_analysis_pg_port is not None
-                        else 5432
-                    ),
-                    "dbname": code_analysis_pg_dbname or "code_analysis",
-                    "user": code_analysis_pg_user or "postgres",
-                    "password_env": code_analysis_pg_password_env
-                    or "CODE_ANALYSIS_POSTGRES_PASSWORD",
-                },
-            }
-        else:
-            driver_path = code_analysis_driver_path or db_path
-            config["code_analysis"]["database"]["driver"] = {
-                "type": driver_type,
-                "config": {
-                    "path": driver_path,
-                },
-            }
-            if driver_type == "sqlite_proxy":
-                config["code_analysis"]["database"]["driver"]["config"][
-                    "worker_config"
-                ] = {
-                    "command_timeout": 30.0,
-                    "poll_interval": 0.01,
-                }
+        if driver_type in ("sqlite", "sqlite_proxy"):
+            raise ConfigurationError(
+                f"driver_type {driver_type!r} is not supported: SQLite support was "
+                "removed; PostgreSQL is required. SQLite→PostgreSQL migrators were "
+                "removed in the same release.",
+                config_key="database.driver.type",
+            )
+        if driver_type != "postgres":
+            raise ConfigurationError(
+                f"driver_type {driver_type!r} is not supported. Valid types: ['postgres'].",
+                config_key="database.driver.type",
+            )
+
+        config["code_analysis"]["database"]["driver"] = {
+            "type": "postgres",
+            "config": {
+                "host": code_analysis_pg_host or "127.0.0.1",
+                "port": (
+                    int(code_analysis_pg_port)
+                    if code_analysis_pg_port is not None
+                    else 5432
+                ),
+                "dbname": code_analysis_pg_dbname or "code_analysis",
+                "user": code_analysis_pg_user or "postgres",
+                "password_env": code_analysis_pg_password_env
+                or "CODE_ANALYSIS_POSTGRES_PASSWORD",
+            },
+        }
 
         # Add database.rpc section (shm threshold for large payloads)
         if "rpc" not in config["code_analysis"]["database"]:

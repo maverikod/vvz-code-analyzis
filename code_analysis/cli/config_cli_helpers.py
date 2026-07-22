@@ -9,7 +9,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 
 def _indexing_worker_enabled(args: argparse.Namespace) -> Optional[bool]:
@@ -46,37 +46,6 @@ def _docs_indexing_vectorize(args: argparse.Namespace) -> Optional[bool]:
     if getattr(args, "code_analysis_docs_indexing_vectorize", False):
         return True
     return None
-
-
-def _get_db_path_from_config(config: Dict[str, Any]) -> Path:
-    """Get database path from code_analysis config."""
-    ca = config.get("code_analysis", {})
-    path = ca.get("db_path") or (ca.get("database", {}) or {}).get("driver", {}).get(
-        "config", {}
-    ).get("path")
-    if not path:
-        raise ValueError(
-            "Config must contain code_analysis.db_path or "
-            "code_analysis.database.driver.config.path"
-        )
-    return Path(path).resolve()
-
-
-def _db_open_by_other_processes(db_path: Path) -> bool:
-    """Return True if the database file is open by other process(es)."""
-    try:
-        out = subprocess.run(
-            ["lsof", str(db_path)],
-            capture_output=True,
-            timeout=5,
-            text=True,
-        )
-        if out.returncode != 0:
-            return False
-        lines = [line for line in (out.stdout or "").strip().splitlines() if line]
-        return len(lines) > 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
 
 
 def _stop_server(config_path: Path) -> bool:

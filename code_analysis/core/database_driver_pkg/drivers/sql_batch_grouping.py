@@ -1,5 +1,5 @@
 """
-Batch query parsing and grouping for SQLite driver.
+Batch query parsing and grouping (driver-agnostic; used by the PostgreSQL driver).
 
 Recognizes multiple statements in one SQL text and groups consecutive
 same-statement operations for native executemany. Preserves order of

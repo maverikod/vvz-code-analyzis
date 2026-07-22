@@ -96,37 +96,6 @@ def validate_file_existence_impl(
                             )
                         )
 
-        database = code_analysis.get("database", {})
-        if database:
-            driver = database.get("driver", {})
-            if driver and isinstance(driver, dict):
-                driver_type = driver.get("type")
-                if driver_type not in ("sqlite", "sqlite_proxy"):
-                    driver_type = None
-                driver_config = driver.get("config", {})
-                if driver_type and driver_config and isinstance(driver_config, dict):
-                    db_path = driver_config.get("path")
-                    if db_path and isinstance(db_path, str):
-                        file_path = Path(db_path)
-                        if not file_path.is_absolute():
-                            file_path = config_dir / file_path
-                        if file_path.parent.exists() and not file_path.parent.is_dir():
-                            results.append(
-                                ValidationResult(
-                                    level="error",
-                                    message=f"Database path parent is not a directory: {db_path}",
-                                    section="code_analysis",
-                                    key="database.driver.config.path",
-                                    suggestion=f"Ensure parent directory exists and is a directory: {file_path.parent}",
-                                )
-                            )
-                        elif not file_path.parent.exists():
-                            results.append(
-                                ValidationResult(
-                                    level="warning",
-                                    message=f"Database path parent directory does not exist: {file_path.parent}",
-                                    section="code_analysis",
-                                    key="database.driver.config.path",
-                                    suggestion=f"Parent directory will be created automatically: {file_path.parent}",
-                                )
-                            )
+        # Note: SQLite driver types ("sqlite"/"sqlite_proxy") are no longer valid;
+        # section_database_driver.validate_database_driver_section_impl raises a
+        # fatal error for them, so no file-path-parent check is needed here.

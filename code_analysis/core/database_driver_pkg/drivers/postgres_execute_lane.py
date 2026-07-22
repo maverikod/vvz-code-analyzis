@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional, Tuple
 
-from code_analysis.core.database_driver_pkg.drivers.sqlite_batch import (
+from code_analysis.core.database_driver_pkg.drivers.sql_batch_grouping import (
     expand_operations,
     split_batch_sql,
 )

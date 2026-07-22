@@ -193,7 +193,7 @@ The @code{generate} command always runs @code{CodeAnalysisConfigValidator} after
 @strong{15000} when @code{--server-port} is omitted (@code{code_analysis.port} matches).
 Production template uses @strong{15010}.
 @item Database driver
-@code{sqlite_proxy} unless @code{--code-analysis-driver-type postgres}.
+@code{postgres} (SQLite support was removed; PostgreSQL is required).
 @item Registration
 Requires @code{--with-proxy}. @code{registration.protocol} defaults to @code{server.protocol}.
 @code{registration.server_id} defaults to @code{code-analysis-server}; use
@@ -238,7 +238,7 @@ Write config; validate result.
 @item @code{validate} (@code{val})
 @code{--file PATH} — check config only.
 @item @code{schema}
-Apply SQLite schema from config; stops server unless @code{--no-stop}.
+Apply PostgreSQL schema from config; stops server unless @code{--no-stop}.
 @end table
 
 See @code{man casmgr-config} for the full option list.

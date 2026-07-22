@@ -102,13 +102,9 @@ def register_commands_part2(reg: registry) -> None:
     try:
         from .commands.database_integrity_mcp_commands import (
             BackupDatabaseMCPCommand,
-            GetDatabaseCorruptionStatusMCPCommand,
-            RepairSQLiteDatabaseMCPCommand,
         )
 
-        reg.register(GetDatabaseCorruptionStatusMCPCommand, "custom")
         reg.register(BackupDatabaseMCPCommand, "custom")
-        reg.register(RepairSQLiteDatabaseMCPCommand, "custom")
         logger.info("✅ Registered database_integrity commands")
     except ImportError as e:
         logger.warning("Failed to import database_integrity commands: %s", e)

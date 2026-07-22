@@ -351,11 +351,10 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         docstring: Optional[str],
         entity_id: Optional[int] = None,
     ) -> int:
-        """Add code content and FTS row (SQLite only). Returns content id.
+        """Add code content. Returns content id.
 
-        On PostgreSQL, code_content_fts (FTS5 virtual table) does not exist;
-        fulltext search runs directly over code_content via tsvector.
-        On SQLite, also inserts into code_content_fts for FTS5 MATCH queries.
+        PostgreSQL has no ``code_content_fts`` (FTS5 virtual table); fulltext
+        search runs directly over ``code_content`` via tsvector.
         """
         result = self.execute(
             "INSERT INTO code_content (file_id, entity_type, entity_id, entity_name, content, docstring) "
@@ -363,16 +362,6 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
             (file_id, entity_type, entity_id, entity_name, content, docstring),
         )
         row_id = result.get("lastrowid") or 0
-        # FTS5 virtual table only exists on SQLite; skip on PostgreSQL.
-        if getattr(self, "_driver_type", None) != "postgres":
-            try:
-                self.execute(
-                    "INSERT INTO code_content_fts (rowid, entity_type, entity_name, content, docstring) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (row_id, entity_type, entity_name, content, docstring or ""),
-                )
-            except Exception as e:
-                logger.warning("Failed to add content to FTS index: %s", e)
         return row_id
 
     def add_class(

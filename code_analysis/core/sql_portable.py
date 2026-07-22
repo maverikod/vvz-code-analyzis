@@ -1,11 +1,11 @@
 """
-Portable SQL predicates for SQLite and PostgreSQL.
+Portable SQL predicates for PostgreSQL.
 
 Boolean columns (``files.deleted``, ``files.has_docstring``, ``projects.deleted``)
-are often INTEGER 0/1 in SQLite and native BOOLEAN in PostgreSQL. Comparisons such
-as ``deleted = 0`` or ``has_docstring = 1`` fail on PostgreSQL
-(``operator does not exist: boolean = integer``). Use ``IS TRUE`` / ``IS NOT TRUE``
-with ``OR ... IS NULL`` where legacy rows may have NULL.
+are native BOOLEAN in PostgreSQL. Comparisons such as ``deleted = 0`` or
+``has_docstring = 1`` fail on PostgreSQL (``operator does not exist: boolean =
+integer``). Use ``IS TRUE`` / ``IS NOT TRUE`` with ``OR ... IS NULL`` where legacy
+rows may have NULL.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -48,36 +48,30 @@ def sql_julian_timestamp_now_expr(database: Any) -> str:
     """
     SQL fragment for REAL Julian-day style timestamps (``files.updated_at``).
 
-    SQLite uses ``julianday('now')``; PostgreSQL uses ``EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)``
-    to match schema defaults mapped in ``schema_sync_sql_postgres``.
+    PostgreSQL uses ``EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)`` to match schema
+    defaults mapped in ``schema_sync_sql_postgres``.
     """
-    dt = getattr(database, "_driver_type", None)
-    if isinstance(dt, str) and dt == "postgres":
-        return "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)"
-    return "julianday('now')"
+    _ = database  # kept for call-site compatibility; only PostgreSQL is supported
+    return "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)"
 
 
 def sql_julian_one_day_ago_expr(database: Any) -> str:
     """
     SQL fragment for Julian-day threshold ~24 hours ago (status / analytics).
 
-    SQLite: ``julianday('now', '-1 day')``; PostgreSQL: subtract ``INTERVAL '1 day'``.
+    PostgreSQL: subtract ``INTERVAL '1 day'``.
     """
-    dt = getattr(database, "_driver_type", None)
-    if isinstance(dt, str) and dt == "postgres":
-        return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
-    return "julianday('now', '-1 day')"
+    _ = database  # kept for call-site compatibility; only PostgreSQL is supported
+    return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
 
 
 def database_has_sqlite_code_content_fts(database: Any) -> bool:
     """
-    Return True if DML may target SQLite FTS5 ``code_content_fts``.
+    Return True if DML may target a SQLite FTS5 ``code_content_fts`` virtual table.
 
-    PostgreSQL deployments omit that virtual table; callers must skip FTS
-    ``DELETE`` statements. Unknown / non-string ``_driver_type`` (e.g. bare mocks)
-    defaults to True (SQLite-style).
+    SQLite support was removed; PostgreSQL deployments never have this virtual
+    table, so this is always False. Kept as a named predicate for callers that
+    still gate FTS ``DELETE`` statements on it.
     """
-    driver_type = getattr(database, "_driver_type", None)
-    if not isinstance(driver_type, str):
-        return True
-    return driver_type != "postgres"
+    _ = database  # kept for call-site compatibility; only PostgreSQL is supported
+    return False

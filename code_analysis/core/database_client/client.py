@@ -78,9 +78,8 @@ class DatabaseClient(
             max_retries: Maximum number of retry attempts (default: 3)
             retry_delay: Delay between retries in seconds (default: 0.1)
             pool_size: Connection pool size (default: 5)
-            driver_type: Value from ``code_analysis.database.driver.type`` (e.g. ``postgres``,
-                ``sqlite_proxy``). Used for portable SQL such as full-text search; if omitted,
-                SQLite-style paths are assumed.
+            driver_type: Value from ``code_analysis.database.driver.type``. Only
+                ``postgres`` is supported; used for portable SQL such as full-text search.
         """
         if (socket_path is not None) == (rpc_client is not None):
             raise ValueError("Provide exactly one of socket_path or rpc_client")

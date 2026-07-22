@@ -23,80 +23,6 @@ from ..core.storage_paths import (
 logger = logging.getLogger(__name__)
 
 
-def _sqlite_master_has_table(db: Any, table_name: str) -> bool:
-    """Return True if SQLite ``sqlite_master`` lists ``table_name`` (via RPC ``execute``)."""
-    r = db.execute(
-        "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
-        (table_name,),
-    )
-    data = r.get("data") if isinstance(r, dict) else []
-    return bool(data)
-
-
-def ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
-    """
-    Ensure SQLite physical integrity for a database file.
-
-    If corruption is detected, creates backups and writes a corruption marker.
-    Does NOT recreate the DB automatically.
-
-    Args:
-        db_path: Path to SQLite database file.
-
-    Returns:
-        Dict with ok, repaired, message, backup_paths, marker_path.
-    """
-    from ..core.db_integrity import (
-        backup_sqlite_files,
-        check_sqlite_integrity,
-        corruption_marker_path,
-        read_corruption_marker,
-        write_corruption_marker,
-    )
-
-    marker_path = corruption_marker_path(db_path)
-    marker_data = read_corruption_marker(db_path)
-    if marker_data is not None:
-        msg = str(marker_data.get("message") or "Database is marked as corrupted")
-        backups = marker_data.get("backup_paths")
-        backup_paths: list[str] = []
-        if isinstance(backups, list):
-            backup_paths = [str(p) for p in backups]
-        return {
-            "ok": False,
-            "repaired": False,
-            "message": msg,
-            "backup_paths": backup_paths,
-            "marker_path": str(marker_path),
-        }
-
-    check = check_sqlite_integrity(db_path)
-    if check.ok:
-        return {
-            "ok": True,
-            "repaired": False,
-            "message": check.message,
-            "backup_paths": [],
-            "marker_path": None,
-        }
-
-    backups = backup_sqlite_files(
-        db_path, backup_dir=db_path.parent, include_sidecars=True
-    )
-    marker = write_corruption_marker(
-        db_path,
-        message=check.message,
-        backup_paths=backups,
-    )
-    return {
-        "ok": False,
-        "repaired": False,
-        "message": check.message,
-        "backup_paths": list(backups),
-        "marker_path": marker,
-    }
-
-
 def _schema_def_to_driver_format(schema_def: Dict[str, Any]) -> Dict[str, Any]:
     """Convert get_schema_definition() output to driver sync_schema format."""
     tables = schema_def.get("tables")
@@ -158,64 +84,14 @@ def open_database_once_for_shared(
             config_data=config_data, config_path=config_path
         )
         ensure_storage_dirs(storage)
-        db_path = storage.db_path
 
         dc = get_driver_config(config_data)
-        driver_type = (dc or {}).get("type") if isinstance(dc, dict) else None
-        if not isinstance(driver_type, str):
-            driver_type = "unknown"
+        driver_type = (dc or {}).get("type") if isinstance(dc, dict) else "postgres"
 
-        if driver_type == "postgres":
-            logger.info(
-                "DB entrypoint: driver=%s -> in-process RPCHandlers + PostgreSQL (no Unix RPC)",
-                driver_type,
-            )
-        else:
-            logger.info(
-                "DB entrypoint: driver=%s -> Unix RPC client -> database driver subprocess",
-                driver_type,
-            )
-
-        if driver_type != "postgres":
-            integrity = ensure_database_integrity(db_path)
-            if integrity.get("ok") is False:
-                try:
-                    from ..core.worker_manager import get_worker_manager
-
-                    stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
-                    logger.warning(
-                        "🛑 Stopped all workers due to corrupted database. %s",
-                        stop_result.get("message"),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to stop workers after corruption detection: %s",
-                        e,
-                        exc_info=True,
-                    )
-
-                raise DatabaseError(
-                    "Database is corrupted and project is in safe mode. "
-                    "Only backup/restore/repair commands are allowed.",
-                    operation="database_corrupted",
-                    details={
-                        "db_path": str(db_path),
-                        "marker_path": integrity.get("marker_path"),
-                        "backup_paths": integrity.get("backup_paths"),
-                        "integrity_message": integrity.get("message"),
-                        "allowed_commands": [
-                            "get_database_corruption_status",
-                            "backup_database",
-                            "repair_sqlite_database",
-                            "restore_database",
-                            "list_backup_files",
-                            "list_backup_versions",
-                            "restore_backup_file",
-                            "delete_backup",
-                            "clear_all_backups",
-                        ],
-                    },
-                )
+        logger.info(
+            "DB entrypoint: driver=%s -> in-process RPCHandlers + PostgreSQL (no Unix RPC)",
+            driver_type,
+        )
 
         _ = get_socket_path_fn  # API compatibility; factory derives transport from config
         # Interactive MCP paths (e.g. repeat cst_save_tree) may wait on
@@ -225,15 +101,14 @@ def open_database_once_for_shared(
         )
         db.connect()
 
-        if driver_type == "postgres":
-            try:
-                db.execute("SELECT 1", None)
-            except Exception as e:
-                raise DatabaseError(
-                    f"PostgreSQL connection probe failed: {e}",
-                    operation="open_database",
-                    details={"error": str(e)},
-                ) from e
+        try:
+            db.execute("SELECT 1", None)
+        except Exception as e:
+            raise DatabaseError(
+                f"PostgreSQL connection probe failed: {e}",
+                operation="open_database",
+                details={"error": str(e)},
+            ) from e
 
         from ..core.database.base import get_schema_definition
 
@@ -277,26 +152,6 @@ def open_database_once_for_shared(
                     ) from schema_err
             else:
                 raise
-
-        if driver_type != "postgres":
-            try:
-                db.select("code_content_fts", columns=["rowid"], limit=1)
-            except Exception as e:
-                err_msg = str(e).lower()
-                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
-                if "no such table" in err_msg or "no such table" in cause_msg:
-                    logger.info(
-                        "code_content_fts missing, running sync_schema for virtual tables"
-                    )
-                    try:
-                        _ensure_schema()
-                        logger.info("Virtual tables synced successfully")
-                    except Exception as sync_err:
-                        logger.warning(
-                            "Failed to sync virtual tables: %s",
-                            sync_err,
-                            exc_info=True,
-                        )
 
         return db
     except DatabaseError:

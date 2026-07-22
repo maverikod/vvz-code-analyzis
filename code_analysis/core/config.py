@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 
 from .config_json import ConfigJSONDecodeError, load_config_json
 
@@ -257,11 +257,15 @@ def get_driver_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     db_path = code_analysis.get("db_path")
     if db_path:
-        from .database.base import create_driver_config_for_worker
+        from .exceptions import ConfigurationError
 
-        return cast(
-            Dict[str, Any],
-            create_driver_config_for_worker(Path(db_path), driver_type="sqlite_proxy"),
+        raise ConfigurationError(
+            "code_analysis.db_path (legacy sqlite_proxy-implying config) is not "
+            "supported: SQLite support was removed; PostgreSQL is required. Set "
+            "code_analysis.database.driver.type='postgres' with connection config "
+            "instead of db_path. SQLite→PostgreSQL migrators were removed in the "
+            "same release.",
+            config_key="code_analysis.db_path",
         )
 
     return None

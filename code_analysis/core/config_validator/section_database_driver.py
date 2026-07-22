@@ -327,7 +327,7 @@ def validate_database_driver_section_impl(
                 message="code_analysis.database.driver.type is required",
                 section="code_analysis",
                 key="database.driver.type",
-                suggestion="Add 'type' field to database.driver (e.g., 'sqlite_proxy', 'sqlite')",
+                suggestion="Add 'type' field to database.driver (e.g., 'postgres')",
             )
         )
     elif not isinstance(driver_type, str):
@@ -340,8 +340,22 @@ def validate_database_driver_section_impl(
                 suggestion="Set database.driver.type to a string value",
             )
         )
+    elif driver_type in ("sqlite", "sqlite_proxy"):
+        results.append(
+            ValidationResult(
+                level="error",
+                message=(
+                    f"code_analysis.database.driver.type '{driver_type}' is not "
+                    "supported: SQLite support was removed; PostgreSQL is required. "
+                    "SQLite→PostgreSQL migrators were removed in the same release."
+                ),
+                section="code_analysis",
+                key="database.driver.type",
+                suggestion="Set database.driver.type to 'postgres' and migrate data before upgrading",
+            )
+        )
     else:
-        valid_driver_types = ["sqlite", "sqlite_proxy", "postgres", "mysql"]
+        valid_driver_types = ["postgres"]
         if driver_type not in valid_driver_types:
             results.append(
                 ValidationResult(
@@ -375,35 +389,6 @@ def validate_database_driver_section_impl(
             )
         )
     else:
-        if isinstance(driver_type, str) and driver_type in (
-            "sqlite",
-            "sqlite_proxy",
-        ):
-            if "path" not in driver_config:
-                results.append(
-                    ValidationResult(
-                        level="error",
-                        message="code_analysis.database.driver.config.path is required for sqlite/sqlite_proxy driver",
-                        section="code_analysis",
-                        key="database.driver.config.path",
-                        suggestion="Add 'path' field to database.driver.config with database file path",
-                    )
-                )
-            elif driver_config.get("path") and isinstance(
-                driver_config.get("path"), str
-            ):
-                path_str = driver_config["path"]
-                if not path_str.strip():
-                    results.append(
-                        ValidationResult(
-                            level="error",
-                            message="code_analysis.database.driver.config.path cannot be empty",
-                            section="code_analysis",
-                            key="database.driver.config.path",
-                            suggestion="Set database.driver.config.path to a non-empty path string",
-                        )
-                    )
-
         if isinstance(driver_type, str) and driver_type == "postgres":
             dsn_val = driver_config.get("dsn")
             use_dsn = isinstance(dsn_val, str) and bool(str(dsn_val).strip())
@@ -468,61 +453,6 @@ def validate_database_driver_section_impl(
                         )
                     )
             _validate_driver_pool_size_config(driver_config, results)
-
-        if driver_type == "sqlite_proxy":
-            worker_config = driver_config.get("worker_config")
-            if worker_config and isinstance(worker_config, dict):
-                command_timeout = worker_config.get("command_timeout")
-                if command_timeout is not None:
-                    if not isinstance(command_timeout, (int, float)):
-                        results.append(
-                            ValidationResult(
-                                level="error",
-                                message="code_analysis.database.driver.config.worker_config.command_timeout must be number",
-                                section="code_analysis",
-                                key="database.driver.config.worker_config.command_timeout",
-                                suggestion="Set command_timeout to a number",
-                            )
-                        )
-                    elif command_timeout <= 0:
-                        results.append(
-                            ValidationResult(
-                                level="error",
-                                message="code_analysis.database.driver.config.worker_config.command_timeout must be > 0",
-                                section="code_analysis",
-                                key="database.driver.config.worker_config.command_timeout",
-                                suggestion="Set command_timeout to a positive value",
-                            )
-                        )
-
-                poll_interval = worker_config.get("poll_interval")
-                if poll_interval is not None:
-                    if not isinstance(poll_interval, (int, float)):
-                        results.append(
-                            ValidationResult(
-                                level="error",
-                                message="code_analysis.database.driver.config.worker_config.poll_interval must be number",
-                                section="code_analysis",
-                                key="database.driver.config.worker_config.poll_interval",
-                                suggestion="Set poll_interval to a number",
-                            )
-                        )
-                    elif poll_interval <= 0:
-                        results.append(
-                            ValidationResult(
-                                level="error",
-                                message="code_analysis.database.driver.config.worker_config.poll_interval must be > 0",
-                                section="code_analysis",
-                                key="database.driver.config.worker_config.poll_interval",
-                                suggestion="Set poll_interval to a positive value",
-                            )
-                        )
-
-        if isinstance(driver_type, str) and driver_type in (
-            "postgres",
-            "sqlite",
-            "sqlite_proxy",
-        ):
             _validate_driver_retry_timeout_config(driver_config, results)
 
     rpc = database.get("rpc")

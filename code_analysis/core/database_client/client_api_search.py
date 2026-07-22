@@ -1,7 +1,8 @@
 """
 Full-text search API for database client.
 
-Provides full-text search over code_content_fts (FTS5) with project filter.
+Provides full-text search over ``code_content`` (PostgreSQL ``tsvector`` /
+``plainto_tsquery``) with project filter.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -57,15 +58,7 @@ def plain_query_to_fts5_match(query: str) -> Optional[str]:
 
 
 class _ClientAPISearchMixin(_DatabaseClientBase):
-    """Mixin with full-text search over code content (FTS5)."""
-
-    def _use_postgresql_fulltext_sql(self) -> bool:
-        """Use PostgreSQL ``tsvector`` / ``plainto_tsquery`` when driver is ``postgres``.
-
-        Backend is taken from :attr:`DatabaseClient._driver_type` (set from
-        ``code_analysis.database.driver.type`` in the config factory), not from DB probing.
-        """
-        return getattr(self, "_driver_type", None) == "postgres"
+    """Mixin with full-text search over code content (PostgreSQL tsvector)."""
 
     def _full_text_search_postgresql(
         self,
@@ -131,15 +124,13 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
     ) -> List[Dict[str, Any]]:
         """Run full-text search in code content, docstrings, and symbol-augmented text.
 
-        Uses SQLite FTS5 table code_content_fts. Joins with code_content and files
-        to filter by project_id. Returns entity_type, entity_name, content,
-        docstring, and file_path.
-
-        On PostgreSQL, uses ``to_tsvector('simple', ...)`` / ``plainto_tsquery('simple', ...)``
-        on ``code_content`` (no FTS5 virtual table; ``simple`` preserves identifiers).
+        Uses PostgreSQL ``to_tsvector('simple', ...)`` / ``plainto_tsquery('simple', ...)``
+        on ``code_content`` joined with ``files`` (project_id filter). ``simple``
+        preserves identifiers (classes, methods, variables) instead of stemming
+        them away like common English words.
 
         Args:
-            query: FTS5 search query (e.g. word, phrase in double quotes).
+            query: Free-text search query (e.g. word, phrase in double quotes).
             project_id: Project UUID to restrict results.
             entity_type: Optional filter: 'file', 'class', 'function', 'method',
                 'variable', 'attribute'.
@@ -157,34 +148,6 @@ class _ClientAPISearchMixin(_DatabaseClientBase):
         if fts_query is None:
             return []
 
-        if self._use_postgresql_fulltext_sql():
-            return self._full_text_search_postgresql(
-                fts_query, project_id, entity_type, limit
-            )
-
-        # FTS5 bm25() returns negative score (less negative = more relevant). Order ASC for best first.
-        sql = """
-            SELECT
-                fts.entity_type,
-                fts.entity_name,
-                fts.content,
-                fts.docstring,
-                f.path AS file_path,
-                bm25(code_content_fts) AS bm25_score
-            FROM code_content_fts fts
-            JOIN code_content c ON c.rowid = fts.rowid
-            JOIN files f ON f.id = c.file_id
-            WHERE f.project_id = ? AND code_content_fts MATCH ?
-        """
-        params: List[Any] = [project_id, fts_query]
-        if entity_type:
-            sql += " AND fts.entity_type = ?"
-            params.append(entity_type)
-        sql += " ORDER BY bm25(code_content_fts) ASC LIMIT ?"
-        params.append(limit)
-
-        result = self.execute(sql, tuple(params))
-        rows = result.get("data", [])
-        if not isinstance(rows, list):
-            return []
-        return [dict(r) for r in rows]
+        return self._full_text_search_postgresql(
+            fts_query, project_id, entity_type, limit
+        )

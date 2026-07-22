@@ -136,7 +136,6 @@ BUCKET_B_REASONS: Dict[str, str] = {
         "(ReadTimeout observed); never invoked"
     ),
     "restore_database": "database-wide integrity operation risk",
-    "repair_sqlite_database": "database-wide integrity operation risk",
     "run_uuid_identity_migration": "one-time global DB migration, irreversible risk",
     "delete_unwatched_projects": (
         "global bulk purge across all projects on the shared server"

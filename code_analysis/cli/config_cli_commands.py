@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 
+from ..core.config import get_driver_config
 from ..core.config_errors import (
     format_validation_error_report,
     print_config_error,
@@ -18,18 +19,16 @@ from ..core.config_json import ConfigJSONDecodeError, load_config_json
 from ..core.config_validator import CodeAnalysisConfigValidator
 from ..core.env_loader import load_dotenv_near_config
 
-from .config_cli_helpers import (
-    _db_open_by_other_processes,
-    _get_db_path_from_config,
-    _stop_server,
-)
+from .config_cli_helpers import _stop_server
 
 
 def cmd_schema(args: argparse.Namespace) -> int:
     """
-    Apply database schema (tables and indexes) to the configured database.
+    Apply database schema (tables and indexes) to the configured PostgreSQL database.
 
-    Stops server/workers first if database is in use, then runs migration.
+    Stops server/workers first unless ``--no-stop`` is given (best-effort; unlike
+    the removed SQLite file-lock check, PostgreSQL connections do not block a
+    concurrent schema sync the way an open SQLite file handle did).
     """
     config_path = Path(args.file)
     if not config_path.exists():
@@ -37,13 +36,17 @@ def cmd_schema(args: argparse.Namespace) -> int:
         return 1
     try:
         config = load_config_json(config_path)
-        db_path = _get_db_path_from_config(config)
+        driver_config = get_driver_config(config)
+        if not driver_config or driver_config.get("type") != "postgres":
+            raise ValueError(
+                "Config must contain code_analysis.database.driver with "
+                "type='postgres' (SQLite support was removed)"
+            )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    if not args.no_stop and _db_open_by_other_processes(db_path):
-        print("Database is in use. Stopping server and workers...", flush=True)
+    if not args.no_stop:
         if _stop_server(config_path):
             print("Server stopped.", flush=True)
         else:
@@ -53,20 +56,21 @@ def cmd_schema(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
-    from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
+    from code_analysis.core.database_driver_pkg.drivers.postgres import (
+        PostgreSQLDriver,
+    )
     from code_analysis.core.database.schema_definition import get_schema_definition
 
     try:
         print("Connecting...", flush=True)
-        driver = SQLiteDriver()
-        driver.connect({"path": str(db_path)})
+        driver = PostgreSQLDriver()
+        driver.connect(driver_config.get("config", {}))
         print("Applying schema (compare, backup if needed, migrate)...", flush=True)
         schema_definition = get_schema_definition()
-        db_path_obj = Path(str(db_path))
-        if db_path_obj.parent.name == "data":
-            backup_dir = str(db_path_obj.parent.parent / "backups")
-        else:
-            backup_dir = str(db_path_obj.parent / "backups")
+        ca = config.get("code_analysis", {}) or {}
+        backup_dir = ((ca.get("database") or {}).get("backup_dir")) or str(
+            (config_path.parent / "backups").resolve()
+        )
         result = driver.sync_schema(schema_definition, backup_dir)
         driver.disconnect()
         n = len(result.get("changes_applied") or [])

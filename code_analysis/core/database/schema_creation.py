@@ -12,9 +12,7 @@ from .schema_creation_migrate import (
     run_migrate_schema,
     run_uuid_migration_phase2,
     run_uuid_migration_phase6_swap_postgres,
-    run_uuid_migration_phase6_swap_sqlite,
     run_uuid_migration_phases_3_to_5_postgres,
-    run_uuid_migration_phases_3_to_5_sqlite,
 )
 from .schema_creation_uuid import run_migrate_to_uuid_projects
 from .migrations import (
@@ -30,7 +28,5 @@ __all__ = [
     "run_uuid_migration_phase2_build_mappings",
     "run_uuid_migration_preflight_phase1",
     "run_uuid_migration_phase6_swap_postgres",
-    "run_uuid_migration_phase6_swap_sqlite",
     "run_uuid_migration_phases_3_to_5_postgres",
-    "run_uuid_migration_phases_3_to_5_sqlite",
 ]

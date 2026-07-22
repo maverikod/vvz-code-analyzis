@@ -8,7 +8,6 @@ email: vasilyvz@gmail.com
 import logging
 import sys
 from pathlib import Path
-from typing import Union
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.storage_paths import (
@@ -19,7 +18,6 @@ from code_analysis.core.storage_paths import (
 )
 from code_analysis.core.constants import (
     DEFAULT_BATCH_SIZE,
-    DEFAULT_DATABASE_DRIVER_LOG_FILENAME,
     DEFAULT_POLL_INTERVAL,
 )
 from code_analysis.core.config import ServerConfig, get_driver_config
@@ -68,56 +66,16 @@ def startup_database_driver() -> None:
         driver_type = driver_config.get("type")
         logger.info(f"🔍 Driver config found: type={driver_type}")
 
-        if driver_type == "postgres":
-            logger.info(
-                "ℹ️  PostgreSQL driver runs in-process; skipping database driver subprocess"
-            )
-            print(
-                "ℹ️  PostgreSQL: in-process database driver (no subprocess)",
-                flush=True,
-            )
-            return
-
-        # Resolve storage paths for log file
-        config_path = BaseMCPCommand._resolve_config_path()
-        config_data = load_raw_config(config_path)
-        storage = resolve_storage_paths(
-            config_data=config_data, config_path=config_path
+        # PostgreSQL is the only supported driver and always runs in-process
+        # (SQLite subprocess-driver architecture was removed).
+        logger.info(
+            "ℹ️  PostgreSQL driver runs in-process; skipping database driver subprocess"
         )
-
-        # Generate log path for driver
-        log_path = str(storage.log_dir / DEFAULT_DATABASE_DRIVER_LOG_FILENAME)
-        ensure_storage_dirs(storage)
-
-        # SQLite: force same absolute DB path as storage (avoids cwd-dependent resolution).
-        config_dict: dict = dict(driver_config.get("config", {}) or {})
-        driver_config_resolved = {
-            "type": driver_config.get("type"),
-            "config": config_dict,
-        }
-        if driver_type in ("sqlite", "sqlite_proxy"):
-            config_dict["path"] = str(storage.db_path.resolve())
-        if "query_log_path" not in config_dict:
-            config_dict["query_log_path"] = str(
-                storage.log_dir / "database_queries.jsonl"
-            )
-
-        # Start database driver using WorkerManager
-        logger.info("🚀 Starting database driver...")
-        print("🚀 Starting database driver...", flush=True)
-
-        worker_manager = get_worker_manager()
-        result = worker_manager.start_database_driver(
-            driver_config=driver_config_resolved,
-            log_path=log_path,
+        print(
+            "ℹ️  PostgreSQL: in-process database driver (no subprocess)",
+            flush=True,
         )
-
-        if result.success:
-            logger.info(f"✅ Database driver started: {result.message}")
-            print(f"✅ {result.message}", flush=True)
-        else:
-            logger.warning(f"⚠️  Failed to start database driver: {result.message}")
-            print(f"⚠️  {result.message}", flush=True)
+        return
 
     except Exception as e:
         print(
@@ -290,19 +248,14 @@ def startup_vectorization_worker() -> None:
         if not db_path_obj.exists():
             logger.info(f"Database file not found, creating new database at {db_path}")
             try:
-                from code_analysis.core.database_driver_pkg.drivers.sqlite import (
-                    SQLiteDriver,
-                )
                 from code_analysis.core.database_driver_pkg.drivers.postgres import (
                     PostgreSQLDriver,
-                )
-                from code_analysis.core.database.base import (
-                    create_driver_config_for_worker,
                 )
                 from code_analysis.core.config import get_driver_config
                 from code_analysis.core.database.schema_definition import (
                     get_schema_definition,
                 )
+                from code_analysis.core.exceptions import ConfigurationError
 
                 db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
@@ -313,33 +266,26 @@ def startup_vectorization_worker() -> None:
                     logger.debug(f"Could not get driver config from config: {e}")
 
                 if not driver_config:
-                    driver_config = create_driver_config_for_worker(
-                        db_path=db_path_obj,
-                        driver_type="sqlite_proxy",
-                        backup_dir=storage.backup_dir,
+                    raise ConfigurationError(
+                        "code_analysis.database.driver configuration is required "
+                        "(PostgreSQL); SQLite support was removed.",
+                        config_key="database.driver",
                     )
-                else:
-                    if "config" in driver_config and "path" in driver_config["config"]:
-                        driver_config["config"]["path"] = str(db_path_obj)
-                    if storage.backup_dir and "config" in driver_config:
-                        driver_config["config"]["backup_dir"] = str(storage.backup_dir)
+                if storage.backup_dir and "config" in driver_config:
+                    driver_config["config"]["backup_dir"] = str(storage.backup_dir)
 
                 schema_definition = get_schema_definition()
                 backup_dir = str(storage.backup_dir) if storage.backup_dir else None
-                driver_type = (
-                    driver_config.get("type", "sqlite") if driver_config else "sqlite"
-                )
-                driver_cfg = (
-                    driver_config.get("config", {"path": str(db_path_obj)})
-                    if driver_config
-                    else {"path": str(db_path_obj)}
-                )
+                driver_type = driver_config.get("type")
+                if driver_type != "postgres":
+                    raise ConfigurationError(
+                        f"driver_type {driver_type!r} is not supported: SQLite "
+                        "support was removed; PostgreSQL is required.",
+                        config_key="database.driver.type",
+                    )
+                driver_cfg = driver_config.get("config", {})
 
-                init_driver: Union[PostgreSQLDriver, SQLiteDriver]
-                if driver_type == "postgres":
-                    init_driver = PostgreSQLDriver()
-                else:
-                    init_driver = SQLiteDriver()
+                init_driver: PostgreSQLDriver = PostgreSQLDriver()
                 init_driver.connect(driver_cfg)
                 init_driver.sync_schema(schema_definition, backup_dir)
                 init_driver.disconnect()

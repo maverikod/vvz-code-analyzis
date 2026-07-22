@@ -39,19 +39,38 @@ LOCAL_DRIVER_TRANSACTION_ID = "local"
 
 
 def create_driver_config_for_worker(
-    db_path: Path, driver_type: str = "sqlite_proxy", backup_dir: Optional[Path] = None
+    db_path: Path, driver_type: str = "postgres", backup_dir: Optional[Path] = None
 ) -> Dict[str, Any]:
     """
     Create driver configuration for worker processes.
 
+    SQLite support was removed; PostgreSQL is required. This helper only builds
+    the ``{"path": ..., "backup_dir": ...}`` config shape historically used by
+    file-based drivers — callers targeting PostgreSQL must supply full connection
+    config (host/port/user/dbname) separately via
+    :func:`~code_analysis.core.config.get_driver_config`.
+
     Args:
-        db_path: Path to database file
-        driver_type: Driver type (default: "sqlite_proxy")
+        db_path: Path to database file (used for ``backup_dir`` inference only).
+        driver_type: Driver type (default: "postgres"); "sqlite"/"sqlite_proxy" is rejected.
         backup_dir: Optional backup directory path (if None, will be inferred from db_path in sync_schema)
 
     Returns:
-        Driver configuration dict with 'type' and 'config' keys
+        Driver configuration dict with 'type' and 'config' keys.
+
+    Raises:
+        ConfigurationError: If ``driver_type`` is "sqlite" or "sqlite_proxy".
     """
+    if driver_type in ("sqlite", "sqlite_proxy"):
+        from ..exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"driver_type {driver_type!r} is not supported: SQLite support was "
+            "removed; PostgreSQL is required. SQLite→PostgreSQL migrators were "
+            "removed in the same release.",
+            config_key="database.driver.type",
+        )
+
     resolved_path = Path(db_path).resolve()
 
     config_dict: Dict[str, Any] = {
@@ -62,23 +81,10 @@ def create_driver_config_for_worker(
     if backup_dir:
         config_dict["backup_dir"] = str(Path(backup_dir).resolve())
 
-    if driver_type == "sqlite_proxy":
-        config_dict["worker_config"] = {
-            # Default worker config - can be overridden by caller
-            "command_timeout": 30.0,
-            "poll_interval": 0.01,  # Polling interval in seconds (10ms; reduced for IPC latency)
-        }
-        return {
-            "type": "sqlite_proxy",
-            "config": config_dict,
-        }
-    else:
-        # For other driver types (mysql, postgres, etc.), use provided type
-        # Config structure depends on driver type
-        return {
-            "type": driver_type,
-            "config": config_dict,
-        }
+    return {
+        "type": driver_type,
+        "config": config_dict,
+    }
 
 
 # One lock per database (by driver instance or path)
@@ -221,28 +227,15 @@ class CodeDatabase:
         from code_analysis.core.database_driver_pkg.drivers.postgres import (
             PostgreSQLDriver,
         )
-        from code_analysis.core.database_driver_pkg.drivers.sqlite import (
-            SQLiteDriver as RpcSQLiteDriver,
-        )
 
-        db_path = getattr(driver, "db_path", None)
         if driver_config is None:
-            if isinstance(driver, PostgreSQLDriver):
-                driver_config = {"type": "postgres", "config": {}}
-            elif db_path is not None:
-                driver_config = {
-                    "type": "sqlite",
-                    "config": {"path": str(Path(db_path).resolve())},
-                }
-            else:
-                driver_config = {"type": "sqlite", "config": {}}
+            driver_config = {"type": "postgres", "config": {}}
 
-        if isinstance(driver, PostgreSQLDriver):
-            resolved_driver_type = "postgres"
-        elif isinstance(driver, RpcSQLiteDriver) or db_path is not None:
-            resolved_driver_type = "sqlite"
-        else:
-            resolved_driver_type = str(driver_config.get("type") or "sqlite")
+        resolved_driver_type = (
+            "postgres"
+            if isinstance(driver, PostgreSQLDriver)
+            else str(driver_config.get("type") or "postgres")
+        )
 
         logger.debug(
             "CodeDatabase.from_existing_driver: reusing driver (no connect, no sync_schema)"
@@ -293,13 +286,10 @@ class CodeDatabase:
     def _driver_transaction_id(self) -> Optional[str]:
         """transaction_id for RPC drivers: set while CodeDatabase transaction is active.
 
-        sqlite_proxy keeps transaction id on the driver; other drivers use
-        :data:`LOCAL_DRIVER_TRANSACTION_ID` so sqlite_run/postgres_run skip commit
+        Uses :data:`LOCAL_DRIVER_TRANSACTION_ID` so postgres_run skips commit
         until :meth:`driver.commit`.
         """
         if not getattr(self, "_transaction_active", False):
-            return None
-        if self._driver_type == "sqlite_proxy":
             return None
         return LOCAL_DRIVER_TRANSACTION_ID
 
@@ -519,20 +509,10 @@ class CodeDatabase:
         if self._transaction_active:
             raise RuntimeError("Transaction already active")
 
-        # For SQLite Proxy driver, create transaction_id and set it in driver
-        if self._driver_type == "sqlite_proxy":
-            transaction_id = str(uuid.uuid4())
-            if hasattr(self.driver, "_transaction_id"):
-                self.driver._transaction_id = transaction_id
-            # Send begin_transaction command to worker
-            self.driver._execute_operation(
-                "begin_transaction", transaction_id=transaction_id
-            )
-        else:
-            # database_driver_pkg SQLite/Postgres: defer commit in run_* until driver.commit()
-            transaction_id = LOCAL_DRIVER_TRANSACTION_ID
-            self._transaction_active = True
-            self._execute("BEGIN TRANSACTION")
+        # database_driver_pkg PostgreSQL: defer commit in run_* until driver.commit()
+        transaction_id = LOCAL_DRIVER_TRANSACTION_ID
+        self._transaction_active = True
+        self._execute("BEGIN TRANSACTION")
 
         self._transaction_active = True
         logger.debug("Transaction started")
@@ -543,7 +523,7 @@ class CodeDatabase:
         Commit database transaction.
 
         Args:
-            transaction_id: Optional; ignored for direct SQLite, used by proxy driver.
+            transaction_id: Optional; unused (kept for call-site compatibility).
 
         Raises:
             RuntimeError: If no active transaction.
@@ -551,15 +531,7 @@ class CodeDatabase:
         if not self._transaction_active:
             raise RuntimeError("No active transaction")
 
-        # For SQLite Proxy driver, commit is handled by driver.commit()
-        # which uses transaction_id
         self._commit()
-
-        # Clear transaction_id in proxy driver if exists
-        if self._driver_type == "sqlite_proxy" and hasattr(
-            self.driver, "_transaction_id"
-        ):
-            self.driver._transaction_id = None
 
         self._transaction_active = False
         logger.debug("Transaction committed")
@@ -569,7 +541,7 @@ class CodeDatabase:
         Rollback database transaction.
 
         Args:
-            transaction_id: Optional; ignored for direct SQLite, used by proxy driver.
+            transaction_id: Optional; unused (kept for call-site compatibility).
 
         Raises:
             RuntimeError: If no active transaction.
@@ -577,15 +549,7 @@ class CodeDatabase:
         if not self._transaction_active:
             raise RuntimeError("No active transaction")
 
-        # For SQLite Proxy driver, rollback is handled by driver.rollback()
-        # which uses transaction_id
         self._rollback()
-
-        # Clear transaction_id in proxy driver if exists
-        if self._driver_type == "sqlite_proxy" and hasattr(
-            self.driver, "_transaction_id"
-        ):
-            self.driver._transaction_id = None
 
         self._transaction_active = False
         logger.debug("Transaction rolled back")
@@ -676,7 +640,7 @@ class CodeDatabase:
         self, program: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Run all batches in program under one transaction (in-process SQLite).
+        Run all batches in program under one transaction (in-process PostgreSQL).
 
         Mirrors DatabaseClient.execute_logical_write_operation result shape.
 
@@ -684,20 +648,19 @@ class CodeDatabase:
         ``replace_file_lines`` opened one before ``update_file_data_atomic_batch``),
         batches run in that outer transaction: no nested ``BEGIN``, and this
         method does not ``COMMIT`` / ``ROLLBACK`` (caller owns the transaction).
-        ``sqlite_proxy`` keeps the previous behaviour (single outer RPC tx).
         """
         batches = program.get("batches")
         if not batches or not isinstance(batches, list):
             raise ValueError("LogicalWriteProgramV1 requires non-empty batches")
         outer_active = self._transaction_active
-        nested = outer_active and self._driver_type != "sqlite_proxy"
+        nested = outer_active
         if nested:
             tid = self._driver_transaction_id()
         else:
             tid = self.begin_transaction()
         try:
             if program.get("defer_constraints") and not nested:
-                self._execute("PRAGMA defer_foreign_keys=ON", None)
+                self._execute("SET CONSTRAINTS ALL DEFERRED", None)
             batch_results: list[dict[str, Any]] = []
             for batch_ops in batches:
                 results = self.execute_batch(batch_ops, tid)

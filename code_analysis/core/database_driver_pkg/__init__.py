@@ -10,7 +10,6 @@ email: vasilyvz@gmail.com
 
 from .driver_factory import create_driver
 from .drivers.base import BaseDatabaseDriver
-from .drivers.sqlite import SQLiteDriver
 from .exceptions import (
     DriverConnectionError,
     DriverError,
@@ -28,7 +27,6 @@ from .runner import run_database_driver
 
 __all__ = [
     "BaseDatabaseDriver",
-    "SQLiteDriver",
     "create_driver",
     "RPCServer",
     "RequestQueue",

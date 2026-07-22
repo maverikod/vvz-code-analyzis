@@ -194,7 +194,7 @@ MCP port
      *15000* when ‘--server-port’ is omitted (‘code_analysis.port’
      matches).  Production template uses *15010*.
 Database driver
-     ‘sqlite_proxy’ unless ‘--code-analysis-driver-type postgres’.
+     ‘postgres’ (SQLite support was removed; PostgreSQL is required).
 Registration
      Requires ‘--with-proxy’.  ‘registration.protocol’ defaults to
      ‘server.protocol’.  ‘registration.server_id’ defaults to
@@ -240,7 +240,8 @@ Subcommands
 ‘validate’ (‘val’)
      ‘--file PATH’ — check config only.
 ‘schema’
-     Apply SQLite schema from config; stops server unless ‘--no-stop’.
+     Apply PostgreSQL schema from config; stops server unless
+     ‘--no-stop’.
 
    See ‘man casmgr-config’ for the full option list.
 
@@ -1004,18 +1005,18 @@ Node: Overview1250
 Node: Release build3449
 Node: Installation4307
 Node: Config generator5772
-Node: Config reference9389
-Node: Secrets12794
-Node: mTLS13922
-Node: Admin commands14881
-Node: PostgreSQL container17036
-Node: Ports and co-existence with dev18024
-Node: Git and GitHub commands18882
-Node: Command reference31685
-Node: Systemd33161
-Node: Environment33903
-Node: Upgrade and removal34708
-Node: Troubleshooting35483
+Node: Config reference9397
+Node: Secrets12802
+Node: mTLS13930
+Node: Admin commands14889
+Node: PostgreSQL container17044
+Node: Ports and co-existence with dev18032
+Node: Git and GitHub commands18890
+Node: Command reference31693
+Node: Systemd33169
+Node: Environment33911
+Node: Upgrade and removal34716
+Node: Troubleshooting35491
 
 End Tag Table
 

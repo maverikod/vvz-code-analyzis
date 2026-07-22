@@ -164,13 +164,13 @@ def build_parser(
     gen_parser.add_argument(
         "--code-analysis-driver-type",
         type=str,
-        choices=["sqlite", "sqlite_proxy", "postgres", "mysql"],
-        help="Database driver type (default: sqlite_proxy)",
+        choices=["postgres"],
+        help="Database driver type (default: postgres; SQLite support was removed)",
     )
     gen_parser.add_argument(
         "--code-analysis-driver-path",
         type=str,
-        help="Database path for driver config (default: same as --code-analysis-db-path)",
+        help="Unused (kept for compatibility); SQLite support was removed",
     )
     gen_parser.add_argument(
         "--code-analysis-pg-host",

@@ -18,16 +18,6 @@ from .trash_codedatabase_adapter import TrashSqlDriver
 logger = logging.getLogger(__name__)
 
 
-def _sqlite_code_content_fts_deletes_applicable(driver: Any) -> bool:
-    """True iff ``code_content_fts`` deletes apply (SQLite driver only); mirrors CRUD FTS gating."""
-    if str(type(driver).__name__) == "SQLiteDriver":
-        return True
-    underlying = getattr(driver, "_trash_facade_underlying_driver", None)
-    if underlying is not None:
-        return str(type(underlying).__name__) == "SQLiteDriver"
-    return False
-
-
 def driver_fetchone(
     driver: TrashSqlDriver,
     sql: str,
@@ -129,13 +119,6 @@ def clear_file_data_via_driver(driver: TrashSqlDriver, file_id: str) -> None:
     )
     function_ids = [r["id"] for r in func_rows]
 
-    content_ids: List[Any] = []
-    if _sqlite_code_content_fts_deletes_applicable(driver):
-        content_rows = driver_fetchall(
-            driver, "SELECT rowid FROM code_content WHERE file_id = ?", (file_id,)
-        )
-        content_ids = [row["rowid"] for row in content_rows]
-
     conditions = ["file_id = ?"]
     params_ecr: List[Any] = [file_id]
     if class_ids:
@@ -160,12 +143,6 @@ def clear_file_data_via_driver(driver: TrashSqlDriver, file_id: str) -> None:
     ops: List[Tuple[str, Optional[tuple]]] = [
         (f"DELETE FROM entity_cross_ref WHERE {where_clause}", tuple(params_ecr))
     ]
-
-    if content_ids and _sqlite_code_content_fts_deletes_applicable(driver):
-        ph = ",".join("?" * len(content_ids))
-        ops.append(
-            (f"DELETE FROM code_content_fts WHERE rowid IN ({ph})", tuple(content_ids))
-        )
 
     if class_ids:
         ph = ",".join("?" * len(class_ids))

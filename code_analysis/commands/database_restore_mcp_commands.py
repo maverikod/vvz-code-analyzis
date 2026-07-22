@@ -2,8 +2,8 @@
 MCP command for database restore (rebuild) from configuration.
 
 This command implements the "recovery" workflow described by the project rules:
-- create an automatic filesystem backup of the SQLite DB file;
-- recreate the DB file (fresh schema);
+- create a PostgreSQL backup (pg_dump) of the database;
+- reset the PostgreSQL public schema (fresh schema);
 - read a configuration file that contains a list of directories;
 - sequentially run analysis/indexing for each configured directory into the SAME DB,
   separating data by project_id/root_dir inside the database.
@@ -32,11 +32,6 @@ from ..core.config import get_driver_config
 from ..core.constants import DEFAULT_MAX_FILE_LINES, DEFAULT_REQUEST_TIMEOUT
 from ..core.database.base import get_schema_definition
 from ..core.database_client.factory import create_database_client_from_config_path
-from ..core.db_integrity import (
-    backup_sqlite_files,
-    clear_corruption_marker,
-    recreate_sqlite_database_file,
-)
 from ..core.postgres_cli_backup import (
     PostgresCliBackupError,
     backup_postgres_custom_format,
@@ -51,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
     """
-    Restore (rebuild) SQLite database by sequentially indexing directories from config.
+    Restore (rebuild) PostgreSQL database by sequentially indexing directories from config.
 
     Attributes:
         name: MCP command name.
@@ -66,8 +61,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
     name = "restore_database"
     version = "1.0.0"
     descr = (
-        "Restore (rebuild) database: SQLite recreates file; PostgreSQL resets schema "
-        "then re-indexes (requires pg_dump + psycopg)"
+        "Restore (rebuild) PostgreSQL database: resets schema then re-indexes "
+        "(requires pg_dump + psycopg)"
     )
     category = "database_integrity"
     author = "Vasiliy Zdanovskiy"
@@ -184,15 +179,13 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 scan_roots.append(p)
 
             storage = BaseMCPCommand._get_shared_storage()
-            db_path = storage.db_path
             server_cfg_path = BaseMCPCommand._resolve_config_path()
             raw_server = load_raw_config(server_cfg_path)
             driver = get_driver_config(raw_server) or {}
-            driver_type = str(driver.get("type") or "").lower()
+            driver_type = str(driver.get("type") or "postgres").lower()
 
             plan = {
-                "driver": driver_type or "sqlite",
-                "db_path": str(db_path),
+                "driver": driver_type,
                 "config_file": str(cfg_path),
                 "dirs": [str(p) for p in scan_roots],
                 "max_lines": max_lines,
@@ -203,66 +196,56 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             # Step 1: stop all workers
             workers_stopped = get_worker_manager().stop_all_workers(timeout=10.0)
 
-            if driver_type == "postgres":
-                dcfg = driver.get("config") or {}
-                if not isinstance(dcfg, dict):
-                    return ErrorResult(
-                        message="Invalid PostgreSQL driver config",
-                        code="RESTORE_DATABASE_ERROR",
-                        details={"driver_type": driver_type},
-                    )
-                try:
-                    backup_paths = list(
-                        backup_postgres_custom_format(
-                            dcfg, backup_dir=storage.backup_dir
-                        )
-                    )
-                except PostgresCliBackupError as e:
-                    return ErrorResult(
-                        message=str(e),
-                        code="RESTORE_DATABASE_ERROR",
-                        details={"step": "pg_dump_backup"},
-                    )
-                close_shared_database()
-                try:
-                    reset_postgres_public_schema(dcfg)
-                except PostgresCliBackupError as e:
-                    return ErrorResult(
-                        message=str(e),
-                        code="RESTORE_DATABASE_ERROR",
-                        details={
-                            "step": "reset_schema",
-                            "db_backup_paths": backup_paths,
-                        },
-                    )
-                try:
-                    new_db = create_database_client_from_config_path(
-                        server_cfg_path.resolve(),
-                        timeout=DEFAULT_REQUEST_TIMEOUT,
-                    )
-                    new_db.connect()
-                    schema_def = get_schema_definition()
-                    schema_def = _schema_def_to_driver_format(schema_def)
-                    new_db.sync_schema(
-                        schema_def,
-                        backup_dir=(
-                            str(storage.backup_dir) if storage.backup_dir else None
-                        ),
-                    )
-                    set_shared_database(new_db)
-                except Exception as e:
-                    return ErrorResult(
-                        message=f"Reconnect/sync_schema after reset failed: {e}",
-                        code="RESTORE_DATABASE_ERROR",
-                        details={"step": "reconnect", "db_backup_paths": backup_paths},
-                    )
-            else:
-                # Step 2–3: SQLite — auto-backup DB file (+ sidecars), recreate + marker
-                backup_paths = list(
-                    backup_sqlite_files(db_path, backup_dir=storage.backup_dir)
+            dcfg = driver.get("config") or {}
+            if not isinstance(dcfg, dict):
+                return ErrorResult(
+                    message="Invalid PostgreSQL driver config",
+                    code="RESTORE_DATABASE_ERROR",
+                    details={"driver_type": driver_type},
                 )
-                recreate_sqlite_database_file(db_path)
-                clear_corruption_marker(db_path)
+            try:
+                backup_paths = list(
+                    backup_postgres_custom_format(dcfg, backup_dir=storage.backup_dir)
+                )
+            except PostgresCliBackupError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="RESTORE_DATABASE_ERROR",
+                    details={"step": "pg_dump_backup"},
+                )
+            close_shared_database()
+            try:
+                reset_postgres_public_schema(dcfg)
+            except PostgresCliBackupError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="RESTORE_DATABASE_ERROR",
+                    details={
+                        "step": "reset_schema",
+                        "db_backup_paths": backup_paths,
+                    },
+                )
+            try:
+                new_db = create_database_client_from_config_path(
+                    server_cfg_path.resolve(),
+                    timeout=DEFAULT_REQUEST_TIMEOUT,
+                )
+                new_db.connect()
+                schema_def = get_schema_definition()
+                schema_def = _schema_def_to_driver_format(schema_def)
+                new_db.sync_schema(
+                    schema_def,
+                    backup_dir=(
+                        str(storage.backup_dir) if storage.backup_dir else None
+                    ),
+                )
+                set_shared_database(new_db)
+            except Exception as e:
+                return ErrorResult(
+                    message=f"Reconnect/sync_schema after reset failed: {e}",
+                    code="RESTORE_DATABASE_ERROR",
+                    details={"step": "reconnect", "db_backup_paths": backup_paths},
+                )
 
             # Step 4: sequentially analyze configured directories into the same DB
             # Use DatabaseClient via BaseMCPCommand

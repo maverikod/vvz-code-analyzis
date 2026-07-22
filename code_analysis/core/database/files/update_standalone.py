@@ -17,14 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 def _driver_type_for_inprocess_client(driver: BaseDatabaseDriver) -> Optional[str]:
-    """Infer :class:`DatabaseClient` ``driver_type`` for portable SQL (FTS5 vs PostgreSQL)."""
+    """Infer :class:`DatabaseClient` ``driver_type`` for portable SQL (PostgreSQL only)."""
     from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
-    from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
 
     if isinstance(driver, PostgreSQLDriver):
         return "postgres"
-    if isinstance(driver, SQLiteDriver):
-        return "sqlite"
     return None
 
 

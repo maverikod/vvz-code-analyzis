@@ -27,7 +27,7 @@ from ..exceptions import (
     DriverOperationError,
     TransientDatabaseError,
 )
-from .sqlite_batch import expand_operations, group_for_executemany, split_batch_sql
+from .sql_batch_grouping import expand_operations, group_for_executemany, split_batch_sql
 
 logger = logging.getLogger(__name__)
 

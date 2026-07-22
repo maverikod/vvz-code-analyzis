@@ -27,7 +27,6 @@ from ..constants import (
     RPC_MAX_REQUEST_SIZE,
     RPC_PROCESSING_LOOP_INTERVAL,
     RPC_SERVER_SOCKET_TIMEOUT,
-    SQLITE_SERIALIZED_EXECUTION_MODE,
 )
 
 from code_analysis.core.database_client.protocol import (
@@ -37,7 +36,6 @@ from code_analysis.core.database_client.protocol import (
     RPCResponse,
 )
 from .drivers.base import BaseDatabaseDriver
-from .drivers.sqlite import SQLiteDriver
 from .exceptions import RPCServerError
 from .request_queue import RequestPriority, RequestQueue
 from .rpc_dispatch import process_rpc_request
@@ -85,7 +83,6 @@ class RPCServer:
         self._lock = threading.Lock()
         self.handlers = RPCHandlers(driver)
         self.worker_pool_size = worker_pool_size
-        self._use_serial_sqlite = isinstance(driver, SQLiteDriver)
         self.worker_pool: Optional[ThreadPoolExecutor] = None
         # Map request_id -> (client_sock, condition, response)
         self._pending_responses: Dict[
@@ -115,16 +112,10 @@ class RPCServer:
             self.running = True
             logger.info(f"RPC server started on socket: {self.socket_path}")
 
-            if self._use_serial_sqlite:
-                logger.info(
-                    "RPC execution mode: %s (single SQL consumer)",
-                    SQLITE_SERIALIZED_EXECUTION_MODE,
-                )
-            else:
-                self.worker_pool = ThreadPoolExecutor(
-                    max_workers=self.worker_pool_size, thread_name_prefix="RPCWorker"
-                )
-                logger.info("RPC worker pool started (size: %s)", self.worker_pool_size)
+            self.worker_pool = ThreadPoolExecutor(
+                max_workers=self.worker_pool_size, thread_name_prefix="RPCWorker"
+            )
+            logger.info("RPC worker pool started (size: %s)", self.worker_pool_size)
 
             # Start request processing thread
             processing_thread = threading.Thread(
@@ -333,9 +324,7 @@ class RPCServer:
     def _process_requests_loop(self) -> None:
         """Background loop: dequeue and process requests.
 
-        For SQLite driver, processing is serialized in this thread (single
-        SQL-executing consumer). For other drivers, requests are submitted
-        to the worker pool.
+        Requests are submitted to the worker pool for processing.
         """
         logger.info("RPC request processing loop started")
         while self.running:
@@ -353,35 +342,16 @@ class RPCServer:
                     queued_request.request.method,
                 )
 
-                if self._use_serial_sqlite:
-                    try:
-                        response = self._process_request(queued_request.request)
-                    except Exception as e:
-                        logger.error(
-                            "Error processing request %s: %s",
-                            queued_request.request_id,
-                            e,
-                            exc_info=True,
-                        )
-                        response = RPCResponse(
-                            error=RPCError(
-                                code=ErrorCode.INTERNAL_ERROR,
-                                message=f"Request processing error: {e}",
-                            ),
-                            request_id=queued_request.request_id,
-                        )
-                    self._deliver_response(queued_request.request_id, response)
-                else:
-                    if self.worker_pool:
-                        logger.debug(
-                            "Submitting request %s to worker pool",
-                            queued_request.request_id,
-                        )
-                        self.worker_pool.submit(
-                            self._process_request_async,
-                            queued_request.request_id,
-                            queued_request.request,
-                        )
+                if self.worker_pool:
+                    logger.debug(
+                        "Submitting request %s to worker pool",
+                        queued_request.request_id,
+                    )
+                    self.worker_pool.submit(
+                        self._process_request_async,
+                        queued_request.request_id,
+                        queued_request.request,
+                    )
             except Exception as e:
                 logger.error(f"Error in request processing loop: {e}", exc_info=True)
                 time.sleep(RPC_PROCESSING_LOOP_INTERVAL * 10)
@@ -403,7 +373,7 @@ class RPCServer:
     def _process_request_async(self, request_id: str, request: RPCRequest) -> None:
         """Process request in worker thread and deliver response.
 
-        Used only when not in SQLite serialized mode (worker pool path).
+        Used for worker-pool request processing.
 
         Args:
             request_id: Request ID

@@ -238,31 +238,11 @@ DRIVER_MAIN_LOOP_INTERVAL: float = 0.1
 # Default request timeout in seconds
 DEFAULT_REQUEST_TIMEOUT: float = 300.0
 
-# Default RPC server worker pool size for generic (non-SQLite) RPC path only.
-# Must never be used for SQLite: SQLite uses isolated process with
-# SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE and single-consumer queue semantics.
+# Default RPC server worker pool size for the driver RPC path.
 DEFAULT_RPC_WORKER_POOL_SIZE: int = 10
 
 # Default shutdown grace timeout in seconds
 DEFAULT_SHUTDOWN_GRACE_TIMEOUT: float = 30.0
-
-
-# ============================================================================
-# SQLite serialized execution (isolated process)
-# ============================================================================
-#
-# SQLite DB file operations are executed by exactly one DB executor thread
-# (TZ/architecture constraint). The isolated process uses a single-consumer
-# queue; DEFAULT_RPC_WORKER_POOL_SIZE must not be used for SQLite SQL
-# execution.
-
-# RPC worker pool size for SQLite isolated process: exactly one executor
-# for all DB file operations (no multi-threaded SQL execution for SQLite).
-SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE: int = 1
-
-# Mode identifier for serialized/single-consumer queue semantics in the
-# SQLite isolated process (consumed by runner and RPC server in later steps).
-SQLITE_SERIALIZED_EXECUTION_MODE: str = "serialized"
 
 
 # ============================================================================
@@ -373,8 +353,8 @@ DEFAULT_DATABASE_DRIVER_LOG_FILENAME: str = "database_driver.log"
 # Database Driver
 # ============================================================================
 
-# Default database driver type
-DEFAULT_DB_DRIVER_TYPE: str = "sqlite_proxy"
+# Default database driver type. SQLite support was removed; PostgreSQL only.
+DEFAULT_DB_DRIVER_TYPE: str = "postgres"
 
 # Default database driver socket directory
 DEFAULT_DB_DRIVER_SOCKET_DIR: str = "/tmp/code_analysis_db_drivers"

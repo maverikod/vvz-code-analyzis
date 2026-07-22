@@ -360,7 +360,13 @@ def validate_code_analysis_section_impl(
 
 
 def _infer_database_driver_type(code_analysis: Dict[str, Any]) -> str:
-    """Infer driver type string from ``code_analysis`` (same idea as ``get_driver_config``)."""
+    """Infer driver type string from ``code_analysis`` (same idea as ``get_driver_config``).
+
+    A legacy ``db_path``-only config (no explicit ``database.driver``) previously
+    implied ``sqlite_proxy``; SQLite support was removed, so this is no longer
+    inferred here — ``section_database_driver`` / ``config.get_driver_config``
+    raise a fatal error for that shape at validation/runtime instead.
+    """
     database = code_analysis.get("database")
     if isinstance(database, dict):
         driver = database.get("driver")
@@ -368,8 +374,6 @@ def _infer_database_driver_type(code_analysis: Dict[str, Any]) -> str:
             t = driver.get("type")
             if t:
                 return str(t).strip().lower()
-    if code_analysis.get("db_path"):
-        return "sqlite_proxy"
     return ""
 
 
@@ -378,6 +382,10 @@ def _validate_vector_search_backend_vs_driver(
 ) -> None:
     """
     Enforce: pgvector is not a valid choice for SQLite-class drivers (FAISS only).
+
+    SQLite driver types are already rejected as a fatal error in
+    ``section_database_driver``; this check remains as defense in depth for the
+    ``vector_search_backend`` key specifically.
     """
     raw = code_analysis.get("vector_search_backend")
     if raw is None:
@@ -396,7 +404,8 @@ def _validate_vector_search_backend_vs_driver(
                 level="error",
                 message=(
                     "code_analysis.vector_search_backend cannot be 'pgvector' when the "
-                    "database driver is sqlite or sqlite_proxy: FAISS is always used for those drivers."
+                    "database driver is sqlite or sqlite_proxy: SQLite support was removed; "
+                    "PostgreSQL is required."
                 ),
                 section="code_analysis",
                 key="vector_search_backend",

@@ -149,8 +149,8 @@ def get_metadata(command_cls: Type[Any]) -> Dict[str, Any]:
                 "description": "Database is corrupted and in safe mode",
                 "example": "Database integrity check failed or corruption marker exists",
                 "solution": (
-                    "Database is in safe mode. Run repair_sqlite_database (force=true) "
-                    "or restore_database from backup, then re-run update_indexes."
+                    "Database is in safe mode. Run restore_database from backup, "
+                    "then re-run update_indexes."
                 ),
             },
             "INDEX_UPDATE_ERROR": {
@@ -210,7 +210,7 @@ def get_metadata(command_cls: Type[Any]) -> Dict[str, Any]:
         "best_practices": [
             "Run this command after adding new files or making significant code changes",
             "Use queue_get_job_status to monitor progress for large projects",
-            "Check database integrity before running (use get_database_corruption_status)",
+            "Check database integrity before running (query pg_stat_database / backup_database)",
             "Run regularly to keep indexes up-to-date",
             "If database is corrupted, repair or restore before re-indexing",
             "Review error counts in results to identify problematic files",

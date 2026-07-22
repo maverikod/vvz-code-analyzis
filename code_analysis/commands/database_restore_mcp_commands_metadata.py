@@ -25,20 +25,19 @@ def get_restore_database_metadata(
         "author": author,
         "email": email,
         "detailed_description": (
-            "The restore_database command rebuilds the **shared** database (from active "
-            "server config) and re-indexes directories from the JSON config file you pass. "
-            "For **SQLite**: filesystem backup, delete .db (+ sidecars), recreate empty file, "
-            "clear corruption marker, then index. For **PostgreSQL**: ``pg_dump -Fc`` backup, "
-            "``close_shared_database``, ``DROP SCHEMA public CASCADE`` + ``CREATE SCHEMA public`` "
-            "(via psycopg), new ``DatabaseClient`` + ``sync_schema``, then index. "
+            "The restore_database command rebuilds the **shared** PostgreSQL database "
+            "(from active server config) and re-indexes directories from the JSON config "
+            "file you pass. Flow: ``pg_dump -Fc`` backup, ``close_shared_database``, "
+            "``DROP SCHEMA public CASCADE`` + ``CREATE SCHEMA public`` (via psycopg), "
+            "new ``DatabaseClient`` + ``sync_schema``, then index. "
             "Requires ``pg_dump`` on PATH (or ``pg_dump_path``) and psycopg for the schema reset.\n\n"
             "Operation flow:\n"
             "1. Loads and parses the given config file (JSON) for directory list\n"
             "2. Resolves directory paths (code_analysis.dirs or code_analysis.worker.watch_dirs)\n"
             "3. If dry_run=True, returns plan without executing\n"
             "4. Stops all workers to prevent concurrent access\n"
-            "5. Backs up current database (SQLite files or PostgreSQL pg_dump)\n"
-            "6. SQLite: recreate DB file + clear corruption marker; Postgres: reset public schema + sync_schema\n"
+            "5. Backs up current database via PostgreSQL pg_dump\n"
+            "6. Resets public schema + sync_schema\n"
             "7. Sequentially indexes each configured directory\n"
             "8. Returns summary with statistics\n\n"
             "Config File Format:\n"
@@ -215,7 +214,7 @@ def get_restore_database_metadata(
                 "description": "Restore completed successfully",
                 "data": {
                     "plan": {
-                        "db_path": "Path to database file",
+                        "driver": "Always 'postgres'",
                         "config_file": "Path to config file used",
                         "dirs": "List of directories to index",
                         "max_lines": "Maximum lines threshold",
@@ -248,7 +247,7 @@ def get_restore_database_metadata(
                 "example_dry_run": {
                     "dry_run": True,
                     "plan": {
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "driver": "postgres",
                         "config_file": "/home/user/projects/my_project/config.json",
                         "dirs": [
                             "/home/user/projects/project1",
@@ -259,7 +258,7 @@ def get_restore_database_metadata(
                 },
                 "example_full_restore": {
                     "plan": {
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "driver": "postgres",
                         "config_file": "/home/user/projects/my_project/config.json",
                         "dirs": [
                             "/home/user/projects/project1",

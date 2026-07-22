@@ -45,8 +45,6 @@ def _rpc_backend_name(driver: Any) -> str:
     name = type(driver).__name__
     if "PostgreSQL" in name or "postgres" in name.lower():
         return "postgres"
-    if "SQLite" in name or "sqlite" in name.lower():
-        return "sqlite"
     return name.replace("Driver", "").lower() or "unknown"
 
 
@@ -312,7 +310,7 @@ class _RPCHandlersSchemaMixin:
                 )
                 if params.get("defer_constraints"):
                     self.driver.execute(
-                        "PRAGMA defer_foreign_keys=ON", None, transaction_id
+                        "SET CONSTRAINTS ALL DEFERRED", None, transaction_id
                     )
                 batch_results: list[dict[str, Any]] = []
                 for batch_ops in batches:

@@ -15,7 +15,7 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_index_sql_postgres,
     generate_create_table_sql_postgres,
 )
-from code_analysis.core.database.sqlite_to_postgres import create_postgresql_schema
+from code_analysis.core.database.postgres_schema_ddl import create_postgresql_schema
 
 logger = logging.getLogger(__name__)
 

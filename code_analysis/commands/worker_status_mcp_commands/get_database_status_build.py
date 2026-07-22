@@ -42,10 +42,9 @@ _WHERE_FILES_ACTIVE_FL = "(fl.deleted IS NOT TRUE OR fl.deleted IS NULL)"
 
 
 def _julian_day_threshold_sql(driver_type: str) -> str:
-    """Threshold for \"last 24h\" filters; schema stores Julian day as REAL (SQLite) / DOUBLE (PG)."""
-    if driver_type == "postgres":
-        return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
-    return "julianday('now', '-1 day')"
+    """Threshold for "last 24h" filters; schema stores Julian day as DOUBLE (PostgreSQL)."""
+    _ = driver_type  # kept for call-site compatibility; only "postgres" is supported
+    return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
 
 
 def build_status_ops(
@@ -53,7 +52,7 @@ def build_status_ops(
     *,
     vector_ann_backend: VectorSearchBackend = "faiss",
 ) -> List[Tuple[str, Any]]:
-    """SQL batch for get_database_status; SQLite uses julianday(), PostgreSQL uses EXTRACT(JULIAN ...).
+    """SQL batch for get_database_status; PostgreSQL uses EXTRACT(JULIAN ...).
 
     ``vector_ann_backend`` selects how \"vectorized\" chunks are counted: FAISS uses
     ``vector_id``; pgvector uses ``embedding_vec`` (PostgreSQL only).
@@ -209,8 +208,8 @@ def build_status_ops(
     ]
 
 
-# Default batch for SQLite-style servers (tests, scripts).
-STATUS_OPS: List[tuple] = build_status_ops("sqlite_proxy", vector_ann_backend="faiss")
+# Default batch (PostgreSQL is the only supported driver).
+STATUS_OPS: List[tuple] = build_status_ops("postgres", vector_ann_backend="faiss")
 
 
 def _postgres_pool_observability_fields(db: Any, driver_type: str) -> Dict[str, Any]:
@@ -247,19 +246,19 @@ def build_database_status_result(
     db: Any,
     db_path: Path,
     *,
-    driver_type: str = "sqlite_proxy",
+    driver_type: str = "postgres",
     vector_ann_backend: Optional[VectorSearchBackend] = None,
 ) -> Dict[str, Any]:
     """
     Run status queries and build the full result dict.
 
     Caller must pass an open db client and the resolved db_path.
-    ``driver_type`` must match ``code_analysis.database.driver.type`` so
-    \"last 24h\" queries use valid SQL (SQLite ``julianday`` vs PostgreSQL ``EXTRACT``).
+    ``driver_type`` must match ``code_analysis.database.driver.type`` (only
+    "postgres" is supported) so \"last 24h\" queries use valid SQL (PostgreSQL ``EXTRACT``).
 
     If ``vector_ann_backend`` is omitted, it is inferred from the driver type and
-    ``vector_search_backend`` on the database client (or defaults: SQLite → FAISS,
-    Postgres without client hint → pgvector when permitted).
+    ``vector_search_backend`` on the database client (defaults to pgvector when
+    permitted, else FAISS).
     """
     if vector_ann_backend is None:
         if driver_requires_faiss(driver_type):

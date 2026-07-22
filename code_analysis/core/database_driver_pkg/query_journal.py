@@ -1,5 +1,6 @@
 """
-Query journal for SQLite driver: log each executed SQL for inspection and replay.
+Query journal (driver-agnostic; used by the PostgreSQL driver): log each executed
+SQL for inspection and replay.
 
 Writes JSON Lines (one JSON object per line). Each record has sql, params, and
 optional success/error for recovery. Replay by reading lines and executing sql
@@ -43,7 +44,7 @@ DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024
 DEFAULT_JOURNAL_BACKUP_COUNT = 5
 
 
-class SQLiteQueryJournal:
+class QueryJournal:
     """Append-only journal of SQL executions for logging and recovery, with rotation."""
 
     _file: Optional[io.TextIOWrapper]

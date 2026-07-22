@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-BackendKind = Literal["sqlite", "postgresql"]
+BackendKind = Literal["postgresql"]
 
 # (source_pk_table, uuid_migration_* table name) — exhaustive per step 09.
 MANDATORY_SOURCE_TO_MIGRATION: Tuple[Tuple[str, str], ...] = (
@@ -161,34 +161,23 @@ def _migration_commit(db: Any) -> None:
 
 def detect_backend_kind(db: Any) -> BackendKind:
     """
-    Detect SQLite vs PostgreSQL from CodeDatabase ``_driver_type`` or probe queries.
+    Detect PostgreSQL backend from CodeDatabase ``_driver_type`` or probe query.
+
+    SQLite support was removed; any non-PostgreSQL result is a fatal
+    configuration error, not a valid migration target.
 
     Enforced: ``_driver_type`` from :class:`CodeDatabase` when present; else
-    ``sqlite_version()`` / ``version()``.
+    ``version()`` probe.
     """
     dt = str(getattr(db, "_driver_type", "") or "").lower()
     if dt in ("postgres", "postgresql"):
         return "postgresql"
-    if dt in ("sqlite", "sqlite_proxy"):
-        return "sqlite"
 
     driver = getattr(db, "driver", None)
     cls = type(driver).__name__.lower() if driver is not None else ""
     mod = type(driver).__module__.lower() if driver is not None else ""
     if "postgres" in cls or "postgres" in mod:
         return "postgresql"
-    if "sqlite" in cls or "sqlite" in mod:
-        return "sqlite"
-
-    try:
-        row = _migration_fetchone(db, "SELECT sqlite_version()")
-        if row is not None:
-            ver = next(iter(row.values())) if isinstance(row, dict) else row[0]
-            if ver is not None and str(ver):
-                logger.debug("[uuid-migration] backend=sqlite sqlite_version=%s", ver)
-                return "sqlite"
-    except Exception:
-        pass
 
     try:
         row2 = _migration_fetchone(db, "SELECT version() AS v")
@@ -200,8 +189,8 @@ def detect_backend_kind(db: Any) -> BackendKind:
         pass
 
     raise UuidMigrationError(
-        "Could not detect database backend (SQLite vs PostgreSQL); "
-        "set CodeDatabase driver 'type' or extend detect_backend_kind."
+        "Could not detect PostgreSQL database backend; SQLite support was removed. "
+        "Set CodeDatabase driver 'type' to 'postgres' or extend detect_backend_kind."
     )
 
 
@@ -440,18 +429,11 @@ def run_uuid_migration_phase2_build_mappings(
         run_uuid_migration_preflight_phase1(db, check_orphan_fks=False)
 
     backend = detect_backend_kind(db)
-    if backend == "sqlite":
-        from .uuid_identity_migration_sqlite import create_mapping_tables_sqlite
+    from .uuid_identity_migration_postgres import create_mapping_tables_postgres
 
-        for stmt in create_mapping_tables_sqlite():
-            _migration_execute(db, stmt)
-        _migration_commit(db)
-    else:
-        from .uuid_identity_migration_postgres import create_mapping_tables_postgres
-
-        for stmt in create_mapping_tables_postgres():
-            _migration_execute(db, stmt)
-        _migration_commit(db)
+    for stmt in create_mapping_tables_postgres():
+        _migration_execute(db, stmt)
+    _migration_commit(db)
 
     use = specs if specs is not None else MANDATORY_SOURCE_TO_MIGRATION
 

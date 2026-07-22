@@ -283,8 +283,8 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     "description": "General error during statistics collection",
                     "example": "Database error, permission denied, or corrupted database",
                     "solution": (
-                        "Check database integrity, verify file permissions, ensure database "
-                        "is not locked, or run repair_sqlite_database if corrupted"
+                        "Check database connectivity, verify credentials, ensure PostgreSQL "
+                        "is reachable, or run restore_database if corrupted"
                     ),
                 },
             },

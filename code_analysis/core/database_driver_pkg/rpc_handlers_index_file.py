@@ -12,7 +12,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
@@ -27,8 +26,6 @@ logger = logging.getLogger(__name__)
 
 def _is_fk_or_integrity_error(exc: BaseException) -> bool:
     """Return True if exception is FK or integrity constraint (project-deleted race)."""
-    if isinstance(exc, sqlite3.IntegrityError):
-        return True
     try:
         import psycopg
 

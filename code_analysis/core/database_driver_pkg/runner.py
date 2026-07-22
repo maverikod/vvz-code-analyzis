@@ -22,8 +22,6 @@ from ..constants import (
     DEFAULT_LOG_MAX_BYTES,
     DEFAULT_QUEUE_MAX_SIZE,
     DEFAULT_RPC_WORKER_POOL_SIZE,
-    SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE,
-    SQLITE_SERIALIZED_EXECUTION_MODE,
 )
 
 from .driver_factory import create_driver
@@ -37,18 +35,15 @@ os.environ["CODE_ANALYSIS_DB_DRIVER"] = "1"
 
 logger = logging.getLogger(__name__)
 
-# Driver type that must use serialized (single-consumer) execution for SQLite.
-_SQLITE_DRIVER_TYPE: str = "sqlite"
-
 
 def _resolve_execution_mode(driver_type: str) -> tuple[str, int]:
     """Resolve execution mode and worker pool size from driver type.
 
-    SQLite uses serialized mode (exactly one DB executor thread). All other
-    driver types use default multi-worker pool size.
+    PostgreSQL is the only supported driver; always uses the default
+    multi-worker pool size.
 
     Args:
-        driver_type: Driver type identifier (e.g. 'sqlite', 'postgres').
+        driver_type: Driver type identifier (must be 'postgres').
 
     Returns:
         Tuple of (mode_name, worker_pool_size).
@@ -58,9 +53,6 @@ def _resolve_execution_mode(driver_type: str) -> tuple[str, int]:
     """
     if not driver_type or not str(driver_type).strip():
         raise ValueError("driver_type is required for execution mode resolution")
-    normalized = str(driver_type).strip().lower()
-    if normalized == _SQLITE_DRIVER_TYPE:
-        return (SQLITE_SERIALIZED_EXECUTION_MODE, SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE)
     return ("default", DEFAULT_RPC_WORKER_POOL_SIZE)
 
 
@@ -130,17 +122,12 @@ def run_database_driver(
     then processes requests in a loop.
 
     Args:
-        driver_type: Driver type ('sqlite', 'postgres', 'mysql', etc.)
+        driver_type: Driver type ('postgres' only).
         driver_config: Driver-specific configuration dictionary
         socket_path: Path to Unix socket for RPC communication
         log_path: Path to driver log file (optional)
         queue_max_size: Maximum size of request queue (default: 1000)
     """
-    # Set environment variable to allow direct sqlite driver in worker process
-    import os
-
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
     # Setup logging
     _setup_driver_logging(log_path)
 

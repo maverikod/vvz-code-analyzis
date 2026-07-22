@@ -299,7 +299,7 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                             "message": "Error connecting to database",
                             "solution": (
                                 "Verify database exists and is accessible. "
-                                "Check database integrity with get_database_corruption_status."
+                                "Check PostgreSQL server logs and connectivity."
                             ),
                         },
                     ],

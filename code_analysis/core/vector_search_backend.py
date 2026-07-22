@@ -1,9 +1,8 @@
 """
 Vector ANN backend resolution (FAISS vs pgvector).
 
-Hard invariant: any SQLite-class database driver **always** uses FAISS
-(JSON ``embedding_vector`` + per-project ``.bin`` index). pgvector is only
-considered for PostgreSQL.
+PostgreSQL is the only supported driver. pgvector is used unless the
+``vector_search_backend`` config explicitly requests ``faiss``.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,18 +14,16 @@ from typing import Any, Literal, Optional
 
 VectorSearchBackend = Literal["faiss", "pgvector"]
 
-# Drivers that cannot use pgvector (no ``vector`` type / extension in this stack).
-_SQLITE_CLASS_DRIVERS = frozenset({"sqlite", "sqlite_proxy"})
-
 
 def driver_requires_faiss(driver_type: str) -> bool:
     """
     Return True when the stack must use file-based FAISS for vector search.
 
-    SQLite and sqlite_proxy always use FAISS; this is not configurable.
+    PostgreSQL never forces FAISS by driver type; the choice is config-driven
+    (see :func:`effective_vector_search_backend`). Kept for call-site compatibility.
     """
-    dt = (driver_type or "").strip().lower()
-    return dt in _SQLITE_CLASS_DRIVERS
+    _ = driver_type
+    return False
 
 
 def effective_vector_search_backend(
@@ -37,13 +34,10 @@ def effective_vector_search_backend(
     Resolve the effective ANN backend from driver type and config.
 
     Rules (fixed):
-    - ``sqlite`` / ``sqlite_proxy`` → always ``faiss`` (``pgvector`` in config is invalid; rejected at config validation).
     - ``postgres`` → ``pgvector`` when ``configured`` is omitted, ``auto``, or ``pgvector``; ``faiss`` when ``configured`` is ``faiss``.
-    - Any other driver → ``faiss``.
+    - Any other driver → ``faiss`` (should not occur; SQLite support was removed).
     """
     dt = (driver_type or "").strip().lower()
-    if dt in _SQLITE_CLASS_DRIVERS:
-        return "faiss"
 
     raw = configured if configured is not None else "auto"
     cfg = str(raw).strip().lower()

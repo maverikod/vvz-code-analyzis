@@ -1,7 +1,7 @@
 """
 Database driver implementations package.
 
-Provides implementations for different database drivers (SQLite, PostgreSQL, etc.).
+Provides the PostgreSQL driver implementation (SQLite support was removed).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -9,6 +9,5 @@ email: vasilyvz@gmail.com
 
 from .base import BaseDatabaseDriver
 from .postgres import PostgreSQLDriver
-from .sqlite import SQLiteDriver
 
-__all__ = ["BaseDatabaseDriver", "PostgreSQLDriver", "SQLiteDriver"]
+__all__ = ["BaseDatabaseDriver", "PostgreSQLDriver"]

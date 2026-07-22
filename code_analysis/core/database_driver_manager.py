@@ -114,14 +114,8 @@ class DatabaseDriverManager:
                 message="Driver config missing 'type' field",
             )
 
-        # Convert sqlite_proxy to sqlite for driver process
-        # sqlite_proxy is for main process, sqlite is for worker process
+        # SQLite support was removed; PostgreSQL is the only supported driver type.
         actual_driver_type = driver_type
-        if driver_type == "sqlite_proxy":
-            actual_driver_type = "sqlite"
-            logger.info(
-                "Converting driver type from 'sqlite_proxy' to 'sqlite' for driver process"
-            )
 
         # Generate socket path if not provided
         if not socket_path:

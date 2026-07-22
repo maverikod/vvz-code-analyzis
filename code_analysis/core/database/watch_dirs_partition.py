@@ -64,29 +64,23 @@ def _rows_from_execute(
 
 
 def _primary_key_columns(database: Any, table_name: str) -> Tuple[str, ...]:
-    """Return primary-key column names for ``table_name`` (PostgreSQL or SQLite)."""
-    driver = getattr(database, "_driver_type", None)
-    if driver == "postgres":
-        rows = _rows_from_execute(
-            database,
-            """
-            SELECT kcu.column_name
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-            WHERE tc.constraint_type = 'PRIMARY KEY'
-              AND tc.table_schema = current_schema()
-              AND tc.table_name = ?
-            ORDER BY kcu.ordinal_position
-            """,
-            (table_name,),
-        )
-        return tuple(str(r["column_name"]) for r in rows)
-    rows = _rows_from_execute(database, f"PRAGMA table_info({table_name})")
-    pk_rows = [r for r in rows if int(r.get("pk") or 0) > 0]
-    pk_rows.sort(key=lambda r: int(r["pk"]))
-    return tuple(str(r["name"]) for r in pk_rows)
+    """Return primary-key column names for ``table_name`` (PostgreSQL)."""
+    rows = _rows_from_execute(
+        database,
+        """
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = current_schema()
+          AND tc.table_name = ?
+        ORDER BY kcu.ordinal_position
+        """,
+        (table_name,),
+    )
+    return tuple(str(r["column_name"]) for r in rows)
 
 
 def watch_dirs_upsert_conflict_target(database: Any) -> str:

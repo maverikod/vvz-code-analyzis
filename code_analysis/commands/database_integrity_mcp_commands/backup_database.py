@@ -1,4 +1,4 @@
-"""MCP commands for SQLite database integrity safe mode.
+"""MCP commands for PostgreSQL database backup.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class BackupDatabaseMCPCommand(BaseMCPCommand):
-    """Create a filesystem backup of the project SQLite database file.
+    """Create a PostgreSQL backup of the project database (pg_dump custom format).
 
     Attributes:
         name: MCP command name.
@@ -38,9 +38,7 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
 
     name = "backup_database"
     version = "1.0.0"
-    descr = (
-        "Backup database: SQLite file (+ wal/shm/journal) or PostgreSQL (pg_dump -Fc)"
-    )
+    descr = "Backup PostgreSQL database (pg_dump -Fc, custom format)"
     category = "database_integrity"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -59,8 +57,8 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Create backup of the shared database: SQLite copies files; PostgreSQL "
-                "runs pg_dump custom format (requires pg_dump on PATH)."
+                "Create a PostgreSQL backup of the shared database via "
+                "pg_dump custom format (requires pg_dump on PATH)."
             ),
             "properties": {
                 "root_dir": {
@@ -106,45 +104,28 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             storage = BaseMCPCommand._get_shared_storage()
             out_dir = Path(backup_dir).resolve() if backup_dir else storage.backup_dir
 
-            if driver_type == "postgres":
-                dcfg = driver.get("config") or {}
-                if not isinstance(dcfg, dict):
-                    return ErrorResult(
-                        message="Invalid PostgreSQL driver config (expected object)",
-                        code="BACKUP_DATABASE_ERROR",
-                        details={"driver_type": driver_type},
-                    )
-                try:
-                    backups = backup_postgres_custom_format(dcfg, backup_dir=out_dir)
-                except PostgresCliBackupError as e:
-                    return ErrorResult(
-                        message=str(e),
-                        code="BACKUP_DATABASE_ERROR",
-                        details={"driver_type": driver_type},
-                    )
-                return SuccessResult(
-                    data={
-                        "driver": "postgres",
-                        "backup_dir": str(out_dir),
-                        "backup_paths": list(backups),
-                        "count": len(backups),
-                        "format": "custom",
-                    }
+            dcfg = driver.get("config") or {}
+            if not isinstance(dcfg, dict):
+                return ErrorResult(
+                    message="Invalid PostgreSQL driver config (expected object)",
+                    code="BACKUP_DATABASE_ERROR",
+                    details={"driver_type": driver_type},
                 )
-
-            from ...core.db_integrity import backup_sqlite_files
-
-            db_path = storage.db_path
-            backups = backup_sqlite_files(
-                db_path, backup_dir=out_dir, include_sidecars=True
-            )
+            try:
+                backups = backup_postgres_custom_format(dcfg, backup_dir=out_dir)
+            except PostgresCliBackupError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="BACKUP_DATABASE_ERROR",
+                    details={"driver_type": driver_type},
+                )
             return SuccessResult(
                 data={
-                    "driver": "sqlite",
-                    "db_path": str(db_path),
+                    "driver": "postgres",
                     "backup_dir": str(out_dir),
                     "backup_paths": list(backups),
                     "count": len(backups),
+                    "format": "custom",
                 }
             )
         except Exception as e:
@@ -173,45 +154,33 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The backup_database command backs up the shared database from server config. "
-                "For SQLite it copies the .db file and sidecars (WAL, SHM, journal). "
-                "For PostgreSQL it runs ``pg_dump -Fc`` (custom format) using "
+                "The backup_database command backs up the shared PostgreSQL database "
+                "from server config. It runs ``pg_dump -Fc`` (custom format) using "
                 "``code_analysis.database.driver.config``; ``pg_dump`` must be on PATH "
                 "or set ``pg_dump_path`` in driver config.\n\n"
                 "Operation flow:\n"
-                "1. Resolves database path from server config (one shared DB for all projects)\n"
+                "1. Resolves driver config from server config (one shared DB for all projects)\n"
                 "2. Determines backup directory (default: backup_dir from server config)\n"
-                "3. Creates timestamped backups of database file\n"
-                "4. Creates backups of sidecar files if present (-wal, -shm, -journal)\n"
-                "5. Returns list of created backup file paths\n\n"
+                "3. Runs pg_dump -Fc against the configured database\n"
+                "4. Returns list of created backup file paths\n\n"
                 "Backup Files:\n"
-                "- Main database file: code_analysis.db.corrupt-backup.TIMESTAMP\n"
-                "- WAL file (if present): code_analysis.db-wal.corrupt-backup.TIMESTAMP\n"
-                "- SHM file (if present): code_analysis.db-shm.corrupt-backup.TIMESTAMP\n"
-                "- Journal file (if present): code_analysis.db-journal.corrupt-backup.TIMESTAMP\n"
+                "- Custom-format pg_dump archive, timestamped filename\n"
                 "- Timestamp format: YYYYMMDD-HHMMSS\n\n"
-                "Sidecar Files:\n"
-                "- WAL (Write-Ahead Logging): Transaction log for SQLite\n"
-                "- SHM (Shared Memory): Shared memory file for WAL mode\n"
-                "- Journal: Rollback journal (if not in WAL mode)\n"
-                "- These files are critical for database consistency\n\n"
                 "Use cases:\n"
                 "- Create backup before repair operations\n"
                 "- Preserve database state before destructive changes\n"
                 "- Create recovery point for database restoration\n"
-                "- Backup before major database operations\n"
-                "- Safety measure before corruption repair\n\n"
+                "- Backup before major database operations\n\n"
                 "Important notes:\n"
                 "- Backups are created with timestamp in filename\n"
                 "- Multiple backups can coexist (each has unique timestamp)\n"
-                "- Only existing files are backed up (missing sidecars are skipped)\n"
                 "- Backup directory is created if it doesn't exist\n"
-                "- Original files are not modified (read-only operation)\n"
+                "- Original database is not modified (read-only operation)\n"
                 "- Use restore_database to restore from backup"
             ),
             "parameters": {
                 "root_dir": {
-                    "description": "Optional; ignored. DB path from server config.",
+                    "description": "Optional; ignored. DB config from server config.",
                     "type": "string",
                     "required": False,
                     "examples": [],
@@ -275,23 +244,20 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Backup created successfully",
                     "data": {
-                        "db_path": "Path to shared database file (from server config)",
+                        "driver": "Always 'postgres'",
                         "backup_dir": "Directory where backups were created",
-                        "backup_paths": (
-                            "List of created backup file paths. Includes:\n"
-                            "- Database file backup\n"
-                            "- Sidecar file backups (if present)"
-                        ),
+                        "backup_paths": "List of created pg_dump backup file paths",
                         "count": "Number of backup files created",
+                        "format": "Always 'custom' (pg_dump -Fc)",
                     },
                     "example": {
-                        "db_path": "/var/code_analysis/data/code_analysis.db",
+                        "driver": "postgres",
                         "backup_dir": "/var/code_analysis/backups",
                         "backup_paths": [
-                            "/var/code_analysis/backups/code_analysis.db.corrupt-backup.20240115-143025",
-                            "/var/code_analysis/backups/code_analysis.db-wal.corrupt-backup.20240115-143025",
+                            "/var/code_analysis/backups/code_analysis.pgdump.20240115-143025",
                         ],
-                        "count": 2,
+                        "count": 1,
+                        "format": "custom",
                     },
                 },
                 "error": {
@@ -301,12 +267,10 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
-                "Run backup_database before repair_sqlite_database",
                 "Use backup_database before any destructive database operations",
                 "Store backups in separate directory for safety",
                 "Keep multiple backups with different timestamps",
                 "Verify backup_paths list after backup creation",
                 "Use restore_database to restore from backup if needed",
-                "Backup is automatically created by repair command, but manual backup is safer",
             ],
         }

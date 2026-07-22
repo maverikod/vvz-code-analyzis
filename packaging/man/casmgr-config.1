@@ -102,7 +102,7 @@ Write a new config file.
 Validate an existing config; no writes.
 .TP
 .B schema
-Apply SQLite database schema from config (stops server/workers unless
+Apply PostgreSQL database schema from config (stops server/workers unless
 .BR \-\-no\-stop ).
 .SH GENERATE OPTIONS
 .SS Required
@@ -201,12 +201,12 @@ Completed job retention (default base generator:
 .BR 21600 ).
 .SS code_analysis section
 .TP
-.BI \-\-code\-analysis\-driver\-type {sqlite,sqlite_proxy,postgres,mysql}
+.BI \-\-code\-analysis\-driver\-type {postgres}
 (default:
-.BR sqlite_proxy ).
+.BR postgres ; SQLite support was removed).
 .TP
 .BI \-\-code\-analysis\-db\-path PATH
-Legacy SQLite path (default:
+Unused (kept for compatibility); SQLite support was removed (default:
 .BR data/code_analysis.db ).
 .TP
 .BI \-\-code\-analysis\-pg\-host HOST
@@ -249,10 +249,8 @@ Legacy SQLite path (default:
 When not overridden, the generator adds:
 .TP
 .B database.driver
-.BR sqlite_proxy
-with RPC worker settings, or
 .B postgres
-when requested.
+(SQLite support was removed; PostgreSQL is required).
 .TP
 .B database.rpc
 shared-memory threshold 65536 bytes.
@@ -325,7 +323,7 @@ casmgr-config-validate
 casmgr-config validate \-\-file /etc/casmgr/config.json
 .fi
 .RE
-.SS Apply SQLite schema (development)
+.SS Apply PostgreSQL schema (development)
 .PP
 .RS
 .nf

@@ -419,8 +419,8 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     "description": "Failed to open or query the database",
                     "example": "Database locked, corrupted, or permission denied",
                     "solution": (
-                        "Check database integrity, ensure it's not locked by another process, "
-                        "verify file permissions, or run repair_sqlite_database if corrupted"
+                        "Check database connectivity, ensure PostgreSQL is reachable, "
+                        "verify credentials, or run restore_database if corrupted"
                     ),
                 },
                 "DELETE_PROJECT_ERROR": {

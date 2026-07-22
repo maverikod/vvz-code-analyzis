@@ -67,44 +67,23 @@ def _code_content_insert_ops(
     docstring: Optional[str],
     driver_type: Optional[str],
 ) -> List[Tuple[str, Any]]:
-    """INSERT ``code_content`` and, on SQLite, ``code_content_fts`` keyed by INTEGER rowid.
+    """INSERT ``code_content`` (PostgreSQL: explicit UUID ``id``).
 
-    SQLite FTS5 external table uses ``content_rowid='rowid'``; ``rowid`` must match the
-    autoincrement primary key of ``code_content``, not a UUID string (see ``entities.add_code_content``).
-    PostgreSQL has no FTS virtual table; ``code_content.id`` is an explicit UUID.
+    ``driver_type`` is kept for call-site compatibility; only ``postgres`` is supported.
     """
-    if driver_type == "postgres":
-        rid = str(uuid.uuid4())
-        row: Dict[str, Any] = {
-            "id": rid,
-            "file_id": file_id,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "entity_name": entity_name,
-            "content": content or "",
-            "docstring": docstring,
-        }
-        sql, params = _row_to_insert_sql("code_content", row)
-        return [(sql, params)]
-
-    ins = (
-        "INSERT INTO code_content (file_id, entity_type, entity_id, entity_name, content, docstring) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            file_id,
-            entity_type,
-            entity_id,
-            entity_name,
-            content or "",
-            docstring,
-        ),
-    )
-    fts = (
-        "INSERT INTO code_content_fts (rowid, entity_type, entity_name, content, docstring) "
-        "VALUES (last_insert_rowid(), ?, ?, ?, ?)",
-        (entity_type, entity_name, content or "", docstring or ""),
-    )
-    return [ins, fts]
+    _ = driver_type
+    rid = str(uuid.uuid4())
+    row: Dict[str, Any] = {
+        "id": rid,
+        "file_id": file_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "entity_name": entity_name,
+        "content": content or "",
+        "docstring": docstring,
+    }
+    sql, params = _row_to_insert_sql("code_content", row)
+    return [(sql, params)]
 
 
 def build_file_data_atomic_batches(
@@ -119,14 +98,13 @@ def build_file_data_atomic_batches(
     """
     Build ordered batches for file data update and metadata for the result dict.
 
-    Populates ``code_content`` (and on SQLite, ``code_content_fts``) so
+    Populates ``code_content`` so
     :meth:`~code_analysis.core.database_client.client_api_search._ClientAPISearchMixin.full_text_search`
     returns matches after indexing.
 
     Args:
-        driver_type: ``postgres`` skips SQLite-only FTS virtual table DML; omit or use
-            ``sqlite`` / ``sqlite_proxy`` for FTS5 sidecar updates (same as
-            :attr:`~code_analysis.core.database_client.client.DatabaseClient._driver_type`).
+        driver_type: Kept for call-site compatibility; only ``postgres`` is supported
+            (same as :attr:`~code_analysis.core.database_client.client.DatabaseClient._driver_type`).
 
     Returns:
         (batches, meta). On syntax error, ([], {success: False, ...}).
@@ -167,19 +145,11 @@ def build_file_data_atomic_batches(
     ast_row_id = str(uuid.uuid4())
     cst_row_id = str(uuid.uuid4())
 
-    # Full-text rows (code_content / SQLite FTS) must be cleared before entity teardown.
-    code_content_deletes: List[Tuple[str, Optional[tuple]]] = []
-    if driver_type != "postgres":
-        code_content_deletes.append(
-            (
-                "DELETE FROM code_content_fts WHERE rowid IN ("
-                "SELECT rowid FROM code_content WHERE file_id = ?)",
-                (file_id,),
-            )
-        )
-    code_content_deletes.append(
+    # Full-text rows (code_content) must be cleared before entity teardown.
+    _ = driver_type
+    code_content_deletes: List[Tuple[str, Optional[tuple]]] = [
         ("DELETE FROM code_content WHERE file_id = ?", (file_id,))
-    )
+    ]
 
     ops1: List[Tuple[str, Optional[tuple]]] = code_content_deletes + [
         (

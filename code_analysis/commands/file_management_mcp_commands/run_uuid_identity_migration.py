@@ -19,9 +19,7 @@ from code_analysis.core.database.migrations import (
     Phase345Report,
     run_uuid_migration_phase2_build_mappings,
     run_uuid_migration_phase6_swap_postgres,
-    run_uuid_migration_phase6_swap_sqlite,
     run_uuid_migration_phases_3_to_5_postgres,
-    run_uuid_migration_phases_3_to_5_sqlite,
     run_uuid_migration_preflight_phase1,
 )
 from code_analysis.core.database.migrations.uuid_identity_migration_common import (
@@ -263,16 +261,13 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
                     skip_mapping_validation=skip_mapping_validation,
                     shadow_prefix=shadow_prefix,
                 )
-                if backend == "sqlite":
-                    r345 = run_uuid_migration_phases_3_to_5_sqlite(database, **kw)
-                elif backend == "postgresql":
-                    r345 = run_uuid_migration_phases_3_to_5_postgres(database, **kw)
-                else:
+                if backend != "postgresql":
                     return ErrorResult(
                         message=f"Unsupported backend for phases 3–5: {backend!r}",
                         code="UUID_MIGRATION_UNSUPPORTED_BACKEND",
                         details={"backend": backend},
                     )
+                r345 = run_uuid_migration_phases_3_to_5_postgres(database, **kw)
                 payload["steps"].append(
                     {"step": "phases_345", "report": _phase345_to_dict(r345)}
                 )
@@ -284,16 +279,13 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
                     migration_tag=migration_tag,
                     i_confirm_maintenance_swap=i_confirm_maintenance_swap,
                 )
-                if backend == "sqlite":
-                    stmts = run_uuid_migration_phase6_swap_sqlite(database, **kw6)
-                elif backend == "postgresql":
-                    stmts = run_uuid_migration_phase6_swap_postgres(database, **kw6)
-                else:
+                if backend != "postgresql":
                     return ErrorResult(
                         message=f"Unsupported backend for phase 6: {backend!r}",
                         code="UUID_MIGRATION_UNSUPPORTED_BACKEND",
                         details={"backend": backend},
                     )
+                stmts = run_uuid_migration_phase6_swap_postgres(database, **kw6)
                 payload["steps"].append(
                     {"step": "phase6_swap", "report": _phase6_stmts_to_dict(stmts)}
                 )
@@ -315,16 +307,13 @@ class RunUuidIdentityMigrationMCPCommand(BaseMCPCommand):
                 skip_mapping_validation=skip_mapping_validation,
                 shadow_prefix=shadow_prefix,
             )
-            if backend == "sqlite":
-                r345 = run_uuid_migration_phases_3_to_5_sqlite(database, **kw)
-            elif backend == "postgresql":
-                r345 = run_uuid_migration_phases_3_to_5_postgres(database, **kw)
-            else:
+            if backend != "postgresql":
                 return ErrorResult(
                     message=f"Unsupported backend for pipeline_dry: {backend!r}",
                     code="UUID_MIGRATION_UNSUPPORTED_BACKEND",
                     details={"backend": backend},
                 )
+            r345 = run_uuid_migration_phases_3_to_5_postgres(database, **kw)
             payload["steps"].append(
                 {"step": "phases_345", "report": _phase345_to_dict(r345)}
             )

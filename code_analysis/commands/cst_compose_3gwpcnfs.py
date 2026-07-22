@@ -21,6 +21,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from ..core.backup_manager import BackupManager
 from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
 from ..core.cst_tree.tree_builder import get_tree
+from ..core.database_driver_pkg.exceptions import TransactionError
 from ..core.exceptions import CSTModulePatchError
 from ..core.git_integration import commit_after_write
 from .base_mcp_command import BaseMCPCommand
@@ -219,7 +220,10 @@ def run_ops_mode(
                     details={"file_path": str(target_path)},
                 )
 
-        transaction_id = database.begin_transaction()
+        try:
+            transaction_id = database.begin_transaction()
+        except TransactionError:
+            transaction_id = None
         if not transaction_id:
             if temp_file and temp_file.exists():
                 try:

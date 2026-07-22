@@ -1,4 +1,15 @@
-"""Unit tests for RPC full-transaction logical write retry."""
+"""Unit tests for RPC full-transaction logical write retry.
+
+The retry/transaction-orchestration loop lives on
+``PostgreSQLDriver.execute_logical_write_operation`` (stage-2 driver-prep); the RPC
+handler (``handle_execute_logical_write_operation``) now only validates params,
+delegates to ``self.driver.execute_logical_write_operation``, and translates the
+plain return value / raised exceptions back into ``SuccessResult`` / ``ErrorResult``.
+``FakeLogicalWriteDriver`` below borrows the *real* driver method (instead of
+re-implementing the loop) so these tests exercise the actual retry logic, driven
+through the fake's own recorded primitives (``begin_transaction``, ``execute_batch``,
+``commit_transaction``, ``rollback_transaction``).
+"""
 
 from __future__ import annotations
 
@@ -13,6 +24,8 @@ from code_analysis.core.database_client.protocol import (
     ErrorResult,
     SuccessResult,
 )
+from code_analysis.core.database_driver_pkg.drivers import postgres as postgres_mod
+from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
 from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 from code_analysis.core.retry_policy import RetryPolicy
@@ -36,11 +49,19 @@ def _batches_one() -> list[SqlBatch]:
 
 
 class FakeLogicalWriteDriver:
-    """Records calls and simulates transients; optional ``_write_retry_policy`` for RPC layer."""
+    """Records calls and simulates transients.
+
+    ``execute_logical_write_operation`` is the real ``PostgreSQLDriver`` method
+    (borrowed, not duplicated) run against this fake's own primitives, so
+    ``_retry_policy`` must be set the same way the real driver sets it (from
+    ``connect()``).
+    """
+
+    execute_logical_write_operation = PostgreSQLDriver.execute_logical_write_operation
 
     def __init__(self, policy: RetryPolicy | None = None) -> None:
         """Initialize the instance."""
-        self._write_retry_policy = policy
+        self._retry_policy = policy if policy is not None else RetryPolicy()
         self.calls: list[tuple[str, ...]] = []
         self._session = 0
         self._batch_in_session = 0
@@ -145,7 +166,7 @@ def _run_handler(
     return h.handle_execute_logical_write_operation(params)
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_retry_replays_whole_transaction_from_beginning(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -156,11 +177,7 @@ def test_retry_replays_whole_transaction_from_beginning(
     )
     d.fail_transient_on_batch2_session1 = True
     b = _batches_two()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="fake",
-    ):
-        r = _run_handler(d, b)
+    r = _run_handler(d, b)
     assert isinstance(r, SuccessResult)
     assert r.data is not None
     assert "batch_results" in r.data
@@ -178,7 +195,7 @@ def test_retry_replays_whole_transaction_from_beginning(
     assert batch_calls[3][2] == 2
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_retry_does_not_replay_only_failed_batch(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -189,11 +206,7 @@ def test_retry_does_not_replay_only_failed_batch(
     )
     d.fail_transient_on_batch2_session1 = True
     b = _batches_two()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="testbackend",
-    ):
-        _ = _run_handler(d, b)
+    _ = _run_handler(d, b)
     batch_calls = [c for c in d.calls if c[0] == "execute_batch"]
     # After failed batch2 on session 1, session 2 must run batch1 before batch2
     assert batch_calls[2][2] == 1, "batch 1 must re-run before batch 2 on retry"
@@ -207,23 +220,23 @@ def test_commit_outcome_unknown_is_not_retried() -> None:
     )
     d.commit_outcome_unknown_once = True
     b = _batches_one()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="pg",
-    ):
-        r = _run_handler(d, b)
+    r = _run_handler(d, b)
     assert isinstance(r, ErrorResult)
     assert r.error_code == ErrorCode.DATABASE_ERROR
     assert r.details is not None
     assert r.details.get("commit_outcome_unknown") is True
     assert r.details.get("retryable") is False
+    # Regression guard: the old handler always passed the CURRENT loop attempt
+    # (attempt_1based), not whatever default TransientDatabaseError.attempts was;
+    # this early-exit fires on the first attempt.
+    assert r.details.get("attempts") == 1
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1
     rolls = [c for c in d.calls if c[0] == "rollback_transaction"]
     assert len(rolls) >= 1
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
     """Verify test exhausted attempts returns structured details."""
     d = FakeLogicalWriteDriver(
@@ -231,11 +244,7 @@ def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
     )
     d.fail_transient_on_batch1_every_attempt = True
     b = _batches_one()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="sqlite",
-    ):
-        r = _run_handler(d, b)
+    r = _run_handler(d, b)
     assert isinstance(r, ErrorResult)
     assert r.error_code == ErrorCode.DATABASE_ERROR
     assert r.details is not None
@@ -246,7 +255,7 @@ def test_exhausted_attempts_returns_structured_details(_sleep: Any) -> None:
     assert r.details.get("commit_outcome_unknown") is False
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_operation_name_is_forwarded_to_error_details_and_logs(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -257,11 +266,7 @@ def test_operation_name_is_forwarded_to_error_details_and_logs(
     )
     d.fail_transient_on_batch1_every_attempt = True
     b = _batches_one()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="postgres",
-    ):
-        r = _run_handler(d, b, operation_name="index_upsert")
+    r = _run_handler(d, b, operation_name="index_upsert")
     assert isinstance(r, ErrorResult)
     assert r.details is not None
     assert r.details.get("operation_name") == "index_upsert"
@@ -269,7 +274,8 @@ def test_operation_name_is_forwarded_to_error_details_and_logs(
     assert "[DB_RETRY]" in joined
     assert "operation=execute_logical_write_operation" in joined
     assert "operation_name=index_upsert" in joined
-    assert "layer=rpc" in joined
+    # The loop now runs on the driver, not the RPC handler.
+    assert "layer=driver" in joined
     assert "backend=postgres" in joined
 
 
@@ -298,7 +304,7 @@ def test_project_id_and_lock_scope_are_metadata_only_in_this_step() -> None:
     assert not any(c[0] == "acquire_project_lock" for c in d.calls)
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_rollback_failure_stops_retry(_sleep: Any) -> None:
     """Verify test rollback failure stops retry."""
     d = FakeLogicalWriteDriver(
@@ -307,15 +313,16 @@ def test_rollback_failure_stops_retry(_sleep: Any) -> None:
     d.fail_transient_on_batch1_every_attempt = True
     d.rollback_raises_after_transient = True
     b = _batches_one()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="fake",
-    ):
-        r = _run_handler(d, b)
+    r = _run_handler(d, b)
     assert isinstance(r, ErrorResult)
     assert "rollback failed" in r.description
     assert r.details is not None
     assert r.details.get("error_kind") == "rollback_failed"
     assert r.details.get("retryable") is False
+    # Regression guard: the old handler's details dict always carried "attempts"
+    # (the current loop's attempt_1based) and the BARE rollback exception's own
+    # text in "message" (not the wrapped "rollback failed: ..." description).
+    assert r.details.get("attempts") == 1
+    assert r.details.get("message") == "rollback failed"
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1, "no further attempt after failed rollback"

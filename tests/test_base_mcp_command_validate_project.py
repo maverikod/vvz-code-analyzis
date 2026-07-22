@@ -1,5 +1,12 @@
 """
-Tests for BaseMCPCommand._validate_project_id_exists: transient RPC retry.
+Tests for BaseMCPCommand._validate_project_id_exists.
+
+The retry-on-``DBConnectionError`` (connect-refused) wrapper was removed
+(stage-2 driver-prep): ``core/database_client/factory.py`` confirms PostgreSQL
+always runs in-process (no Unix socket, no driver subprocess), so a raw
+connect-refused here can only mean the in-process RPC client is already
+closed, not a transient network blip worth retrying. ``DBConnectionError`` now
+propagates immediately.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -65,41 +72,32 @@ class _ScopedMissGlobalHitDb(_ClientAPIProjectsMixin):
 
 
 class TestValidateProjectIdExistsTransientRpc:
-    """Connect-refused on get_project matches cst_save_tree retry policy."""
+    """DBConnectionError (any kind) propagates immediately; no retry."""
 
-    def test_connect_refused_then_succeeds(self) -> None:
-        """First two get_project calls raise connect-refused; third returns project."""
+    def test_connect_refused_raises_immediately(self) -> None:
+        """A connect-refused DBConnectionError propagates without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        fake_project = MagicMock()
-        mock_db.get_project.side_effect = [
-            DBConnectionError("connection refused"),
-            DBConnectionError("connection refused"),
-            fake_project,
-        ]
-        with (
-            patch.object(
-                BaseMCPCommand,
-                "_open_database_from_config",
-                return_value=mock_db,
-            ),
-            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        mock_db.get_project.side_effect = DBConnectionError("connection refused")
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
         ):
-            BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
-        assert mock_db.get_project.call_count == 3
+            with pytest.raises(DBConnectionError):
+                BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
+        assert mock_db.get_project.call_count == 1
+        mock_db.disconnect.assert_called_once()
 
     def test_non_connect_refused_raises_immediately(self) -> None:
-        """DBConnectionError without connect-refused is not retried."""
+        """DBConnectionError without connect-refused also propagates without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
         mock_db.get_project.side_effect = DBConnectionError("timeout")
-        with (
-            patch.object(
-                BaseMCPCommand,
-                "_open_database_from_config",
-                return_value=mock_db,
-            ),
-            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
         ):
             with pytest.raises(DBConnectionError):
                 BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
@@ -146,22 +144,15 @@ class TestValidateProjectIdExistsTransientRpc:
 class TestCstSaveTreeValidateParamsUsesRetry:
     """validate_params delegates to _validate_project_id_exists."""
 
-    def test_validate_params_succeeds_after_transient_failures(self) -> None:
-        """Verify test validate params succeeds after transient failures."""
+    def test_validate_params_succeeds_when_project_exists(self) -> None:
+        """validate_params returns params unchanged once the project is found."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        fake_project = MagicMock()
-        mock_db.get_project.side_effect = [
-            DBConnectionError("connection refused"),
-            fake_project,
-        ]
-        with (
-            patch.object(
-                BaseMCPCommand,
-                "_open_database_from_config",
-                return_value=mock_db,
-            ),
-            patch("code_analysis.commands.base_mcp_command.time.sleep"),
+        mock_db.get_project.return_value = MagicMock()
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
         ):
             params = CSTSaveTreeCommand().validate_params(
                 {
@@ -171,4 +162,24 @@ class TestCstSaveTreeValidateParamsUsesRetry:
                 }
             )
         assert params["project_id"] == _VALID_UUID
-        assert mock_db.get_project.call_count == 2
+        assert mock_db.get_project.call_count == 1
+
+    def test_validate_params_propagates_connection_error_immediately(self) -> None:
+        """A DBConnectionError from get_project propagates without retry."""
+        mock_db = MagicMock()
+        mock_db.disconnect = MagicMock()
+        mock_db.get_project.side_effect = DBConnectionError("connection refused")
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            with pytest.raises(DBConnectionError):
+                CSTSaveTreeCommand().validate_params(
+                    {
+                        "tree_id": "tid",
+                        "project_id": _VALID_UUID,
+                        "file_path": "x.py",
+                    }
+                )
+        assert mock_db.get_project.call_count == 1

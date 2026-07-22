@@ -11,9 +11,11 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 
+from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
 from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.qa_mcp_hooks_policy import qa_mcp_hooks_enabled_for_driver_rpc
 from code_analysis.core.retry_policy import RetryPolicy
 
 from ..exceptions import (
@@ -44,6 +46,29 @@ def _is_self_managed_transaction(transaction_id: Optional[str]) -> bool:
     if transaction_id is None or transaction_id == "":
         return True
     return transaction_id == "local"
+
+
+def _transient_with_attempts(
+    exc: TransientDatabaseError, attempts: int
+) -> TransientDatabaseError:
+    """Rebuild ``exc`` with ``.attempts`` set to the current loop's ``attempt_1based``.
+
+    The old RPC-handler retry loop always passed the *current attempt count* into
+    ``ErrorResult.details`` explicitly (``e.to_details(operation_name, attempts=attempt_1based)``)
+    rather than relying on whatever ``.attempts`` the raiser happened to set (usually
+    unset -> ``None``). This preserves that behavior now that the loop lives on the
+    driver and callers translate ``e.to_details(operation_name)`` without an explicit
+    override.
+    """
+    return TransientDatabaseError(
+        exc.args[0] if exc.args else str(exc),
+        sqlstate=exc.sqlstate,
+        error_kind=exc.error_kind,
+        retryable=exc.retryable,
+        original_error=exc.original_error,
+        attempts=attempts,
+        commit_outcome_unknown=exc.commit_outcome_unknown,
+    )
 
 
 def _is_connection_lost_error(exc: BaseException) -> bool:
@@ -127,7 +152,18 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._reaper_thread: Optional[threading.Thread] = None
 
     def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
-        """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock."""
+        """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock.
+
+        Gated on ``CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS`` at the driver level (moved down
+        from the RPC handler, which still pre-checks the same gate for RPC callers —
+        the two checks are idempotent; the handler's check simply becomes redundant
+        once this method is also reachable directly).
+        """
+        if not qa_mcp_hooks_enabled_for_driver_rpc():
+            raise DriverOperationError(
+                "qa_set_db_retry_injections is disabled; set "
+                "CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1 on the database driver process"
+            )
         n = int(remaining)
         if n < 0 or n > 20:
             raise DriverOperationError("remaining must be between 0 and 20")
@@ -685,6 +721,129 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         if not self._transaction_manager:
             raise DriverOperationError("Transaction manager not initialized")
         return self._transaction_manager.rollback_transaction(transaction_id)
+
+    def execute_logical_write_operation(
+        self, program: LogicalWriteProgramV1
+    ) -> Dict[str, Any]:
+        """Run multiple execute_batch steps in one transaction, with full-tx retry.
+
+        Direct-driver counterpart of the RPC ``execute_logical_write_operation``
+        handler (``rpc_handlers_schema.handle_execute_logical_write_operation``,
+        which now delegates here). Sources retry policy from ``self._retry_policy``
+        (set in ``connect()``), not the RPC-only ``_write_retry_policy`` /
+        ``_driver_config`` lookup the handler used to read.
+
+        Returns the unwrapped success payload (``batch_results`` / ``transaction_id``
+        / ``metadata``). Raises on failure instead of building an RPC Result envelope,
+        matching every other driver method's convention (``begin_transaction``,
+        ``execute_batch``, ...): ``TransientDatabaseError`` propagates (re-raised as-is
+        when not retried; rebuilt with the final ``attempts`` count when retries are
+        exhausted, mirroring ``_run_self_managed_with_retry``); a rollback failure
+        after a transient error raises ``DriverOperationError`` chained from the
+        rollback exception (same convention as ``_rollback_self_managed_before_retry``);
+        any other exception propagates unchanged after a best-effort rollback attempt.
+        """
+        batches = program.get("batches")
+        if not batches:
+            raise ValueError("LogicalWriteProgramV1 requires non-empty batches")
+        operation_name = program.get("operation_name")
+        project_id = program.get("project_id")
+        lock_scope = program.get("lock_scope", "none")
+        defer_constraints = program.get("defer_constraints", False)
+
+        policy = self._retry_policy
+        max_attempts = max(1, policy.attempts)
+        logger.info(
+            "method=execute_logical_write_operation n_batches=%s lock_scope=%s",
+            len(batches),
+            lock_scope,
+        )
+
+        for attempt_1based in range(1, max_attempts + 1):
+            transaction_id: Optional[str] = None
+            try:
+                transaction_id = self.begin_transaction()
+                tid_short = (
+                    (transaction_id[:8] + "…")
+                    if transaction_id and len(transaction_id) > 8
+                    else transaction_id
+                )
+                logger.debug(
+                    "[CHAIN] driver execute_logical_write_operation tid=%s",
+                    tid_short,
+                )
+                if defer_constraints:
+                    self.execute("SET CONSTRAINTS ALL DEFERRED", None, transaction_id)
+                batch_results: list[dict[str, Any]] = []
+                for batch_ops in batches:
+                    ops = cast(
+                        List[Tuple[str, Optional[tuple]]], list(batch_ops)
+                    )
+                    results = self.execute_batch(ops, transaction_id)
+                    batch_results.append({"results": results})
+                self.commit_transaction(transaction_id)
+                return {
+                    "batch_results": batch_results,
+                    "transaction_id": transaction_id,
+                    "metadata": {
+                        "operation_name": operation_name,
+                        "project_id": project_id,
+                        "lock_scope": lock_scope,
+                    },
+                }
+            except TransientDatabaseError as e:
+                if transaction_id is not None:
+                    try:
+                        self.rollback_transaction(transaction_id)
+                    except Exception as rb_err:
+                        logger.error(
+                            "rollback after logical write failure: %s",
+                            rb_err,
+                            exc_info=True,
+                        )
+                        rollback_err = DriverOperationError(
+                            f"rollback failed: {rb_err}"
+                        )
+                        # Old handler's ErrorResult.details always carried the
+                        # current attempt count here; DriverOperationError has no
+                        # such field, so attach it dynamically for the handler to
+                        # read back (see handle_execute_logical_write_operation).
+                        setattr(rollback_err, "attempts", attempt_1based)
+                        raise rollback_err from rb_err
+                if e.commit_outcome_unknown:
+                    raise _transient_with_attempts(e, attempt_1based) from e
+                if not (e.retryable and not e.commit_outcome_unknown):
+                    raise _transient_with_attempts(e, attempt_1based) from e
+                if attempt_1based >= max_attempts:
+                    raise _transient_with_attempts(e, max_attempts) from e
+                logger.info(
+                    "[DB_RETRY] backend=postgres layer=driver "
+                    "operation=execute_logical_write_operation "
+                    "operation_name=%s attempt=%s/%s sqlstate=%s error_kind=%s",
+                    operation_name if operation_name is not None else "none",
+                    attempt_1based,
+                    max_attempts,
+                    e.sqlstate,
+                    e.error_kind,
+                )
+                time.sleep(policy.delay_for_attempt(attempt_1based))
+            except Exception as e:
+                if transaction_id is not None:
+                    try:
+                        self.rollback_transaction(transaction_id)
+                    except Exception as rb_err:
+                        logger.error(
+                            "rollback after logical write failure: %s",
+                            rb_err,
+                            exc_info=True,
+                        )
+                logger.error(
+                    "Error in execute_logical_write_operation: %s", e, exc_info=True
+                )
+                raise
+        raise RuntimeError(
+            "PostgreSQL driver: logical write retry loop exited without result"
+        )
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Return get table info."""

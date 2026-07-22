@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,16 +14,6 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
 
 from ..core.database_client.client import DatabaseClient
-from ..core.database_client.exceptions import (
-    ConnectionError as DBConnectionError,
-)
-from ..core.database_client.transient import (
-    CATEGORY_RPC_CONNECT_REFUSED,
-    MAX_ATTEMPTS,
-    MAX_TOTAL_ELAPSED_SECONDS,
-    compute_retry_delay,
-    is_rpc_connect_refused,
-)
 from ..core.constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 from ..core.exceptions import (
     CodeAnalysisError,
@@ -261,8 +250,6 @@ class BaseMCPCommand(Command):
 
         Raises:
             ValidationError: If project_id is empty or project not found in database.
-            DBConnectionError: If transient RPC connect-refused persists after retries
-                (same policy as ``cst_save_tree`` execute).
         """
         if not project_id or not isinstance(project_id, str):
             raise ValidationError(
@@ -277,51 +264,24 @@ class BaseMCPCommand(Command):
                 field="project_id",
                 details={},
             )
-        t_retry_start = time.perf_counter()
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            db = BaseMCPCommand._open_database_from_config()
-            try:
-                try:
-                    project = db.get_project(project_id)
-                except DBConnectionError as e:
-                    if not is_rpc_connect_refused(e):
-                        raise
-                    elapsed = time.perf_counter() - t_retry_start
-                    if attempt >= MAX_ATTEMPTS or elapsed >= MAX_TOTAL_ELAPSED_SECONDS:
-                        logger.error(
-                            "_validate_project_id_exists retry exhausted "
-                            "category=%s attempts=%s elapsed_sec=%.2f",
-                            CATEGORY_RPC_CONNECT_REFUSED,
-                            attempt,
-                            elapsed,
-                        )
-                        raise
-                    delay = compute_retry_delay(attempt)
-                    logger.warning(
-                        "_validate_project_id_exists transient connect refused "
-                        "attempt=%s/%s category=%s next_delay_sec=%.2f",
-                        attempt,
-                        MAX_ATTEMPTS,
-                        CATEGORY_RPC_CONNECT_REFUSED,
-                        delay,
+        db = BaseMCPCommand._open_database_from_config()
+        try:
+            project = db.get_project(project_id)
+            if not project:
+                hint = ""
+                if "-" not in project_id or len(project_id) < 36:
+                    hint = (
+                        " Use list_projects to get the project id (UUID), or read "
+                        "projectid in the project root."
                     )
-                    time.sleep(delay)
-                    continue
-                if not project:
-                    hint = ""
-                    if "-" not in project_id or len(project_id) < 36:
-                        hint = (
-                            " Use list_projects to get the project id (UUID), or read "
-                            "projectid in the project root."
-                        )
-                    raise ValidationError(
-                        f"Project with ID {project_id!r} not found in database.{hint}",
-                        field="project_id",
-                        details={"project_id": project_id},
-                    )
-                return
-            finally:
-                db.disconnect()
+                raise ValidationError(
+                    f"Project with ID {project_id!r} not found in database.{hint}",
+                    field="project_id",
+                    details={"project_id": project_id},
+                )
+            return
+        finally:
+            db.disconnect()
 
     @staticmethod
     def _validate_watch_dir_id_exists(watch_dir_id: str) -> None:

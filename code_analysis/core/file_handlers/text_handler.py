@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
+from code_analysis.core.database_driver_pkg.exceptions import TransactionError
+
 from .base import (
     VALIDATION_FAILED,
     BaseFileHandler,
@@ -278,7 +280,10 @@ def persist_plain_text_file_metadata(
     if existing:
         file_record = existing[0]
         file_id = file_record["id"]
-        tid = database.begin_transaction()
+        try:
+            tid = database.begin_transaction()
+        except TransactionError:
+            tid = None
         if not tid:
             return {
                 "success": False,
@@ -329,7 +334,10 @@ def persist_plain_text_file_metadata(
         return {"success": False, "error": str(e), **base}
     file_id = created.id
 
-    tid = database.begin_transaction()
+    try:
+        tid = database.begin_transaction()
+    except TransactionError:
+        tid = None
     if not tid:
         return {
             "success": False,

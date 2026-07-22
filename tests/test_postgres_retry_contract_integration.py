@@ -37,7 +37,7 @@ _PG_SKIP_REASON = (
     "set it to a test database DSN to run live-DSN contract checks"
 )
 
-_LOG_RPC = "code_analysis.core.database_driver_pkg.rpc_handlers_schema"
+_LOG_DRIVER = "code_analysis.core.database_driver_pkg.drivers.postgres"
 SqlBatch = list[tuple[str, Optional[tuple[Any, ...]]]]
 
 
@@ -62,11 +62,18 @@ def _batches_two() -> list[SqlBatch]:
 
 
 class FakeLogicalWriteDriver:
-    """Simulates execute_batch / commit for logical-write RPC path."""
+    """Simulates execute_batch / commit for logical-write RPC path.
+
+    ``execute_logical_write_operation`` is the real ``PostgreSQLDriver`` method
+    (borrowed, not duplicated); the retry loop now lives on the driver, and the
+    RPC handler delegates to it (stage-2 driver-prep).
+    """
+
+    execute_logical_write_operation = PostgreSQLDriver.execute_logical_write_operation
 
     def __init__(self, policy: RetryPolicy | None = None) -> None:
         """Initialize the instance."""
-        self._write_retry_policy = policy
+        self._retry_policy = policy if policy is not None else RetryPolicy()
         self.calls: list[tuple[str, ...]] = []
         self._session = 0
         self._batch_in_session = 0
@@ -212,7 +219,7 @@ def test_postgres_sqlstate_survives_to_transient_error() -> None:
     assert t.commit_outcome_unknown is False
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_postgres_rpc_error_result_has_structured_details(
     _sleep: Any,
 ) -> None:
@@ -221,11 +228,7 @@ def test_postgres_rpc_error_result_has_structured_details(
         policy=RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0)
     )
     d.fail_transient_on_batch1_every_attempt = True
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="postgres",
-    ):
-        r = _run_logical_write(d, _batches_one())
+    r = _run_logical_write(d, _batches_one())
     assert isinstance(r, ErrorResult)
     assert r.details is not None
     for key in (
@@ -238,28 +241,25 @@ def test_postgres_rpc_error_result_has_structured_details(
         assert key in r.details, f"missing {key} in ErrorResult.details: {r.details!r}"
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_postgres_retry_log_has_required_fields(
     _sleep: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Verify test postgres retry log has required fields."""
-    caplog.set_level(logging.INFO, logger=_LOG_RPC)
+    caplog.set_level(logging.INFO, logger=_LOG_DRIVER)
     d = FakeLogicalWriteDriver(
         policy=RetryPolicy(attempts=2, delay_seconds=0.0, jitter_seconds=0.0)
     )
     d.fail_transient_on_batch2_session1 = True
     b = _batches_two()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="postgres",
-    ):
-        r = _run_logical_write(d, b)
+    r = _run_logical_write(d, b)
     assert isinstance(r, SuccessResult)
     found = [r for r in caplog.records if "[DB_RETRY]" in r.getMessage()]
     assert found, "expected [DB_RETRY] log line on first transient before retry"
     text = found[0].getMessage()
     assert "backend=postgres" in text
-    assert "layer=rpc" in text
+    # The loop now runs on the driver, not the RPC handler.
+    assert "layer=driver" in text
     assert "operation=execute_logical_write_operation" in text
     assert re.search(r"attempt=\d+/\d+", text)
     assert "sqlstate=40P01" in text
@@ -314,7 +314,7 @@ def test_postgres_external_transaction_not_retried_by_driver(
     d.conn.rollback.assert_not_called()
 
 
-@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+@patch.object(postgres_mod.time, "sleep")
 def test_postgres_commit_outcome_unknown_not_retried(
     _sleep: Any,
 ) -> None:
@@ -324,15 +324,12 @@ def test_postgres_commit_outcome_unknown_not_retried(
     )
     d.commit_outcome_unknown_once = True
     b = _batches_one()
-    with patch(
-        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
-        return_value="postgres",
-    ):
-        r = _run_logical_write(d, b)
+    r = _run_logical_write(d, b)
     assert isinstance(r, ErrorResult)
     assert r.error_code == ErrorCode.DATABASE_ERROR
     assert r.details is not None
     assert r.details.get("commit_outcome_unknown") is True
     assert r.details.get("retryable") is False
+    assert r.details.get("attempts") == 1
     begins = [c for c in d.calls if c[0] == "begin_transaction"]
     assert len(begins) == 1

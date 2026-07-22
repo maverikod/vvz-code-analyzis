@@ -31,7 +31,6 @@ from ..core.database_client.transient import (
     MAX_TOTAL_ELAPSED_SECONDS,
     compute_retry_delay,
     format_retry_summary_suffix,
-    is_rpc_connect_refused,
     is_rpc_connect_refused_message,
     is_sqlite_db_locked,
 )
@@ -143,7 +142,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         )
         t_start = time.perf_counter()
         t_retry_start = time.perf_counter()
-        last_connect_error: Optional[Exception] = None
         try:
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 try:
@@ -445,56 +443,12 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     finally:
                         database.disconnect()
 
-                except DBConnectionError as e:
-                    last_connect_error = e
-                    if not is_rpc_connect_refused(e):
-                        raise
-                    elapsed = time.perf_counter() - t_retry_start
-                    if attempt >= MAX_ATTEMPTS or elapsed >= MAX_TOTAL_ELAPSED_SECONDS:
-                        logger.error(
-                            "cst_save_tree retry exhausted category=%s attempts=%s elapsed_sec=%.2f",
-                            CATEGORY_RPC_CONNECT_REFUSED,
-                            attempt,
-                            elapsed,
-                            extra={
-                                "cst_save_stage": "rpc_connect_refused_exhausted",
-                                "project_id": project_id,
-                                "tree_id": tree_id,
-                                "file_path": file_path,
-                                "attempt": attempt,
-                                "exc_type": "DBConnectionError",
-                            },
-                        )
-                        suffix = format_retry_summary_suffix(attempt, elapsed)
-                        return ErrorResult(
-                            message=f"cst_save_tree failed: {e}{suffix}",
-                            code="CST_SAVE_ERROR",
-                        )
-                    delay = compute_retry_delay(attempt)
-                    logger.warning(
-                        "cst_save_tree transient connect refused attempt=%s/%s category=%s next_delay_sec=%.2f",
-                        attempt,
-                        MAX_ATTEMPTS,
-                        CATEGORY_RPC_CONNECT_REFUSED,
-                        delay,
-                        extra={
-                            "cst_save_stage": "rpc_connect_refused_retry",
-                            "project_id": project_id,
-                            "tree_id": tree_id,
-                            "file_path": file_path,
-                            "attempt": attempt,
-                        },
-                    )
-                    time.sleep(delay)
-
-            if last_connect_error is not None:
-                suffix = format_retry_summary_suffix(
-                    MAX_ATTEMPTS, time.perf_counter() - t_retry_start
-                )
-                return ErrorResult(
-                    message=f"cst_save_tree failed: {last_connect_error}{suffix}",
-                    code="CST_SAVE_ERROR",
-                )
+                except DBConnectionError:
+                    # No-socket in-process driver (see core/database_client/factory.py):
+                    # a raw connect-refused here cannot be a transient network blip, so
+                    # there is nothing useful to retry — propagate to the generic handler
+                    # below (stage-2 driver-prep: vestigial retry wrapper removed).
+                    raise
         except Exception as e:
             logger.exception(
                 "cst_save_tree failed: %s",

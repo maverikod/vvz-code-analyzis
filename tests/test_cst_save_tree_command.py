@@ -46,25 +46,27 @@ def out_py(project_root: Path) -> Path:
     return p
 
 
-class TestCstSaveTreeTransientConnectRefusalRecovery:
-    """Transient connect refusal then recovery: retry until success."""
+class TestCstSaveTreeConnectRefusedNoRetry:
+    """DBConnectionError from ``_open_database_from_config`` fails fast, no retry.
+
+    Stage-2 driver-prep: the retry-on-connect-refused wrapper was removed
+    (``core/database_client/factory.py`` confirms PostgreSQL always runs
+    in-process, no Unix socket, so a raw connect-refused here cannot be a
+    transient network blip worth retrying).
+    """
 
     @pytest.mark.asyncio
-    async def test_connect_refused_then_success(
+    async def test_connect_refused_fails_immediately(
         self, project_root: Path, out_py: Path
     ) -> None:
-        """First 2 attempts raise connection refused, 3rd succeeds."""
-        mock_db = MagicMock()
-        mock_db.disconnect = MagicMock()
+        """A single connection-refused raise aborts the command with no retry."""
         call_count = 0
 
         def open_db(*args, **kwargs):
             """Return open db."""
             nonlocal call_count
             call_count += 1
-            if call_count <= 2:
-                raise DBConnectionError("connection refused")
-            return mock_db
+            raise DBConnectionError("connection refused")
 
         with (
             patch.object(
@@ -97,9 +99,10 @@ class TestCstSaveTreeTransientConnectRefusalRecovery:
                     project_id="test-project-id",
                     file_path="out.py",
                 )
-        assert isinstance(result, SuccessResult)
-        assert result.data.get("success") is True
-        assert call_count == 3
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_SAVE_ERROR"
+        assert "connection refused" in result.message
+        assert call_count == 1
 
 
 class TestCstSaveTreeTransientConnectRefusedInSaveResult:
@@ -239,10 +242,14 @@ class TestCstSaveTreeRetryBudgetExhaustion:
     """Retry budget exhaustion: fail with clear message after max attempts."""
 
     @pytest.mark.asyncio
-    async def test_connect_refused_exhaustion(
+    async def test_connect_refused_fails_without_retry_summary(
         self, project_root: Path, out_py: Path
     ) -> None:
-        """All 4 attempts raise connection refused; return ErrorResult with suffix."""
+        """A connect-refused raise fails fast (no retry, no retry-summary suffix).
+
+        Stage-2 driver-prep: the retry-on-connect-refused wrapper was removed, so
+        this no longer exhausts a retry budget -- it just propagates once.
+        """
         with patch.object(
             BaseMCPCommand,
             "_open_database_from_config",
@@ -256,8 +263,8 @@ class TestCstSaveTreeRetryBudgetExhaustion:
             )
         assert isinstance(result, ErrorResult)
         assert result.code == "CST_SAVE_ERROR"
-        assert "after 4 attempts" in result.message
-        assert "s total" in result.message
+        assert "connection refused" in result.message
+        assert "after 4 attempts" not in result.message
 
     @pytest.mark.asyncio
     async def test_db_locked_exhaustion(self, project_root: Path, out_py: Path) -> None:

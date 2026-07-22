@@ -10,42 +10,28 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, cast
 
+from code_analysis.core.database.logical_write_program import (
+    LogicalWriteProgramV1,
+    SqlParamPair,
+)
 from code_analysis.core.database_client.protocol import (
     DataResult,
     ErrorResult,
     SuccessResult,
     ErrorCode,
 )
-from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
-from code_analysis.core.retry_policy import RetryPolicy
+from code_analysis.core.database_driver_pkg.exceptions import (
+    DriverOperationError,
+    TransientDatabaseError,
+)
 
 from .rpc_handlers_base import parse_logical_write_batches_param
 
 logger = logging.getLogger(__name__)
 
 _LOCK_SCOPE_VALUES = frozenset({"none", "project_write", "project_read"})
-
-
-def _rpc_write_retry_policy(driver: Any) -> RetryPolicy:
-    """Return rpc write retry policy."""
-    policy = getattr(driver, "_write_retry_policy", None)
-    if policy is not None:
-        return policy
-    cfg = getattr(driver, "_driver_config", None)
-    if isinstance(cfg, dict):
-        return RetryPolicy.from_driver_config(cfg)
-    return RetryPolicy()
-
-
-def _rpc_backend_name(driver: Any) -> str:
-    """Return rpc backend name."""
-    name = type(driver).__name__
-    if "PostgreSQL" in name or "postgres" in name.lower():
-        return "postgres"
-    return name.replace("Driver", "").lower() or "unknown"
 
 
 class _RPCHandlersSchemaMixin:
@@ -259,7 +245,15 @@ class _RPCHandlersSchemaMixin:
     def handle_execute_logical_write_operation(
         self, params: Dict[str, Any]
     ) -> SuccessResult | ErrorResult:
-        """Run multiple execute_batch steps in one transaction (one RPC), with full-tx retry."""
+        """Run multiple execute_batch steps in one transaction (one RPC), with full-tx retry.
+
+        The retry/transaction-orchestration loop now lives on the driver
+        (``PostgreSQLDriver.execute_logical_write_operation``, stage-2 driver-prep);
+        this handler owns RPC param validation and translates the driver's plain
+        return value / raised exceptions back into the ``SuccessResult`` /
+        ``ErrorResult`` wire envelope, so current RPC/``DatabaseClient`` callers see
+        byte-identical responses.
+        """
         err, batches = parse_logical_write_batches_param(params)
         if err is not None:
             return err
@@ -286,116 +280,54 @@ class _RPCHandlersSchemaMixin:
                 ),
             )
 
-        policy = _rpc_write_retry_policy(self.driver)
-        backend = _rpc_backend_name(self.driver)
-        max_attempts = max(1, policy.attempts)
-        logger.info(
-            "method=execute_logical_write_operation n_batches=%s lock_scope=%s",
-            len(batches),
-            lock_scope,
-        )
+        program: LogicalWriteProgramV1 = {
+            "batches": cast(List[List[SqlParamPair]], batches),
+            "lock_scope": lock_scope,  # type: ignore[typeddict-item]
+        }
+        if params.get("defer_constraints"):
+            program["defer_constraints"] = True
+        if operation_name is not None:
+            program["operation_name"] = operation_name
+        if project_id is not None:
+            program["project_id"] = project_id
 
-        for attempt_1based in range(1, max_attempts + 1):
-            transaction_id: Optional[str] = None
-            try:
-                transaction_id = self.driver.begin_transaction()
-                tid_short = (
-                    (transaction_id[:8] + "…")
-                    if transaction_id and len(transaction_id) > 8
-                    else transaction_id
-                )
-                logger.debug(
-                    "[CHAIN] handler handle_execute_logical_write_operation tid=%s",
-                    tid_short,
-                )
-                if params.get("defer_constraints"):
-                    self.driver.execute(
-                        "SET CONSTRAINTS ALL DEFERRED", None, transaction_id
-                    )
-                batch_results: list[dict[str, Any]] = []
-                for batch_ops in batches:
-                    results = self.driver.execute_batch(batch_ops, transaction_id)
-                    batch_results.append({"results": results})
-                self.driver.commit_transaction(transaction_id)
-                return SuccessResult(
-                    data={
-                        "batch_results": batch_results,
-                        "transaction_id": transaction_id,
-                        "metadata": {
-                            "operation_name": operation_name,
-                            "project_id": project_id,
-                            "lock_scope": lock_scope,
-                        },
-                    }
-                )
-            except TransientDatabaseError as e:
-                if transaction_id is not None:
-                    try:
-                        self.driver.rollback_transaction(transaction_id)
-                    except Exception as rb_err:
-                        logger.error(
-                            "rollback after logical write failure: %s",
-                            rb_err,
-                            exc_info=True,
-                        )
-                        return ErrorResult(
-                            error_code=ErrorCode.DATABASE_ERROR,
-                            description=f"rollback failed: {rb_err}",
-                            details={
-                                "retryable": False,
-                                "error_kind": "rollback_failed",
-                                "message": str(rb_err),
-                                "operation_name": operation_name,
-                                "attempts": attempt_1based,
-                            },
-                        )
-                if e.commit_outcome_unknown:
-                    return ErrorResult(
-                        error_code=ErrorCode.DATABASE_ERROR,
-                        description=str(e),
-                        details=e.to_details(operation_name, attempts=attempt_1based),
-                    )
-                if not (e.retryable and not e.commit_outcome_unknown):
-                    return ErrorResult(
-                        error_code=ErrorCode.DATABASE_ERROR,
-                        description=str(e),
-                        details=e.to_details(operation_name, attempts=attempt_1based),
-                    )
-                if attempt_1based >= max_attempts:
-                    return ErrorResult(
-                        error_code=ErrorCode.DATABASE_ERROR,
-                        description=str(e),
-                        details=e.to_details(operation_name, attempts=max_attempts),
-                    )
-                logger.info(
-                    "[DB_RETRY] backend=%s layer=rpc operation=execute_logical_write_operation "
-                    "operation_name=%s attempt=%s/%s sqlstate=%s error_kind=%s",
-                    backend,
-                    operation_name if operation_name is not None else "none",
-                    attempt_1based,
-                    max_attempts,
-                    e.sqlstate,
-                    e.error_kind,
-                )
-                time.sleep(
-                    policy.delay_for_attempt(attempt_1based),
-                )
-            except Exception as e:
-                if transaction_id is not None:
-                    try:
-                        self.driver.rollback_transaction(transaction_id)
-                    except Exception as rb_err:
-                        logger.error(
-                            "rollback after logical write failure: %s",
-                            rb_err,
-                            exc_info=True,
-                        )
-                logger.error(
-                    "Error in handle_execute_logical_write_operation: %s",
-                    e,
-                    exc_info=True,
-                )
-                return ErrorResult(
-                    error_code=ErrorCode.DATABASE_ERROR,
-                    description=str(e),
-                )
+        try:
+            data = self.driver.execute_logical_write_operation(program)
+        except TransientDatabaseError as e:
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details=e.to_details(operation_name),
+            )
+        except DriverOperationError as e:
+            # Rollback-after-transient failure: driver raises DriverOperationError
+            # chained from the rollback exception (``raise ... from rb_err``, see
+            # PostgreSQLDriver.execute_logical_write_operation docstring). The old
+            # handler put the bare rollback exception's own text in
+            # details["message"] (not the wrapped "rollback failed: ..." text);
+            # __cause__ is that same rollback exception here. The attempt count is
+            # attached dynamically (attribute not on the base exception type) so
+            # it can be forwarded, matching the old handler's dict key-for-key.
+            rollback_cause = e.__cause__
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details={
+                    "retryable": False,
+                    "error_kind": "rollback_failed",
+                    "message": str(rollback_cause) if rollback_cause is not None else str(e),
+                    "operation_name": operation_name,
+                    "attempts": getattr(e, "attempts", None),
+                },
+            )
+        except Exception as e:
+            logger.error(
+                "Error in handle_execute_logical_write_operation: %s",
+                e,
+                exc_info=True,
+            )
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )
+        return SuccessResult(data=data)

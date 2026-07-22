@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 from ..core.json_tree.json_saver import save_json_tree_to_file
 from ..core.json_tree.tree_builder import get_tree, reload_tree_from_file
@@ -119,7 +120,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     return validated_path
                 rel_path, raw_path = validated_path
 
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return ErrorResult(
                         message=f"Project {project_id} not found",

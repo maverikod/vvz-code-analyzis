@@ -45,6 +45,10 @@ async def test_search_runs_background_in_dedicated_thread(tmp_path) -> None:
             "_open_database_from_config",
             return_value=_mock_project_db(),
         ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value={"id": _VALID_PROJECT_ID},
+        ),
         patch.object(
             SearchMCPCommand,
             "_get_search_sessions_root",
@@ -93,6 +97,10 @@ async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
             "_open_database_from_config",
             return_value=_mock_project_db(),
         ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value={"id": _VALID_PROJECT_ID},
+        ),
         patch.object(
             SearchMCPCommand,
             "_get_search_sessions_root",
@@ -133,10 +141,16 @@ async def test_search_returns_handoff_with_job_id(tmp_path) -> None:
 def test_search_accepts_path_filter_alias() -> None:
     """Verify test search accepts path filter alias."""
     cmd = SearchMCPCommand()
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=_mock_project_db(),
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=_mock_project_db(),
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value={"id": _VALID_PROJECT_ID},
+        ),
     ):
         params = cmd.validate_params(
             {

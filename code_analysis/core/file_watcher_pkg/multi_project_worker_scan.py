@@ -12,6 +12,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
+from code_analysis.core.database_driver_pkg.domain.projects import (
+    get_project, insert_project_row, relocate_project_root_after_disk_move)
 from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
@@ -399,7 +401,7 @@ def scan_watch_dir(
                 skipped_projects.add(pid_p)
                 continue
             try:
-                project_obj = database.get_project(project_root_obj.project_id)
+                project_obj = get_project(database, project_root_obj.project_id)
                 if not project_obj:
                     project = None
                 elif isinstance(project_obj, dict):
@@ -439,7 +441,8 @@ def scan_watch_dir(
                         old_for_relocate = old_abs or str(
                             project.get("root_path") or ""
                         )
-                        ok = database.relocate_project_root_after_disk_move(
+                        ok = relocate_project_root_after_disk_move(
+                            database,
                             project_root_obj.project_id,
                             old_for_relocate,
                             str(project_root_obj.root_path.resolve()),
@@ -524,8 +527,8 @@ def scan_watch_dir(
                             priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                     else:
-                        existing_project_obj = database.get_project(
-                            project_root_obj.project_id
+                        existing_project_obj = get_project(
+                            database, project_root_obj.project_id
                         )
                         if not existing_project_obj:
                             existing_project = None
@@ -563,7 +566,8 @@ def scan_watch_dir(
                             database=database,
                         )
                         if hasattr(database, "insert_project_row"):
-                            database.insert_project_row(
+                            insert_project_row(
+                                database,
                                 project_root_obj.project_id,
                                 root_stored,
                                 project_name,

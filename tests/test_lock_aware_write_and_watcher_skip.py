@@ -23,6 +23,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
+import pytest
+
 from code_analysis.commands.project_file_transfer_by_id_commands import (
     _rollback_registered_file_row,
 )
@@ -228,8 +230,14 @@ def test_lock_status_parity_and_listing(tmp_path: Path) -> None:
     assert "pkg/mod.py" in list_locked_file_paths(db, PROJECT_ID)
 
 
-def test_session_open_lease_acquire_and_release(tmp_path: Path) -> None:
+def test_session_open_lease_acquire_and_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """S2/S4: the session helper records an advisory lease and releases it idempotently."""
+    monkeypatch.setattr(
+        "code_analysis.core.client_sessions.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
     db = _make_db(tmp_path)
     ensure_client_session_tables(db)
     session_id = "11111111-1111-4111-8111-111111111111"

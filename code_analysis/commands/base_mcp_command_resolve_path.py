@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.database_client.client import DatabaseClient
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.project_root_path import resolve_project_root_absolute_str
 
@@ -124,7 +125,7 @@ def resolve_file_path_from_project(
     Raises:
         ValidationError: If project not found, watch_dir not found, or path invalid.
     """
-    project = database.get_project(project_id)
+    project = get_project(database, project_id)
     if not project:
         raise ValidationError(
             f"Project with ID {project_id} not found in database",

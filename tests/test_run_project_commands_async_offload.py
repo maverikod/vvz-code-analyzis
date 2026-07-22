@@ -142,11 +142,16 @@ def test_run_project_module_validate_params_rejects_unknown_project() -> None:
     """Verify test run project module validate params rejects unknown project."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
-    mock_db.get_project.return_value = None
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value=None,
+        ),
     ):
         with pytest.raises(ValidationError, match="not found"):
             RunProjectModuleCommand().validate_params(

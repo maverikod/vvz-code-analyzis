@@ -13,6 +13,8 @@ from ._shared import (
     SuccessResult,
     ValidationError,
 )
+from ...core.database_driver_pkg.domain.projects import (
+    get_project, sync_project_metadata_from_projectid)
 
 
 class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
@@ -83,7 +85,7 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return self._handle_error(
                         ValidationError(
@@ -136,7 +138,7 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
                     resolved_root, processing_paused=bool(processing_paused)
                 )
                 if hasattr(database, "sync_project_metadata_from_projectid"):
-                    database.sync_project_metadata_from_projectid(resolved_root)
+                    sync_project_metadata_from_projectid(database, resolved_root)
                 else:
                     database.execute(
                         """

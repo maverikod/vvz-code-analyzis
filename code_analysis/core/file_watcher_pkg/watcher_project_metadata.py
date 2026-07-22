@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..database_driver_pkg.domain.projects import sync_project_metadata_from_projectid
 from ..sql_portable import unix_timestamp_to_julian_day
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
@@ -51,7 +52,8 @@ def refresh_project_metadata_from_projectid(
     Does not modify ``projects.updated_at`` (that field is filled during file scan).
     """
     if hasattr(database, "sync_project_metadata_from_projectid"):
-        return database.sync_project_metadata_from_projectid(
+        return sync_project_metadata_from_projectid(
+            database,
             project_root,
             priority=priority,
         )

@@ -23,6 +23,7 @@ from .project_file_advisory_lock_batch_metadata import (
 from .project_file_advisory_lock_batch_schema import (
     get_project_file_advisory_lock_batch_schema,
 )
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
 from ..core.client_sessions import (
@@ -214,7 +215,7 @@ class ProjectFileAdvisoryLockBatchCommand(BaseMCPCommand):
                 "Foreign runtime lock session is not allowed",
             )
 
-        project = database.get_project(project_id)
+        project = get_project(database, project_id)
         if not project:
             return self._item_error(
                 base,

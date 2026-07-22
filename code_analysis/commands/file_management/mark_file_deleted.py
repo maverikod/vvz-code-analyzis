@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from ...core.database_driver_pkg.domain.projects import get_project
+
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
 else:
@@ -122,7 +124,7 @@ class MarkFileDeletedCommand:
             "moved_to_trash": False,
         }
         try:
-            project = self.database.get_project(self.project_id)
+            project = get_project(self.database, self.project_id)
             project_root = self._project_root_from_record(project)
             if project_root is None:
                 result["error"] = "PROJECT_NOT_FOUND"

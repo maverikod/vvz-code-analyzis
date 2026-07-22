@@ -19,6 +19,24 @@ from code_analysis.commands.file_management.mark_file_deleted import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _patch_get_project_to_fake_db_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route the domain ``get_project`` call site back to ``_FakeDB.get_project``.
+
+    ``MarkFileDeletedCommand`` calls the driver-direct free function (stage-2
+    layer collapse), which reads through ``driver.select``/``driver.execute`` -
+    primitives this lightweight test double does not implement. Every test in
+    this module supplies its own ``get_project`` shortcut instead, so redirect
+    the call site to it rather than reimplementing SQL primitives on the fake.
+    """
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.mark_file_deleted.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
+
+
 class _FakeDB:
     """Represent FakeDB."""
 

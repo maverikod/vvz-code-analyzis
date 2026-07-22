@@ -16,6 +16,7 @@ import time
 import uuid
 from typing import Any, List, Tuple
 
+from code_analysis.core.database_driver_pkg.domain.projects import list_projects
 from code_analysis.core.docs_markdown_vector_gate import \
     sql_and_exclude_docs_markdown_chunks
 from code_analysis.core.sql_portable import (WHERE_FILES_ACTIVE,
@@ -351,7 +352,7 @@ async def run_one_cycle(
                 "[CYCLE #%s] Rebuilding FAISS indexes for all projects...",
                 cycle_count,
             )
-            all_projects_list = database.list_projects()
+            all_projects_list = list_projects(database)
             all_projects = [
                 {
                     "id": p.id,

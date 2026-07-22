@@ -189,7 +189,7 @@ class TestJsonSaveTreeCommandPathSafety:
         assert result.code == "INVALID_FILE_PATH"
 
     async def test_json_save_tree_rejects_resolved_escape_symlink(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify test json save tree rejects resolved escape symlink."""
         outside_dir = tmp_path.parent / "outside-json-save"
@@ -198,6 +198,10 @@ class TestJsonSaveTreeCommandPathSafety:
         link.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(outside_dir, target_is_directory=True)
 
+        monkeypatch.setattr(
+            "code_analysis.commands.json_save_tree_command.get_project",
+            lambda driver, project_id: driver.get_project(project_id),
+        )
         cmd = JsonSaveTreeCommand()
         cmd._open_database_from_config = MagicMock(return_value=_FakeDatabase(tmp_path))
 
@@ -214,13 +218,17 @@ class TestJsonSaveTreeCommandPathSafety:
         assert result.code == "INVALID_FILE_PATH"
 
     async def test_json_save_tree_non_json_extension_still_rejected(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify test json save tree non json extension still rejected."""
         txt_target = tmp_path / "json_cases" / "file.txt"
         txt_target.parent.mkdir(parents=True, exist_ok=True)
         txt_target.write_text("{}", encoding="utf-8")
 
+        monkeypatch.setattr(
+            "code_analysis.commands.json_save_tree_command.get_project",
+            lambda driver, project_id: driver.get_project(project_id),
+        )
         cmd = JsonSaveTreeCommand()
         cmd._open_database_from_config = MagicMock(return_value=_FakeDatabase(tmp_path))
 
@@ -270,6 +278,10 @@ class TestJsonSaveTreeCommandPathSafety:
             },
         )
 
+        monkeypatch.setattr(
+            "code_analysis.commands.json_save_tree_command.get_project",
+            lambda driver, project_id: driver.get_project(project_id),
+        )
         cmd = JsonSaveTreeCommand()
         cmd._open_database_from_config = MagicMock(return_value=_FakeDatabase(tmp_path))
 

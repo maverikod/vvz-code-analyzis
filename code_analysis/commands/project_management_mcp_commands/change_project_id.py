@@ -20,6 +20,7 @@ from ._shared import (
     logger,
     uuid,
 )
+from ...core.database_driver_pkg.domain.projects import get_project
 from ...core.exceptions import CodeAnalysisError
 from ...core.project_root_path import persist_projects_root_path_stored_value
 from ...core.sql_portable import sql_julian_timestamp_now_expr
@@ -259,7 +260,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
             if str(new_project_id).lower() != str(project_id).lower():
                 pre_db = self._open_database_from_config(auto_analyze=False)
                 try:
-                    existing_new = pre_db.get_project(new_project_id)
+                    existing_new = get_project(pre_db, new_project_id)
                     if (
                         existing_new is not None
                         and not _db_row_root_matches_project_root(

@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
+from .database_driver_pkg.domain.projects import get_all_projects, get_project
 from .constants import (
     DEFAULT_IGNORE_PATTERNS,
     GIT_IGNORE_PATTERNS,
@@ -75,7 +76,7 @@ class ProjectManager:
         # Try to get projects from database first
         if self.database:
             try:
-                db_projects = self.database.get_all_projects()
+                db_projects = get_all_projects(self.database)
                 for db_project in db_projects:
                     root_path = Path(db_project["root_path"])
                     if root_path.exists():
@@ -131,7 +132,7 @@ class ProjectManager:
         # Try to get from database first
         if self.database:
             try:
-                db_project = self.database.get_project(project_id)
+                db_project = get_project(self.database, project_id)
                 if db_project:
                     root_path = Path(db_project["root_path"])
                     if root_path.exists():

@@ -27,6 +27,7 @@ from .cst_modify_tree_helpers import (
 from .cst_modify_tree_metadata import get_cst_modify_tree_metadata
 from .cst_modify_tree_ops_build import build_tree_operations
 from ..core.cst_tree.models import TreeNodeMetadata, TreeOperation, TreeOperationType
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.cst_tree.node_stable_id import logical_source_from_module
 from ..core.cst_tree.tree_builder import (
     _attach_disk_snapshot,
@@ -317,7 +318,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     absolute_file_path = self._resolve_file_path_from_project(
                         database, project_id, file_path
                     )
-                    project = database.get_project(project_id)
+                    project = get_project(database, project_id)
                     if not project:
                         rollback_tree_to_code(
                             tree_id,

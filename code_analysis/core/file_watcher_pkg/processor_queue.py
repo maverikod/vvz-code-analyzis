@@ -29,6 +29,7 @@ from .ignore_pre_scan_purge import (
 from .processor_delta import FileDelta
 
 from code_analysis.core.database.file_edit_lock import file_row_has_live_edit_lock
+from code_analysis.core.database_driver_pkg.domain.projects import get_project
 from code_analysis.core.runtime_lock_sessions import list_locked_file_paths
 from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
 from code_analysis.core.file_disk_registration import (
@@ -183,7 +184,7 @@ class ProcessorQueueOps:
         for project_id, delta in deltas.items():
             err_extra = len(delta.ignore_purge_paths)
             try:
-                project_obj = self.database.get_project(project_id)
+                project_obj = get_project(self.database, project_id)
                 # get_project may return a dict (local DB) or a Project object (RPC client)
                 if not project_obj:
                     project = None
@@ -899,7 +900,7 @@ class ProcessorQueueOps:
     def _get_project_root_dir(self, project_id: str, file_path: str) -> Optional[Path]:
         """Get project root directory for a file."""
         try:
-            project_obj = self.database.get_project(project_id)
+            project_obj = get_project(self.database, project_id)
             root = (
                 project_obj.get("root_path")
                 if isinstance(project_obj, dict)

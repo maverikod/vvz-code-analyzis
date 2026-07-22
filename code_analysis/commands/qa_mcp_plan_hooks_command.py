@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.qa_mcp_hooks_policy import qa_mcp_hooks_enabled_for_mcp_commands
 from ..core.worker_project_activity import (
     release_project_activity,
@@ -103,7 +104,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
                             details={"scenario": scenario_l},
                         )
                     pid = str(project_id).strip()
-                    proj = db.get_project(pid)
+                    proj = get_project(db, pid)
                     if not proj:
                         return ErrorResult(
                             message="project not found",
@@ -122,7 +123,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
                         details={"scenario": scenario_l},
                     )
                 pid = str(project_id).strip()
-                proj = db.get_project(pid)
+                proj = get_project(db, pid)
                 if not proj:
                     return ErrorResult(
                         message=f"Project {pid} not found",

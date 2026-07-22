@@ -14,6 +14,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..database_driver_pkg.domain.projects import list_projects
 from .base import VectorizationWorker
 
 logger = logging.getLogger(__name__)
@@ -277,7 +278,7 @@ def run_vectorization_worker(
             )
             sync_database.connect()
             # Get all projects from database
-            all_projects = sync_database.list_projects()
+            all_projects = list_projects(sync_database)
             # Convert Project objects to dict format for compatibility
             all_projects = [
                 {

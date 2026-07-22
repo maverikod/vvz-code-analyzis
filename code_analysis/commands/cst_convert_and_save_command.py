@@ -23,6 +23,7 @@ from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Get project
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return ErrorResult(
                         message=f"Project {project_id} not found",

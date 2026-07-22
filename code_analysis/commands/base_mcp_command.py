@@ -14,6 +14,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
 
 from ..core.database_client.client import DatabaseClient
+from ..core.database_driver_pkg.domain.projects import get_project, insert_project_row
 from ..core.constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 from ..core.exceptions import (
     CodeAnalysisError,
@@ -139,7 +140,7 @@ class BaseMCPCommand(Command):
                 return None
 
         if project_id:
-            project = db.get_project(project_id)
+            project = get_project(db, project_id)
             if project:
                 return project_id
             existing = BaseMCPCommand._get_project_id_by_root_path(db, str(root_path))
@@ -160,7 +161,8 @@ class BaseMCPCommand(Command):
                 watch_dir_id=watch_dir_id,
                 database=db,
             )
-            db.insert_project_row(
+            insert_project_row(
+                db,
                 project_id,
                 root_stored,
                 project_name,
@@ -177,7 +179,8 @@ class BaseMCPCommand(Command):
             watch_dir_id=watch_dir_id,
             database=db,
         )
-        db.insert_project_row(
+        insert_project_row(
+            db,
             new_id,
             root_stored,
             root_path.name,
@@ -266,7 +269,7 @@ class BaseMCPCommand(Command):
             )
         db = BaseMCPCommand._open_database_from_config()
         try:
-            project = db.get_project(project_id)
+            project = get_project(db, project_id)
             if not project:
                 hint = ""
                 if "-" not in project_id or len(project_id) < 36:

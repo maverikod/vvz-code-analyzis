@@ -246,6 +246,10 @@ async def test_project_file_advisory_lock_batch_partial_failures(
     monkeypatch.setattr(
         cmd, "_open_database_from_config", lambda auto_analyze=False: database
     )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_advisory_lock_batch_command.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
 
     result = await cmd.execute(
         items=[
@@ -320,6 +324,10 @@ async def test_transfer_download_begin_accepts_and_binds_lock_mode(
     cmd = ProjectFileTransferDownloadBeginCommand()
     monkeypatch.setattr(
         cmd, "_open_database_from_config", lambda auto_analyze=False: database
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
     )
 
     result = await cmd.execute(
@@ -424,6 +432,10 @@ async def test_transfer_upload_save_registers_and_returns_file_id(
     monkeypatch.setattr(
         cmd, "_open_database_from_config", lambda auto_analyze=False: database
     )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
 
     result = await cmd.execute(
         transfer_id="upload-1",
@@ -494,6 +506,14 @@ async def test_transfer_upload_save_yaml_writes_bytes_identical(
         BaseMCPCommand,
         "_resolve_file_path_from_project",
         lambda self, db, pid, fp, require_exists=False: target,
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.universal_file_save_command.save_command.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
     )
 
     cmd = ProjectFileTransferUploadSaveCommand()

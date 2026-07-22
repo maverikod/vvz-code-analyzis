@@ -105,12 +105,15 @@ class TestUniversalFileReplaceRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -136,12 +139,15 @@ class TestUniversalFileReplaceRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -173,12 +179,15 @@ class TestUniversalFileReplaceRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -212,13 +221,16 @@ class TestUniversalFileReplaceRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
 
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,

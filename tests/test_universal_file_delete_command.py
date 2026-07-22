@@ -172,7 +172,6 @@ class TestUniversalFileDeleteRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
@@ -183,6 +182,10 @@ class TestUniversalFileDeleteRouting:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=missing,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_delete_command.get_project",
+                return_value=mock_project,
             ),
         ):
             cmd = UniversalFileDeleteCommand()

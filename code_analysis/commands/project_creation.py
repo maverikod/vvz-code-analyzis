@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 else:
     DatabaseClient = Any
 
+from code_analysis.core.database_driver_pkg.domain.projects import insert_project_row
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
 
 logger = logging.getLogger(__name__)
@@ -387,7 +388,8 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
-                self.database.insert_project_row(
+                insert_project_row(
+                    self.database,
                     project_id,
                     root_stored,
                     project_path.name,
@@ -429,7 +431,8 @@ class CreateProjectCommand:
                     ),
                     database=self.database,
                 )
-                self.database.insert_project_row(
+                insert_project_row(
+                    self.database,
                     project_id,
                     root_stored,
                     project_path.name,

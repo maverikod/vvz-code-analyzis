@@ -447,7 +447,6 @@ class TestWriteProjectTextLines:
         mock_db = MagicMock()
         mock_proj = MagicMock()
         mock_proj.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_proj
         mock_db.select.return_value = [{"id": 42}]
 
         with (
@@ -460,6 +459,10 @@ class TestWriteProjectTextLines:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=cfg,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.get_project",
+                return_value=mock_proj,
             ),
             patch(
                 "code_analysis.commands.write_project_text_lines_command.persist_plain_text_file_metadata",
@@ -567,7 +570,6 @@ class TestWriteProjectTextLines:
         mock_db = MagicMock()
         mock_proj = MagicMock()
         mock_proj.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_proj
 
         with (
             patch.object(
@@ -579,6 +581,10 @@ class TestWriteProjectTextLines:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=cfg,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.get_project",
+                return_value=mock_proj,
             ),
             patch(
                 "code_analysis.commands.write_project_text_lines_command.BackupManager"

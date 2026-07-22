@@ -16,6 +16,7 @@ from ._shared import (
     ValidationError,
     logger,
 )
+from ...core.database_driver_pkg.domain.projects import get_project
 
 
 class DeleteProjectMCPCommand(BaseMCPCommand):
@@ -186,7 +187,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
 
             try:
                 # Get project from database to verify it exists and get root_path
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return self._handle_error(
                         ValidationError(

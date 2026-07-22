@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.config import get_driver_config
+from ...core.database_driver_pkg.domain.projects import get_project
 from ...core.faiss_manager import FaissIndexManager
 from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ...core.config_json import ConfigJSONDecodeError
@@ -93,7 +94,7 @@ class RebuildFaissCommand(BaseMCPCommand):
             self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",

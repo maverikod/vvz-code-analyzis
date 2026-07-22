@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ...core.database_driver_pkg.domain.projects import get_project
 from .path_mask_match import filter_rows_by_mask, relative_path_posix
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ class MarkFilesDeletedByMaskCommand:
             "errors": errors_list,
         }
 
-        proj = self.database.get_project(self.project_id)
+        proj = get_project(self.database, self.project_id)
         if not proj:
             result["success"] = False
             errors_list.append(

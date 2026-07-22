@@ -53,6 +53,7 @@ from ..core.client_sessions import (
     touch_or_error,
 )
 from ..core.database_client.client import DatabaseClient
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.file_lock import acquire_persistent_file_lock, release_persistent_file_lock
 from ..core.runtime_lock_sessions import (
@@ -265,7 +266,7 @@ def _resolve_file_by_id(
         )
     rel_posix = str(Path(rel_raw).as_posix())
     if Path(rel_posix).is_absolute():
-        project = database.get_project(effective_pid)
+        project = get_project(database, effective_pid)
         if not project:
             return ErrorResult(
                 message=f"Project {effective_pid} not found",
@@ -362,7 +363,7 @@ def _resolve_by_file_path(
             details={"field": "file_path"},
         )
     pid = str(project_id).strip()
-    project = database.get_project(pid)
+    project = get_project(database, pid)
     if not project:
         return ErrorResult(
             message=f"Project {pid} not found",
@@ -407,7 +408,7 @@ def _require_on_disk_project_file(
 ) -> Union[Path, ErrorResult]:
     """Resolve ``rel_posix`` under the project root and require a regular file on disk."""
     pid = str(project_id).strip()
-    project = database.get_project(pid)
+    project = get_project(database, pid)
     if not project:
         return ErrorResult(
             message=f"Project {pid} not found",
@@ -470,7 +471,7 @@ def _create_path_on_disk(
     database: DatabaseClient, project_id: str, rel_posix: str
 ) -> bool:
     """Return True when the project-relative path currently exists on disk."""
-    project = database.get_project(project_id)
+    project = get_project(database, project_id)
     if project is None:
         return False
     try:
@@ -800,7 +801,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         if session_id:
             merged["session_id"] = str(session_id).strip()
         if include_backup_history:
-            project = database.get_project(effective_project_id)
+            project = get_project(database, effective_project_id)
             if project:
                 root = Path(project.root_path).resolve()
                 bm = BackupManager(root)
@@ -956,7 +957,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         # Resolve the absolute target path up front: the advisory lock (when
         # requested) and the pre-write row registration for a new file both need it.
         if mode != "none" or is_create:
-            project = database.get_project(effective_project_id)
+            project = get_project(database, effective_project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {effective_project_id} not found",

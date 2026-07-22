@@ -194,7 +194,6 @@ class TestUniversalFileReplaceAnchor:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
 
         with (
             patch.object(
@@ -206,6 +205,10 @@ class TestUniversalFileReplaceAnchor:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=f,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch(
                 "code_analysis.commands.universal_file_replace_command.BackupManager"
@@ -236,7 +239,6 @@ class TestUniversalFileReplaceAnchor:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
 
         with (
             patch.object(
@@ -248,6 +250,10 @@ class TestUniversalFileReplaceAnchor:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=f,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_replace_command.get_project",
+                return_value=mock_project,
             ),
             patch(
                 "code_analysis.commands.universal_file_replace_command.BackupManager"

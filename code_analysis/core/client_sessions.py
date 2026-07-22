@@ -11,6 +11,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
+from .database_driver_pkg.domain.projects import get_project
+
 if TYPE_CHECKING:
     from code_analysis.core.database_client.client import DatabaseClient
 
@@ -564,7 +566,7 @@ def _session_file_relative_posix(
     row = get_file_by_id(file_id)
     if not row:
         return None
-    project = database.get_project(project_id)
+    project = get_project(database, project_id)
     root = getattr(project, "root_path", None)
     if isinstance(project, dict):
         root = project.get("root_path")

@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from ...core.database_driver_pkg.domain.projects import get_project
 from ...core.sql_portable import WHERE_FILES_TRASHED
 
 if TYPE_CHECKING:
@@ -68,7 +69,7 @@ class RestoreDeletedFilesCommand:
         }
 
         try:
-            project = self.database.get_project(self.project_id)
+            project = get_project(self.database, self.project_id)
             root_path = None
             if project:
                 root_path = (

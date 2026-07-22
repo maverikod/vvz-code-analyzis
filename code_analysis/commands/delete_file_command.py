@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional, Type
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.file_handlers.registry import HANDLER_TEXT, RegistryError, resolve_handler
 from ..core.git_integration import commit_after_write
 from ..core.venv_path_policy import (
@@ -215,7 +216,7 @@ class DeleteFileMCPCommand(BaseMCPCommand):
 
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return ErrorResult(
                         message=f"Project {project_id} not found",

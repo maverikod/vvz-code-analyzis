@@ -20,6 +20,7 @@ from .base_mcp_command import BaseMCPCommand
 from .base_mcp_command_resolve_path import resolve_under_project_root
 from .project_file_lock_status_metadata import get_project_file_lock_status_metadata
 from .project_file_lock_status_schema import get_project_file_lock_status_schema
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.exceptions import ValidationError
 from ..core.runtime_lock_sessions import get_file_advisory_lock_status
 
@@ -69,7 +70,7 @@ class ProjectFileLockStatusCommand(BaseMCPCommand):
         """Return the cooperative advisory lock state for a project file."""
         database = self._open_database_from_config(auto_analyze=False)
         try:
-            project = database.get_project(project_id)
+            project = get_project(database, project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project not found: {project_id}",

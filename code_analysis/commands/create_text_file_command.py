@@ -24,6 +24,7 @@ from .project_text_file_guard import (
     reject_if_write_under_project_venv,
 )
 from ..core.backup_manager import BackupManager
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 from ..core.exceptions import ValidationError
 from ..core.file_handlers.registry import (
@@ -330,7 +331,7 @@ class CreateTextFileMCPCommand(BaseMCPCommand):
                 raw_path,
                 require_exists=False,
             )
-            project = database.get_project(project_id)
+            project = get_project(database, project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {project_id} not found",

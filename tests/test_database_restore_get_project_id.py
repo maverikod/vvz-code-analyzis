@@ -55,11 +55,14 @@ def test_get_project_id_creates_new_project_when_none_exists() -> None:
             "code_analysis.core.project_root_path.persist_projects_root_path_stored_value",
             return_value="brand_new_project",
         ),
+        patch(
+            "code_analysis.commands.base_mcp_command.insert_project_row"
+        ) as mock_insert_project_row,
     ):
         result = BaseMCPCommand._get_project_id(mock_db, scan_root)
 
     assert isinstance(result, str) and result
-    mock_db.insert_project_row.assert_called_once()
-    call_args = mock_db.insert_project_row.call_args
-    assert call_args.args == (result, "brand_new_project", "brand_new_project")
+    mock_insert_project_row.assert_called_once()
+    call_args = mock_insert_project_row.call_args
+    assert call_args.args == (mock_db, result, "brand_new_project", "brand_new_project")
     assert call_args.kwargs == {"watch_dir_id": None}

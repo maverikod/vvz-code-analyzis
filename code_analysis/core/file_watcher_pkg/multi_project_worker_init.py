@@ -11,6 +11,9 @@ import logging
 from pathlib import Path
 from typing import Any, List
 
+from code_analysis.core.database_driver_pkg.domain.projects import (
+    get_all_projects, get_project, insert_project_row,
+    relocate_project_root_after_disk_move)
 from code_analysis.core.path_normalization import normalize_path_simple
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
@@ -126,7 +129,7 @@ def _verify_and_relocate_orphaned_projects(
 
     config_roots: list[Path] = list(config_watch_dir_paths.values())
 
-    all_projects = database.get_all_projects()
+    all_projects = get_all_projects(database)
     for proj in all_projects:
         project_id = _project_row_field(proj, "id")
         raw_root = _project_row_field(proj, "root_path")
@@ -180,7 +183,8 @@ def _verify_and_relocate_orphaned_projects(
                 if str(candidate.project_id) != str(project_id):
                     continue
                 new_root = candidate.root_path.resolve()
-                if database.relocate_project_root_after_disk_move(
+                if relocate_project_root_after_disk_move(
+                    database,
                     project_id,
                     old_for_relocate,
                     str(new_root),
@@ -325,7 +329,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     )
                 )
                 for project_root_obj in discovered_projects:
-                    project_obj = database.get_project(project_root_obj.project_id)
+                    project_obj = get_project(database, project_root_obj.project_id)
                     if project_obj:
                         stored_root = _project_row_field(project_obj, "root_path")
                         if stored_root:
@@ -345,7 +349,8 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                     if old_rr is not None
                                     else str(stored_root)
                                 )
-                                if database.relocate_project_root_after_disk_move(
+                                if relocate_project_root_after_disk_move(
+                                    database,
                                     project_root_obj.project_id,
                                     old_for_relocate,
                                     str(new_rr),
@@ -420,7 +425,8 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             database=database,
                         )
                         if hasattr(database, "insert_project_row"):
-                            database.insert_project_row(
+                            insert_project_row(
+                                database,
                                 project_root_obj.project_id,
                                 root_stored,
                                 project_name,

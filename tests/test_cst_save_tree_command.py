@@ -132,6 +132,10 @@ class TestCstSaveTreeTransientConnectRefusedInSaveResult:
                 return_value=out_py,
             ),
             patch(
+                "code_analysis.commands.cst_save_tree_command.get_project",
+                return_value=MagicMock(),
+            ),
+            patch(
                 "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
             ) as mock_save,
         ):
@@ -190,6 +194,10 @@ class TestCstSaveTreeTransientDbLockRecovery:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.get_project",
+                return_value=MagicMock(),
             ),
             patch(
                 "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
@@ -288,6 +296,10 @@ class TestCstSaveTreeRetryBudgetExhaustion:
                 return_value=out_py,
             ),
             patch(
+                "code_analysis.commands.cst_save_tree_command.get_project",
+                return_value=MagicMock(),
+            ),
+            patch(
                 "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
                 return_value=lock_result,
             ),
@@ -325,6 +337,10 @@ class TestCstSaveTreeRetryBudgetExhaustion:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.get_project",
+                return_value=MagicMock(),
             ),
             patch(
                 "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
@@ -384,6 +400,10 @@ class TestCstSaveTreeNonTransientFastFail:
                 BaseMCPCommand,
                 "_resolve_file_path_from_project",
                 return_value=out_py,
+            ),
+            patch(
+                "code_analysis.commands.cst_save_tree_command.get_project",
+                return_value=MagicMock(),
             ),
             patch(
                 "code_analysis.commands.cst_save_tree_command.save_tree_to_file",

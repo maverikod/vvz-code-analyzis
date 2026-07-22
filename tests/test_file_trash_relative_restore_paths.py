@@ -68,9 +68,15 @@ class _FakeDB:
 
 
 @pytest.mark.asyncio
-async def test_restore_deleted_files_resolves_relative_path(tmp_path: Path) -> None:
+async def test_restore_deleted_files_resolves_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify test restore deleted files resolves relative path."""
     db = _FakeDB(tmp_path)
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.restore_deleted_files.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
     cmd = RestoreDeletedFilesCommand(
         database=db,
         project_id="p1",
@@ -85,9 +91,15 @@ async def test_restore_deleted_files_resolves_relative_path(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_unmark_deleted_file_resolves_relative_path(tmp_path: Path) -> None:
+async def test_unmark_deleted_file_resolves_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Verify test unmark deleted file resolves relative path."""
     db = _FakeDB(tmp_path)
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.unmark_deleted_file.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
     cmd = UnmarkDeletedFileCommand(
         database=db,
         project_id="p1",

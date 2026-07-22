@@ -18,7 +18,6 @@ _VALID_PROJECT_ID = str(uuid.uuid4())
 def _mock_project_db() -> MagicMock:
     """Return mock project db."""
     mock_db = MagicMock()
-    mock_db.get_project.return_value = {"id": _VALID_PROJECT_ID}
     return mock_db
 
 
@@ -30,10 +29,16 @@ def _base_params() -> dict[str, object]:
 def test_validate_params_accepts_limit_in_range() -> None:
     """Verify test validate params accepts limit in range."""
     cmd = FulltextSearchMCPCommand()
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=_mock_project_db(),
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=_mock_project_db(),
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value={"id": _VALID_PROJECT_ID},
+        ),
     ):
         out = cmd.validate_params({**_base_params(), "limit": 500})
     assert out["limit"] == 500
@@ -43,10 +48,16 @@ def test_validate_params_accepts_limit_in_range() -> None:
 def test_validate_params_rejects_limit_out_of_range(limit: int) -> None:
     """Verify test validate params rejects limit out of range."""
     cmd = FulltextSearchMCPCommand()
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=_mock_project_db(),
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=_mock_project_db(),
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value={"id": _VALID_PROJECT_ID},
+        ),
     ):
         with pytest.raises(ValidationError, match="limit") as exc_info:
             cmd.validate_params({**_base_params(), "limit": limit})
@@ -78,11 +89,16 @@ def test_fulltext_search_validate_params_rejects_unknown_project_id() -> None:
     """Verify test fulltext search validate params rejects unknown project id."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
-    mock_db.get_project.return_value = None
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value=None,
+        ),
     ):
         with pytest.raises(ValidationError, match="not found"):
             FulltextSearchMCPCommand().validate_params(_base_params())
@@ -120,11 +136,16 @@ async def test_fulltext_search_execute_rejects_unknown_project_id() -> None:
     """Verify test fulltext search execute rejects unknown project id."""
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
-    mock_db.get_project.return_value = None
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.get_project",
+            return_value=None,
+        ),
     ):
         result = await FulltextSearchMCPCommand().execute(
             project_id=_VALID_PROJECT_ID,

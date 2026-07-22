@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, TypeAlias
 
+from ..database_driver_pkg.domain.projects import list_projects
+
 logger = logging.getLogger(__name__)
 
 EnsureDatabaseConnectionResult: TypeAlias = tuple[Optional[Any], bool, float, bool]
@@ -68,7 +70,7 @@ async def ensure_database_connection(
         database.connect()
         try:
             logger.debug("[VECTORIZATION] Testing connection with list_projects()")
-            database.list_projects()
+            list_projects(database)
             if not db_available:
                 logger.info("Database is now available")
             new_logged = True if not db_available else False

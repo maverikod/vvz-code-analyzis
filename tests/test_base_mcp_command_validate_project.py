@@ -78,30 +78,40 @@ class TestValidateProjectIdExistsTransientRpc:
         """A connect-refused DBConnectionError propagates without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.side_effect = DBConnectionError("connection refused")
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.base_mcp_command.get_project",
+                side_effect=DBConnectionError("connection refused"),
+            ) as mock_get_project,
         ):
             with pytest.raises(DBConnectionError):
                 BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
-        assert mock_db.get_project.call_count == 1
+        assert mock_get_project.call_count == 1
         mock_db.disconnect.assert_called_once()
 
     def test_non_connect_refused_raises_immediately(self) -> None:
         """DBConnectionError without connect-refused also propagates without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.side_effect = DBConnectionError("timeout")
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.base_mcp_command.get_project",
+                side_effect=DBConnectionError("timeout"),
+            ) as mock_get_project,
         ):
             with pytest.raises(DBConnectionError):
                 BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
-        assert mock_db.get_project.call_count == 1
+        assert mock_get_project.call_count == 1
 
     def test_scoped_miss_global_hit_via_real_get_project_fallback(self) -> None:
         """Orphan project (scoped select misses, global-by-id hits) still validates."""
@@ -113,12 +123,12 @@ class TestValidateProjectIdExistsTransientRpc:
                 return_value=db,
             ),
             patch(
-                "code_analysis.core.database_client.client_api_projects."
+                "code_analysis.core.database_driver_pkg.domain.projects."
                 "current_server_instance_id",
                 return_value="server-b-current",
             ),
             patch(
-                "code_analysis.core.database_client.client_api_projects."
+                "code_analysis.core.database_driver_pkg.domain.projects."
                 "enrich_project_dict_resolve_root_path",
                 side_effect=lambda row, _db: dict(row),
             ),
@@ -130,15 +140,20 @@ class TestValidateProjectIdExistsTransientRpc:
         """Missing project (None) raises ValidationError without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.return_value = None
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.base_mcp_command.get_project",
+                return_value=None,
+            ) as mock_get_project,
         ):
             with pytest.raises(ValidationError, match="not found"):
                 BaseMCPCommand._validate_project_id_exists(_VALID_UUID)
-        assert mock_db.get_project.call_count == 1
+        assert mock_get_project.call_count == 1
 
 
 class TestCstSaveTreeValidateParamsUsesRetry:
@@ -148,11 +163,16 @@ class TestCstSaveTreeValidateParamsUsesRetry:
         """validate_params returns params unchanged once the project is found."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.return_value = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.base_mcp_command.get_project",
+                return_value=MagicMock(),
+            ) as mock_get_project,
         ):
             params = CSTSaveTreeCommand().validate_params(
                 {
@@ -162,17 +182,22 @@ class TestCstSaveTreeValidateParamsUsesRetry:
                 }
             )
         assert params["project_id"] == _VALID_UUID
-        assert mock_db.get_project.call_count == 1
+        assert mock_get_project.call_count == 1
 
     def test_validate_params_propagates_connection_error_immediately(self) -> None:
         """A DBConnectionError from get_project propagates without retry."""
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.side_effect = DBConnectionError("connection refused")
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.base_mcp_command.get_project",
+                side_effect=DBConnectionError("connection refused"),
+            ) as mock_get_project,
         ):
             with pytest.raises(DBConnectionError):
                 CSTSaveTreeCommand().validate_params(
@@ -182,4 +207,4 @@ class TestCstSaveTreeValidateParamsUsesRetry:
                         "file_path": "x.py",
                     }
                 )
-        assert mock_db.get_project.call_count == 1
+        assert mock_get_project.call_count == 1

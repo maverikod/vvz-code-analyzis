@@ -31,6 +31,7 @@ from .registration import (
 )
 
 from ..core.backup_manager import BackupManager
+from ..core.database_driver_pkg.domain.projects import get_project
 
 from ..core.git_integration import commit_after_write
 
@@ -260,7 +261,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             absolute_path = self._resolve_file_path_from_project(
                 database, project_id, file_path, require_exists=False
             )
-            project = database.get_project(project_id)
+            project = get_project(database, project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {project_id} not found",

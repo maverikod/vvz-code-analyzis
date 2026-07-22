@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.trash_utils import (
     build_trash_folder_name,
     ensure_unique_trash_path,
@@ -141,7 +142,7 @@ class DeleteProjectCommand:
             Dictionary with deletion results
         """
         # Get project info before deletion
-        project = self.database.get_project(self.project_id)
+        project = get_project(self.database, self.project_id)
         if not project:
             return {
                 "success": False,

@@ -42,13 +42,18 @@ class TestDeleteFileRouting:
 
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.return_value = MagicMock(root_path=str(proj_root.resolve()))
 
         cmd = DeleteFileMCPCommand()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.delete_file_command.get_project",
+                return_value=MagicMock(root_path=str(proj_root.resolve())),
+            ),
         ):
             result = await cmd.execute(
                 project_id=_PID,
@@ -70,13 +75,18 @@ class TestDeleteFileRouting:
 
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.return_value = MagicMock(root_path=str(proj_root.resolve()))
 
         cmd = DeleteFileMCPCommand()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.delete_file_command.get_project",
+                return_value=MagicMock(root_path=str(proj_root.resolve())),
+            ),
         ):
             result = await cmd.execute(
                 project_id=_PID,
@@ -100,7 +110,6 @@ class TestDeleteFileRegistryDiagnostics:
 
         mock_db = MagicMock()
         mock_db.disconnect = MagicMock()
-        mock_db.get_project.return_value = MagicMock(root_path=str(proj_root.resolve()))
 
         trash = tmp_path / "trash"
         trash.mkdir()
@@ -139,6 +148,10 @@ class TestDeleteFileRegistryDiagnostics:
             patch(
                 "code_analysis.commands.delete_file_command.MarkFileDeletedCommand",
                 return_value=mock_mfdc,
+            ),
+            patch(
+                "code_analysis.commands.delete_file_command.get_project",
+                return_value=MagicMock(root_path=str(proj_root.resolve())),
             ),
         ):
             result = await cmd.execute(project_id=_PID, file_path="src/m.py")

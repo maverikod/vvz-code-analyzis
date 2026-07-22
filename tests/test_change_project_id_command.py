@@ -48,7 +48,6 @@ async def test_duplicate_new_project_id_fails_before_file_change(
 
     pre_db = MagicMock()
     pre_db.disconnect = MagicMock()
-    pre_db.get_project = MagicMock(return_value=other)
 
     with (
         patch.object(cmd, "_resolve_project_root", return_value=root),
@@ -56,6 +55,11 @@ async def test_duplicate_new_project_id_fails_before_file_change(
             ChangeProjectIdMCPCommand,
             "_open_database_from_config",
             return_value=pre_db,
+        ),
+        patch(
+            "code_analysis.commands.project_management_mcp_commands."
+            "change_project_id.get_project",
+            return_value=other,
         ),
     ):
         result = await cmd.execute(
@@ -85,7 +89,6 @@ async def test_database_error_restores_projectid_file(
 
     pre_db = MagicMock()
     pre_db.disconnect = MagicMock()
-    pre_db.get_project = MagicMock(return_value=None)
 
     main_db = MagicMock()
     main_db.disconnect = MagicMock()
@@ -108,6 +111,11 @@ async def test_database_error_restores_projectid_file(
         ),
         patch(
             "code_analysis.core.storage_paths.resolve_storage_paths",
+        ),
+        patch(
+            "code_analysis.commands.project_management_mcp_commands."
+            "change_project_id.get_project",
+            return_value=None,
         ),
     ):
         result = await cmd.execute(

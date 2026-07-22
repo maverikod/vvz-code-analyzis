@@ -27,6 +27,7 @@ from code_analysis.commands.universal_file_save_command.save_helpers import (
     _success_from_handler,
 )
 from code_analysis.core.backup_manager import BackupManager
+from code_analysis.core.database_driver_pkg.domain.projects import get_project
 from code_analysis.core.exceptions import ValidationError
 from code_analysis.core.file_handlers.base import FileHandlerRequest, FileHandlerResult
 from code_analysis.core.file_handlers.json_handler import JsonFileHandler
@@ -219,7 +220,7 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             absolute_path = self._resolve_file_path_from_project(
                 database, project_id, file_path, require_exists=False
             )
-            project = database.get_project(project_id)
+            project = get_project(database, project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {project_id} not found",

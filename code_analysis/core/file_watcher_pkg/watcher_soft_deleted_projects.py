@@ -16,6 +16,8 @@ import logging
 from pathlib import Path
 from typing import Any, List, Set, Tuple
 
+from ..database_driver_pkg.domain.projects import (
+    get_project, sync_project_metadata_from_projectid)
 from ..project_discovery import ProjectRoot
 from ..project_resolution import load_project_info
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
@@ -94,7 +96,8 @@ def partition_discovered_projects_by_db_soft_delete(
 
         if pid_info.deleted:
             if hasattr(database, "sync_project_metadata_from_projectid"):
-                database.sync_project_metadata_from_projectid(
+                sync_project_metadata_from_projectid(
+                    database,
                     pr.root_path,
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
@@ -108,12 +111,13 @@ def partition_discovered_projects_by_db_soft_delete(
             continue
 
         if hasattr(database, "sync_project_metadata_from_projectid"):
-            database.sync_project_metadata_from_projectid(
+            sync_project_metadata_from_projectid(
+                database,
                 pr.root_path,
                 priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
 
-        proj_by_id = database.get_project(pr.project_id)
+        proj_by_id = get_project(database, pr.project_id)
         if is_project_record_soft_deleted(proj_by_id):
             logger.info(
                 "[WATCHER] skip discovered project root=%s project_id=%s "

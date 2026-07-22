@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING, cast
 
+from ...core.database_driver_pkg.domain.projects import get_project
+
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
 else:
@@ -70,7 +72,7 @@ class UnmarkDeletedFileCommand:
         }
 
         try:
-            project = self.database.get_project(self.project_id)
+            project = get_project(self.database, self.project_id)
             root_path = None
             if project:
                 root_path = (

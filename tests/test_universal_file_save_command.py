@@ -80,12 +80,16 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -113,12 +117,16 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -146,12 +154,16 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -183,7 +195,6 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         mock_db.select.return_value = []
         mock_db.create_file.return_value = MagicMock(id="fid")
 
@@ -196,6 +207,11 @@ class TestUniversalFileSaveRouting:
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -231,7 +247,6 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         mock_db.select.return_value = []
 
         def _fake_persist(**_: object) -> dict:
@@ -243,6 +258,11 @@ class TestUniversalFileSaveRouting:
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -275,7 +295,6 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         mock_db.select.return_value = []
         mock_db.begin_transaction.return_value = "txn-1"
         mock_db.commit_transaction.return_value = True
@@ -285,6 +304,11 @@ class TestUniversalFileSaveRouting:
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -322,7 +346,6 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
         mock_db.select.return_value = []
         mock_db.begin_transaction.return_value = "txn-1"
         mock_db.commit_transaction.return_value = True
@@ -333,6 +356,11 @@ class TestUniversalFileSaveRouting:
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,
@@ -373,13 +401,17 @@ class TestUniversalFileSaveRouting:
         mock_db = MagicMock()
         mock_project = MagicMock()
         mock_project.root_path = str(tmp_path)
-        mock_db.get_project.return_value = mock_project
 
         with (
             patch.object(
                 BaseMCPCommand,
                 "_open_database_from_config",
                 return_value=mock_db,
+            ),
+            patch(
+                "code_analysis.commands.universal_file_save_command."
+                "save_command.get_project",
+                return_value=mock_project,
             ),
             patch.object(
                 BaseMCPCommand,

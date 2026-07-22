@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..core.constants import DEFAULT_MAX_FILE_LINES
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.venv_path_policy import (
     collect_python_files_for_indexing,
     load_venv_site_packages_index_allowlist_from_config,
@@ -158,7 +159,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     progress_tracker.set_description("Indexing: resolving project...")
                     progress_tracker.set_progress(0)
 
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project or not project.root_path:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",

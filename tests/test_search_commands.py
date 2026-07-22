@@ -35,13 +35,20 @@ def _make_mock_db_for_search():
 
 
 @pytest.fixture
-def mock_db(project_root):
+def mock_db(project_root, monkeypatch):
     """Mock database client for search commands."""
     db = _make_mock_db_for_search()
     db.get_project.return_value = {
         "id": "test-proj",
         "root_path": str(project_root),
     }
+    # _validate_project_id_exists now calls the driver-direct free function
+    # (stage-2 layer collapse) instead of the bound method stubbed above;
+    # route it back to the mock's own get_project shortcut.
+    monkeypatch.setattr(
+        "code_analysis.commands.base_mcp_command.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
     return db
 
 

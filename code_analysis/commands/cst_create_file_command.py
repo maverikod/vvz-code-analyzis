@@ -20,6 +20,7 @@ from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.cst_tree.create_python_file import create_new_python_file_from_source
 from ..core.cst_tree.tree_builder import get_tree
+from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 t0 = time.perf_counter()
-                project = database.get_project(project_id)
+                project = get_project(database, project_id)
                 if not project:
                     return ErrorResult(
                         message=f"Project {project_id} not found",

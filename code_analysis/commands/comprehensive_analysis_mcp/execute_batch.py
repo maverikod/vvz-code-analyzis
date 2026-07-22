@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 from ..base_mcp_command import BaseMCPCommand
 from ...core.database_driver_pkg.domain.comprehensive_analysis import (
     save_comprehensive_analysis_results_batch,
+    should_analyze_file,
 )
 from ...core.database_driver_pkg.domain.files import get_project_files
 from ...core.sql_portable import WHERE_FILES_ACTIVE
@@ -263,31 +264,30 @@ async def run_batch(
                 files_skipped_unreadable_or_missing += 1
                 continue
 
-            if hasattr(db, "should_analyze_file"):
-                gate = db.should_analyze_file(file_id, file_mtime)
-                if not gate["should_analyze"]:
-                    files_skipped += 1
-                    files_skipped_up_to_date += 1
-                    reason = gate.get("reason", "unknown")
-                    logger.debug(
-                        "Skipping %s: %s (disk_mtime older or equal)",
-                        file_path_str,
-                        reason,
-                    )
-                    analysis_logger.debug(
-                        "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
-                        file_path_str,
-                        reason,
-                        gate.get("db_mtime"),
-                        gate.get("disk_mtime"),
-                    )
-                    file_records.append(
-                        {
-                            "path": file_path_str,
-                            "lines": file_record.get("lines", 0),
-                        }
-                    )
-                    continue
+            gate = should_analyze_file(db, file_id, file_mtime)
+            if not gate["should_analyze"]:
+                files_skipped += 1
+                files_skipped_up_to_date += 1
+                reason = gate.get("reason", "unknown")
+                logger.debug(
+                    "Skipping %s: %s (disk_mtime older or equal)",
+                    file_path_str,
+                    reason,
+                )
+                analysis_logger.debug(
+                    "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
+                    file_path_str,
+                    reason,
+                    gate.get("db_mtime"),
+                    gate.get("disk_mtime"),
+                )
+                file_records.append(
+                    {
+                        "path": file_path_str,
+                        "lines": file_record.get("lines", 0),
+                    }
+                )
+                continue
 
             t0 = time.perf_counter()
             try:

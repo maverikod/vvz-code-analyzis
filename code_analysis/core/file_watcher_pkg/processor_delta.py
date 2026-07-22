@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import AbstractSet, Any, Dict, List, Optional, Set
 
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
-from code_analysis.core.database_driver_pkg.domain.files import get_project_files
+from code_analysis.core.database_driver_pkg.domain.files import get_project_file_rows
 from code_analysis.core.project_root_path import (
     resolve_projects_root_path_row_to_absolute_str,
 )
@@ -108,13 +108,16 @@ def compute_project_delta(
     changed_files: List[tuple[str, float, int]] = []
 
     try:
-        get_raw = getattr(database, "get_project_file_rows", None)
-        if get_raw is not None:
-            db_files_list = get_raw(project_id, include_deleted=False)
-        else:
-            db_files_list = get_project_files(
-                database, project_id, include_deleted=False
-            )
+        # get_project_file_rows (raw last_modified, no Julian parsing) - NOT
+        # get_project_files, which parses Julian dates and would cause mass false
+        # "changed" detection here (see module docstring / domain/files.py docstring).
+        # Previously dispatched via getattr(database, "get_project_file_rows", None)
+        # with a get_project_files fallback that silently took over post-flip (driver
+        # has neither as a native method - both are domain free functions) - fixed to
+        # call the correct one unconditionally.
+        db_files_list = get_project_file_rows(
+            database, project_id, include_deleted=False
+        )
         db_files = []
         for f in db_files_list:
             if isinstance(f, dict):
@@ -273,13 +276,11 @@ def compute_supplemental_watch_dir_deltas(
                         db_root_path,
                     )
                     try:
-                        get_raw = getattr(database, "get_project_file_rows", None)
-                        if get_raw is not None:
-                            gone_db_list = get_raw(db_project_id, include_deleted=False)
-                        else:
-                            gone_db_list = get_project_files(
-                                database, db_project_id, include_deleted=False
-                            )
+                        # get_project_file_rows, not get_project_files - see the
+                        # top-of-file comment in compute_project_delta.
+                        gone_db_list = get_project_file_rows(
+                            database, db_project_id, include_deleted=False
+                        )
                         if gone_db_list:
                             all_deleted = list(
                                 find_missing_files({}, gone_db_list, db_root_path)
@@ -304,13 +305,11 @@ def compute_supplemental_watch_dir_deltas(
                         )
                     continue
                 try:
-                    get_raw = getattr(database, "get_project_file_rows", None)
-                    if get_raw is not None:
-                        sup_db_list = get_raw(db_project_id, include_deleted=False)
-                    else:
-                        sup_db_list = get_project_files(
-                            database, db_project_id, include_deleted=False
-                        )
+                    # get_project_file_rows, not get_project_files - see the
+                    # top-of-file comment in compute_project_delta.
+                    sup_db_list = get_project_file_rows(
+                        database, db_project_id, include_deleted=False
+                    )
                     if not sup_db_list:
                         continue
                     extra_deleted = list(

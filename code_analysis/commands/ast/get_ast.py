@@ -13,6 +13,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
+from ...core.database_driver_pkg.domain.ast_cst import get_ast as get_ast_via_driver
 from ...core.exceptions import ValidationError
 
 
@@ -237,11 +238,7 @@ class GetASTMCPCommand(BaseMCPCommand):
             file_id = (
                 file_record["id"] if isinstance(file_record, dict) else file_record.id
             )
-            ast_data = None
-            if hasattr(db, "get_ast"):
-                ast_data = db.get_ast(file_id)
-            elif hasattr(db, "get_ast_tree"):
-                ast_data = db.get_ast_tree(file_id)
+            ast_data = get_ast_via_driver(db, file_id)
 
             if ast_data is not None:
                 result = {

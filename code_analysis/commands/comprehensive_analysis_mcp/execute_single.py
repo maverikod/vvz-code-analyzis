@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.database_driver_pkg.domain.comprehensive_analysis import (
     save_comprehensive_analysis_results,
+    should_analyze_file,
 )
 from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.duplicate_detector import DuplicateDetector
@@ -140,8 +141,8 @@ async def run_single_file(
 
     # Single-file comprehensive analysis always runs checks (no stale mtime-cache short
     # circuit). Log when the DB gate would skip; callers still get fresh analyzer output.
-    if file_id and file_project_id and hasattr(db, "should_analyze_file"):
-        gate = db.should_analyze_file(file_id, file_mtime)
+    if file_id and file_project_id:
+        gate = should_analyze_file(db, file_id, file_mtime)
         if not gate["should_analyze"]:
             analysis_logger.info(
                 "DB mtime gate would skip %s (%s); running single-file analyzers anyway "

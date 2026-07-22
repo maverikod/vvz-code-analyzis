@@ -19,6 +19,42 @@ from code_analysis.core.file_disk_registration import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _route_domain_functions_to_fake_db_methods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route driver-direct domain-function call sites back to ``_FakeDatabase`` methods.
+
+    ``file_disk_registration`` calls the driver-direct free functions
+    ``get_file_by_path``/``add_file``/``get_project`` (stage-2 layer collapse fix for
+    the getattr-based silent-no-op bug) unconditionally now, instead of dynamically
+    dispatching on ``database``. Those free functions read through
+    ``driver.select``/``driver.execute`` - primitives this lightweight fake does not
+    implement (it exposes its own convenience methods instead) - so route the call
+    sites back to the fake's own methods rather than reimplementing SQL primitives.
+    """
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.add_file",
+        lambda driver, path, lines, last_modified, has_docstring, project_id: driver.add_file(
+            path=path,
+            lines=lines,
+            last_modified=last_modified,
+            has_docstring=has_docstring,
+            project_id=project_id,
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.get_project",
+        lambda driver, project_id: driver.get_project(project_id),
+    )
+
+
 class _FakeDatabase:
     """Represent FakeDatabase."""
 

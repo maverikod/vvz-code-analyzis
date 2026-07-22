@@ -194,8 +194,26 @@ def _make_db(tmp_path: Path, driver_type: Optional[str] = None) -> Any:
     return db
 
 
-def test_register_before_write_then_rollback(tmp_path: Path) -> None:
+def test_register_before_write_then_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """S1: a new file is registered before its bytes exist, and rolls back cleanly."""
+    # file_disk_registration calls the driver-direct get_file_by_path/add_file free
+    # functions (stage-2 layer collapse) unconditionally now; they read through
+    # driver.select, a primitive this FakeDatabase does not implement (it only
+    # implements execute) - route the call sites back to the fake's own methods.
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.add_file",
+        lambda driver, path, lines, last_modified, has_docstring, project_id: driver.add_file(
+            path, lines, last_modified, has_docstring, project_id
+        ),
+    )
     db = _make_db(tmp_path)
     abs_path = tmp_path / "pkg" / "new_module.py"
     content = '"""Doc."""\n\nx = 1\n'
@@ -237,6 +255,13 @@ def test_session_open_lease_acquire_and_release(
     monkeypatch.setattr(
         "code_analysis.core.client_sessions.get_project",
         lambda driver, project_id: driver.get_project(project_id),
+    )
+    # client_sessions calls the driver-direct get_file_by_id free function (stage-2
+    # layer collapse) unconditionally now; it reads through driver.select, a primitive
+    # this FakeDatabase does not implement (it only implements get_file_by_id itself).
+    monkeypatch.setattr(
+        "code_analysis.core.client_sessions.get_file_by_id",
+        lambda driver, file_id: driver.get_file_by_id(file_id),
     )
     db = _make_db(tmp_path)
     ensure_client_session_tables(db)

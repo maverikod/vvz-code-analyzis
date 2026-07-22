@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from code_analysis.core.database_driver_pkg.domain.files import add_file, get_file_by_path
+from code_analysis.core.database_driver_pkg.domain.projects import get_project
 from code_analysis.core.file_identity import (
     FILE_ROW_PATH_MATCH_SQL,
     file_row_path_match_values,
@@ -78,24 +80,15 @@ def register_file_row_for_new_content(
 
     pid = str(project_id).strip()
     abs_str = str(path)
-    get_by_path = getattr(database, "get_file_by_path", None)
-    if not callable(get_by_path):
-        logger.warning("database has no get_file_by_path; skip register %s", abs_str)
-        return None
 
-    existing = get_by_path(abs_str, pid, include_deleted=False)
+    existing = get_file_by_path(database, abs_str, pid, include_deleted=False)
     if existing and existing.get("id") is not None:
         return dict(existing)
 
-    add_file = getattr(database, "add_file", None)
-    if not callable(add_file):
-        logger.warning("database has no add_file; skip register %s", abs_str)
-        return None
-
     mtime = last_modified if last_modified is not None else time.time()
     lines, has_docstring = collect_content_metadata(content)
-    add_file(abs_str, lines, float(mtime), has_docstring, pid)
-    fetched = get_by_path(abs_str, pid, include_deleted=False)
+    add_file(database, abs_str, lines, float(mtime), has_docstring, pid)
+    fetched = get_file_by_path(database, abs_str, pid, include_deleted=False)
     return dict(fetched) if fetched else None
 
 
@@ -132,12 +125,8 @@ def ensure_file_row_for_disk_path(
 
     pid = str(project_id).strip()
     abs_str = str(path)
-    get_by_path = getattr(database, "get_file_by_path", None)
-    if not callable(get_by_path):
-        logger.warning("database has no get_file_by_path; skip register %s", abs_str)
-        return None
 
-    existing = get_by_path(abs_str, pid, include_deleted=False)
+    existing = get_file_by_path(database, abs_str, pid, include_deleted=False)
     if existing and existing.get("id") is not None:
         row: Optional[Dict[str, Any]] = dict(existing)
     else:
@@ -148,12 +137,8 @@ def ensure_file_row_for_disk_path(
             except OSError:
                 mtime = 0.0
         lines, has_docstring = collect_file_disk_metadata(path)
-        add_file = getattr(database, "add_file", None)
-        if not callable(add_file):
-            logger.warning("database has no add_file; skip register %s", abs_str)
-            return None
-        add_file(abs_str, lines, float(mtime), has_docstring, pid)
-        fetched = get_by_path(abs_str, pid, include_deleted=False)
+        add_file(database, abs_str, lines, float(mtime), has_docstring, pid)
+        fetched = get_file_by_path(database, abs_str, pid, include_deleted=False)
         row = dict(fetched) if fetched else None
 
     if not row or row.get("id") is None:
@@ -198,10 +183,7 @@ def _mark_file_needs_chunking(
     if file_id is not None:
         execute("UPDATE files SET needs_chunking = 1 WHERE id = ?", (file_id,))
         return
-    project = None
-    get_project = getattr(database, "get_project", None)
-    if callable(get_project):
-        project = get_project(project_id)
+    project = get_project(database, project_id)
     root = getattr(project, "root_path", None) if project is not None else None
     if isinstance(project, dict):
         root = project.get("root_path")

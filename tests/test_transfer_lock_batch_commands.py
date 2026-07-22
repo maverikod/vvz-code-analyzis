@@ -442,6 +442,22 @@ async def test_transfer_upload_save_registers_and_returns_file_id(
         "code_analysis.commands.project_file_transfer_by_id_commands.get_project",
         lambda driver, project_id: driver.get_project(project_id),
     )
+    # register_file_row_for_new_content (file_disk_registration.py) calls the
+    # driver-direct get_file_by_path/add_file free functions (stage-2 layer collapse)
+    # unconditionally now; they read through driver.select/execute, primitives this
+    # FakeDatabase does not implement (it only implements its own convenience methods).
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.add_file",
+        lambda driver, path, lines, last_modified, has_docstring, project_id: driver.add_file(
+            path, lines, last_modified, has_docstring, project_id
+        ),
+    )
 
     result = await cmd.execute(
         transfer_id="upload-1",
@@ -520,6 +536,22 @@ async def test_transfer_upload_save_yaml_writes_bytes_identical(
     monkeypatch.setattr(
         "code_analysis.commands.universal_file_save_command.save_command.get_project",
         lambda driver, project_id: driver.get_project(project_id),
+    )
+    # register_file_row_for_new_content (file_disk_registration.py) calls the
+    # driver-direct get_file_by_path/add_file free functions (stage-2 layer collapse)
+    # unconditionally now; they read through driver.select/execute, primitives this
+    # FakeDatabase does not implement (it only implements its own convenience methods).
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.get_file_by_path",
+        lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+            path, project_id, include_deleted=include_deleted
+        ),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.file_disk_registration.add_file",
+        lambda driver, path, lines, last_modified, has_docstring, project_id: driver.add_file(
+            path, lines, last_modified, has_docstring, project_id
+        ),
     )
 
     cmd = ProjectFileTransferUploadSaveCommand()

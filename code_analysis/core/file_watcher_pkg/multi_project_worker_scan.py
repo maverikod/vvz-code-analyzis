@@ -12,6 +12,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
+from code_analysis.core.database.files.trash_standalone_support import (
+    clear_file_data_via_driver,
+)
 from code_analysis.core.database_driver_pkg.domain.projects import (
     get_project, insert_project_row, relocate_project_root_after_disk_move)
 from code_analysis.core.path_normalization import normalize_path_simple
@@ -182,18 +185,14 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                     canonical_id, duplicate_id = t_rel[0], t_abs[0]
 
                 try:
-                    clear_fn = getattr(database, "clear_file_data", None)
-                    if callable(clear_fn):
-                        clear_fn(str(duplicate_id))
-                    else:
-                        # Legacy facades only: avoid SQLite-only tables (e.g.
-                        # ``chunk_embeddings``) that are absent on PostgreSQL.
-                        for tbl in ("code_chunks", "vector_index", "code_content"):
-                            database.execute(
-                                f"DELETE FROM {tbl} WHERE file_id = ?",
-                                (str(duplicate_id),),
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-                            )
+                    # Full cascade (code_chunks/vector_index/entity_cross_ref/methods/
+                    # classes/functions/imports/issues/usages/code_content/ast_trees/
+                    # cst_trees) - stage 2: was getattr(database, "clear_file_data", None)
+                    # with a 3-table-only fallback documented as degraded (silently
+                    # orphaned the other 9 tables); clear_file_data_via_driver is
+                    # duck-typed against execute/execute_batch, which both
+                    # DatabaseClient and PostgreSQLDriver already implement identically.
+                    clear_file_data_via_driver(database, str(duplicate_id))
                 except Exception as exc:
                     logger.warning(
                         "[ABSPATH_DEDUP] duplicate cleanup failed duplicate_id=%s: %s",

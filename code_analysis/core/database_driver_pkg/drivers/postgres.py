@@ -130,6 +130,10 @@ class PostgreSQLDriver(BaseDatabaseDriver):
 
     def __init__(self) -> None:
         """Initialize the instance."""
+        # Stage 2 (layer collapse): widespread getattr(x, "_driver_type") call sites
+        # must keep evaluating to "postgres" once callers get handed this driver
+        # directly instead of a DatabaseClient wrapping it (which already sets this).
+        self._driver_type: str = "postgres"
         self.conn: Any = None
         self._pool: Optional[PostgreSQLConnectionPool] = None
         self._connect_kwargs: Dict[str, Any] = {}

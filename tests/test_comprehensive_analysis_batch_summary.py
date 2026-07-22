@@ -121,8 +121,20 @@ def test_build_batch_summary_save_error_counters_passthrough() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_batch_summary_counter_invariants(tmp_path) -> None:
+async def test_run_batch_summary_counter_invariants(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """One missing file, one up-to-date skip, one analyzed row: buckets sum to files_total."""
+    # execute_batch calls the driver-direct should_analyze_file free function (stage-2
+    # layer collapse) unconditionally now, instead of hasattr(db, "should_analyze_file")
+    # dispatch - route it back to db.should_analyze_file(fid, mtime) below.
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_mcp.execute_batch."
+        "should_analyze_file",
+        lambda driver, file_id, file_mtime: driver.should_analyze_file(
+            file_id, file_mtime
+        ),
+    )
     (tmp_path / "stale.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "live.py").write_text("y = 2\n", encoding="utf-8")
 

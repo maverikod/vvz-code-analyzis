@@ -217,9 +217,17 @@ def _postgres_pool_observability_fields(db: Any, driver_type: str) -> Dict[str, 
     out: Dict[str, Any] = {}
     if driver_type != "postgres":
         return out
-    rpc = getattr(db, "rpc_client", None)
-    handlers = getattr(rpc, "handlers", None) if rpc is not None else None
-    driver = getattr(handlers, "driver", None) if handlers is not None else None
+    # Stage 2 (layer collapse): db IS the PostgreSQLDriver directly once construction
+    # hands it out unwrapped - check that first. Fall back to the DatabaseClient ->
+    # rpc_client -> handlers -> driver chain for the pre-flip receiver shape so this
+    # stays correct on both sides of the flip (pool_status() only exists on the raw
+    # driver, never on DatabaseClient itself, so there is no primitive to call directly).
+    if isinstance(db, PostgreSQLDriver):
+        driver: Any = db
+    else:
+        rpc = getattr(db, "rpc_client", None)
+        handlers = getattr(rpc, "handlers", None) if rpc is not None else None
+        driver = getattr(handlers, "driver", None) if handlers is not None else None
     if not isinstance(driver, PostgreSQLDriver):
         return out
     pool_st = driver.pool_status()

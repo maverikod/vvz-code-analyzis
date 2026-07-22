@@ -144,6 +144,13 @@ async def test_get_ast_valid_indexed_file_success(tmp_path: Path) -> None:
         patch.object(
             BaseMCPCommand, "_resolve_project_root", return_value=project_root
         ),
+        # get_ast.py calls the driver-direct get_ast free function (stage-2 layer
+        # collapse) unconditionally now, instead of hasattr(db, "get_ast") dispatch -
+        # route it back to db.get_ast(file_id) below.
+        patch(
+            "code_analysis.commands.ast.get_ast.get_ast_via_driver",
+            side_effect=lambda driver, file_id: driver.get_ast(file_id),
+        ),
     ):
         cmd = GetASTMCPCommand()
         result = await cmd.execute(

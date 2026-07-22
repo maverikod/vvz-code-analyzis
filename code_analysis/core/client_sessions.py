@@ -11,6 +11,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
+from .database_driver_pkg.domain.files import get_file_by_id
 from .database_driver_pkg.domain.projects import get_project
 
 if TYPE_CHECKING:
@@ -560,10 +561,7 @@ def _session_file_relative_posix(
         relative_path_for_project,
     )
 
-    get_file_by_id = getattr(database, "get_file_by_id", None)
-    if not callable(get_file_by_id):
-        return None
-    row = get_file_by_id(file_id)
+    row = get_file_by_id(database, file_id)
     if not row:
         return None
     project = get_project(database, project_id)

@@ -72,20 +72,28 @@ def _execute_with_optional_tid(
 
 def _project_root_path_str(database: Any, project_id: str) -> Optional[str]:
     """Return project root path str."""
+    from code_analysis.core.database_driver_pkg.domain.projects import get_project
     from code_analysis.core.project_root_path import (
         resolve_projects_root_path_row_to_absolute_str,
     )
 
-    gp = getattr(database, "get_project", None)
-    if callable(gp):
-        p = gp(project_id)
-        if isinstance(p, dict):
-            s = str(p.get("root_path") or "").strip()
-            return s or None
-        if p is not None:
-            rp = getattr(p, "root_path", None)
-            s = str(rp).strip() if rp else ""
-            return s or None
+    # get_project is a driver-direct domain free function (stage 2 layer collapse) -
+    # call it unconditionally rather than dispatching on a "does database have its own
+    # get_project method" getattr, which silently stopped matching once callers started
+    # handing in a bare PostgreSQLDriver (no .get_project() of its own, only .select()).
+    # It only needs .select(), a primitive both DatabaseClient and PostgreSQLDriver
+    # implement identically, so this works for both the pre-flip and post-flip receiver.
+    try:
+        p = get_project(database, project_id)
+    except Exception:
+        p = None
+    if isinstance(p, dict):
+        s = str(p.get("root_path") or "").strip()
+        return s or None
+    if p is not None:
+        rp = getattr(p, "root_path", None)
+        s = str(rp).strip() if rp else ""
+        return s or None
     row = None
     if hasattr(database, "_fetchone"):
         row = database._fetchone(

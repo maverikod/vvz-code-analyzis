@@ -37,20 +37,6 @@ class TestGetDriverConfig:
         assert driver_config["config"]["path"] == "data/test.db"
         assert "worker_config" in driver_config["config"]
 
-    def test_get_driver_config_fallback_to_db_path(self):
-        """Test fallback to db_path when database.driver is not present."""
-        config = {
-            "code_analysis": {
-                "db_path": "data/test.db",
-            }
-        }
-
-        driver_config = get_driver_config(config)
-
-        assert driver_config is not None
-        assert driver_config["type"] == "sqlite_proxy"
-        assert "path" in driver_config["config"]
-
     def test_get_driver_config_no_config(self):
         """Test get_driver_config when no config is available."""
         config = {

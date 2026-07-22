@@ -84,56 +84,6 @@ class TestDatabaseDriverConfigValidatorRetry:
         validator.validate_config(config)
         assert validator.get_validation_summary()["is_valid"] is True
 
-    def test_sqlite_config_with_valid_canonical_retry_fields_passes(self):
-        """Verify test sqlite config with valid canonical retry fields passes."""
-        config = {
-            **_shell(),
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite",
-                        "config": {
-                            "path": "data/test.db",
-                            "write_retry_attempts": 2,
-                            "write_retry_delay_seconds": 0,
-                            "write_retry_backoff_multiplier": 1.0,
-                            "write_retry_jitter_seconds": 0,
-                            "lock_timeout_seconds": 10,
-                            "statement_timeout_seconds": 30,
-                        },
-                    }
-                }
-            },
-        }
-        validator = CodeAnalysisConfigValidator()
-        validator.validate_config(config)
-        assert validator.get_validation_summary()["is_valid"] is True
-
-    def test_sqlite_proxy_config_with_valid_canonical_retry_fields_passes(self):
-        """Verify test sqlite proxy config with valid canonical retry fields passes."""
-        config = {
-            **_shell(),
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {
-                            "path": "data/test.db",
-                            "write_retry_attempts": 5,
-                            "write_retry_delay_seconds": 2,
-                            "write_retry_backoff_multiplier": 1.5,
-                            "write_retry_jitter_seconds": 1,
-                            "lock_timeout_seconds": 60,
-                            "statement_timeout_seconds": 120,
-                        },
-                    }
-                }
-            },
-        }
-        validator = CodeAnalysisConfigValidator()
-        validator.validate_config(config)
-        assert validator.get_validation_summary()["is_valid"] is True
-
     def test_invalid_retry_attempts_ranges_fail(self):
         """Verify test invalid retry attempts ranges fail."""
         for bad_attempts in (0, 21, 3.0, "3"):

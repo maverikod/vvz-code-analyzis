@@ -8,17 +8,8 @@ from code_analysis.core.vector_search_backend import (
 )
 
 
-def test_sqlite_always_faiss_effective() -> None:
-    """Verify test sqlite always faiss effective."""
-    assert effective_vector_search_backend("sqlite", "pgvector") == "faiss"
-    assert effective_vector_search_backend("sqlite_proxy", "auto") == "faiss"
-    assert effective_vector_search_backend("SQLITE_PROXY", None) == "faiss"
-
-
-def test_driver_requires_faiss_sqlite_only() -> None:
-    """Verify test driver requires faiss sqlite only."""
-    assert driver_requires_faiss("sqlite") is True
-    assert driver_requires_faiss("sqlite_proxy") is True
+def test_driver_requires_faiss_postgres_false() -> None:
+    """Verify test driver requires faiss postgres false."""
     assert driver_requires_faiss("postgres") is False
 
 

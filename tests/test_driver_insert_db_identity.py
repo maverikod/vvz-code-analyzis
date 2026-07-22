@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
 from unittest.mock import MagicMock
 
 from code_analysis.core.database_driver_pkg.drivers.postgres_operations import (
     PostgreSQLOperations,
     _normalize_postgres_returning_pk,
-)
-from code_analysis.core.database_driver_pkg.drivers.sqlite_operations import (
-    SQLiteOperations,
 )
 
 
@@ -67,51 +63,3 @@ def test_postgres_insert_returns_none_when_no_returning_row() -> None:
 
     ops = PostgreSQLOperations(conn, schema_tables={})
     assert ops.insert("files", {"path": "/x", "project_id": "p1"}) is None
-
-
-def test_sqlite_insert_explicit_text_uuid_pk_returns_string(tmp_path) -> None:
-    """Verify test sqlite insert explicit text uuid pk returns string."""
-    db = tmp_path / "t.db"
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    pid = str(uuid.uuid4())
-    conn.execute(
-        "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
-    )
-    conn.commit()
-
-    ops = SQLiteOperations(conn)
-    rid = ops.insert("projects", {"id": pid, "name": "proj"})
-
-    assert rid == pid
-    assert isinstance(rid, str)
-    conn.close()
-
-
-def test_sqlite_insert_autoincrement_integer_pk_returns_int(tmp_path) -> None:
-    """Verify test sqlite insert autoincrement integer pk returns int."""
-    db = tmp_path / "t.db"
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT)")
-    conn.commit()
-
-    ops = SQLiteOperations(conn)
-    rid = ops.insert("files", {"path": "/a.py"})
-
-    assert rid == 1
-    assert isinstance(rid, int)
-    conn.close()
-
-
-def test_sqlite_insert_explicit_integer_id_returns_int(tmp_path) -> None:
-    """Verify test sqlite insert explicit integer id returns int."""
-    db = tmp_path / "t.db"
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
-    conn.commit()
-
-    ops = SQLiteOperations(conn)
-    assert ops.insert("t", {"id": 100, "v": "x"}) == 100
-    conn.close()

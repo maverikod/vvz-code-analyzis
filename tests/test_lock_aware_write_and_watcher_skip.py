@@ -93,7 +93,20 @@ class FakeDatabase:
         )
 
     def execute(self, sql: str, params: tuple | None = None, **_: object) -> dict:
-        """Run one SQL statement and return a client-style result dict."""
+        """Run one SQL statement and return a client-style result dict.
+
+        Production SQL (``sql_portable``) now unconditionally emits PostgreSQL Julian-day
+        syntax (SQLite support was removed); translate the two fragments this double
+        actually encounters into SQLite equivalents before executing against the
+        in-memory SQLite backing.
+        """
+        sql = sql.replace(
+            "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))",
+            "julianday('now', '-1 day')",
+        ).replace(
+            "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)",
+            "julianday('now')",
+        )
         cur = self.conn.execute(sql, params or ())
         if sql.lstrip().upper().startswith(("SELECT", "PRAGMA")):
             return {"data": [dict(row) for row in cur.fetchall()]}

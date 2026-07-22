@@ -18,10 +18,6 @@ from code_analysis.core.database.schema_definition_indexes import (
 )
 from code_analysis.core.database.schema_definition_tables_rest import get_tables_rest
 from code_analysis.core.database.schema_sync_models import IndexDef
-from code_analysis.core.database.schema_sync_sql import (
-    generate_create_index_sql,
-    generate_create_table_sql,
-)
 from code_analysis.core.database.schema_sync_sql_postgres import (
     _index_where_sqlite_to_pg,
     generate_create_index_sql_postgres,
@@ -149,16 +145,6 @@ def test_snapshot_fk_graph_targets_uuid_columns() -> None:
     assert node_fk["references_columns"] == ["id"]
 
 
-@pytest.mark.parametrize("table", _UUID_REST_TABLES)
-def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
-    """Verify test sqlite ddl maps uuid to text."""
-    sd = _wrapped(table)
-    ddl = generate_create_table_sql(sd, table).upper()
-    ddl_check = ddl.replace("CHUNK_UUID", "")
-    assert "UUID" not in ddl_check, ddl
-    assert "TEXT" in ddl
-
-
 @pytest.mark.parametrize(
     "table",
     (
@@ -205,18 +191,6 @@ def test_idx_code_chunks_not_vectorized_uses_created_at_not_uuid_order_alone() -
     idx = indexes["idx_code_chunks_not_vectorized"]
     assert idx["columns"] == ["project_id", "created_at", "id"]
     assert idx["where_clause"] == "vector_id IS NULL"
-
-
-def test_sqlite_partial_index_predicate_unchanged_for_sqlite_boolean_literals() -> None:
-    """Verify test sqlite partial index predicate unchanged for sqlite boolean literals."""
-    idef = IndexDef(
-        name="idx_files_deleted",
-        table="files",
-        columns=["deleted"],
-        where_clause="deleted = 1",
-    )
-    sql = generate_create_index_sql(idef)
-    assert "WHERE deleted = 1" in sql
 
 
 @pytest.mark.parametrize(

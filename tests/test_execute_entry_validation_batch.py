@@ -22,9 +22,6 @@ from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPComma
 from code_analysis.commands.comprehensive_analysis_mcp.command import (
     ComprehensiveAnalysisMCPCommand,
 )
-from code_analysis.commands.database_integrity_mcp_commands.get_corruption_status import (
-    GetDatabaseCorruptionStatusMCPCommand,
-)
 from code_analysis.commands.project_management_mcp_commands.delete_project import (
     DeleteProjectMCPCommand,
 )
@@ -72,7 +69,6 @@ _VALID_PROJECT_ID = str(uuid.uuid4())
         (ListCodeEntitiesMCPCommand, {"project_id": _VALID_PROJECT_ID}),
         (GetClassHierarchyMCPCommand, {"project_id": _VALID_PROJECT_ID}),
         (ASTStatisticsMCPCommand, {"project_id": _VALID_PROJECT_ID}),
-        (GetDatabaseCorruptionStatusMCPCommand, {}),
         (UpdateIndexesMCPCommand, {"project_id": _VALID_PROJECT_ID}),
         (DeleteProjectMCPCommand, {"project_id": _VALID_PROJECT_ID}),
         (

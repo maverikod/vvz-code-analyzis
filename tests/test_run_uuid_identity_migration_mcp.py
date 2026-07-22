@@ -134,13 +134,18 @@ async def test_preflight_success_mocked() -> None:
 
 @pytest.mark.asyncio
 async def test_pipeline_dry_does_not_call_phase6() -> None:
-    """Verify test pipeline dry does not call phase6."""
+    """Verify test pipeline dry does not call phase6.
+
+    SQLite support was removed; the pipeline now has a single (PostgreSQL)
+    backend, so only ``run_uuid_migration_phase6_swap_postgres`` exists to assert
+    unused for a dry run.
+    """
     mock_db = MagicMock()
     mock_db.disconnect = MagicMock()
-    fake_pre = _FakePreflight()
-    fake2 = _FakePhase2()
+    fake_pre = _FakePreflight(backend="postgresql")
+    fake2 = _FakePhase2(backend="postgresql")
     rep345 = Phase345Report(
-        backend="sqlite",
+        backend="postgresql",
         shadow_prefix="uuid_mig_new_",
         dry_run=True,
         statements_executed=0,
@@ -149,7 +154,6 @@ async def test_pipeline_dry_does_not_call_phase6() -> None:
         sql_log=["SELECT 1"],
     )
     swap_pg = MagicMock()
-    swap_sl = MagicMock()
 
     with (
         patch.object(
@@ -169,13 +173,8 @@ async def test_pipeline_dry_does_not_call_phase6() -> None:
         ),
         patch(
             "code_analysis.commands.file_management_mcp_commands."
-            "run_uuid_identity_migration.run_uuid_migration_phases_3_to_5_sqlite",
+            "run_uuid_identity_migration.run_uuid_migration_phases_3_to_5_postgres",
             return_value=rep345,
-        ),
-        patch(
-            "code_analysis.commands.file_management_mcp_commands."
-            "run_uuid_identity_migration.run_uuid_migration_phase6_swap_sqlite",
-            swap_sl,
         ),
         patch(
             "code_analysis.commands.file_management_mcp_commands."
@@ -185,7 +184,7 @@ async def test_pipeline_dry_does_not_call_phase6() -> None:
         patch(
             "code_analysis.commands.file_management_mcp_commands."
             "run_uuid_identity_migration.detect_backend_kind",
-            return_value="sqlite",
+            return_value="postgresql",
         ),
     ):
         cmd = RunUuidIdentityMigrationMCPCommand()
@@ -193,17 +192,20 @@ async def test_pipeline_dry_does_not_call_phase6() -> None:
 
     assert isinstance(result, SuccessResult)
     assert len(result.data["steps"]) == 3
-    swap_sl.assert_not_called()
     swap_pg.assert_not_called()
 
 
 def test_schema_creation_reexports() -> None:
-    """Verify test schema creation reexports."""
+    """Verify test schema creation reexports.
+
+    SQLite support was removed; ``schema_creation`` now re-exports only the
+    PostgreSQL phase 3-6 migration facades.
+    """
     from code_analysis.core.database import schema_creation as sc
 
     assert callable(sc.run_uuid_migration_preflight_phase1)
-    assert callable(sc.run_uuid_migration_phases_3_to_5_sqlite)
-    assert callable(sc.run_uuid_migration_phase6_swap_sqlite)
+    assert callable(sc.run_uuid_migration_phases_3_to_5_postgres)
+    assert callable(sc.run_uuid_migration_phase6_swap_postgres)
 
 
 def test_run_uuid_identity_migration_is_queued_by_default() -> None:

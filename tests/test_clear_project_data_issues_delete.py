@@ -21,10 +21,6 @@ def test_sql_julian_timestamp_now_expr_backend_specific() -> None:
     pg = MagicMock()
     pg._driver_type = "postgres"
     assert "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)" in sql_julian_timestamp_now_expr(pg)
-    sl = MagicMock()
-    sl._driver_type = "sqlite_proxy"
-    assert sql_julian_timestamp_now_expr(sl) == "julianday('now')"
-    assert sql_julian_timestamp_now_expr(object()) == "julianday('now')"
 
 
 def test_database_has_sqlite_code_content_fts_by_driver() -> None:
@@ -32,11 +28,6 @@ def test_database_has_sqlite_code_content_fts_by_driver() -> None:
     pg = MagicMock()
     pg._driver_type = "postgres"
     assert database_has_sqlite_code_content_fts(pg) is False
-    sl = MagicMock()
-    sl._driver_type = "sqlite_proxy"
-    assert database_has_sqlite_code_content_fts(sl) is True
-    bare = MagicMock()
-    assert database_has_sqlite_code_content_fts(bare) is True
 
 
 def test_full_clear_batch_skips_fts_when_disabled() -> None:

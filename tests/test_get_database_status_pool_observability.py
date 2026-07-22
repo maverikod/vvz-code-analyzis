@@ -59,25 +59,6 @@ def test_postgres_in_process_adds_pool_in_use_when_enabled() -> None:
     assert result["pg_read_pool_waiters"] == 1
 
 
-def test_sqlite_driver_does_not_add_pg_pool_fields(tmp_path: Path) -> None:
-    """Verify test sqlite driver does not add pg pool fields."""
-
-    class _FakeDB:
-        """Represent FakeDB."""
-
-        rpc_client = SimpleNamespace(handlers=None)
-
-        def execute_batch(self, ops):  # noqa: ANN001, ANN201
-            """Return execute batch."""
-            return _minimal_status_batch_results()
-
-    result = build_database_status_result(
-        _FakeDB(), tmp_path / "x.db", driver_type="sqlite_proxy"
-    )
-    assert "pg_write_pool_in_use" not in result
-    assert "pg_read_pool_in_use" not in result
-
-
 def test_postgres_pool_disabled_omits_in_use_fields() -> None:
     """Verify test postgres pool disabled omits in use fields."""
     driver = PostgreSQLDriver()

@@ -12,40 +12,6 @@ from code_analysis.core.docs_indexing_defaults import default_docs_indexing_dict
 class TestDriverConfigValidation:
     """Test driver configuration validation."""
 
-    def test_valid_driver_config(self):
-        """Test validation with valid driver config."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {
-                            "path": "data/test.db",
-                            "worker_config": {
-                                "command_timeout": 30.0,
-                                "poll_interval": 0.1,
-                            },
-                        },
-                    }
-                }
-            },
-        }
-
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        summary = validator.get_validation_summary()
-
-        assert summary["is_valid"] is True
-        errors = [r for r in results if r.level == "error"]
-        assert len(errors) == 0
-
     def test_git_section_is_allowed(self):
         """code_analysis.git is a first-class config section used by remote commands."""
         config = {
@@ -64,13 +30,13 @@ class TestDriverConfigValidation:
                 },
                 "database": {
                     "driver": {
-                        "type": "sqlite_proxy",
+                        "type": "postgres",
                         "config": {
-                            "path": "data/test.db",
-                            "worker_config": {
-                                "command_timeout": 30.0,
-                                "poll_interval": 0.1,
-                            },
+                            "host": "127.0.0.1",
+                            "port": 5432,
+                            "dbname": "code_analysis",
+                            "user": "postgres",
+                            "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD",
                         },
                     }
                 },
@@ -86,39 +52,6 @@ class TestDriverConfigValidation:
             for r in results
             if r.level == "error" and r.key == "git" and "Unknown key" in r.message
         ]
-
-    def test_pgvector_with_sqlite_class_driver_errors(self) -> None:
-        """vector_search_backend=pgvector is invalid for sqlite / sqlite_proxy (FAISS only)."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "vector_search_backend": "pgvector",
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {
-                            "path": "data/test.db",
-                            "worker_config": {
-                                "command_timeout": 30.0,
-                                "poll_interval": 0.1,
-                            },
-                        },
-                    }
-                },
-            },
-        }
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        assert validator.get_validation_summary()["is_valid"] is False
-        assert any(
-            r.level == "error" and r.key == "vector_search_backend" for r in results
-        )
 
     def test_missing_driver_type(self):
         """Test validation with missing driver type."""
@@ -209,105 +142,6 @@ class TestDriverConfigValidation:
         assert len(errors) > 0
         assert any("database.driver.type" in (r.key or "") for r in errors)
 
-    def test_missing_path_for_sqlite(self):
-        """Test validation with missing path for sqlite driver."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {},
-                    }
-                }
-            },
-        }
-
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        summary = validator.get_validation_summary()
-
-        assert summary["is_valid"] is False
-        errors = [r for r in results if r.level == "error"]
-        assert len(errors) > 0
-        assert any("database.driver.config.path" in (r.key or "") for r in errors)
-
-    def test_invalid_worker_config_timeout(self):
-        """Test validation with invalid worker_config command_timeout."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {
-                            "path": "data/test.db",
-                            "worker_config": {
-                                "command_timeout": -1,
-                                "poll_interval": 0.1,
-                            },
-                        },
-                    }
-                }
-            },
-        }
-
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        summary = validator.get_validation_summary()
-
-        assert summary["is_valid"] is False
-        errors = [r for r in results if r.level == "error"]
-        assert len(errors) > 0
-        assert any("command_timeout" in (r.key or "") for r in errors)
-
-    def test_invalid_worker_config_poll_interval(self):
-        """Test validation with invalid worker_config poll_interval."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite_proxy",
-                        "config": {
-                            "path": "data/test.db",
-                            "worker_config": {
-                                "command_timeout": 30.0,
-                                "poll_interval": -1,
-                            },
-                        },
-                    }
-                }
-            },
-        }
-
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        summary = validator.get_validation_summary()
-
-        assert summary["is_valid"] is False
-        errors = [r for r in results if r.level == "error"]
-        assert len(errors) > 0
-        assert any("poll_interval" in (r.key or "") for r in errors)
-
     def test_valid_postgres_driver_config(self):
         """Test validation with postgres driver (dbname, user, password_env)."""
         config = {
@@ -376,36 +210,6 @@ class TestDriverConfigValidation:
         assert summary["is_valid"] is False
         assert any("password must not be set" in r.message for r in results)
 
-    def test_valid_sqlite_driver(self):
-        """Test validation with valid sqlite driver (not proxy)."""
-        config = {
-            "server": {
-                "host": "localhost",
-                "port": 15000,
-                "protocol": "mtls",
-                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
-            },
-            "queue_manager": {"enabled": True},
-            "code_analysis": {
-                "database": {
-                    "driver": {
-                        "type": "sqlite",
-                        "config": {
-                            "path": "data/test.db",
-                        },
-                    }
-                }
-            },
-        }
-
-        validator = CodeAnalysisConfigValidator()
-        results = validator.validate_config(config)
-        summary = validator.get_validation_summary()
-
-        assert summary["is_valid"] is True
-        errors = [r for r in results if r.level == "error"]
-        assert len(errors) == 0
-
 
 def _config_with_docs_indexing(docs_indexing: dict) -> dict:
     """Return config with docs indexing."""
@@ -420,13 +224,13 @@ def _config_with_docs_indexing(docs_indexing: dict) -> dict:
         "code_analysis": {
             "database": {
                 "driver": {
-                    "type": "sqlite_proxy",
+                    "type": "postgres",
                     "config": {
-                        "path": "data/test.db",
-                        "worker_config": {
-                            "command_timeout": 30.0,
-                            "poll_interval": 0.1,
-                        },
+                        "host": "127.0.0.1",
+                        "port": 5432,
+                        "dbname": "code_analysis",
+                        "user": "postgres",
+                        "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD",
                     },
                 }
             },

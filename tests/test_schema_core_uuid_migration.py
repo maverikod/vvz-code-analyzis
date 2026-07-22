@@ -12,7 +12,6 @@ from __future__ import annotations
 import pytest
 
 from code_analysis.core.database.schema_definition_tables_core import get_tables_core
-from code_analysis.core.database.schema_sync_sql import generate_create_table_sql
 from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_table_sql_postgres,
 )
@@ -90,15 +89,6 @@ def test_core_fk_graph_uuid_targets() -> None:
     ec = tables["entity_cross_ref"]
     targets = {fk["references_table"] for fk in ec["foreign_keys"]}
     assert targets == {"classes", "methods", "functions", "files"}
-
-
-@pytest.mark.parametrize("table", _UUID_CORE_TABLES)
-def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
-    """Verify test sqlite ddl maps uuid to text."""
-    sd = _wrapped_core()
-    ddl = generate_create_table_sql(sd, table).upper()
-    assert "UUID" not in ddl, ddl
-    assert "TEXT" in ddl
 
 
 @pytest.mark.parametrize(

@@ -7,14 +7,6 @@ from code_analysis.commands.worker_status_mcp_commands.get_database_status_build
 )
 
 
-def test_build_status_ops_sqlite_uses_julianday() -> None:
-    """Verify test build status ops sqlite uses julianday."""
-    ops = build_status_ops("sqlite_proxy")
-    sql = " ".join(q[0] for q in ops)
-    assert "julianday('now', '-1 day')" in sql
-    assert "EXTRACT(JULIAN" not in sql
-
-
 def test_build_status_ops_postgres_uses_extract() -> None:
     """Verify test build status ops postgres uses extract."""
     ops = build_status_ops("postgres")

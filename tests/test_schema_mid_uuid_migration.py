@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from code_analysis.core.database.schema_definition_tables_mid import get_tables_mid
-from code_analysis.core.database.schema_sync_sql import generate_create_table_sql
 from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_table_sql_postgres,
 )
@@ -109,17 +108,6 @@ def test_step_06_unique_constraints_preserved() -> None:
         "vector_index"
     ]["unique_constraints"]
     assert {"columns": ["chunk_uuid"]} in tables["code_chunks"]["unique_constraints"]
-
-
-@pytest.mark.parametrize("table", _UUID_MID_TABLES)
-def test_sqlite_ddl_maps_uuid_to_text(table: str) -> None:
-    """Verify test sqlite ddl maps uuid to text."""
-    sd = _wrapped(table)
-    ddl = generate_create_table_sql(sd, table).upper()
-    # Logical UUID maps to SQLite TEXT; column names like chunk_uuid → CHUNK_UUID contain "UUID".
-    ddl_check = ddl.replace("CHUNK_UUID", "")
-    assert "UUID" not in ddl_check, ddl
-    assert "TEXT" in ddl
 
 
 @pytest.mark.parametrize(

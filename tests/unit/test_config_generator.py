@@ -31,7 +31,6 @@ def test_generate_default_port_and_code_analysis_sections(
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["server"]["port"] == DEFAULT_SERVER_PORT
     assert data["code_analysis"]["port"] == DEFAULT_SERVER_PORT
-    assert data["code_analysis"]["database"]["driver"]["type"] == "sqlite_proxy"
     assert data["code_analysis"]["search_session"] == {
         "ttl_seconds": SEARCH_SESSION_TTL_SECONDS_DEFAULT,
         "max_block_size_bytes": SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,

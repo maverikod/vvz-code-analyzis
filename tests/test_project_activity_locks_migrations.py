@@ -7,9 +7,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import sqlite3
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from code_analysis.core.database.schema_definition import get_schema_definition
@@ -19,10 +16,6 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
 from code_analysis.core.database_driver_pkg.drivers.postgres_migrations import (
     idempotent_ensure_client_session_tables,
     idempotent_ensure_project_activity_locks_table,
-)
-from code_analysis.core.database_driver_pkg.drivers.sqlite_migrations import (
-    ensure_project_activity_locks_table,
-    ensure_runtime_file_lock_tables,
 )
 
 
@@ -74,63 +67,6 @@ def test_postgres_ddl_uses_create_if_not_exists() -> None:
     ddl = generate_create_table_sql_postgres(sd, "project_activity_locks")
     assert "CREATE TABLE IF NOT EXISTS project_activity_locks" in ddl
     assert "lease_until" in ddl
-
-
-def test_ensure_sqlite_project_activity_locks_idempotent() -> None:
-    """Verify test ensure sqlite project activity locks idempotent."""
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "t.db"
-        conn = sqlite3.connect(str(p))
-        try:
-            conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
-            conn.commit()
-            ensure_project_activity_locks_table(conn)
-            one = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_activity_locks'"
-            ).fetchone()
-            assert one is not None
-            one_idx = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_project_activity_locks_lease_until'"
-            ).fetchone()
-            assert one_idx is not None
-            ensure_project_activity_locks_table(conn)
-        finally:
-            conn.close()
-
-
-def test_ensure_sqlite_runtime_file_lock_tables_idempotent() -> None:
-    """Verify test ensure sqlite runtime file lock tables idempotent."""
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "t.db"
-        conn = sqlite3.connect(str(p))
-        try:
-            conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY)")
-            conn.commit()
-            ensure_runtime_file_lock_tables(conn)
-            for table in ("runtime_lock_sessions", "file_advisory_lock_leases"):
-                one = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                    (table,),
-                ).fetchone()
-                assert one is not None
-            ensure_runtime_file_lock_tables(conn)
-        finally:
-            conn.close()
-
-
-def test_ensure_sqlite_skips_without_projects_table() -> None:
-    """Verify test ensure sqlite skips without projects table."""
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "t.db"
-        conn = sqlite3.connect(str(p))
-        try:
-            ensure_project_activity_locks_table(conn)
-            one = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_activity_locks'"
-            ).fetchone()
-            assert one is None
-        finally:
-            conn.close()
 
 
 def test_idempotent_ensure_postgres_runs_table_and_index() -> None:

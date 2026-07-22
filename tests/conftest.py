@@ -7,22 +7,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import json
-import os
-import threading
-import time
-import uuid
-
 import pytest
-
-from code_analysis.core.database_client.client import DatabaseClient
-from code_analysis.core.database_client.objects.file import File
-from code_analysis.core.database_client.objects.project import Project
-from code_analysis.core.database_driver_pkg.driver_factory import create_driver
-from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
-from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
-
-from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
 
 TEST_SERVER_INSTANCE_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -55,96 +40,3 @@ def pytest_configure(config) -> None:
         "markers",
         "postgres: optional live PostgreSQL (e.g. CODE_ANALYSIS_POSTGRES_TEST_DSN).",
     )
-
-
-@pytest.fixture
-def rpc_server_with_schema(tmp_path):
-    """Create RPC server with full database schema for command testing."""
-    db_path = tmp_path / "test.db"
-    socket_path = str(tmp_path / "test.sock")
-
-    # Create driver and the FULL production schema (single source of truth).
-    # Hardcoded per-table DDL drifted from schema_definition (e.g. missing the
-    # server_instance_id partition column), so use sync_schema instead.
-    from code_analysis.core.database.schema_definition import get_schema_definition
-
-    driver = create_driver("sqlite", {"path": str(db_path)})
-    backup_dir = tmp_path / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    driver.sync_schema(get_schema_definition(), str(backup_dir))
-
-    # Start RPC server
-    request_queue = RequestQueue()
-    server = RPCServer(driver, request_queue, socket_path)
-
-    server_thread = threading.Thread(target=server.start, daemon=True)
-    server_thread.start()
-    time.sleep(0.3)  # Wait for server to start
-
-    yield server, socket_path, db_path
-
-    # Cleanup
-    server.stop()
-    driver.disconnect()
-
-
-@pytest.fixture
-def database_client(rpc_server_with_schema):
-    """Create DatabaseClient instance for testing."""
-    _, socket_path, _ = rpc_server_with_schema
-
-    client = DatabaseClient(socket_path=socket_path)
-    client.connect()
-
-    yield client
-
-    client.disconnect()
-
-
-@pytest.fixture
-def test_project(database_client, tmp_path):
-    """Create test project in database and filesystem."""
-    project_id = str(uuid.uuid4())
-    root_path = str(tmp_path)
-
-    # Create project in database
-    project = Project(
-        id=project_id,
-        root_path=root_path,
-        name=tmp_path.name,
-    )
-    database_client.create_project(project)
-
-    # Create projectid file
-    projectid_file = tmp_path / "projectid"
-    projectid_data = {"id": project_id, "description": "Test project"}
-    projectid_file.write_text(json.dumps(projectid_data, indent=4), encoding="utf-8")
-
-    return project_id, tmp_path
-
-
-@pytest.fixture
-def test_file(database_client, test_project, tmp_path):
-    """Create test file in database and filesystem."""
-    project_id, root_path = test_project
-
-    # Create test file (substantial content for fulltext/semantic search tests)
-    file_path = tmp_path / "test_file.py"
-    file_path.write_text(DEFAULT_TEST_FILE_CONTENT, encoding="utf-8")
-    file_content = DEFAULT_TEST_FILE_CONTENT
-
-    file_mtime = os.path.getmtime(file_path)
-    lines = len(file_content.splitlines())
-
-    # Create file in database
-    file_obj = File(
-        project_id=project_id,
-        path=str(file_path),
-        relative_path="test_file.py",
-        lines=lines,
-        last_modified=file_mtime,
-        has_docstring=True,
-    )
-    created_file = database_client.create_file(file_obj)
-
-    return created_file.id, file_path, project_id, root_path

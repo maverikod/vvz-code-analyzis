@@ -13,15 +13,10 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any, List
 
-from code_analysis.core.database.schema_definition import get_schema_definition
 from code_analysis.core.database_driver_pkg.drivers.postgres_tables import (
     run_create_table_postgres,
-)
-from code_analysis.core.database_driver_pkg.drivers.sqlite_tables import (
-    run_create_table,
 )
 
 _COMPOSITE_SCHEMA = {
@@ -45,49 +40,6 @@ _SINGLE_PK_SCHEMA = {
         {"name": "val", "type": "TEXT"},
     ],
 }
-
-
-# --------------------------------------------------------------------------- #
-# SQLite driver
-# --------------------------------------------------------------------------- #
-
-
-def test_sqlite_composite_pk_creates_table() -> None:
-    """Verify test sqlite composite pk creates table."""
-    conn = sqlite3.connect(":memory:")
-    assert run_create_table(conn, _COMPOSITE_SCHEMA) is True
-    pk_cols = [
-        row[1]
-        for row in conn.execute("PRAGMA table_info(watch_dir_paths)")
-        if row[5] > 0
-    ]
-    assert pk_cols == ["server_instance_id", "watch_dir_id"]
-
-
-def test_sqlite_single_pk_still_inline() -> None:
-    """Verify test sqlite single pk still inline."""
-    conn = sqlite3.connect(":memory:")
-    assert run_create_table(conn, _SINGLE_PK_SCHEMA) is True
-    pk_cols = [row[1] for row in conn.execute("PRAGMA table_info(solo)") if row[5] > 0]
-    assert pk_cols == ["id"]
-
-
-def test_sqlite_full_schema_definition_creates_all_tables() -> None:
-    """Every declarative table must create cleanly (no composite-PK abort)."""
-    conn = sqlite3.connect(":memory:")
-    tables = get_schema_definition().get("tables", {})
-    items = (
-        tables.items()
-        if isinstance(tables, dict)
-        else [(t.get("name"), t) for t in tables]
-    )
-    for name, body in items:
-        if not isinstance(body, dict):
-            continue
-        entry = dict(body)
-        entry["name"] = name
-        # Must not raise "table has more than one primary key".
-        assert run_create_table(conn, entry) is True
 
 
 # --------------------------------------------------------------------------- #

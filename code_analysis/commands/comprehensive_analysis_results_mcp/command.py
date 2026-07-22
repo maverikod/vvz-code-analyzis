@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.database_driver_pkg.domain.comprehensive_analysis import (
+    get_comprehensive_analysis_results,
+)
 from ...core.database_driver_pkg.domain.files import (
     get_file_by_id,
     get_project_file_rows,
@@ -182,7 +185,7 @@ class ComprehensiveAnalysisResultsMCPCommand(BaseMCPCommand):
                     row_file_id = _file_row_id(row)
                     if not row_file_id:
                         continue
-                    saved = db.get_comprehensive_analysis_results(row_file_id)
+                    saved = get_comprehensive_analysis_results(db, row_file_id)
                     if not saved:
                         continue
                     files_with_saved_results += 1

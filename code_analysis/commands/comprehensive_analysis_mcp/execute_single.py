@@ -14,6 +14,9 @@ from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.database_driver_pkg.domain.comprehensive_analysis import (
+    save_comprehensive_analysis_results,
+)
 from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.duplicate_detector import DuplicateDetector
 from ..base_mcp_command import BaseMCPCommand
@@ -279,7 +282,8 @@ async def run_single_file(
                 "total_missing_docstrings": len(results["missing_docstrings"]),
                 **quality_findings_counts(results),
             }
-            db.save_comprehensive_analysis_results(
+            save_comprehensive_analysis_results(
+                db,
                 file_id=file_id,
                 project_id=file_project_id,
                 file_mtime=file_mtime,

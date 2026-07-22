@@ -139,6 +139,13 @@ def _patch_domain_files_to_fake_db(monkeypatch: pytest.MonkeyPatch) -> None:
             project_id, include_deleted=include_deleted
         ),
     )
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_results_mcp.command."
+        "get_comprehensive_analysis_results",
+        lambda driver, file_id, file_mtime=None: driver.get_comprehensive_analysis_results(
+            file_id, file_mtime=file_mtime
+        ),
+    )
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,14 @@ def _patch_get_file_by_path_to_db_mock(monkeypatch: pytest.MonkeyPatch) -> None:
             path, project_id, include_deleted=include_deleted
         ),
     )
+    # Same reasoning for save_comprehensive_analysis_results: tests assert on
+    # db.save_comprehensive_analysis_results.assert_called_once(), so route the
+    # domain free-function call site back to that mock too.
+    monkeypatch.setattr(
+        "code_analysis.commands.comprehensive_analysis_mcp.execute_single."
+        "save_comprehensive_analysis_results",
+        lambda driver, **kwargs: driver.save_comprehensive_analysis_results(**kwargs),
+    )
 
 
 def _empty_results() -> dict:

@@ -17,6 +17,9 @@ from typing import Any, Dict, List
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.database_driver_pkg.domain.comprehensive_analysis import (
+    save_comprehensive_analysis_results_batch,
+)
 from ...core.database_driver_pkg.domain.files import get_project_files
 from ...core.sql_portable import WHERE_FILES_ACTIVE
 from .batch_one_file import analyze_one_file_in_batch
@@ -370,7 +373,7 @@ async def run_batch(
                 if len(save_batch) >= _BATCH_SAVE_SIZE:
                     try:
                         t_save0 = time.perf_counter()
-                        db.save_comprehensive_analysis_results_batch(save_batch)
+                        save_comprehensive_analysis_results_batch(db, save_batch)
                         timings_sec["save"] += time.perf_counter() - t_save0
                         results_persisted += len(save_batch)
                         analysis_logger.info(
@@ -413,7 +416,7 @@ async def run_batch(
             progress_tracker.set_description("Analysis: saving results")
         try:
             t_save0 = time.perf_counter()
-            db.save_comprehensive_analysis_results_batch(save_batch)
+            save_comprehensive_analysis_results_batch(db, save_batch)
             timings_sec["save"] += time.perf_counter() - t_save0
             results_persisted += len(save_batch)
             analysis_logger.info(

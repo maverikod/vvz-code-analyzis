@@ -288,7 +288,9 @@ class TestUniversalFileSaveRouting:
         assert d["created"] is True
         assert target.read_text(encoding="utf-8") == "# Title\n\nbody\n"
 
-    async def test_python_create_missing_file(self, tmp_path: Path) -> None:
+    async def test_python_create_missing_file(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         """Verify test python create missing file."""
         target = tmp_path / "pkg" / "new_mod.py"
         assert not target.exists()
@@ -298,6 +300,16 @@ class TestUniversalFileSaveRouting:
         mock_db.select.return_value = []
         mock_db.begin_transaction.return_value = "txn-1"
         mock_db.commit_transaction.return_value = True
+        created_file_mock = MagicMock()
+        created_file_mock.id = "created-file-id"
+        mock_db.create_file.return_value = created_file_mock
+        # tree_saver.py calls the driver-direct create_file free function (stage 2
+        # layer collapse) instead of database.create_file bound method; patch it at
+        # its import site so mock_db.create_file above is still what gets exercised.
+        monkeypatch.setattr(
+            "code_analysis.core.cst_tree.tree_saver.create_file",
+            lambda driver, file_obj: driver.create_file(file_obj),
+        )
 
         with (
             patch.object(

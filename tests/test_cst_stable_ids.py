@@ -153,8 +153,20 @@ def test_metadata_positions_after_text_strip_of_legacy_inline_marker(
     assert "# @node-id:" not in tree.module.code
 
 
-def test_save_and_reload_preserve_node_ids(tmp_path: Path) -> None:
+def test_save_and_reload_preserve_node_ids(tmp_path: Path, monkeypatch) -> None:
     """Saving with marker block and loading again must reproduce the same UUIDs."""
+    # tree_saver.py calls the driver-direct create_file/update_file free functions
+    # (stage 2 layer collapse) instead of database.create_file/.update_file bound
+    # methods; patch them at their import site so the mock's own db.create_file/
+    # db.update_file stubs below are still what gets exercised.
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.create_file",
+        lambda driver, file_obj: driver.create_file(file_obj),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.update_file",
+        lambda driver, file_obj: driver.update_file(file_obj),
+    )
     db = _make_db_mock()
     file_path = tmp_path / "sample.py"
     tree = create_tree_from_code(
@@ -194,8 +206,22 @@ def test_save_and_reload_preserve_node_ids(tmp_path: Path) -> None:
     assert before_function.node_id == after_function.node_id
 
 
-def test_modify_save_reload_preserves_replaced_function_id(tmp_path: Path) -> None:
+def test_modify_save_reload_preserves_replaced_function_id(
+    tmp_path: Path, monkeypatch
+) -> None:
     """A replaced function keeps its UUID after save and reload."""
+    # tree_saver.py calls the driver-direct create_file/update_file free functions
+    # (stage 2 layer collapse) instead of database.create_file/.update_file bound
+    # methods; patch them at their import site so the mock's own db.create_file/
+    # db.update_file stubs below are still what gets exercised.
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.create_file",
+        lambda driver, file_obj: driver.create_file(file_obj),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.update_file",
+        lambda driver, file_obj: driver.update_file(file_obj),
+    )
     db = _make_db_mock()
     file_path = tmp_path / "sample.py"
     tree = create_tree_from_code(

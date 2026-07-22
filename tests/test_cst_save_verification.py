@@ -234,8 +234,21 @@ def test_assert_file_bytes_match_after_os_replace(tmp_path: Path) -> None:
 
 def test_save_twice_without_reload_second_save_succeeds(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Snapshot refreshed after first save (tree_saver); second save does not regress FILE_CHANGED."""
+    # tree_saver.py calls the driver-direct create_file/update_file free functions
+    # (stage 2 layer collapse) instead of database.create_file/.update_file bound
+    # methods; patch them at their import site so the mock's own db.create_file/
+    # db.update_file stubs below are still what gets exercised.
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.create_file",
+        lambda driver, file_obj: driver.create_file(file_obj),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.update_file",
+        lambda driver, file_obj: driver.update_file(file_obj),
+    )
     code = '"""Doc."""\n\nx = 1\n'
     rel = "out.py"
     tree = create_tree_from_code(str(tmp_path / rel), code)

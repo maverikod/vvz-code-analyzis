@@ -45,8 +45,23 @@ def _make_db_mock() -> MagicMock:
 
 
 @pytest.fixture
-def db_mock():
-    """Database mock for save_tree_to_file (batch path)."""
+def db_mock(monkeypatch):
+    """Database mock for save_tree_to_file (batch path).
+
+    ``tree_saver.py`` calls the driver-direct ``create_file``/``update_file`` free
+    functions (stage 2 layer collapse) instead of ``database.create_file``/
+    ``.update_file`` bound methods; patch them at their import site in
+    ``tree_saver`` so the mock's own ``db.create_file``/``db.update_file``
+    stubs are still what gets exercised.
+    """
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.create_file",
+        lambda driver, file_obj: driver.create_file(file_obj),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.update_file",
+        lambda driver, file_obj: driver.update_file(file_obj),
+    )
     return _make_db_mock()
 
 

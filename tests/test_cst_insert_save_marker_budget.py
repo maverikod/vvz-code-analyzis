@@ -121,8 +121,20 @@ def test_v2_marker_block_fixed_small_line_overhead(tmp_path) -> None:
         remove_tree(tree.tree_id)
 
 
-def test_cst_save_tree_physical_lines_near_logical(tmp_path) -> None:
+def test_cst_save_tree_physical_lines_near_logical(tmp_path, monkeypatch) -> None:
     """After save, file line count stays close to logical (markers are compact)."""
+    # tree_saver.py calls the driver-direct create_file/update_file free functions
+    # (stage 2 layer collapse) instead of database.create_file/.update_file bound
+    # methods; patch them at their import site so the mock's own db.create_file/
+    # db.update_file stubs below are still what gets exercised.
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.create_file",
+        lambda driver, file_obj: driver.create_file(file_obj),
+    )
+    monkeypatch.setattr(
+        "code_analysis.core.cst_tree.tree_saver.update_file",
+        lambda driver, file_obj: driver.update_file(file_obj),
+    )
     db = _make_db_mock()
     src = "a = 1\n" * 30
     path = tmp_path / "save_budget.py"

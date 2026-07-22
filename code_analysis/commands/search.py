@@ -14,6 +14,7 @@ from ..core.database_driver_pkg.domain.entities import (
     get_class_methods,
     search_classes,
 )
+from ..core.database_driver_pkg.domain.search import full_text_search
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ class SearchCommand:
         Returns:
             List of matching records with file paths
         """
-        return self.database.full_text_search(
-            query, self.project_id, entity_type=entity_type, limit=limit
+        return full_text_search(
+            self.database, query, self.project_id, entity_type=entity_type, limit=limit
         )
 
     def search_classes(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -363,11 +363,25 @@ def test_path_normalization_absolute_to_project_relative(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_execute_partial_success_with_warnings(tmp_path: Path) -> None:
+async def test_execute_partial_success_with_warnings(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Verify test execute partial success with warnings."""
     project_root = tmp_path / "proj"
     project_root.mkdir()
     (project_root / "foo.py").write_text("session_create\n", encoding="utf-8")
+
+    # SearchCommand.full_text_search now calls the driver-direct free function
+    # (stage-2 layer collapse) instead of the bound method stubbed below; route
+    # it back to the mock's own shortcut.
+    monkeypatch.setattr(
+        "code_analysis.commands.search.full_text_search",
+        lambda driver, query, project_id, entity_type=None, limit=20: (
+            driver.full_text_search(
+                query, project_id, entity_type=entity_type, limit=limit
+            )
+        ),
+    )
 
     mock_db = MagicMock()
     mock_db.full_text_search.return_value = [

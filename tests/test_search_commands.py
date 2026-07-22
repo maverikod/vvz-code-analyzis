@@ -62,6 +62,17 @@ def mock_db(project_root, monkeypatch):
         "code_analysis.commands.search.get_class_methods",
         lambda driver, class_id: driver.get_class_methods(class_id),
     )
+    # SearchCommand.full_text_search now calls the driver-direct free function
+    # (stage-2 layer collapse) instead of the bound method stubbed above; route
+    # it back to the mock's own shortcut.
+    monkeypatch.setattr(
+        "code_analysis.commands.search.full_text_search",
+        lambda driver, query, project_id, entity_type=None, limit=20: (
+            driver.full_text_search(
+                query, project_id, entity_type=entity_type, limit=limit
+            )
+        ),
+    )
     return db
 
 

@@ -175,7 +175,6 @@ async def run_one_cycle(
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     use_pgvector_ann = getattr(worker, "vector_ann_backend", "faiss") == "pgvector"
@@ -193,7 +192,6 @@ async def run_one_cycle(
            WHERE {chunk_unindexed_clause}
              AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
         None,
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     chunks_data = (
         chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
@@ -203,7 +201,6 @@ async def run_one_cycle(
     files_result = database.execute(
         f"SELECT COUNT(*) as count FROM files WHERE {WHERE_FILES_ACTIVE}",
         None,
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     files_data = files_result.get("data", []) if isinstance(files_result, dict) else []
     files_total_at_start = files_data[0].get("count", 0) if files_data else 0
@@ -217,7 +214,6 @@ async def run_one_cycle(
         AND {chunk_indexed_clause}
         """,
         None,
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     vectorized_data = (
         vectorized_result.get("data", []) if isinstance(vectorized_result, dict) else []
@@ -238,7 +234,6 @@ async def run_one_cycle(
             files_total_at_start,
             files_vectorized,
         ),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     cycle_start_time = time.time()
 
@@ -265,7 +260,6 @@ async def run_one_cycle(
             use_pgvector_ann=use_pgvector_ann,
         ),
         None,
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     projects: List[Any] = (
         projects_result.get("data", []) if isinstance(projects_result, dict) else []
@@ -299,7 +293,6 @@ async def run_one_cycle(
             WHERE cycle_id = ?
             """,
             (0, 0, 0, 0.0, cycle_id),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
     else:
         logger.debug(
@@ -416,7 +409,6 @@ async def run_one_cycle(
         WHERE cycle_id = ?
         """,
         (time.time(), cycle_id),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     return (

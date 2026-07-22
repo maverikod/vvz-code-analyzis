@@ -99,7 +99,6 @@ def partition_discovered_projects_by_db_soft_delete(
                 sync_project_metadata_from_projectid(
                     database,
                     pr.root_path,
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
             logger.info(
                 "[WATCHER] skip discovered project root=%s project_id=%s "
@@ -114,7 +113,6 @@ def partition_discovered_projects_by_db_soft_delete(
             sync_project_metadata_from_projectid(
                 database,
                 pr.root_path,
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
 
         proj_by_id = get_project(database, pr.project_id)
@@ -137,7 +135,6 @@ def partition_discovered_projects_by_db_soft_delete(
             "SELECT id, deleted FROM projects "
             "WHERE server_instance_id = ? AND root_path = ? LIMIT 1",
             (sid, root_s),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         rows = _execute_data_rows(res)
         if rows and _truthy_deleted(rows[0].get("deleted")):

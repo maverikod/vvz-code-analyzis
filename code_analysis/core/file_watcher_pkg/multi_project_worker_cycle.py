@@ -58,7 +58,6 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     cycle_stats: Dict[str, Any] = {
@@ -145,7 +144,6 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
                 watch_dir_duration,
                 cycle_id,
             ),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
     database.execute(
@@ -155,7 +153,6 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         ) VALUES (?, ?, ?, {_now_sql})
         """,
         (cycle_id, cycle_start_time, cycle_stats["files_scanned"]),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     database.execute(
@@ -165,7 +162,6 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         WHERE cycle_id = ?
         """,
         (time.time(), cycle_id),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     write_worker_status(
         getattr(worker, "status_file_path", None),

@@ -60,10 +60,15 @@ class _FakeDriver:
         sql: str,
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
-        *,
-        priority: int = 0,
     ) -> Dict[str, Any]:
-        """Route SELECT/UPDATE/INSERT against the in-memory table."""
+        """Route SELECT/UPDATE/INSERT against the in-memory table.
+
+        Signature-strict: EXACTLY ``drivers/base.py``'s ``execute`` signature, no
+        ``priority`` keyword and no ``**kwargs``. A stale ``priority=`` kwarg
+        forwarded from ``domain.projects`` raises ``TypeError`` here instead of
+        being silently swallowed (1.6.70 hotfix regression: stale RPC-era
+        ``priority`` kwarg broke ``insert_project_row``'s driver.execute calls).
+        """
         p = tuple(params or ())
         self.execute_calls.append((sql, p))
         su = _norm_su(sql)
@@ -177,10 +182,12 @@ class _FakeDriver:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
-        *,
-        priority: int = 0,
     ) -> List[Dict[str, Any]]:
-        """Scoped select used by ``get_project``'s first (server_instance_id, id) lookup."""
+        """Scoped select used by ``get_project``'s first (server_instance_id, id) lookup.
+
+        Signature-strict: EXACTLY ``drivers/base.py``'s ``select`` signature, no
+        ``priority`` keyword and no ``**kwargs`` (see ``execute`` docstring above).
+        """
         if table_name != "projects" or not where or "id" not in where:
             return []
         row = self._rows.get(where["id"])
@@ -311,6 +318,42 @@ def test_insert_project_row_reclaims_orphan_without_insert(
     sqls = [c[0] for c in driver.execute_calls]
     assert any("UPDATE projects" in s for s in sqls)
     assert not any("INSERT INTO projects" in s for s in sqls)
+
+
+@_NOW_PATCH
+@_SID_PATCH
+def test_insert_project_row_brand_new_project_inserts(
+    _sid_mock: Any, _now_mock: Any
+) -> None:
+    """No existing row anywhere (fresh project) -> plain INSERT lands.
+
+    Direct regression test for the 1.6.70 hotfix: production ``create_project``
+    called exactly this branch (``driver.execute(INSERT INTO projects ...)``,
+    the 3rd of the module's 5 stale ``priority=priority`` forwarding sites) and
+    failed with ``TypeError: execute() got an unexpected keyword argument
+    'priority'`` because ``_FakeDriver``/the real ``PostgreSQLDriver`` do not
+    accept it. With ``_FakeDriver`` now signature-strict, this test fails with
+    that same ``TypeError`` on the unfixed code and passes once the stale kwarg
+    is dropped.
+    """
+    driver = _FakeDriver({})
+
+    with patch(
+        "code_analysis.core.database_driver_pkg.domain.projects.get_project",
+        return_value=None,
+    ):
+        domain_projects.insert_project_row(
+            driver,
+            "pid-brand-new",
+            "brand_new_proj",
+            "brand_new_proj",
+            comment="fresh",
+        )
+
+    assert driver._rows["pid-brand-new"]["id"] == "pid-brand-new"
+    assert driver._rows["pid-brand-new"]["server_instance_id"] == _SID
+    sqls = [c[0] for c in driver.execute_calls]
+    assert any("INSERT INTO projects" in s for s in sqls)
 
 
 @_NOW_PATCH

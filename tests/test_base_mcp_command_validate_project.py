@@ -47,12 +47,18 @@ class _ScopedMissGlobalHitDb:
     def disconnect(self) -> None:
         """No-op disconnect for the RPC-less test double."""
 
-    def select(self, table_name, where=None, **_kwargs):  # type: ignore[no-untyped-def]
+    def select(self, table_name, where=None, columns=None, limit=None, offset=None, order_by=None):  # type: ignore[no-untyped-def]
         """Scoped select always misses (row lives under a different sid)."""
         return []
 
-    def execute(self, sql, params=None, transaction_id=None, *, priority=0):  # type: ignore[no-untyped-def]
-        """Global-by-id lookup hits a row registered under a different sid."""
+    def execute(self, sql, params=None, transaction_id=None):  # type: ignore[no-untyped-def]
+        """Global-by-id lookup hits a row registered under a different sid.
+
+        Signature-strict (matches ``drivers/base.py`` exactly, no ``priority``
+        keyword and no ``**kwargs``): a stale ``priority=`` kwarg forwarded by
+        ``domain.projects`` would raise ``TypeError`` here instead of being
+        silently swallowed (see the 1.6.70 hotfix regression).
+        """
         if "FROM projects WHERE id =" in sql:
             return {
                 "data": [

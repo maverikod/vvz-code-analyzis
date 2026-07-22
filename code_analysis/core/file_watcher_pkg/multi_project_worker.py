@@ -167,7 +167,6 @@ class MultiProjectFileWatcherWorker:
                             database.execute(
                                 "SELECT 1",
                                 None,
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                             # Connection successful
                             if not db_available:

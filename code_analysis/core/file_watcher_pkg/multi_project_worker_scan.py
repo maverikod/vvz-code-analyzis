@@ -93,7 +93,6 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
         list_res = database.execute(
             list_sql,
             root_prefix,
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
     except Exception as exc:
         logger.warning("[ABSPATH_DEDUP] list absolute rows failed: %s", exc)
@@ -142,7 +141,6 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                 dup_res = database.execute(
                     dup_sql,
                     (project_id, rel_str, str(abs_row_id)),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
             except Exception as exc:
                 logger.warning(
@@ -206,19 +204,16 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                     database.execute(
                         "DELETE FROM files WHERE id = ?",
                         (str(duplicate_id),),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     database.execute(
                         f"UPDATE files SET path = ?, relative_path = ?, "
                         f"updated_at = {_now_sql} WHERE id = ?",
                         (rel_str, rel_str, str(canonical_id)),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     database.execute(
                         "DELETE FROM indexing_errors WHERE project_id = ? "
                         "AND (file_path = ? OR file_path = ?)",
                         (project_id, abs_path_str, rel_str),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -242,7 +237,6 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
                         f"UPDATE files SET path = ?, relative_path = ?, "
                         f"updated_at = {_now_sql} WHERE id = ?",
                         (rel_str, rel_str, str(abs_row_id)),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -483,7 +477,6 @@ def scan_watch_dir(
                             WHERE id = ?
                             """,
                             tuple(update_values),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.debug(
                             f"Updated project {project_root_obj.project_id}: "
@@ -493,7 +486,6 @@ def scan_watch_dir(
                     refresh_project_metadata_from_projectid(
                         database,
                         project_root_obj.root_path,
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 else:
                     existing_project_id = find_project_id_by_resolved_absolute_root(
@@ -518,12 +510,10 @@ def scan_watch_dir(
                                     project_root_obj.description,
                                     existing_project_id,
                                 ),
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         refresh_project_metadata_from_projectid(
                             database,
                             project_root_obj.root_path,
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                     else:
                         existing_project_obj = get_project(
@@ -578,7 +568,6 @@ def scan_watch_dir(
                                 ),
                                 deleted=pid_deleted,
                                 processing_paused=pid_paused,
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         else:
                             from code_analysis.core.server_instance import \
@@ -601,12 +590,10 @@ def scan_watch_dir(
                                     project_description,
                                     watch_dir_id,
                                 ),
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         refresh_project_metadata_from_projectid(
                             database,
                             project_root_obj.root_path,
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.info(
                             f"Auto-created project {project_root_obj.project_id} "
@@ -794,7 +781,6 @@ def scan_watch_dir(
                 database,
                 project_id,
                 project_files,
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.info(
                 "[QUEUE PROJECT] watch_dir=%s project_id=%s "
@@ -917,7 +903,6 @@ def scan_watch_dir(
                         LIMIT 1
                         """,
                         None,
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     cycle_rows = (
                         cycle_result.get("data", [])
@@ -933,7 +918,6 @@ def scan_watch_dir(
                             WHERE cycle_id = ?
                             """,
                             (current_project_id, cycle_id),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                 except Exception as e:
                     logger.debug(f"Could not update current_project_id: {e}")

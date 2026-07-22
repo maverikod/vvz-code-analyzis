@@ -80,7 +80,6 @@ def _mark_vectorization_dead_letter(
     database.execute(
         "UPDATE code_chunks SET vectorization_skipped = ? WHERE id = ?",
         (VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE, chunk_id),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     logger.warning(
         "[dead-letter] chunk_id=%s file=%s reason=%s — vectorization_skipped=%d, "
@@ -217,7 +216,6 @@ async def process_chunk_only_files(
         LIMIT ?
         """,
         (project_id, getattr(self, "max_files_per_pass", 30)),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     files_data = file_result.get("data", []) if isinstance(file_result, dict) else []
     if not files_data:
@@ -236,7 +234,6 @@ async def process_chunk_only_files(
         chunk_result = database.execute(
             _CHUNK_SELECT_SQL,
             (file_id, project_id),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         chunks = chunk_result.get("data", []) if isinstance(chunk_result, dict) else []
         if not chunks:
@@ -381,7 +378,7 @@ async def process_chunk_only_files(
                     lw({"batches": [update_ops]})
             else:
                 database.execute_batch(
-                    update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+                    update_ops
                 )
             updated_count += len(update_ops)
             error_count += unresolved_count
@@ -457,7 +454,6 @@ async def process_embedding_ready_chunks(
         LIMIT ?
         """,
         (self.project_id, self.batch_size),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     chunks = chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
     step_duration = time.time() - step_start
@@ -626,7 +622,7 @@ async def process_embedding_ready_chunks(
             )
             for (cid, vtxt, em) in updates_pg
         ]
-        database.execute_batch(pg_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
+        database.execute_batch(pg_ops)
         total_db_update_s = time.time() - db_batch_start
         logger.debug(
             f"[TIMING] execute_batch: {len(pg_ops)} pgvector UPDATEs in {total_db_update_s:.3f}s"
@@ -648,7 +644,7 @@ async def process_embedding_ready_chunks(
             )
             for (cid, vid, em) in updates_faiss
         ]
-        database.execute_batch(update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
+        database.execute_batch(update_ops)
         total_db_update_s = time.time() - db_batch_start
         logger.debug(
             f"[TIMING] execute_batch: {len(update_ops)} UPDATEs in {total_db_update_s:.3f}s"

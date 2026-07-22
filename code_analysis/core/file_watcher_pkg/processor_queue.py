@@ -134,7 +134,6 @@ class ProcessorQueueOps:
             return self.database.execute(
                 sql,
                 params or (),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
         self.database._execute(sql, params)
         result = getattr(self.database, "_last_execute_result", None)
@@ -158,7 +157,6 @@ class ProcessorQueueOps:
         if hasattr(self.database, "execute_batch"):
             return self.database.execute_batch(
                 operations,
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
         results: List[Dict[str, Any]] = []
         for sql, params in operations:

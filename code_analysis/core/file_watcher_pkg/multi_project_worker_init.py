@@ -278,7 +278,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                 updated_at = EXCLUDED.updated_at
             """,
             (server_instance_id, wid, watch_dir_path.name, False),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
         access_issue = describe_watch_dir_access(watch_dir_path)
@@ -295,7 +294,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (server_instance_id, wid),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.warning(
                 "Watch dir path not accessible during init (id=%s, path=%s): %s",
@@ -317,7 +315,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (server_instance_id, wid, normalized_path),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Updated watch_dir_path: {wid} -> {normalized_path}")
 
@@ -389,7 +386,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                     project_root_obj.project_id,
                                     server_instance_id,
                                 ),
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                             logger.debug(
                                 f"Updated project {project_root_obj.project_id} "
@@ -398,7 +394,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                         refresh_project_metadata_from_projectid(
                             database,
                             project_root_obj.root_path,
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                     else:
                         existing_by_root = find_project_id_by_resolved_absolute_root(
@@ -434,7 +429,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 watch_dir_id=wid,
                                 deleted=pid_deleted,
                                 processing_paused=pid_paused,
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         else:
                             database.execute(
@@ -453,12 +447,10 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                     project_root_obj.description,
                                     wid,
                                 ),
-                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                         refresh_project_metadata_from_projectid(
                             database,
                             project_root_obj.root_path,
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.info(
                             f"Created project {project_root_obj.project_id} "
@@ -481,13 +473,11 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
               AND watch_dir_id IN ({placeholders})
             """,
             (server_instance_id, *sorted(config_watch_dir_ids)),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
     all_watch_dirs_result = database.execute(
         "SELECT id FROM watch_dirs WHERE server_instance_id = ?",
         (server_instance_id,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     all_watch_dirs_rows = (
         all_watch_dirs_result.get("data", [])
@@ -509,7 +499,6 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (server_instance_id, db_wid),
-                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Watch dir {db_wid} not in config, setting path to NULL")
 

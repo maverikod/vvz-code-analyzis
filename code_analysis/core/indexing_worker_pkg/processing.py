@@ -150,7 +150,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         database.execute(
                             "SELECT 1",
                             None,
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         if not db_available:
                             logger.info("Database is now available")
@@ -222,7 +221,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     WHERE cycle_end_time IS NULL
                     """,
                     (cycle_start_time,),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 discovery_start = time.time()
                 files_total_result = database.execute(
@@ -233,7 +231,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     + """ AND needs_chunking = 1
                     """,
                     None,
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 files_total_at_start = 0
                 if isinstance(files_total_result, dict) and files_total_result.get(
@@ -256,14 +253,12 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, {_now_sql})
                     """,
                     (cycle_id, cycle_start_time, files_total_at_start),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
 
                 try:
                     projects_result = database.execute(
                         INDEXING_PROJECT_DISCOVERY_SQL,
                         None,
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     projects_data = (
                         projects_result.get("data", [])
@@ -352,7 +347,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     "AND needs_chunking = 1 "
                                     "ORDER BY updated_at DESC, id DESC LIMIT ?",
                                     (project_id, self.batch_size),
-                                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                 )
                                 files_data = (
                                     files_result.get("data", [])
@@ -369,7 +363,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 proj_row = database.execute(
                                     "SELECT root_path FROM projects WHERE id = ?",
                                     (project_id,),
-                                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                 )
                                 if isinstance(proj_row, dict):
                                     pd = proj_row.get("data") or []
@@ -430,7 +423,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             database.execute(
                                                 "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                                                 (row.get("id"),),
-                                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                             )
                                         except Exception:
                                             pass
@@ -593,7 +585,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 if project_batch:
                                     database.execute_batch(
                                         project_batch,
-                                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                     )
                             finally:
                                 release_project_activity(
@@ -620,7 +611,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 avg_time,
                                 cycle_id,
                             ),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         write_worker_status(
                             getattr(self, "status_file_path", None),
@@ -670,7 +660,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         WHERE cycle_id = ?
                         """,
                         (time.time(), cycle_id),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 except Exception as e:
                     try:

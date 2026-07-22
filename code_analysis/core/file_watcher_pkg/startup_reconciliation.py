@@ -185,7 +185,6 @@ def _all_db_projects(database: Any) -> List[Any]:
         "SELECT id, root_path, name, watch_dir_id FROM projects "
         "WHERE server_instance_id = ? OR server_instance_id IS NULL",
         (sid,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     if isinstance(result, dict):
         return list(result.get("data", []) or [])
@@ -251,7 +250,6 @@ def _mark_missing_files_for_project(
         "SELECT id, path, relative_path FROM files "
         "WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
         (project_id,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     file_rows = (
         result.get("data", []) if isinstance(result, dict) else (result or [])
@@ -270,7 +268,6 @@ def _mark_missing_files_for_project(
         database.execute(
             f"UPDATE files SET deleted = 1, updated_at = {now_sql} WHERE id = ?",
             (file_id,),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         marked += 1
         logger.debug(

@@ -85,7 +85,6 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                     LIMIT 1
                     """,
                     (file_path_str, self.project_id),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 file_rows = (
                     file_result.get("data", []) if isinstance(file_result, dict) else []
@@ -109,7 +108,6 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                             file_mtime,
                             False,
                         ),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     # Use execute() for mark_file_needs_chunking
                     database.execute(
@@ -117,7 +115,6 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                         UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                         """,
                         (file_path_str, self.project_id),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     enqueued += 1
                 else:
@@ -130,7 +127,6 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                             UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                             """,
                             (file_path_str, self.project_id),
-                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         enqueued += 1
         except Exception as e:

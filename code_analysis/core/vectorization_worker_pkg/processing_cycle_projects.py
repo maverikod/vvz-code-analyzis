@@ -196,7 +196,6 @@ async def process_projects_in_cycle(
                             project_id,
                             worker.max_files_per_pass,
                         ),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     files_to_chunk = (
                         files_result.get("data", [])
@@ -374,7 +373,6 @@ async def process_projects_in_cycle(
                         batch_duration,
                         cycle_id,
                     ),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
             finally:
                 worker.faiss_manager = original_faiss_manager

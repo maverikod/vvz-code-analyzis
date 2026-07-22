@@ -43,7 +43,6 @@ def _query_file_rows(
     out = database.execute(
         sql,
         params,
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     if not isinstance(out, dict):
         return []

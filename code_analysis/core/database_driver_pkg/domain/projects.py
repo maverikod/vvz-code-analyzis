@@ -65,7 +65,6 @@ def _execute_select_first_row(
         sql,
         params,
         transaction_id=transaction_id,
-        priority=priority,
     )
     if not isinstance(result, dict):
         return None
@@ -208,7 +207,6 @@ def insert_project_row(
                     project_id,
                 ),
                 transaction_id=transaction_id,
-                priority=priority,
             )
             logger.info(
                 "Reclaimed orphan projects row id=%s for server_instance_id=%s",
@@ -254,7 +252,6 @@ def insert_project_row(
                         other_sid_str,
                     ),
                     transaction_id=transaction_id,
-                    priority=priority,
                 )
                 logger.info(
                     "Reassigned projects row id=%s from server_instance_id=%s "
@@ -292,7 +289,6 @@ def insert_project_row(
             bool(processing_paused),
         ),
         transaction_id=transaction_id,
-        priority=priority,
     )
 
 
@@ -339,7 +335,6 @@ def sync_project_metadata_from_projectid(
                 info.project_id,
             ),
             transaction_id=transaction_id,
-            priority=priority,
         )
         affected_rows = result.get("affected_rows", 0) if isinstance(result, dict) else 0
         return int(affected_rows) if isinstance(affected_rows, int) else 0

@@ -87,7 +87,6 @@ async def _request_chunking_for_files(
                     "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND "
                     + WHERE_FILES_ACTIVE,
                     (file_id, project_id),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 check_data = (
                     check_result.get("data", [])
@@ -146,7 +145,6 @@ async def _request_chunking_for_files(
                     database.execute(
                         "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                         (file_id,),
-                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 except Exception as e:
                     logger.debug(
@@ -203,7 +201,6 @@ async def _request_chunking_for_files(
                 database.execute(
                     "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                     (file_id,),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 log_operation_timing(
                     getattr(self, "log_timing", False),
@@ -269,7 +266,6 @@ def _log_missing_docstring_files(
             LIMIT ?
             """,
             (self.project_id, sample),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         # Extract data from result - execute() returns dict with "data" key
         rows = rows_result.get("data", []) if isinstance(rows_result, dict) else []

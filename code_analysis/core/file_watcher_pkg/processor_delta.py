@@ -224,7 +224,6 @@ def compute_supplemental_watch_dir_deltas(
                     "projects",
                     where={"server_instance_id": sid},
                     columns=["id", "root_path", "watch_dir_id"],
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 or []
             )
@@ -234,7 +233,6 @@ def compute_supplemental_watch_dir_deltas(
                     "SELECT id, root_path, watch_dir_id FROM projects "
                     "WHERE server_instance_id = ?",
                     (sid,),
-                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 ).get("data")
                 or []
             )

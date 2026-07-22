@@ -82,7 +82,6 @@ def refresh_project_metadata_from_projectid(
             info.description or None,
             info.project_id,
         ),
-        priority=priority,
     )
     return info.project_id
 
@@ -111,7 +110,6 @@ def apply_project_updated_at_from_scan(
           AND (updated_at IS NULL OR updated_at < ?)
         """,
         (jd, project_id, jd),
-        priority=priority,
     )
     return True
 

@@ -206,7 +206,6 @@ def _fetch_db_watch_dirs(
         WHERE wd.server_instance_id = ?
         """,
         (server_instance_id,),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     rows = result.get("data", []) if isinstance(result, dict) else []
     out: dict[str, dict[str, Any]] = {}
@@ -230,7 +229,6 @@ def _register_new_watch_dir_row(
     database.execute(
         watch_dirs_insert_new_row_sql(),
         (server_instance_id, watch_dir_id, watch_dir_id, False),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     database.execute(
         """
@@ -240,7 +238,6 @@ def _register_new_watch_dir_row(
         VALUES (?, ?, ?, julianday('now'))
         """,
         (server_instance_id, watch_dir_id, absolute_path),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
 
@@ -259,7 +256,6 @@ def _activate_watch_dir_row(
         WHERE server_instance_id = ? AND id = ?
         """,
         (watch_dir_id, server_instance_id, watch_dir_id),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     path_update = database.execute(
         """
@@ -268,7 +264,6 @@ def _activate_watch_dir_row(
         WHERE server_instance_id = ? AND watch_dir_id = ?
         """,
         (absolute_path, server_instance_id, watch_dir_id),
-        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     affected = 0
     if isinstance(path_update, dict):
@@ -282,7 +277,6 @@ def _activate_watch_dir_row(
             VALUES (?, ?, ?, julianday('now'))
             """,
             (server_instance_id, watch_dir_id, absolute_path),
-            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
 
@@ -331,7 +325,7 @@ def _mark_watch_dir_absent(
     )
     for batch in program.get("batches", []):
         for sql, params in batch:
-            database.execute(sql, params, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
+            database.execute(sql, params)
 
 
 def sync_watch_dirs_from_mount(

@@ -27,7 +27,19 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, cast
 
 
 class TrashSqlDriver(Protocol):
-    """Minimal surface used by ``*_via_driver`` and ``trash_standalone_support``."""
+    """Minimal surface used by ``*_via_driver`` and ``trash_standalone_support``.
+
+    Modeled on :class:`~code_analysis.core.database_driver_pkg.drivers.postgres.PostgreSQLDriver`
+    (the post-flip caller, stage 2). Pre-flip, production call sites
+    (``code_analysis/commands/file_management/*.py``) still pass the existing
+    :class:`~code_analysis.core.database_client.client.DatabaseClient`, which satisfies
+    this protocol structurally at runtime (duck-typed ``execute``/``execute_batch``) but
+    not nominally for mypy - ``DatabaseClient.execute_batch`` is a strict superset (extra
+    ``priority`` keyword-only param, wider per-operation param type accepting ``list`` as
+    well as ``tuple``). Those call sites use ``cast(Any, database)`` to bridge this
+    transitional mismatch; the cast becomes a no-op once construction hands out a real
+    ``PostgreSQLDriver`` there instead.
+    """
 
     def execute(
         self,

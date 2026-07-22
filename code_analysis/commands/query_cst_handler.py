@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.backup_manager import BackupManager
+from ..core.database.files.update_standalone import index_file_via_driver
 from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops, unified_diff
 from ..core.cst_tree.tree_modifier_ops_parse import join_code_lines
 from ..core.git_integration import commit_after_write
@@ -82,7 +83,8 @@ def _write_replace_result_atomically(
                     "Post-write verification failed: file content mismatch"
                 )
 
-        update_result = database.index_file(
+        update_result = index_file_via_driver(
+            database,
             file_path=abs_resolved,
             project_id=project_id,
         )

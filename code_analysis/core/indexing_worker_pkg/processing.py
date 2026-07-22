@@ -2,7 +2,7 @@
 Processing loop for IndexingWorker.
 
 One cycle: discover projects with needs_chunking=1, per project take a batch of files,
-call database.index_file(path, project_id). Backoff on DB unavailability.
+call index_file_via_driver(database, path, project_id). Backoff on DB unavailability.
 Writes cycle stats to indexing_worker_stats (start/update/end) via database.execute().
 
 Author: Vasiliy Zdanovskiy
@@ -43,6 +43,9 @@ from code_analysis.core.docs_indexing_config_load import (
 from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from code_analysis.core.docs_indexing_eligibility import is_docs_markdown_eligible
 from code_analysis.core.database.file_edit_lock import editing_lock_holder_is_alive
+from code_analysis.core.database.files.update_standalone import (
+    index_file_via_driver,
+)
 from code_analysis.core.runtime_lock_sessions import register_runtime_session
 
 logger = logging.getLogger(__name__)
@@ -91,7 +94,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
     and (deleted=0 OR deleted IS NULL) AND needs_chunking=1, grouped by project_id,
     ORDER BY MAX(updated_at) DESC (freshest pending work first). Per project: SELECT id, path, project_id FROM files
     WHERE project_id=? AND (deleted=0 OR deleted IS NULL) AND needs_chunking=1
-    ORDER BY updated_at DESC, id DESC LIMIT ?. For each file call database.index_file(path, project_id).
+    ORDER BY updated_at DESC, id DESC LIMIT ?. For each file call index_file_via_driver(database, path, project_id).
     Driver clears needs_chunking after success. Backoff 1–60s when DB unavailable.
 
     Args:
@@ -455,19 +458,20 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         progress_percent=progress_pct,
                                     )
                                     try:
-                                        idx_kw = (
-                                            dict(
-                                                docs_indexing=docs_cfg_loaded,
-                                                server_config_path=srv_cfg_str,
-                                            )
-                                            if is_docs_file_eligible
-                                            else {}
-                                        )
-                                        result = database.index_file(
+                                        result = index_file_via_driver(
+                                            database,
                                             path,
                                             project_id,
-                                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
-                                            **idx_kw,
+                                            docs_indexing=(
+                                                docs_cfg_loaded
+                                                if is_docs_file_eligible
+                                                else None
+                                            ),
+                                            server_config_path=(
+                                                srv_cfg_str
+                                                if is_docs_file_eligible
+                                                else None
+                                            ),
                                         )
                                         elapsed = time.time() - file_start
                                         log_operation_timing(

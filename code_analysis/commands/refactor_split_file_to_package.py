@@ -18,6 +18,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .refactor import RefactorCommand as InternalRefactorCommand
 from ..core.backup_manager import BackupManager
+from ..core.database.files.update_standalone import index_file_via_driver
 from ..core.database_driver_pkg.domain.files import add_file
 from ..core.git_integration import commit_after_write
 
@@ -520,7 +521,8 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                                 or init_content.strip().startswith("'''"),
                                 project_id=proj_id,
                             )
-                            update_result = db.index_file(
+                            update_result = index_file_via_driver(
+                                db,
                                 file_path=str(init_file.resolve()),
                                 project_id=proj_id,
                             )
@@ -558,7 +560,8 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                                         or module_content.strip().startswith("'''"),
                                         project_id=proj_id,
                                     )
-                                    update_result = db.index_file(
+                                    update_result = index_file_via_driver(
+                                        db,
                                         file_path=str(module_path.resolve()),
                                         project_id=proj_id,
                                     )

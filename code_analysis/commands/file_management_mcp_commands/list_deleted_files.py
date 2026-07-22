@@ -7,10 +7,11 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ...core.database.files.trash_standalone import get_deleted_files_via_driver
 from ..base_mcp_command import BaseMCPCommand
 from ..file_management.relative_path_list_pattern import (
     canonical_relative_path,
@@ -102,7 +103,8 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
             root = self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                rows = database.get_deleted_files(project_id)
+                # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
+                rows = get_deleted_files_via_driver(cast(Any, database), project_id)
                 # path = trash path when file was moved (version_dir set); else original path (watcher-only)
                 items = [
                     {

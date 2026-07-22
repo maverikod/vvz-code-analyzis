@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING, cast
 
+from ...core.database.files.trash_standalone import unmark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.projects import get_project
 
 if TYPE_CHECKING:
@@ -154,8 +155,9 @@ class UnmarkDeletedFileCommand:
                 )
                 result["restored"] = True  # Would be restored
             else:
-                success = self.database.unmark_file_deleted(
-                    self.file_path, self.project_id
+                # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
+                success = unmark_file_deleted_via_driver(
+                    cast(Any, self.database), self.file_path, self.project_id
                 )
                 result["restored"] = success
                 if success:

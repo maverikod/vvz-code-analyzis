@@ -10,6 +10,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING, cast
 
+from ...core.database.files.trash_standalone import (
+    get_deleted_files_via_driver,
+    hard_delete_file_via_driver,
+)
+
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
 else:
@@ -80,8 +85,11 @@ class CleanupDeletedFilesCommand:
 
         try:
             # Get deleted files
+            # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
             if self.project_id:
-                deleted_files = self.database.get_deleted_files(self.project_id)
+                deleted_files = get_deleted_files_via_driver(
+                    cast(Any, self.database), self.project_id
+                )
             else:
                 # Get all projects and their deleted files
                 projects_result = cast(
@@ -92,7 +100,9 @@ class CleanupDeletedFilesCommand:
                 deleted_files = []
                 for project_row in projects:
                     project_id = project_row["id"]
-                    deleted_files.extend(self.database.get_deleted_files(project_id))
+                    deleted_files.extend(
+                        get_deleted_files_via_driver(cast(Any, self.database), project_id)
+                    )
 
             # Filter by age if specified
             if self.older_than_days:
@@ -144,7 +154,8 @@ class CleanupDeletedFilesCommand:
 
                     try:
                         # Hard delete removes physical file and all DB data
-                        self.database.hard_delete_file(file_id)
+                        # (cast: see TrashSqlDriver docstring, pre-flip bridge).
+                        hard_delete_file_via_driver(cast(Any, self.database), file_id)
                         result["deleted_files"].append(
                             {"id": file_id, "path": file_path, "deleted": True}
                         )

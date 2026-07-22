@@ -135,6 +135,11 @@ async def test_list_deleted_files_pattern_on_original_path(tmp_path) -> None:
             "_open_database_from_config",
             return_value=mock_db,
         ),
+        patch(
+            "code_analysis.commands.file_management_mcp_commands.list_deleted_files."
+            "get_deleted_files_via_driver",
+            return_value=rows,
+        ),
     ):
         cmd = ListDeletedFilesMCPCommand()
         result = await cmd.execute(

@@ -62,9 +62,12 @@ class _FakeDB:
             }
         return {"data": []}
 
-    def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:  # type: ignore[override]
-        """Return unmark file deleted."""
-        return file_path == "notes/a.py" and project_id == "p1"
+
+def _fake_unmark_file_deleted_via_driver(
+    driver: "_FakeDB", file_path: str, project_id: str
+) -> bool:
+    """Stand-in for :func:`unmark_file_deleted_via_driver` matching the old _FakeDB stub."""
+    return file_path == "notes/a.py" and project_id == "p1"
 
 
 @pytest.mark.asyncio
@@ -76,6 +79,11 @@ async def test_restore_deleted_files_resolves_relative_path(
     monkeypatch.setattr(
         "code_analysis.commands.file_management.restore_deleted_files.get_project",
         lambda driver, project_id: driver.get_project(project_id),
+    )
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.restore_deleted_files."
+        "unmark_file_deleted_via_driver",
+        _fake_unmark_file_deleted_via_driver,
     )
     cmd = RestoreDeletedFilesCommand(
         database=db,

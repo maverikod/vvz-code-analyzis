@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
+from ...core.database.files.trash_standalone import mark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.files import get_project_file_rows
 from ...core.database_driver_pkg.domain.projects import get_project
 from .path_mask_match import filter_rows_by_mask, relative_path_posix
@@ -95,7 +96,9 @@ class MarkFilesDeletedByMaskCommand:
             except OSError:
                 rel = Path(abs_path).name
             try:
-                ok = self.database.mark_file_deleted(
+                ok = mark_file_deleted_via_driver(
+                    # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
+                    cast(Any, self.database),
                     file_path=rel,
                     project_id=self.project_id,
                     trash_dir=self.trash_dir,

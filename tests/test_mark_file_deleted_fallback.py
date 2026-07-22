@@ -61,6 +61,19 @@ def _patch_get_project_to_fake_db_method(
         "code_analysis.core.database_driver_pkg.domain.files.get_project",
         lambda driver, project_id: driver.get_project(project_id),
     )
+    monkeypatch.setattr(
+        "code_analysis.commands.file_management.mark_file_deleted."
+        "mark_file_deleted_via_driver",
+        lambda driver, file_path, project_id, version_dir=None, reason=None, trash_dir=None: (
+            driver.mark_file_deleted(
+                file_path=file_path,
+                project_id=project_id,
+                version_dir=version_dir,
+                reason=reason,
+                trash_dir=trash_dir,
+            )
+        ),
+    )
 
 
 class _FakeDB:

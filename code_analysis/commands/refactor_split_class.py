@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .refactor import RefactorCommand as InternalRefactorCommand
 from ..core.backup_manager import BackupManager
+from ..core.database.files.update_standalone import index_file_via_driver
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
@@ -487,7 +488,8 @@ class SplitClassMCPCommand(BaseMCPCommand):
                         progress_tracker.set_description("Updating database...")
                         progress_tracker.set_progress(80)
                     try:
-                        update_result = db.index_file(
+                        update_result = index_file_via_driver(
+                            db,
                             file_path=str(file_path_obj),
                             project_id=proj_id,
                         )

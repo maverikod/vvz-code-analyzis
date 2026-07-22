@@ -7,8 +7,9 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING, cast
 
+from ...core.database.files.trash_standalone import mark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.files import add_file, get_file_by_path
 from ...core.database_driver_pkg.domain.projects import get_project
 
@@ -177,7 +178,9 @@ class MarkFileDeletedCommand:
                     absolute_path.exists() and absolute_path.is_file()
                 )
 
-            ok = self.database.mark_file_deleted(
+            ok = mark_file_deleted_via_driver(
+                # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
+                cast(Any, self.database),
                 file_path=relative_file_path,
                 project_id=self.project_id,
                 trash_dir=self.trash_dir,

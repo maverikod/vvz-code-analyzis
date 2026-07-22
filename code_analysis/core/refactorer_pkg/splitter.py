@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+from ..database.files.update_standalone import index_file_via_driver
 from .base import BaseRefactorer
 from .formatters import format_code_with_black, format_error_message
 from .splitter_ast import (
@@ -188,7 +189,8 @@ class ClassSplitter(BaseRefactorer):
             # Update database after file write
             if self.database and self.project_id and self.root_dir:
                 try:
-                    update_result = self.database.index_file(
+                    update_result = index_file_via_driver(
+                        self.database,
                         file_path=str(self.file_path),
                         project_id=self.project_id,
                     )

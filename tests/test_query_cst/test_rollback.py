@@ -70,9 +70,22 @@ class FakeCommand:
     ],
 )
 def test_write_replace_rolls_back_file_on_index_errors(
-    tmp_path: Path, database, expected_db_error: str
+    tmp_path: Path,
+    database,
+    expected_db_error: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """Verify test write replace rolls back file on index errors."""
+    # query_cst_handler calls the driver-direct index_file_via_driver free function
+    # (stage-2 layer collapse) instead of database.index_file(...) - route it back to
+    # the fake's own index_file so this test still exercises FakeDatabaseFailure /
+    # FakeDatabaseException's success=False / raise behavior.
+    monkeypatch.setattr(
+        "code_analysis.commands.query_cst_handler.index_file_via_driver",
+        lambda driver, file_path, project_id: driver.index_file(
+            file_path=file_path, project_id=project_id
+        ),
+    )
     target = tmp_path / "sample.py"
     target.write_text(SOURCE_CODE, encoding="utf-8")
 

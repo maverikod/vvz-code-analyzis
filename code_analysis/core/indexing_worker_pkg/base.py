@@ -20,7 +20,7 @@ class IndexingWorker:
     """Worker for indexing files (AST, CST, entities, code_content) in background.
 
     Queries DB for projects with files where needs_chunking=1; for each project
-    takes a batch of files and calls database.index_file(path, project_id).
+    takes a batch of files and calls index_file_via_driver(database, path, project_id).
     Driver clears needs_chunking after success. No root_dir; paths from DB.
     """
 

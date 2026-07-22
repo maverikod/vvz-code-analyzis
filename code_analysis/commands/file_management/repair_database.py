@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 else:
     DatabaseClient = Any
 
+from ...core.database.files.trash_standalone import mark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.files import get_project_files
 from ...core.sql_portable import sql_julian_timestamp_now_expr
 
@@ -194,14 +195,18 @@ class RepairDatabaseCommand:
                                             break
 
                                 if version_file_path:
+                                    # cast: see TrashSqlDriver docstring (pre-flip
+                                    # DatabaseClient bridge).
                                     if self.trash_dir:
-                                        self.database.mark_file_deleted(
+                                        mark_file_deleted_via_driver(
+                                            cast(Any, self.database),
                                             file_path=check_path,
                                             project_id=self.project_id,
                                             trash_dir=self.trash_dir,
                                         )
                                     else:
-                                        self.database.mark_file_deleted(
+                                        mark_file_deleted_via_driver(
+                                            cast(Any, self.database),
                                             file_path=check_path,
                                             project_id=self.project_id,
                                             version_dir=self.version_dir,

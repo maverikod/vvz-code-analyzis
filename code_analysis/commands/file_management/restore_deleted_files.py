@@ -7,8 +7,9 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING, cast
 
+from ...core.database.files.trash_standalone import unmark_file_deleted_via_driver
 from ...core.database_driver_pkg.domain.projects import get_project
 from ...core.sql_portable import WHERE_FILES_TRASHED
 
@@ -149,8 +150,9 @@ class RestoreDeletedFilesCommand:
 
             # Step 3: restore each file; all-or-nothing (abort on first failure)
             for item in resolved:
-                success = self.database.unmark_file_deleted(
-                    item["file_path"], self.project_id
+                # cast: see TrashSqlDriver docstring (pre-flip DatabaseClient bridge).
+                success = unmark_file_deleted_via_driver(
+                    cast(Any, self.database), item["file_path"], self.project_id
                 )
                 if not success:
                     result["error"] = "RESTORE_FAILED"

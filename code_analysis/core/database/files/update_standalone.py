@@ -16,10 +16,57 @@ from code_analysis.core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 logger = logging.getLogger(__name__)
 
 
+class IndexFileError(Exception):
+    """Raised by :func:`index_file_via_driver` on any failure.
+
+    Carries ``error_code`` (``"NOT_FOUND"`` | ``"DATABASE_ERROR"`` | ``"VALIDATION_ERROR"``)
+    so callers that need to reproduce the previous RPC ``ErrorResult`` mapping
+    (:mod:`~code_analysis.core.database_driver_pkg.rpc_handlers_index_file`, now a thin
+    delegate to this function) can do so exactly.
+    """
+
+    def __init__(self, message: str, error_code: str = "DATABASE_ERROR") -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+def _is_fk_or_integrity_error(exc: BaseException) -> bool:
+    """Return True if exception is FK or integrity constraint (project-deleted race)."""
+    try:
+        import psycopg
+
+        if isinstance(
+            exc,
+            (
+                psycopg.errors.ForeignKeyViolation,
+                psycopg.errors.UniqueViolation,
+                psycopg.errors.NotNullViolation,
+            ),
+        ):
+            return True
+    except ImportError:
+        pass
+    msg = (getattr(exc, "args", (None,))[0] or str(exc)).lower()
+    return "foreign key" in msg or "integrity" in msg
+
+
 def _driver_type_for_inprocess_client(driver: BaseDatabaseDriver) -> Optional[str]:
-    """Infer :class:`DatabaseClient` ``driver_type`` for portable SQL (PostgreSQL only)."""
+    """Infer :class:`DatabaseClient` ``driver_type`` for portable SQL (PostgreSQL only).
+
+    Duck-typed on purpose: ``driver`` here is whatever the caller passed as its own
+    ``driver``-shaped object. Pre-flip (Stage 2), callers that go through
+    :func:`index_file_via_driver` directly (not via the RPC handler) may pass the
+    existing :class:`~code_analysis.core.database_client.client.DatabaseClient`
+    itself rather than a raw :class:`PostgreSQLDriver` -- an ``isinstance`` check alone
+    would silently return ``None`` for that (still-correct) case. Post-flip it is
+    always a real ``PostgreSQLDriver``. Trust an existing ``_driver_type == "postgres"``
+    attribute first; fall back to ``isinstance`` for a bare driver with no such attribute.
+    """
     from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 
+    existing = getattr(driver, "_driver_type", None)
+    if existing == "postgres":
+        return "postgres"
     if isinstance(driver, PostgreSQLDriver):
         return "postgres"
     return None
@@ -117,6 +164,186 @@ def update_file_data_via_driver(
         return _analyze_result_to_update_file_data_dict(raw, str(path_obj.resolve()))
     finally:
         ipc.disconnect(close_driver=False)
+
+
+def index_file_via_driver(
+    driver: BaseDatabaseDriver,
+    file_path: str,
+    project_id: str,
+    *,
+    docs_indexing: Optional[Dict[str, Any]] = None,
+    server_config_path: Optional[str] = None,
+    skip_file_edit_lock: bool = False,
+) -> Dict[str, Any]:
+    """
+    Full file index (AST, CST, entities, code_content) directly on ``driver``.
+
+    Stage-2 layer collapse: relocated verbatim from the RPC ``index_file`` handler
+    (:mod:`~code_analysis.core.database_driver_pkg.rpc_handlers_index_file`, which is
+    now a thin delegate to this function) so the whole ``index_file`` operation is one
+    driver-package function instead of split across a handler file and this module.
+
+    Resolves the project root via the canonical 3-component scheme
+    (watch_dir_paths.absolute_path / projects.name / files.relative_path), calls
+    :func:`update_file_data_via_driver`, then clears ``needs_chunking`` and any
+    stale ``indexing_errors`` row for the file on success.
+
+    Args:
+        driver: Connected database driver (PostgreSQL).
+        file_path: Path to the file (project-relative or absolute).
+        project_id: Project UUID.
+        docs_indexing: When set, enables the documentation file path in ``analyze_file``.
+        server_config_path: Server ``config.json`` for optional SVO chunking (docs path).
+        skip_file_edit_lock: When True, caller already holds ``files.editing_pid``.
+
+    Returns:
+        Update-result dict (``success`` always True; ``file_id``, ``file_path``,
+        ``ast_updated``, ``cst_updated``, ``entities_updated`` per :func:`update_file_data_via_driver`).
+
+    Raises:
+        IndexFileError: On any failure (project not found, unresolvable root, FK/integrity
+            race during write, or a non-success result from :func:`update_file_data_via_driver`).
+            ``error_code`` is ``"NOT_FOUND"`` for FK/integrity races, ``"DATABASE_ERROR"`` otherwise
+            — mirrors the previous RPC ``ErrorResult`` mapping exactly.
+    """
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+    from code_analysis.core.database.watch_dirs_query import _database_query_rows
+    from code_analysis.core.project_root_path import (
+        resolve_projects_root_path_row_to_absolute_str,
+    )
+
+    logger.debug(
+        "[index_file] Starting: file_path=%s project_id=%s", file_path, project_id
+    )
+
+    try:
+        sid = current_server_instance_id()
+        rows = _database_query_rows(
+            driver,
+            """
+            SELECT p.root_path, p.watch_dir_id, p.name,
+                   w.absolute_path AS watch_absolute_path
+            FROM projects p
+            LEFT JOIN watch_dir_paths w
+              ON w.server_instance_id = p.server_instance_id
+             AND w.watch_dir_id = p.watch_dir_id
+            WHERE p.server_instance_id = ? AND p.id = ?
+            """,
+            (sid, project_id),
+        )
+        if not rows:
+            raise IndexFileError(
+                f"Project not found: {project_id}", error_code="DATABASE_ERROR"
+            )
+        row = rows[0]
+        watch_abs = row.get("watch_absolute_path")
+        proj_name = row.get("name")
+        root_path_stored = row.get("root_path")
+
+        if watch_abs and proj_name:
+            abs_root_str = str(Path(watch_abs) / proj_name)
+        else:
+            abs_root_str = resolve_projects_root_path_row_to_absolute_str(
+                root_path_stored=root_path_stored,
+                watch_dir_id=row.get("watch_dir_id"),
+                database=driver,
+            )
+
+        if not abs_root_str:
+            raise IndexFileError(
+                f"Cannot resolve absolute root for project: {project_id}",
+                error_code="DATABASE_ERROR",
+            )
+
+        try:
+            update_result = update_file_data_via_driver(
+                driver=driver,
+                file_path=file_path,
+                project_id=project_id,
+                root_dir=Path(abs_root_str),
+                docs_indexing=docs_indexing,
+                server_config_path=server_config_path,
+                skip_file_edit_lock=skip_file_edit_lock,
+            )
+        except Exception as e:
+            if not _is_fk_or_integrity_error(e):
+                raise
+            logger.warning(
+                "[index_file] FK/integrity (project likely deleted): project_id=%s %s",
+                project_id,
+                e,
+            )
+            raise IndexFileError(
+                "Project no longer exists (deleted during indexing)",
+                error_code="NOT_FOUND",
+            ) from e
+
+        if not update_result.get("success"):
+            raise IndexFileError(
+                update_result.get("error", "Unknown error"),
+                error_code="DATABASE_ERROR",
+            )
+
+        # Clear needs_chunking only when full reindex was performed (not skipped).
+        abs_path = update_result.get("file_path", file_path)
+        fp_param = str(file_path)
+        abs_resolved = str(abs_path)
+        if not update_result.get("skipped"):
+            try:
+                driver.execute(
+                    "UPDATE files SET needs_chunking = 0 WHERE project_id = ?"
+                    " AND (path = ? OR path = ? OR relative_path = ? OR relative_path = ?)",
+                    (project_id, fp_param, abs_resolved, fp_param, abs_resolved),
+                    None,
+                )
+            except Exception as e:
+                if _is_fk_or_integrity_error(e):
+                    logger.warning(
+                        "[index_file] FK on needs_chunking (project deleted): %s",
+                        abs_path,
+                    )
+                    raise IndexFileError(
+                        "Project no longer exists (deleted during indexing)",
+                        error_code="NOT_FOUND",
+                    ) from e
+                logger.warning(
+                    "Failed to clear needs_chunking after index_file for %s: %s",
+                    abs_path,
+                    e,
+                )
+                # Still return success; index completed.
+
+        # Clear indexing error for this file on successful write.
+        try:
+            driver.execute(
+                "DELETE FROM indexing_errors WHERE project_id = ? AND (file_path = ? OR file_path = ?)",
+                (project_id, fp_param, abs_resolved),
+                None,
+            )
+        except Exception:
+            pass  # Best-effort cleanup; ignore FK/IO errors.
+
+        logger.debug(
+            "[index_file] Completed: file_path=%s success=True",
+            update_result.get("file_path", file_path),
+        )
+        return update_result
+    except IndexFileError:
+        raise
+    except Exception as e:
+        if _is_fk_or_integrity_error(e):
+            logger.warning("[index_file] FK/integrity (project likely deleted): %s", e)
+            raise IndexFileError(
+                "Project no longer exists (deleted during indexing)",
+                error_code="NOT_FOUND",
+            ) from e
+        err_msg = str(e)
+        logger.error("index_file failed for %s: %s", file_path, e, exc_info=True)
+        if "temp_files" in err_msg:
+            logger.error("[index_file] temp_files-related failure: %s", err_msg)
+        raise IndexFileError(err_msg, error_code="DATABASE_ERROR") from e
 
 
 async def _vectorize_via_client(

@@ -197,3 +197,42 @@ def test_empty_batches_raises_value_error() -> None:
     d = _driver(RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0))
     with pytest.raises(ValueError):
         d.execute_logical_write_operation({"batches": []})  # type: ignore[typeddict-item]
+
+
+def test_invalid_operation_name_type_raises_value_error() -> None:
+    """Restored from the deleted RPC boundary (``rpc_handlers_schema``, fc4dde4b):
+    a non-string, non-null ``operation_name`` must fail loud before opening a
+    transaction."""
+    d = _driver(RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0))
+    d.begin_transaction = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("must not open a transaction on validation failure")
+    )
+    with pytest.raises(ValueError, match="operation_name"):
+        d.execute_logical_write_operation(_program(operation_name=123))  # type: ignore[arg-type]
+    d.begin_transaction.assert_not_called()
+
+
+def test_invalid_project_id_type_raises_value_error() -> None:
+    """Restored from the deleted RPC boundary (``rpc_handlers_schema``, fc4dde4b):
+    a non-string, non-null ``project_id`` must fail loud before opening a
+    transaction."""
+    d = _driver(RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0))
+    d.begin_transaction = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("must not open a transaction on validation failure")
+    )
+    with pytest.raises(ValueError, match="project_id"):
+        d.execute_logical_write_operation(_program(project_id=456))  # type: ignore[arg-type]
+    d.begin_transaction.assert_not_called()
+
+
+def test_invalid_lock_scope_raises_value_error() -> None:
+    """Restored from the deleted RPC boundary (``rpc_handlers_schema``, fc4dde4b):
+    a ``lock_scope`` outside {none, project_write, project_read} must fail loud
+    before opening a transaction."""
+    d = _driver(RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0))
+    d.begin_transaction = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("must not open a transaction on validation failure")
+    )
+    with pytest.raises(ValueError, match="lock_scope"):
+        d.execute_logical_write_operation(_program(lock_scope="invalid"))  # type: ignore[arg-type]
+    d.begin_transaction.assert_not_called()

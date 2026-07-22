@@ -38,6 +38,8 @@ from .postgres_transactions import PostgreSQLTransactionManager
 
 logger = logging.getLogger(__name__)
 
+_LOCK_SCOPE_VALUES = frozenset({"none", "project_write", "project_read"})
+
 _T = TypeVar("_T")
 
 
@@ -747,13 +749,26 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         after a transient error raises ``DriverOperationError`` chained from the
         rollback exception (same convention as ``_rollback_self_managed_before_retry``);
         any other exception propagates unchanged after a best-effort rollback attempt.
+
+        Validates ``operation_name`` / ``project_id`` / ``lock_scope`` types up front,
+        raising ``ValueError`` with the same messages the deleted RPC boundary used
+        (``rpc_handlers_schema.handle_execute_logical_write_operation``), so a caller
+        with a malformed program fails loud before any transaction is opened.
         """
         batches = program.get("batches")
         if not batches:
             raise ValueError("LogicalWriteProgramV1 requires non-empty batches")
         operation_name = program.get("operation_name")
+        if operation_name is not None and not isinstance(operation_name, str):
+            raise ValueError("operation_name must be a string or null")
         project_id = program.get("project_id")
+        if project_id is not None and not isinstance(project_id, str):
+            raise ValueError("project_id must be a string or null")
         lock_scope = program.get("lock_scope", "none")
+        if not isinstance(lock_scope, str) or lock_scope not in _LOCK_SCOPE_VALUES:
+            raise ValueError(
+                "lock_scope must be one of: none, project_write, project_read"
+            )
         defer_constraints = program.get("defer_constraints", False)
 
         policy = self._retry_policy

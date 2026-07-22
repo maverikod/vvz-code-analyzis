@@ -27,6 +27,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.git_worktree_base import validation_error
+from code_analysis.core.database.watch_dirs_query import get_watch_dir_absolute_path
 from code_analysis.core.git_integration import is_git_available
 from code_analysis.core.git_remote_ops import (
     GIT_NOT_AVAILABLE,
@@ -338,8 +339,8 @@ class GitCloneCommand(BaseMCPCommand):
 
         database = self._open_database_from_config(auto_analyze=False)
         try:
-            watch_dir_path_str = database.get_watch_dir_absolute_path(
-                str(watch_dir_id or "")
+            watch_dir_path_str = get_watch_dir_absolute_path(
+                database, str(watch_dir_id or "")
             )
             if not watch_dir_path_str:
                 return git_remote_error_result(

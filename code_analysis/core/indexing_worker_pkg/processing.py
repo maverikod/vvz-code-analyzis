@@ -139,10 +139,12 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
 
             if database is None or not db_available:
                 try:
+                    # Already connected: create_worker_database_client runs
+                    # driver.connect() internally (stage 2 flip - no separate
+                    # .connect() call needed/supported).
                     database = create_worker_database_client(
                         config_path=cfg_path,
                     )
-                    database.connect()
                     register_runtime_session(database, role="indexing_worker")
                     try:
                         database.execute(

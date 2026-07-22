@@ -13,6 +13,10 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
 
+from ..core.database.watch_dirs_query import (
+    resolve_watch_dir_id_for_project_root,
+    watch_dir_exists,
+)
 from ..core.database_client.client import DatabaseClient
 from ..core.database_driver_pkg.domain.projects import get_project, insert_project_row
 from ..core.constants import DEFAULT_DB_DRIVER_SOCKET_DIR
@@ -135,7 +139,7 @@ class BaseMCPCommand(Command):
         def _resolve_watch_dir_id(abs_root: Path) -> Optional[str]:
             """Return watch_dir_id whose absolute_path is the direct parent of abs_root."""
             try:
-                return db.resolve_watch_dir_id_for_project_root(abs_root)
+                return resolve_watch_dir_id_for_project_root(db, abs_root)
             except Exception:
                 return None
 
@@ -312,7 +316,7 @@ class BaseMCPCommand(Command):
             )
         db = BaseMCPCommand._open_database_from_config()
         try:
-            if not db.watch_dir_exists(watch_dir_id):
+            if not watch_dir_exists(db, watch_dir_id):
                 rows = []
             else:
                 rows = [{"id": watch_dir_id}]

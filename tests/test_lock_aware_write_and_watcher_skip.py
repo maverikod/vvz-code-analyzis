@@ -214,6 +214,18 @@ def test_register_before_write_then_rollback(
             path, lines, last_modified, has_docstring, project_id
         ),
     )
+    # project_file_transfer_by_id_commands calls the driver-direct
+    # purge_file_ids_cascade_via_client free function (stage-2 layer collapse)
+    # unconditionally now; it reads through driver.execute_batch (via the logical-write
+    # submit path), a primitive this FakeDatabase does not implement (it only
+    # implements its own purge_file_ids_cascade convenience method).
+    monkeypatch.setattr(
+        "code_analysis.commands.project_file_transfer_by_id_commands."
+        "purge_file_ids_cascade_via_client",
+        lambda driver, project_id, file_ids, **kwargs: driver.purge_file_ids_cascade(
+            project_id, file_ids, **kwargs
+        ),
+    )
     db = _make_db(tmp_path)
     abs_path = tmp_path / "pkg" / "new_module.py"
     content = '"""Doc."""\n\nx = 1\n'

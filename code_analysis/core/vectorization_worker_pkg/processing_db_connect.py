@@ -64,10 +64,11 @@ async def ensure_database_connection(
             "[VECTORIZATION] Creating database client (config_path=%s)",
             config_path,
         )
+        # Already connected: create_worker_database_client runs driver.connect(config)
+        # internally (stage 2 flip - no separate .connect() call needed or supported).
         database = create_worker_database_client(
             config_path=config_path,
         )
-        database.connect()
         try:
             logger.debug("[VECTORIZATION] Testing connection with list_projects()")
             list_projects(database)

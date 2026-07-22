@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 else:
     DatabaseClient = Any
 
+from code_analysis.core.database.watch_dirs_query import get_watch_dir_absolute_path
 from code_analysis.core.database_driver_pkg.domain.projects import insert_project_row
 from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
 
@@ -89,8 +90,8 @@ class CreateProjectCommand:
             Path to watch directory or None if not found.
         """
         try:
-            path_str = self.database.get_watch_dir_absolute_path(
-                str(self.watch_dir_id or "")
+            path_str = get_watch_dir_absolute_path(
+                self.database, str(self.watch_dir_id or "")
             )
             if not path_str:
                 logger.error(

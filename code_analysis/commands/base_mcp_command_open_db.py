@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict
 from ..core.config import get_driver_config
 from ..core.constants import DEFAULT_REQUEST_TIMEOUT
 from ..core.database_client.factory import create_database_client_from_config_path
-from ..core.database_client.client import DatabaseClient
+from ..core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 from ..core.exceptions import DatabaseError
 from ..core.storage_paths import (
     ensure_storage_dirs,
@@ -59,20 +59,21 @@ def _schema_def_to_driver_format(schema_def: Dict[str, Any]) -> Dict[str, Any]:
 def open_database_once_for_shared(
     resolve_config_path_fn: Callable[[], Path],
     get_socket_path_fn: Callable[[Path], str],
-) -> DatabaseClient:
+) -> PostgreSQLDriver:
     """
     Open database and run integrity check, connect, and probe selects once.
 
     Called once at server startup to establish the long-lived connection;
-    do not call per-command. Resolves config, ensures integrity, creates
-    DatabaseClient, connect(), runs two probe selects and sync_schema if needed.
+    do not call per-command. Resolves config, ensures integrity, creates the
+    driver (already connected by the factory), runs two probe selects and
+    sync_schema if needed.
 
     Args:
         resolve_config_path_fn: Callable that returns config path.
         get_socket_path_fn: Callable(db_path) -> socket path.
 
     Returns:
-        Connected DatabaseClient instance.
+        Connected PostgreSQLDriver instance.
 
     Raises:
         DatabaseError: On integrity failure, connect failure, or probe failure.
@@ -96,10 +97,12 @@ def open_database_once_for_shared(
         _ = get_socket_path_fn  # API compatibility; factory derives transport from config
         # Interactive MCP paths (e.g. repeat cst_save_tree) may wait on
         # sync_file_to_db_atomic or queue backlog; match DEFAULT_REQUEST_TIMEOUT.
+        # Already connected: create_database_client_from_config_path runs
+        # driver.connect(config) internally (stage 2 flip - no separate .connect()
+        # call needed or supported on the returned object).
         db = create_database_client_from_config_path(
             config_path, timeout=DEFAULT_REQUEST_TIMEOUT
         )
-        db.connect()
 
         try:
             db.execute("SELECT 1", None)
@@ -168,7 +171,7 @@ def open_database_from_config_impl(
     resolve_config_path_fn: Callable[[], Path],
     get_socket_path_fn: Callable[[Path], str],
     auto_analyze: bool = False,
-) -> DatabaseClient:
+) -> PostgreSQLDriver:
     """
     Open database connection via config (universal driver chain).
 
@@ -182,7 +185,7 @@ def open_database_from_config_impl(
         auto_analyze: Unused; for API compatibility.
 
     Returns:
-        DatabaseClient instance.
+        PostgreSQLDriver instance.
 
     Raises:
         DatabaseError: If database cannot be opened or is corrupted.

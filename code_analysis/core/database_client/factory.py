@@ -1,8 +1,19 @@
 """
-Factory for :class:`DatabaseClient` from server config (PostgreSQL in-process only).
+Factory for the PostgreSQL driver from server config (PostgreSQL in-process only).
 
 SQLite support was removed; PostgreSQL is the only supported driver, always
 in-process (no Unix socket, no database driver subprocess).
+
+Stage 2 (layer collapse, THE FLIP): construction now hands out a connected
+:class:`~code_analysis.core.database_driver_pkg.drivers.postgres.PostgreSQLDriver`
+directly instead of wrapping it in ``RPCHandlers`` + ``InProcessRpcClient`` +
+:class:`DatabaseClient` -- every caller only ever used the driver-compatible
+primitive surface (``execute``/``select``/``insert``/... plus the driver-direct
+free functions ported in earlier stage-2 commits), which the driver already
+implements natively; the ``DatabaseClient`` hop was a same-process detour, never
+a real RPC boundary (there is no Unix socket for PostgreSQL). Callers must not
+call ``.connect()`` on the returned object again -- the driver returned here is
+already connected (``.connect(config)`` already ran inside this factory).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,15 +26,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 from code_analysis.core.config import get_driver_config
+from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 from code_analysis.core.exceptions import ConfigurationError
 from code_analysis.core.storage_paths import (
     ensure_storage_dirs,
     load_raw_config,
     resolve_storage_paths,
 )
-
-from .client import DatabaseClient
-from .in_process_rpc_client import InProcessRpcClient
 
 logger = logging.getLogger(__name__)
 
@@ -58,36 +67,25 @@ def create_database_client_from_config_path(
     max_retries: int = 3,
     retry_delay: float = 0.1,
     pool_size: int = 5,
-) -> DatabaseClient:
-    """Build a :class:`DatabaseClient` for the configured (PostgreSQL) driver.
+) -> PostgreSQLDriver:
+    """Build and connect a :class:`PostgreSQLDriver` for the configured driver.
 
-    :class:`~code_analysis.core.database_driver_pkg.drivers.postgres.PostgreSQLDriver`
-    + :class:`~code_analysis.core.database_driver_pkg.rpc_handlers.RPCHandlers` run
-    in-process (no Unix socket, no database driver subprocess).
+    ``timeout``/``max_retries``/``retry_delay``/``pool_size`` are accepted for
+    call-site compatibility with the pre-flip signature; the driver manages its
+    own connection pool and retry policy from ``config`` (see
+    :meth:`PostgreSQLDriver.connect`), so they are otherwise unused here.
+
+    Returns:
+        An already-connected :class:`PostgreSQLDriver`. Do not call ``.connect()``
+        on it again.
     """
+    _ = (timeout, max_retries, retry_delay, pool_size)
     config_data = load_raw_config(config_path)
     resolved = resolve_driver_config_like_main_workers(config_data, config_path)
-    driver_type = resolved["type"]
-
-    from code_analysis.core.database_driver_pkg.drivers.postgres import (
-        PostgreSQLDriver,
-    )
-    from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
     driver = PostgreSQLDriver()
     driver.connect(resolved["config"])
-    handlers = RPCHandlers(driver)
-    transport = InProcessRpcClient(handlers)
-    client = DatabaseClient(
-        rpc_client=transport,
-        timeout=timeout,
-        max_retries=max_retries,
-        retry_delay=retry_delay,
-        pool_size=pool_size,
-        driver_type=driver_type,
-    )
-    client.driver_config = resolved
-    return client
+    return driver
 
 
 def create_worker_database_client(
@@ -97,12 +95,16 @@ def create_worker_database_client(
     max_retries: int = 3,
     retry_delay: float = 0.1,
     pool_size: int = 5,
-) -> DatabaseClient:
-    """Build a :class:`DatabaseClient` from server config only (same as the main process).
+) -> PostgreSQLDriver:
+    """Build and connect a :class:`PostgreSQLDriver` from server config only (same as the main process).
 
     Workers must use this entry point so the database backend is chosen solely from
     ``code_analysis.database.driver`` in ``config_path`` (PostgreSQL in-process).
     Do not construct :class:`DatabaseClient` with a raw ``socket_path`` in worker code.
+
+    Returns:
+        An already-connected :class:`PostgreSQLDriver`. Do not call ``.connect()``
+        on it again.
     """
     return create_database_client_from_config_path(
         config_path,

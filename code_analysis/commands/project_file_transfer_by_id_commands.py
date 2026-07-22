@@ -52,6 +52,7 @@ from ..core.client_sessions import (
     open_session_file,
     touch_or_error,
 )
+from ..core.database.file_purge_cascade import purge_file_ids_cascade_via_client
 from ..core.database_client.client import DatabaseClient
 from ..core.database_driver_pkg.domain.files import get_file_by_path
 from ..core.database_driver_pkg.domain.projects import get_project
@@ -498,8 +499,8 @@ def _rollback_registered_file_row(
     the subsequent disk write does not succeed.
     """
     try:
-        database.purge_file_ids_cascade(
-            project_id, [file_id], operation_name="upload_save_rollback"
+        purge_file_ids_cascade_via_client(
+            database, project_id, [file_id], operation_name="upload_save_rollback"
         )
     except Exception:
         logger.warning(

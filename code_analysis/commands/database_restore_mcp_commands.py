@@ -226,11 +226,13 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     },
                 )
             try:
+                # Already connected: create_database_client_from_config_path runs
+                # driver.connect(config) internally (stage 2 flip - no separate
+                # .connect() call needed or supported on the returned object).
                 new_db = create_database_client_from_config_path(
                     server_cfg_path.resolve(),
                     timeout=DEFAULT_REQUEST_TIMEOUT,
                 )
-                new_db.connect()
                 schema_def = get_schema_definition()
                 schema_def = _schema_def_to_driver_format(schema_def)
                 new_db.sync_schema(

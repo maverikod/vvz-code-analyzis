@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from ...core.database.watch_dirs_query import list_watch_dirs_with_paths
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -65,7 +66,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
             config_path = self._resolve_config_path()
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                items = database.list_watch_dirs_with_paths()
+                items = list_watch_dirs_with_paths(database)
                 if not items:
                     from code_analysis.core.watch_dirs_runtime import (
                         load_watch_dir_specs_runtime,

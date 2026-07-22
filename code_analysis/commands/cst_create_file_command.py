@@ -20,6 +20,9 @@ from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.cst_tree.create_python_file import create_new_python_file_from_source
 from ..core.cst_tree.tree_builder import get_tree
+from ..core.database.watch_dirs_query import (
+    get_watch_dir_absolute_path,
+)
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 
@@ -135,8 +138,8 @@ class CSTCreateFileCommand(BaseMCPCommand):
                         details={"project_id": project_id},
                     )
 
-                watch_dir_path = database.get_watch_dir_absolute_path(
-                    str(project.watch_dir_id or "")
+                watch_dir_path = get_watch_dir_absolute_path(
+                    database, str(project.watch_dir_id or "")
                 )
                 if not watch_dir_path:
                     return ErrorResult(

@@ -154,10 +154,12 @@ class MultiProjectFileWatcherWorker:
             while not self._stop_event.is_set():
                 if database is None:
                     try:
+                        # Already connected: create_worker_database_client runs
+                        # driver.connect() internally (stage 2 flip - no separate
+                        # .connect() call needed/supported).
                         database = create_worker_database_client(
                             config_path=cfg_path,
                         )
-                        database.connect()
                         register_runtime_session(database, role="file_watcher")
                         # Test connection with a simple query
                         try:

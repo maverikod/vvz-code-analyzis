@@ -116,10 +116,11 @@ class FileWatcherWorker:
                     "FileWatcherWorker requires config_path (server config.json) "
                     "for the universal database driver."
                 )
+            # Already connected: create_worker_database_client runs driver.connect()
+            # internally (stage 2 flip - no separate .connect() call needed/supported).
             database = create_worker_database_client(
                 config_path=Path(self.config_path),
             )
-            database.connect()
             processor = FileChangeProcessor(
                 database=database,
                 watch_dirs=self.watch_dirs,

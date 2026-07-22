@@ -223,10 +223,11 @@ def run_vectorization_worker(
     if not is_postgres and not db_path_obj.exists():
         logger.info(f"Database file not found, creating new database at {db_path}")
         try:
+            # Already connected: create_worker_database_client runs driver.connect()
+            # internally (stage 2 flip - no separate .connect() call needed/supported).
             init_database = create_worker_database_client(
                 config_path=cfg_path_resolved,
             )
-            init_database.connect()
             init_database.disconnect()
             logger.info(f"Created new database at {db_path}")
         except Exception as e:
@@ -272,11 +273,12 @@ def run_vectorization_worker(
             logger.info(
                 "Checking FAISS index synchronization with database for all projects..."
             )
+            # Already connected: create_worker_database_client runs driver.connect()
+            # internally (stage 2 flip - no separate .connect() call needed/supported).
             sync_database = create_worker_database_client(
                 config_path=cfg_path_resolved,
                 timeout=30.0,
             )
-            sync_database.connect()
             # Get all projects from database
             all_projects = list_projects(sync_database)
             # Convert Project objects to dict format for compatibility

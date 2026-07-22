@@ -23,6 +23,7 @@ from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.database.watch_dirs_query import get_watch_dir_absolute_path
 from ..core.database_driver_pkg.domain.ast_cst import save_ast, save_cst
 from ..core.database_driver_pkg.domain.files import create_file
 from ..core.database_driver_pkg.domain.projects import get_project
@@ -147,8 +148,8 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         details={"project_id": project_id},
                     )
 
-                watch_dir_path = database.get_watch_dir_absolute_path(
-                    str(project.watch_dir_id or "")
+                watch_dir_path = get_watch_dir_absolute_path(
+                    database, str(project.watch_dir_id or "")
                 )
                 if not watch_dir_path:
                     return ErrorResult(

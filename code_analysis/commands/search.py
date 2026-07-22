@@ -10,6 +10,11 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Any, Dict, List, Optional
 
+from ..core.database_driver_pkg.domain.entities import (
+    get_class_methods,
+    search_classes,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +64,7 @@ class SearchCommand:
         Returns:
             List of matching classes
         """
-        return self.database.search_classes(project_id=self.project_id, name=pattern)
+        return search_classes(self.database, project_id=self.project_id, name=pattern)
 
     def search_methods(self, class_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -76,8 +81,8 @@ class SearchCommand:
         """
         if not class_name:
             return []
-        classes = self.database.search_classes(
-            project_id=self.project_id, name=class_name
+        classes = search_classes(
+            self.database, project_id=self.project_id, name=class_name
         )
         if not classes:
             return []
@@ -85,7 +90,7 @@ class SearchCommand:
         for cls in classes:
             if cls.id is None:
                 continue
-            methods = self.database.get_class_methods(cls.id)
+            methods = get_class_methods(self.database, cls.id)
             for m in methods:
                 result.append(m.to_dict())
         return result

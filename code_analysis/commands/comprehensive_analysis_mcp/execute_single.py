@@ -20,6 +20,7 @@ from ...core.database_driver_pkg.domain.comprehensive_analysis import (
 )
 from ...core.database_driver_pkg.domain.files import get_file_by_path
 from ...core.duplicate_detector import DuplicateDetector
+from ...core.file_handlers import is_registered_python_suffix
 from ..base_mcp_command import BaseMCPCommand
 from .batch_summary import _merge_project_integrity_summary, quality_findings_counts
 
@@ -207,7 +208,7 @@ async def run_single_file(
         results["duplicates"] = duplicates
         log_timing("single_duplicates", t0)
 
-    if check_flake8:
+    if check_flake8 and is_registered_python_suffix(rel_path):
         t0 = time.perf_counter()
         flake8_result = analyzer.check_flake8(file_path_obj)
         if not flake8_result["success"]:

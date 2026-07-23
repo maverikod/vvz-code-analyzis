@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...core.duplicate_detector import DuplicateDetector
+from ...core.file_handlers import is_registered_python_suffix
 from .batch_summary import quality_findings_counts
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,10 @@ def analyze_one_file_in_batch(
 
     If set_step_desc is provided, it is called with the current check name
     (e.g. "placeholders", "flake8", "mypy") before each check for status display.
+    flake8 is a Python-only linter: it is only invoked when ``file_path_str``
+    carries a registered Python suffix (see ``is_registered_python_suffix``),
+    regardless of ``check_flake8`` — non-Python files (e.g. markdown) never
+    reach flake8 and never produce findings (bug a012547c).
 
     Mutates timings_sec. Returns (file_results, file_summary, file_project_id).
     """
@@ -123,7 +128,7 @@ def analyze_one_file_in_batch(
                 occ["file_path"] = file_path_str
         file_results["duplicates"] = duplicates
 
-    if check_flake8:
+    if check_flake8 and is_registered_python_suffix(file_path_str):
         if set_step_desc:
             set_step_desc("flake8")
         t0 = time.perf_counter()

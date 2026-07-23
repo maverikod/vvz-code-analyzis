@@ -32,10 +32,13 @@ def _mock_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         ListProjectFilesMCPCommand, "_open_database_from_config", _open
     )
+    # bug 25c8d9dd: page-scoped get_file_rows_by_paths replaced the full-table
+    # get_project_file_rows load; relative_paths is ignored here since these
+    # fixtures only ever seed an empty row set.
     monkeypatch.setattr(
-        "code_analysis.commands.ast.list_files.get_project_file_rows",
-        lambda driver, project_id, include_deleted=False: driver.get_project_file_rows(
-            project_id, include_deleted=include_deleted
+        "code_analysis.commands.ast.list_files.get_file_rows_by_paths",
+        lambda driver, project_id, relative_paths, include_deleted=False: (
+            driver.get_project_file_rows(project_id, include_deleted=include_deleted)
         ),
     )
 

@@ -34,13 +34,16 @@ def _list_project_files_mock_db_rows(monkeypatch: pytest.MonkeyPatch) -> None:
         "_open_database_from_config",
         _open,
     )
-    # Route the domain get_project_file_rows call site (stage-2 layer collapse)
-    # back to whatever db.get_project_file_rows mock the test installed, since
-    # these bare MagicMock dbs do not model driver.select.
+    # Route the domain get_file_rows_by_paths call site (bug 25c8d9dd:
+    # page-scoped lookup replacing the old full-table get_project_file_rows
+    # load) back to whatever db.get_project_file_rows mock the test installed,
+    # since these bare MagicMock dbs do not model driver.select. relative_paths
+    # is ignored here (these fixtures only ever seed a handful of rows), so the
+    # full fixture row set is returned regardless of which page was requested.
     monkeypatch.setattr(
-        "code_analysis.commands.ast.list_files.get_project_file_rows",
-        lambda driver, project_id, include_deleted=False: driver.get_project_file_rows(
-            project_id, include_deleted=include_deleted
+        "code_analysis.commands.ast.list_files.get_file_rows_by_paths",
+        lambda driver, project_id, relative_paths, include_deleted=False: (
+            driver.get_project_file_rows(project_id, include_deleted=include_deleted)
         ),
     )
 

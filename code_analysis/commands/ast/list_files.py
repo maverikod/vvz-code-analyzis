@@ -19,7 +19,7 @@ from mcp_proxy_adapter.commands.result import (
 from ..base_mcp_command import BaseMCPCommand
 from ...core.database_driver_pkg.domain.files import (
     get_file_by_path,
-    get_project_file_rows,
+    get_file_rows_by_paths,
 )
 from ..file_management.relative_path_list_pattern import (
     canonical_relative_path,
@@ -434,10 +434,20 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             )
             page_paths = paginate_sequence(fs_paths, offset=offset, page_size=page_size)
 
+            # Page-scoped DB enrichment (bug 25c8d9dd): resolve file_id only for
+            # this page's paths instead of loading every non-deleted row for the
+            # whole project (O(page size), was O(project size) -- applies to every
+            # shape of request, including a patternless listing).
             id_by_key: Dict[str, str] = {}
             try:
+                page_relative_paths = [
+                    canonical_relative_path(project_root, abs_path, already_resolved=True)
+                    for abs_path in page_paths
+                ]
                 db = self._open_database_from_config(auto_analyze=False)
-                rows = get_project_file_rows(db, project_id, include_deleted=False)
+                rows = get_file_rows_by_paths(
+                    db, project_id, page_relative_paths, include_deleted=False
+                )
                 id_by_key = _build_file_id_lookup(list(rows or []))
             except Exception:
                 id_by_key = {}

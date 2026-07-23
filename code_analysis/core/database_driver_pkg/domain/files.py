@@ -451,6 +451,94 @@ def get_project_file_rows(
     return list(rows) if rows else []
 
 
+def get_file_rows_by_paths(
+    driver: Any,
+    project_id: str,
+    relative_paths: List[str],
+    include_deleted: bool = False,
+) -> List[Dict[str, Any]]:
+    """Resolve many project-relative paths to ``files`` rows in one query.
+
+    Page-scoped counterpart to :func:`get_project_file_rows` (bug 25c8d9dd):
+    ``list_project_files`` used to load every non-deleted row for the whole
+    project just to enrich one page of on-disk paths with ``file_id`` --
+    O(project size) work for an O(page size) need. This mirrors
+    ``IndexCoverageService._fetch_file_rows``'s query shape (``code_analysis.
+    core.index_coverage``) -- same per-path candidate-value matching
+    (``relative_path``, legacy relative ``path``, legacy absolute ``path``,
+    via :func:`code_analysis.core.file_identity.file_row_path_match_values`)
+    collapsed into exactly one ``project_id``-scoped query covering every
+    requested path, instead of one query per path
+    (:func:`get_file_by_path`'s per-call shape).
+
+    Args:
+        driver: Database driver/client exposing ``execute``.
+        project_id: Project UUID string.
+        relative_paths: Project-relative POSIX paths to resolve (typically
+            one page's worth of on-disk listing results). Empty input short-
+            circuits to an empty list without touching the database.
+        include_deleted: When ``False`` (default), only active rows
+            (mirrors :data:`~code_analysis.core.sql_portable.WHERE_FILES_ACTIVE`)
+            are returned.
+
+    Returns:
+        Raw ``files`` table rows (dicts) matching any of ``relative_paths``
+        for ``project_id`` -- unordered, and NOT necessarily one row per
+        input path (a path with no matching row simply contributes nothing;
+        callers needing a per-path map should build one from the ``id``/
+        ``relative_path``/``path`` keys the same way
+        :func:`code_analysis.commands.ast.list_files._build_file_id_lookup`
+        does for :func:`get_project_file_rows`'s full-table shape).
+    """
+    if not relative_paths:
+        return []
+
+    from code_analysis.core.file_identity import file_row_path_match_values
+    from code_analysis.core.path_normalization import normalize_path_simple
+
+    project = get_project(driver, project_id)
+    if project is None:
+        return []
+    root = project.root_path
+
+    rel_match_values: set = set()
+    path_match_values: set = set()
+    for rel in relative_paths:
+        abs_norm = normalize_path_simple(str((Path(root) / rel).resolve()))
+        try:
+            r1, r2, r3 = file_row_path_match_values(
+                project_root=root, absolute_path=abs_norm
+            )
+        except ValueError:
+            path_match_values.add(abs_norm)
+            continue
+        rel_match_values.add(r1)
+        path_match_values.add(r2)
+        path_match_values.add(r3)
+
+    where_parts: List[str] = []
+    params: List[Any] = [project_id]
+    if rel_match_values:
+        placeholders = ",".join(["?"] * len(rel_match_values))
+        where_parts.append(f"relative_path IN ({placeholders})")
+        params.extend(sorted(rel_match_values))
+    if path_match_values:
+        placeholders = ",".join(["?"] * len(path_match_values))
+        where_parts.append(f"path IN ({placeholders})")
+        params.extend(sorted(path_match_values))
+    if not where_parts:
+        return []
+
+    active = "" if include_deleted else f" AND {WHERE_FILES_ACTIVE}"
+    sql = (
+        "SELECT * FROM files WHERE project_id = ? AND "
+        f"({' OR '.join(where_parts)}){active}"
+    )
+    result = driver.execute(sql, tuple(params))
+    rows = result.get("data", []) if isinstance(result, dict) else []
+    return list(rows)
+
+
 def get_project_files(
     driver: Any,
     project_id: str,
@@ -474,3 +562,31 @@ def get_project_files(
         offset=offset,
     )
     return db_rows_to_objects(rows, File)
+
+
+def mark_file_content_stale(driver: Any, file_path: str, project_id: str) -> bool:
+    """Mark a file's content as stale after a CA-only content write (bug 56c23bd9).
+
+    CA is the sole file-content access point for the user; ANY write to a
+    file's on-disk content sets ``files.content_stale`` (and records
+    ``content_stale_since``) so search results can surface the staleness
+    until the next successful reindex clears it. ``file_path`` may be
+    absolute. Row-resolution shape mirrors :func:`mark_file_needs_chunking`.
+    """
+    from code_analysis.core.path_normalization import normalize_path_simple
+
+    abs_path = normalize_path_simple(file_path)
+    row = get_file_by_path(driver, abs_path, project_id, include_deleted=True)
+    if not row:
+        return False
+    if row.get("deleted"):
+        return False
+    file_id = row.get("id")
+    if file_id is None:
+        return False
+    _now = sql_julian_timestamp_now_expr(driver)
+    driver.execute(
+        f"UPDATE files SET content_stale = 1, content_stale_since = {_now} WHERE id = ?",
+        (file_id,),
+    )
+    return True

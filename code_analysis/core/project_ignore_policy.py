@@ -252,13 +252,22 @@ def filter_paths_for_default_project_listing(
     include_venv: bool,
     include_venv_ignore_exceptions: bool,
     show_hidden: bool = False,
+    already_resolved: bool = False,
 ) -> list[Path]:
-    """Drop ignored relative paths; used when assembling ``list_project_files`` results."""
-    root = project_root.resolve()
+    """Drop ignored relative paths; used when assembling ``list_project_files`` results.
+
+    ``already_resolved=True`` skips the per-path ``Path.resolve()`` call -- pass it
+    ONLY when every path in ``paths`` and ``project_root`` are already fully
+    resolved (e.g. :func:`enumerate_project_paths`'s own ``uniq``/``ordered``
+    pipeline). Default ``False`` preserves the original always-resolve behavior
+    for any other caller.
+    """
+    root = project_root if already_resolved else project_root.resolve()
     out: list[Path] = []
     for p in paths:
         try:
-            rel = p.resolve().relative_to(root).as_posix()
+            rp = p if already_resolved else p.resolve()
+            rel = rp.relative_to(root).as_posix()
         except ValueError:
             continue
         except OSError:

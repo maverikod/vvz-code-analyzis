@@ -403,11 +403,19 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             )
 
             if effective_pattern:
+                # enumerate_project_paths already returns fully-resolved paths
+                # under the already-resolved project_root (see its docstring on
+                # the ``uniq``/``ordered`` pipeline) -- already_resolved=True
+                # skips a fourth redundant per-path realpath resolve (bug
+                # 04cb1578).
                 fs_paths = [
                     p
                     for p in fs_paths
                     if relative_path_matches_listing_pattern(
-                        canonical_relative_path(project_root, p), effective_pattern
+                        canonical_relative_path(
+                            project_root, p, already_resolved=True
+                        ),
+                        effective_pattern,
                     )
                 ]
 

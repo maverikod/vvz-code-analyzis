@@ -69,14 +69,33 @@ def enumerate_project_paths(
                 if not path_is_under_project_local_venv(p.resolve(), root)
             ]
         found.extend(extra)
-    uniq = {p.resolve() for p in found}
-    ordered = sorted(uniq, key=lambda p: canonical_relative_path(root, p))
+    # ``found`` is already canonical for every source: the walk builds paths by
+    # joining onto the already-resolved ``root`` (os.walk never traverses through
+    # a symlinked directory, so no ".." / symlink component can appear along the
+    # way) and every non-walk source (allowlisted venv RECORD paths,
+    # ignore_exceptions expansion) already calls ``.resolve()`` internally before
+    # returning. The one exception is a *leaf* symlink -- a regular file entry
+    # discovered by the walk that is itself a symlink -- whose apparent (walked)
+    # path differs from its real target; only that case still needs resolving,
+    # so limit the (expensive, full-path realpath) ``.resolve()`` call to it via
+    # a cheap ``is_symlink()`` probe (single lstat) instead of unconditionally
+    # resolving all N paths.
+    uniq: set[Path] = set()
+    for p in found:
+        try:
+            uniq.add(p.resolve() if p.is_symlink() else p)
+        except OSError:
+            uniq.add(p)
+    ordered = sorted(
+        uniq, key=lambda p: canonical_relative_path(root, p, already_resolved=True)
+    )
     return filter_paths_for_default_project_listing(
         ordered,
         root,
         include_venv=show_venv,
         include_venv_ignore_exceptions=include_venv_ignore_exceptions,
         show_hidden=show_hidden,
+        already_resolved=True,
     )
 
 

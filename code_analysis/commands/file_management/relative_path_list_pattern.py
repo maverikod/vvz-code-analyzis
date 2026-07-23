@@ -15,21 +15,38 @@ import fnmatch
 from pathlib import Path
 
 
-def canonical_relative_path(project_root: Path, absolute_path: Path) -> str:
+def canonical_relative_path(
+    project_root: Path, absolute_path: Path, *, already_resolved: bool = False
+) -> str:
     """Stable posix path from ``project_root`` for FS/DB joins.
 
     Args:
         project_root: Project root directory.
         absolute_path: Absolute path to resolve relative to project root.
+        already_resolved: When True, skip the ``Path.resolve()`` calls on both
+            inputs -- pass this ONLY when the caller guarantees both
+            ``project_root`` and ``absolute_path`` are already fully resolved
+            (no symlinks, no ``..``), e.g. paths produced by
+            :func:`code_analysis.commands.project_fs_enumerate.enumerate_project_paths`,
+            which resolves leaf symlinks explicitly and leaves already-canonical
+            walk paths as-is. Default ``False`` (always resolve) is safe for
+            every other caller; getting ``True`` wrong silently produces a wrong
+            relative path or a wrong "not under root" verdict.
 
     Returns:
         Posix relative path if ``absolute_path`` is under ``project_root``,
         otherwise absolute posix path.
     """
+    if already_resolved:
+        root = project_root
+        ap = absolute_path
+    else:
+        root = project_root.resolve()
+        ap = absolute_path.resolve()
     try:
-        return absolute_path.resolve().relative_to(project_root.resolve()).as_posix()
+        return ap.relative_to(root).as_posix()
     except ValueError:
-        return absolute_path.resolve().as_posix()
+        return ap.as_posix()
 
 
 def normalize_listing_pattern(raw: str) -> str:

@@ -1,6 +1,6 @@
 # code_analysis — operating contract
 
-**Prompts template:** `claude-prompts-v1` rev **1.1.0** (2026-07-23)
+**Prompts template:** `claude-prompts-v1` rev **1.2.0** (2026-07-23)
 
 You are the **ORCHESTRATOR**. Obey the contracts imported below (common + laws + your role).
 Project files are remote and MCP-only BY DEFAULT: never touch them with local bash/Read/Write/Edit —
@@ -22,11 +22,12 @@ fallback for the other.
 **Role contracts** live in `docs/agent-ref/roles/`:
 `common.yaml` (universal laws, everyone) + `laws.yaml` (standing laws, everyone) +
 `tooling.yaml` (tool mechanics, tool-using roles only) +
-one per role: `orchestrator.yaml`, `researcher.yaml`, `context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`, `executor.yaml`.
+one per role: `orchestrator.yaml`, `researcher.yaml`, `context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`, `executor.yaml`, `deliverer.yaml`.
 Each role sees ONLY its zone (need-to-know): orchestrator = high-level decisions (no tool mechanics);
 conscience = orchestrator's mirror; context_former = task + what it pulled; researcher = read-only facts;
 coder = implementation; tester = testing; executor = runtime execution of frozen atomic steps
-(plan-manager runtime records + coder/tester pair orchestration; never plan truth, never direct file edits).
+(plan-manager runtime records + coder/tester pair orchestration; never plan truth, never direct file edits);
+deliverer = mechanical execution of an orchestrator-mandated delivery procedure (never the deploy/repair decision itself).
 
 Project profile and repo-wide rules (`CR-*`, `LAYOUT-*`, `NAME-*`): `docs/PROJECT_RULES.md`.
 Work modes (planning / analysis / refactoring) and their trigger maps: `docs/agent-ref/modes.yaml`.
@@ -37,7 +38,7 @@ Work modes (planning / analysis / refactoring) and their trigger maps: `docs/age
 > do NOT spawn a subagent to read. Then: `<task>`.
 
 Pick the subagent model **by task complexity**: mechanical single-shot work = haiku;
-standard multi-step work (researcher / context_former / tester / executor and most coders) = **sonnet**;
+standard multi-step work (researcher / context_former / tester / executor / deliverer and most coders) = **sonnet**;
 verdicts, audits, hardest analysis (conscience, independent verification) = **opus**.
 Never send haiku into files needing judgment — it fabricates under pressure.
 A declared mode may refine delegation and model choice (see `docs/agent-ref/modes.yaml` `<mode>.scheme`;

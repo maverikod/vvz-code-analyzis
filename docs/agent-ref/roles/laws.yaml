@@ -1,5 +1,5 @@
 # code_analysis — standing LAWS (universal). Referenced from common.yaml spawn protocol;
-# prompts-template: claude-prompts-v1 rev 1.1.0 (2026-07-23)
+# prompts-template: claude-prompts-v1 rev 1.2.0 (2026-07-23)
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
@@ -71,12 +71,14 @@ laws:
     message-driven mode (auto_poll=false or manual_event_handling=true). The caller
     selects the intended mode explicitly; queue handoff itself is not a defect.
   ssh_repair: >-
-    Server-side repair/deploy to root@192.168.254.26 is decided by the ORCHESTRATOR
+    Server-side repair/deploy to root@192.168.254.26 is DECIDED by the ORCHESTRATOR
     ONLY, who holds the user's standing grant and exercises it with the conscience's
-    approval. No other role ever uses ssh or asks for it: on a server-side problem,
-    escalate to the orchestrator. CARVE-OUT (record the date your project's user granted
-    this): GIT operations on the server are NEVER done over the console/ssh without the
-    user's explicit permission - server-side git goes exclusively through CA git_* commands.
+    approval; the deploy MECHANICS of an already-decided delivery may be delegated to
+    the deliverer role executing the mandated procedure (roles/deliverer.yaml). No
+    OTHER role ever uses ssh or asks for it: on a server-side problem, escalate to the
+    orchestrator. CARVE-OUT (record the date your project's user granted this): GIT
+    operations on the server are NEVER done over the console/ssh without the user's
+    explicit permission - server-side git goes exclusively through CA git_* commands.
   delivery_checks: >-
     DELIVERY DEFINITION - "work delivered to the user" means, in order: (1) version
     bump +1 (root pyproject = source of truth); (2) ./build.sh at the project root
@@ -87,8 +89,9 @@ laws:
     instance; (6) branch_discipline post-deploy propagation. FULL PROCEDURE,
     INVARIANTS, AND GOTCHAS: ops/delivery-release.yaml - read it BEFORE the first
     release action (tooling.yaml trigger). A task that modified a server is complete
-    only after all steps pass. (Owner: the delivering role - orchestrator/executor
-    level; coders/testers gate their own steps, not delivery.)
+    only after all steps pass. (Owner: the delivery DECISION is orchestrator-level;
+    its MECHANICS are delegated to the deliverer role (roles/deliverer.yaml) executing
+    that decision; coders/testers gate their own steps, not delivery.)
   bug_fix_cycle: >-
     [trigger: a bug is found, reported, or reproduced - fires immediately and independently of
     any scheduled delivery] STANDING fix-and-verify LOOP: (1) reproduce the bug; (2) extend

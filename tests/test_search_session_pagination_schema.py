@@ -10,10 +10,6 @@ from code_analysis.commands.fs_ggrep_pagination_schema import (
     document_fs_ggrep_pagination_metadata,
     get_fs_ggrep_schema_with_pagination,
 )
-from code_analysis.commands.project_cross_search_pagination_schema import (
-    document_cross_search_pagination_metadata,
-    get_project_cross_search_schema_with_pagination,
-)
 from code_analysis.commands.search_mcp_commands_fulltext import FulltextSearchMCPCommand
 from code_analysis.commands.search_session_schema import (
     OPTIONAL_PAGINATION_PROPERTIES,
@@ -70,15 +66,6 @@ def test_fs_ggrep_schema_with_pagination() -> None:
     assert PAGINATION_KEYS <= set(props)
     assert schema.get("required")
     assert "paginated" in document_fs_ggrep_pagination_metadata()
-
-
-def test_project_cross_search_schema_with_pagination() -> None:
-    """Verify test project cross search schema with pagination."""
-    schema = get_project_cross_search_schema_with_pagination()
-    props = schema.get("properties") or {}
-    assert PAGINATION_KEYS <= set(props)
-    assert set(schema.get("required") or []) == {"project_id", "query"}
-    assert "paginated" in document_cross_search_pagination_metadata()
 
 
 def test_semantic_search_schema_with_pagination() -> None:

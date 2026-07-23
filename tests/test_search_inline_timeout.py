@@ -20,9 +20,8 @@ from mcp_proxy_adapter.integrations.queuemgr_integration import (
 import code_analysis.hooks  # noqa: F401
 from code_analysis.commands.fs_grep_budget import GREP_HARD_TIMEOUT
 from code_analysis.commands.fs_grep_command import FsGrepCommand
-from code_analysis.commands.project_cross_search_command import (
-    ProjectCrossSearchCommand,
-)
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.commands.search_mcp_command import SearchMCPCommand
 from code_analysis.core.search_inline_execution import (
     cancel_pending_enqueue_start_tasks,
 )
@@ -186,31 +185,41 @@ async def test_queued_job_hard_timeout(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_project_cross_search_auto_queue(tmp_path, queue_manager) -> None:
-    """Verify test project cross search auto queue."""
-    project_root = tmp_path / "project"
-    project_root.mkdir()
-    (project_root / "one.py").write_text("xpath\n", encoding="utf-8")
+async def test_search_inline_wait_returns_handoff_when_phases_are_slow(
+    tmp_path,
+) -> None:
+    """The live ``search`` command must not block on slow phases (reworked from the
+    now-deleted ``ProjectCrossSearchCommand`` auto-queue coverage: that command's
+    ``inline_timeout_seconds`` -> auto-queue behavior is superseded by ``search``'s
+    own background-thread + first-block-wait-then-handoff architecture - this test
+    asserts the same underlying guarantee (a slow search never blocks the caller
+    past its configured wait bound) against the live machinery that replaced it,
+    see search_mcp_command.SearchMCPCommand / search_paginated_cross.run_paginated_cross)."""
 
-    async def _slow_cross_search(**_kwargs: object) -> SuccessResult:
-        """Return slow cross search."""
+    async def _slow_run_paginated_cross(**_kwargs: object) -> None:
+        """Simulate a phase that runs far longer than first_block_wait_seconds."""
         await __import__("asyncio").sleep(SEARCH_INLINE_TIMEOUT_SECONDS + 2)
-        return SuccessResult(data={"success": True, "results": []})
 
-    with patch.object(
-        ProjectCrossSearchCommand,
-        "_execute_project_cross_search",
-        side_effect=_slow_cross_search,
+    with (
+        patch.object(BaseMCPCommand, "_validate_project_id_exists", return_value=None),
+        patch(
+            "code_analysis.commands.search_mcp_command.run_paginated_cross",
+            side_effect=_slow_run_paginated_cross,
+        ),
     ):
-        cmd = ProjectCrossSearchCommand()
+        cmd = SearchMCPCommand()
+        start = time.monotonic()
         result = await cmd.execute(
             project_id="00000000-0000-0000-0000-000000000005",
             query="xpath test",
-            semantic_limit=0,
-            fulltext_limit=0,
-            inline_timeout_seconds=0.2,
+            enable_semantic=False,
+            enable_grep=False,
+            first_block_wait_seconds=0.2,
         )
+        elapsed = time.monotonic() - start
 
     assert isinstance(result, SuccessResult)
-    assert result.data.get("queued") is True
+    assert elapsed < SEARCH_INLINE_TIMEOUT_SECONDS
+    assert result.data is not None
+    assert result.data.get("search_still_running") is True
     assert result.data.get("job_id")

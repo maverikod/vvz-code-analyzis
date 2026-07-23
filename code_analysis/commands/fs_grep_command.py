@@ -543,6 +543,14 @@ class FsGrepCommand(BaseMCPCommand):
                 timeout=hard_limit,
             )
         except asyncio.TimeoutError:
+            # asyncio.wait_for only cancels the awaiting Task; the underlying
+            # asyncio.to_thread worker keeps running (and its DB connection stays
+            # open) until it notices should_cancel(). Signal it here so the
+            # cooperative check inside FsGrepBudgetState.should_stop_scan (polled
+            # every scan-loop iteration) actually stops the thread instead of
+            # leaking it for the rest of the scan (bug 0c124699).
+            if cancel_event is not None:
+                cancel_event.set()
             elapsed = perf_counter() - started
             return ErrorResult(
                 message="fs_grep exceeded hard timeout and was stopped.",
@@ -671,6 +679,7 @@ class FsGrepCommand(BaseMCPCommand):
                             rels,
                             skip_indexed_unchanged=skip_indexed_unchanged,
                             indexed_only=indexed_only,
+                            should_cancel=budget.should_cancel,
                         )
                     )
                     kept_set = set(kept)

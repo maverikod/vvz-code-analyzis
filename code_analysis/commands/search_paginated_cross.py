@@ -470,6 +470,21 @@ async def run_paginated_cross(
         if search_completed and published == 0 and buffer_bytes == 0:
             profile.checkpoint("assembler_finalize", relevance=True)
 
+    def _bump_scanned_files(delta: int) -> None:
+        """Increment metrics.scanned_files so a polling client sees live progress
+        during the (possibly long-running) grep phase instead of a value frozen
+        at 0 for the whole scan (bug 0c124699)."""
+        if delta <= 0:
+            return
+
+        def mutator(m: SearchSessionManifest) -> SearchSessionManifest:
+            """Return mutator."""
+            nxt = dict(m.metrics)
+            nxt["scanned_files"] = nxt.get("scanned_files", 0) + delta
+            return replace(m, metrics=nxt)
+
+        update_manifest_atomic(layout, mutator)
+
     project_root: Optional[Any] = None
     try:
         project_root = command._resolve_project_root(project_id).resolve()
@@ -635,6 +650,7 @@ async def run_paginated_cross(
                 pattern_len=len(pattern),
             )
             batches_flushed = 0
+            matched_files_counted = 0
 
             def _on_grep_batch(
                 batch: list[dict[str, Any]],
@@ -643,7 +659,16 @@ async def run_paginated_cross(
                 grep_pattern: str = pattern,
             ) -> None:
                 """Return on grep batch."""
-                nonlocal batches_flushed
+                nonlocal batches_flushed, matched_files_counted
+                # One callback invocation == one scanned file that had >=1 match
+                # (fs_grep calls on_match_batch per file, see
+                # FsGrepCommand._deliver_file_matches). Bump scanned_files
+                # immediately so a client polling search_get_status sees live
+                # progress during a long grep phase (bug 0c124699), reconciled
+                # against the authoritative files_scanned total once this
+                # pattern's grep_cmd.execute() call returns.
+                matched_files_counted += 1
+                _bump_scanned_files(1)
                 filtered = [
                     m
                     for m in batch
@@ -714,6 +739,13 @@ async def run_paginated_cross(
                     pattern_sec=round(time.monotonic() - t_pat, 4),
                 )
                 continue
+
+            # _on_grep_batch only fires per matched file (live "not hung" signal
+            # while the pattern is still scanning); reconcile against the
+            # authoritative total here so files scanned with zero matches are
+            # still counted once the pattern is done (bug 0c124699).
+            pattern_files_scanned = int((result.data or {}).get("files_scanned") or 0)
+            _bump_scanned_files(max(0, pattern_files_scanned - matched_files_counted))
 
             profile.checkpoint(
                 "grep_pattern_done",

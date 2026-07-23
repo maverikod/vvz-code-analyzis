@@ -163,10 +163,31 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                     # enrich_project_dict_resolve_root_path (require_exists=True)
                     # returns "". Re-resolve without requiring on-disk existence
                     # to recover the intended restore destination.
+                    #
+                    # watch_dir_id is a native UUID column (see
+                    # core.database.schema_definition_tables_core); the domain
+                    # get_project() surfaces it exactly as the PostgreSQL driver
+                    # returns it (PostgreSQLOperations.select builds rows via
+                    # plain dict(zip(cols, row)), no UUID-to-str coercion), and
+                    # neither Project.from_dict nor
+                    # enrich_project_dict_resolve_root_path normalize it (only
+                    # root_path is rewritten there) -- so project.watch_dir_id
+                    # can be a uuid.UUID object here. Every other caller of
+                    # resolve_project_root_absolute_str coerces watch_dir_id to
+                    # str before passing it in (see
+                    # project_root_path._resolved_project_root_norm and
+                    # enrich_project_dict_resolve_root_path itself); match that
+                    # convention here instead of widening the resolver's
+                    # documented str-only contract.
+                    watch_dir_id_str = (
+                        str(project.watch_dir_id)
+                        if project.watch_dir_id is not None
+                        else None
+                    )
                     root_path_str = resolve_project_root_absolute_str(
                         project_id=project_id,
                         root_path_stored=project.name or "",
-                        watch_dir_id=project.watch_dir_id,
+                        watch_dir_id=watch_dir_id_str,
                         project_name=project.name,
                         database=database,
                         require_exists=False,

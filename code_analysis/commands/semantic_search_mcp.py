@@ -282,6 +282,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             c.line,
                             c.source_type,
                             f.path AS file_path,
+                            f.content_stale,
                             c.bm25_score,
                             c.token_count,
                             (c.embedding_vec <=> ?::vector) AS dist
@@ -318,6 +319,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             "line": row.get("line"),
                             "text": row.get("chunk_text"),
                             "vector_backend": "pgvector",
+                            "content_stale": bool(row.get("content_stale") or False),
                         }
                         if row.get("bm25_score") is not None:
                             item_pg["bm25_score"] = float(row["bm25_score"])

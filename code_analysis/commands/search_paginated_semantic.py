@@ -60,6 +60,7 @@ def normalize_semantic_finding(raw: dict[str, Any], *, index: int) -> dict[str, 
         "preview": preview if isinstance(preview, dict) else None,
         "entity_type": raw.get("entity_type"),
         "entity_name": raw.get("entity_name"),
+        "content_stale": bool(raw.get("content_stale") or False),
     }
 
 

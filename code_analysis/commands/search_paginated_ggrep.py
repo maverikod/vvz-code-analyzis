@@ -77,6 +77,9 @@ def normalize_ggrep_match(raw: dict[str, Any], *, index: int) -> Optional[Findin
         file_path=file_path,
         stable_id=str(node_ref),
         score=score_for_source(FindingSource.grep, raw),
+        # grep reads the live filesystem directly (not the files.content_stale row),
+        # so its own hits are never stale by construction.
+        content_stale=False,
     )
 
 

@@ -58,6 +58,9 @@ class Finding:
             Finding (it stays a line-only hit upstream).
         score: Relevance in [0.0, 1.0], assigned by the shared scoring layer.
             Higher is more relevant.
+        content_stale: True when the file's content was written through CA
+            since its last successful reindex (bug 56c23bd9) - the result may
+            not reflect the file's current on-disk content.
     """
 
     result_id: str
@@ -65,6 +68,7 @@ class Finding:
     file_path: str
     stable_id: str
     score: float
+    content_stale: bool = False
 
     def __post_init__(self) -> None:
         """Return post init."""

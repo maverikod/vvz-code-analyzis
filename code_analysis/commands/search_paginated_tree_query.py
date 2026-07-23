@@ -53,6 +53,7 @@ def normalize_tree_query_finding(
         file_path=file_path,
         stable_id=stable_id,
         score=EXACT_STRUCTURAL_SCORE,
+        content_stale=bool(raw.get("content_stale") or False),
     )
 
 

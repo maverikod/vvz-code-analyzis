@@ -81,6 +81,7 @@ def _full_text_search_postgresql(
             c.content,
             c.docstring,
             f.path AS file_path,
+            f.content_stale,
             ts_rank_cd(
                 to_tsvector(
                     'simple',

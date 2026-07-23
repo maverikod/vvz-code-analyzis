@@ -207,6 +207,7 @@ def normalize_cross_finding(
         file_path=str(raw.get("file_path") or ""),
         stable_id=str(stable_id),
         score=score_for_source(FindingSource.cross, raw),
+        content_stale=bool(raw.get("content_stale") or False),
     )
 
 

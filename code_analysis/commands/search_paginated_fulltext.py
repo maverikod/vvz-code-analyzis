@@ -59,6 +59,7 @@ def normalize_fulltext_finding(raw: dict[str, Any], *, index: int) -> dict[str, 
         "text": str(raw.get("chunk_text") or ""),
         "entity_type": raw.get("entity_type"),
         "entity_name": raw.get("entity_name"),
+        "content_stale": bool(raw.get("content_stale") or False),
     }
 
 

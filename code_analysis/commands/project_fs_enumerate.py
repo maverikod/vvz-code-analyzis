@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import Collection, List, Optional
 
 from ..core.project_ignore_policy import (
     filter_paths_for_default_project_listing,
@@ -30,7 +30,115 @@ from ..core.venv_path_policy import (
     load_venv_site_packages_index_allowlist_from_config,
 )
 
-from .file_management.relative_path_list_pattern import canonical_relative_path
+from .file_management.relative_path_list_pattern import (
+    canonical_relative_path,
+    static_prefix_of_listing_pattern,
+)
+
+
+def _resolve_scope_root_for_request_pattern(
+    root: Path,
+    request_static_prefix: Optional[str],
+    *,
+    show_hidden: bool,
+) -> Path:
+    """Return the safe ``os.walk`` start directory for ``request_static_prefix``.
+
+    Falls back to ``root`` (no scoping -- full-tree walk, today's behavior)
+    whenever the prefix is absent, escapes ``root``, does not exist as a
+    directory, or any of its path segments (ancestors AND the leaf itself)
+    would be pruned by the default project walk. The leaf check matters as
+    much as the ancestor checks: ``os.walk`` never re-applies its own
+    ``dirs``-list pruning rule to the directory it was told to start at, only
+    to entries it discovers while descending, so pointing it directly at an
+    otherwise-ignored directory (e.g. a request pattern naming a path under
+    ``node_modules``) would silently surface paths a full walk from ``root``
+    would never reach -- conservativeness (condition 3a) requires ``root`` in
+    every such doubtful case, never a guess.
+
+    Args:
+        root: Already-resolved project root.
+        request_static_prefix: Return value of
+            :func:`static_prefix_of_listing_pattern` for the effective
+            request pattern, or ``None`` when no pattern / no derivable
+            prefix.
+        show_hidden: Same flag the walk itself will use, so the safety check
+            agrees with the walk's own dot-dir/cache-dir pruning rule.
+
+    Returns:
+        ``root / request_static_prefix`` (resolved) when every segment is
+        provably reachable by the default walk, else ``root`` unchanged.
+    """
+    if not request_static_prefix:
+        return root
+    try:
+        candidate = (root / request_static_prefix).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return root
+    try:
+        if not candidate.is_dir():
+            return root
+    except OSError:
+        return root
+    ignore_dirs = default_project_walk_prune_ignore_dir_basenames()
+    for seg in request_static_prefix.strip("/").split("/"):
+        if not seg:
+            continue
+        if directory_basename_pruned_from_default_project_walk(
+            seg, ignore_dirs, show_hidden=show_hidden
+        ):
+            return root
+    return candidate
+
+
+def _prefixes_may_overlap(a: str, b: str) -> bool:
+    """True when directory-prefix strings ``a``/``b`` could describe overlapping subtrees.
+
+    ``a`` may overlap ``b`` when they are equal or one is an ancestor
+    directory of the other (a ``/``-bounded prefix, not a bare string
+    prefix -- ``docs/plan`` must NOT be treated as overlapping ``docs/plans``).
+    """
+    if a == b:
+        return True
+    return a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def _select_ignore_exceptions_relevant_to_request(
+    patterns: Collection[str], request_static_prefix: Optional[str]
+) -> List[str]:
+    """Conservative pre-filter over ``ignore_exceptions`` glob patterns to expand.
+
+    Performance-only optimization (bug 25c8d9dd): every file an EXCLUDED
+    pattern could ever expand to is later dropped anyway by the caller's own
+    pattern-match filter over the merged result, so skipping its (potentially
+    expensive) glob expansion here changes nothing about the final result --
+    provided the exclusion is provably safe. A pattern is excluded ONLY when
+    both its own derivable static prefix and ``request_static_prefix`` are
+    known non-empty strings AND neither is an ancestor of the other (see
+    :func:`_prefixes_may_overlap`); a pattern whose own prefix cannot be
+    derived (``None``, e.g. ``*.env``) is always expanded, matching the
+    pre-25c8d9dd unconditional behavior for it. When ``request_static_prefix``
+    itself is ``None`` (no derivable request-pattern prefix, or no pattern at
+    all), every pattern is expanded unconditionally -- unchanged behavior.
+
+    Args:
+        patterns: Raw ``code_analysis.ignore_exceptions`` glob patterns.
+        request_static_prefix: Return value of
+            :func:`static_prefix_of_listing_pattern` for the effective
+            request pattern.
+
+    Returns:
+        The subset of ``patterns`` that must still be expanded.
+    """
+    if not request_static_prefix:
+        return list(patterns)
+    selected: List[str] = []
+    for pat in patterns:
+        pat_prefix = static_prefix_of_listing_pattern(pat)
+        if not pat_prefix or _prefixes_may_overlap(pat_prefix, request_static_prefix):
+            selected.append(pat)
+    return selected
 
 
 def enumerate_project_paths(
@@ -40,28 +148,62 @@ def enumerate_project_paths(
     python_only: bool,
     include_venv_ignore_exceptions: bool = False,
     show_hidden: bool = False,
+    request_pattern: Optional[str] = None,
 ) -> List[Path]:
     """Return sorted absolute file paths under ``project_root`` (listing policy).
 
     Same rules as legacy ``list_project_files`` walk: skip venv by default, optional
     allowlisted site-packages ``.py``, ignore_exceptions expansion, cache/hidden policy.
+
+    Args:
+        project_root: Project root directory.
+        show_venv: Include allowlisted venv site-packages ``.py`` files.
+        python_only: Restrict the walk to ``.py`` files.
+        include_venv_ignore_exceptions: Include ``ignore_exceptions`` matches
+            that live under ``.venv``/``venv``.
+        show_hidden: ``ls -a``-style dot-dir/cache-dir inclusion.
+        request_pattern: Optional raw ``file_pattern``/``glob`` value the
+            caller will filter the result against afterward (bug 25c8d9dd).
+            When its static prefix (:func:`static_prefix_of_listing_pattern`)
+            resolves to a safely-reachable existing directory, the walk is
+            bounded to that subtree instead of the whole project root, and
+            ``ignore_exceptions`` glob expansion is pre-filtered to patterns
+            that could plausibly land inside it (see
+            :func:`_select_ignore_exceptions_relevant_to_request`). Passing
+            ``None`` (default) reproduces the pre-25c8d9dd full-root-walk,
+            expand-everything behavior exactly.
     """
     root = project_root.resolve()
+    request_static_prefix = (
+        static_prefix_of_listing_pattern(request_pattern) if request_pattern else None
+    )
+    scope_root = _resolve_scope_root_for_request_pattern(
+        root, request_static_prefix, show_hidden=show_hidden
+    )
     found: List[Path]
     if python_only:
         found = list(
-            iter_project_python_files_excluding_venv(root, show_hidden=show_hidden)
+            iter_project_python_files_excluding_venv(
+                root, show_hidden=show_hidden, scope_root=scope_root
+            )
         )
         exc_expand = expand_ignore_exception_py_files
     else:
-        found = list(iter_project_files_excluding_venv(root, show_hidden=show_hidden))
+        found = list(
+            iter_project_files_excluding_venv(
+                root, show_hidden=show_hidden, scope_root=scope_root
+            )
+        )
         exc_expand = expand_ignore_exception_all_files
     if show_venv:
         allowlist = load_venv_site_packages_index_allowlist_from_config()
         found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
     exc_patterns = load_ignore_exceptions_from_config()
     if exc_patterns:
-        extra = list(exc_expand(root, exc_patterns))
+        relevant_patterns = _select_ignore_exceptions_relevant_to_request(
+            exc_patterns, request_static_prefix
+        )
+        extra = list(exc_expand(root, relevant_patterns))
         if not include_venv_ignore_exceptions:
             extra = [
                 p

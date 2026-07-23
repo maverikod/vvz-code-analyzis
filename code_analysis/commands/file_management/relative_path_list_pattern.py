@@ -96,6 +96,64 @@ def relative_path_matches_listing_pattern(
     return fnmatch.fnmatch(relative_posix, pat)
 
 
+def static_prefix_of_listing_pattern(pattern: str) -> str | None:
+    """Largest directory prefix of ``pattern`` that is guaranteed literal.
+
+    Used to bound a filesystem walk to a subtree instead of the whole project
+    root (bug 25c8d9dd): any file a full walk would match against ``pattern``
+    must live under this prefix, so starting ``os.walk`` there instead of at
+    the project root cannot miss a match.
+
+    Normalizes ``pattern`` first (same rules as :func:`relative_path_matches_
+    listing_pattern`), then scans for the first ``fnmatch`` metacharacter
+    (``*``, ``?``, ``[``). Everything before it is provisionally literal, but
+    is then truncated to the last complete ``/``-separated segment so a
+    metacharacter landing mid-segment (e.g. ``code_analysis/comm*nds/x.py``)
+    never yields a partial, non-existent directory name (``code_analysis``,
+    not ``code_analysis/comm``).
+
+    A pattern with no metacharacters at all (a literal path or directory
+    prefix per :func:`relative_path_matches_listing_pattern`) returns itself
+    (trailing ``/`` stripped) unchanged -- it already names its own subtree
+    root. A metacharacter with no ``/`` before it (e.g. ``*.py``, ``*foo*``)
+    has no derivable literal directory at all and returns ``None``.
+
+    Args:
+        pattern: Raw ``file_pattern``/``glob`` value (not yet normalized).
+
+    Returns:
+        The literal directory-prefix string (posix, no trailing ``/``), or
+        ``None`` when no safe subtree can be derived (caller must then walk
+        the whole project root).
+
+    Examples:
+        >>> static_prefix_of_listing_pattern("code_analysis/commands/*")
+        'code_analysis/commands'
+        >>> static_prefix_of_listing_pattern("docs/plans/foo")
+        'docs/plans/foo'
+        >>> static_prefix_of_listing_pattern("*.py") is None
+        True
+        >>> static_prefix_of_listing_pattern("*foo*") is None
+        True
+    """
+    normalized = normalize_listing_pattern(pattern)
+    if not normalized:
+        return None
+    magic_idx: int | None = None
+    for i, ch in enumerate(normalized):
+        if ch in "*?[":
+            magic_idx = i
+            break
+    if magic_idx is None:
+        literal = normalized.rstrip("/")
+        return literal or None
+    head = normalized[:magic_idx]
+    if "/" not in head:
+        return None
+    prefix = head.rsplit("/", 1)[0]
+    return prefix or None
+
+
 def effective_listing_pattern(file_pattern: str | None, glob: str | None) -> str | None:
     """Resolve ``file_pattern`` vs ``glob`` (non-empty ``file_pattern`` wins)."""
     if file_pattern and str(file_pattern).strip():

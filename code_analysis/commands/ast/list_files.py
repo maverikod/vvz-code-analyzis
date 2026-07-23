@@ -400,6 +400,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 python_only=python_only,
                 include_venv_ignore_exceptions=include_venv_ignore_exceptions,
                 show_hidden=show_hidden,
+                # Bug 25c8d9dd: lets enumerate_project_paths bound the walk to
+                # the pattern's own static-prefix subtree instead of always
+                # walking the whole project root.
+                request_pattern=effective_pattern,
             )
 
             if effective_pattern:

@@ -444,7 +444,7 @@ def _iter_project_walk_prune_dirs(
 
 
 def iter_project_python_files_excluding_venv(
-    project_root: Path, *, show_hidden: bool = False
+    project_root: Path, *, show_hidden: bool = False, scope_root: Optional[Path] = None
 ) -> List[Path]:
     """
     Walk project tree for ``.py`` files, excluding hidden dirs and venv/data/logs.
@@ -452,6 +452,24 @@ def iter_project_python_files_excluding_venv(
     Mirrors :func:`code_analysis.commands.code_mapper_mcp_command` discovery
     (no ``.venv`` / ``venv`` traversal). Dot-prefixed dirs (except venv roots) and
     cache dir basenames are skipped unless ``show_hidden`` is true (``ls -a``-style).
+
+    Args:
+        project_root: Project root; still the default walk start when
+            ``scope_root`` is omitted (every pre-existing caller).
+        show_hidden: ``ls -a``-style dot-dir/cache-dir inclusion (see above).
+        scope_root: When given, ``os.walk`` starts here instead of
+            ``project_root`` (bug 25c8d9dd: subtree-bounded listing for a
+            directory-scoped request pattern, e.g.
+            ``code_analysis/commands/*``). This function performs NO
+            reachability check of its own -- the caller (see
+            :func:`code_analysis.commands.project_fs_enumerate.
+            enumerate_project_paths`) MUST have already proven every path
+            segment from ``project_root`` down to ``scope_root`` survives
+            the same pruning this walk applies to its own ``dirs`` lists;
+            ``os.walk`` never prunes its own starting directory, only
+            entries it discovers in ``dirs``, so pointing it directly at an
+            otherwise-ignored directory would silently surface paths a full
+            walk from ``project_root`` would never reach.
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
@@ -459,7 +477,7 @@ def iter_project_python_files_excluding_venv(
         DATA_DIR_NAME,
         LOGS_DIR_NAME,
     }
-    root_path = project_root.resolve()
+    root_path = (scope_root if scope_root is not None else project_root).resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
         _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
@@ -470,7 +488,7 @@ def iter_project_python_files_excluding_venv(
 
 
 def iter_project_files_excluding_venv(
-    project_root: Path, *, show_hidden: bool = False
+    project_root: Path, *, show_hidden: bool = False, scope_root: Optional[Path] = None
 ) -> List[Path]:
     """
     Walk the project tree for regular files (not only ``.py``), excluding the same
@@ -479,6 +497,15 @@ def iter_project_files_excluding_venv(
     Skips bytecode, native libraries, and similar binary suffixes; does not descend into
     ``.venv`` / ``venv`` or non-hidden noise dirs; dot-prefixed dirs and cache basenames
     are skippable unless ``show_hidden`` is true.
+
+    Args:
+        project_root: Project root; still the default walk start when
+            ``scope_root`` is omitted (every pre-existing caller).
+        show_hidden: ``ls -a``-style dot-dir/cache-dir inclusion (see above).
+        scope_root: Same subtree-bounding contract as
+            :func:`iter_project_python_files_excluding_venv` -- see that
+            docstring for the reachability precondition the caller must
+            already have verified.
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
@@ -486,7 +513,7 @@ def iter_project_files_excluding_venv(
         DATA_DIR_NAME,
         LOGS_DIR_NAME,
     }
-    root_path = project_root.resolve()
+    root_path = (scope_root if scope_root is not None else project_root).resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
         _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)

@@ -74,6 +74,8 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
         try:
             import shutil
 
+            from ...core.database_driver_pkg.domain.projects import get_project
+            from ...core.project_root_path import resolve_project_root_absolute_str
             from ...core.sql_portable import WHERE_FILES_ACTIVE
             from ...core.storage_paths import load_raw_config, resolve_storage_paths
             from ...core.trash_utils import get_project_id_from_trash_folder
@@ -116,12 +118,8 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
 
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                rows = database.select(
-                    "projects",
-                    where={"id": project_id},
-                    columns=["id", "root_path", "name"],
-                )
-                if not rows:
+                project = get_project(database, project_id)
+                if project is None:
                     return self._handle_error(
                         ValidationError(
                             f"Project {project_id} not found in database",
@@ -131,7 +129,6 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                         "PROJECT_NOT_FOUND",
                         "restore_project_from_trash",
                     )
-                row = rows[0]
                 # Trashed state is determined by files table only: all files must be deleted
                 active_result = database.execute(
                     "SELECT COUNT(*) as active FROM files WHERE project_id = ? "
@@ -158,7 +155,33 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                         "NOT_IN_TRASH",
                         "restore_project_from_trash",
                     )
-                root_path = Path(row["root_path"])
+                root_path_str = project.root_path
+                if not root_path_str:
+                    # A trashed project's folder no longer exists at its
+                    # watch-relative location (it now lives under trash_dir), so
+                    # the existence-gated resolution baked into get_project() /
+                    # enrich_project_dict_resolve_root_path (require_exists=True)
+                    # returns "". Re-resolve without requiring on-disk existence
+                    # to recover the intended restore destination.
+                    root_path_str = resolve_project_root_absolute_str(
+                        project_id=project_id,
+                        root_path_stored=project.name or "",
+                        watch_dir_id=project.watch_dir_id,
+                        project_name=project.name,
+                        database=database,
+                        require_exists=False,
+                    )
+                if not root_path_str:
+                    return self._handle_error(
+                        ValidationError(
+                            f"Cannot resolve original root path for project {project_id}",
+                            field="trash_folder_name",
+                            details={"project_id": project_id},
+                        ),
+                        "PROJECT_ROOT_UNRESOLVABLE",
+                        "restore_project_from_trash",
+                    )
+                root_path = Path(root_path_str)
                 if root_path.exists():
                     return self._handle_error(
                         ValidationError(

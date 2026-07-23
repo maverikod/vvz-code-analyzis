@@ -33,7 +33,9 @@ def get_restore_database_metadata(
             "Requires ``pg_dump`` on PATH (or ``pg_dump_path``) and psycopg for the schema reset.\n\n"
             "Operation flow:\n"
             "1. Loads and parses the given config file (JSON) for directory list\n"
-            "2. Resolves directory paths (code_analysis.dirs or code_analysis.worker.watch_dirs)\n"
+            "2. Resolves directory paths (code_analysis.dirs or code_analysis.worker.watch_dirs); "
+            "if both are empty, falls back to every currently registered watch_dirs-table "
+            "absolute path\n"
             "3. If dry_run=True, returns plan without executing\n"
             "4. Stops all workers to prevent concurrent access\n"
             "5. Backs up current database via PostgreSQL pg_dump\n"
@@ -45,8 +47,12 @@ def get_restore_database_metadata(
             "- Looks for directories in:\n"
             "  1. code_analysis.dirs (array of directory paths)\n"
             "  2. code_analysis.worker.watch_dirs (array of directory paths)\n"
+            "  3. Fallback (only when both above are empty/missing): every absolute "
+            "path currently registered in the watch_dirs table\n"
             "- Directories can be absolute or relative to config file location\n"
-            "- Empty directories are skipped\n\n"
+            "- Empty directories are skipped\n"
+            "- plan.dirs_source reports which source was used: 'config' or "
+            "'watch_dirs_table'\n\n"
             "Indexing Process:\n"
             "- Each directory is processed sequentially\n"
             "- Python files are discovered recursively\n"
@@ -177,15 +183,22 @@ def get_restore_database_metadata(
                 ),
             },
             "NO_DIRS": {
-                "description": "No directories found in config",
+                "description": (
+                    "No directories found in config, and no watch directories "
+                    "registered in the watch_dirs table"
+                ),
                 "message": (
-                    "No directories found in config. Expected code_analysis.dirs "
-                    "or code_analysis.worker.watch_dirs."
+                    "No directories found in config (code_analysis.dirs or "
+                    "code_analysis.worker.watch_dirs) and no watch directories "
+                    "registered in the watch_dirs table."
                 ),
                 "solution": (
                     "Add directories array to config file:\n"
                     '- code_analysis.dirs: ["/path/to/dir1", "/path/to/dir2"]\n'
-                    '- OR code_analysis.worker.watch_dirs: ["/path/to/dir1"]'
+                    '- OR code_analysis.worker.watch_dirs: ["/path/to/dir1"]\n'
+                    "- OR register at least one watch directory (create_project / "
+                    "watch_dir management commands) so the watch_dirs-table "
+                    "fallback has something to restore."
                 ),
             },
             "RESTORE_DATABASE_ERROR": {

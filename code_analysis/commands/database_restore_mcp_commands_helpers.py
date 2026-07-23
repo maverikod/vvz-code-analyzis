@@ -41,6 +41,34 @@ def extract_restore_dirs_from_config(cfg: dict[str, Any]) -> list[str]:
     return []
 
 
+def extract_restore_dirs_from_watch_dirs_table(database: Any) -> list[str]:
+    """
+    Fallback restore directories sourced from the ``watch_dirs`` table.
+
+    Used when the config file has no directories configured (both
+    ``code_analysis.dirs`` and ``code_analysis.worker.watch_dirs`` empty or
+    missing) — restore falls back to every currently registered watch
+    directory's absolute path instead of failing with ``NO_DIRS``.
+
+    Args:
+        database: Open database/driver connection (duck-typed, see
+            ``code_analysis.core.database.watch_dirs_query.list_watch_dir_path_pairs``).
+
+    Returns:
+        Deduplicated list of absolute watch-directory paths (insertion order
+        preserved). May be empty when no watch dirs are registered.
+    """
+    from ..core.database.watch_dirs_query import list_watch_dir_path_pairs
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for _watch_dir_id, absolute_path in list_watch_dir_path_pairs(database):
+        if absolute_path and absolute_path not in seen:
+            seen.add(absolute_path)
+            out.append(absolute_path)
+    return out
+
+
 def iter_python_files(root_path: Path) -> Iterable[Path]:
     """
     Iterate python files under root_path.

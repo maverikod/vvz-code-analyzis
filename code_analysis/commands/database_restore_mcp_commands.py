@@ -25,6 +25,7 @@ from .base_mcp_command import BaseMCPCommand
 from .base_mcp_command_open_db import _schema_def_to_driver_format
 from .database_restore_mcp_commands_helpers import (
     extract_restore_dirs_from_config,
+    extract_restore_dirs_from_watch_dirs_table,
     iter_python_files,
 )
 from .database_restore_mcp_commands_metadata import get_restore_database_metadata
@@ -159,12 +160,28 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 )
 
             restore_dirs = extract_restore_dirs_from_config(cfg)
+            restore_dirs_source = "config" if restore_dirs else None
+            if not restore_dirs:
+                # Config has no directories configured: fall back to every
+                # currently registered watch directory instead of failing.
+                fallback_db = BaseMCPCommand._open_database_from_config(
+                    auto_analyze=False
+                )
+                try:
+                    restore_dirs = extract_restore_dirs_from_watch_dirs_table(
+                        fallback_db
+                    )
+                finally:
+                    fallback_db.disconnect()
+                if restore_dirs:
+                    restore_dirs_source = "watch_dirs_table"
             if not restore_dirs:
                 return ErrorResult(
                     code="NO_DIRS",
                     message=(
-                        "No directories found in config. Expected `code_analysis.dirs` "
-                        "or `code_analysis.worker.watch_dirs`."
+                        "No directories found in config (`code_analysis.dirs` "
+                        "or `code_analysis.worker.watch_dirs`) and no watch "
+                        "directories registered in the watch_dirs table."
                     ),
                     details={"config_file": str(cfg_path)},
                 )
@@ -188,6 +205,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 "driver": driver_type,
                 "config_file": str(cfg_path),
                 "dirs": [str(p) for p in scan_roots],
+                "dirs_source": restore_dirs_source,
                 "max_lines": max_lines,
             }
             if dry_run:

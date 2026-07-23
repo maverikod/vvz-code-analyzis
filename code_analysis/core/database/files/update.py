@@ -301,7 +301,8 @@ def update_file_data(
                         (project_id, abs_path),
                     ),
                     (
-                        "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                        "UPDATE files SET needs_chunking = 0, content_stale = 0, "
+                        "content_stale_since = NULL WHERE id = ?",
                         (file_id,),
                     ),
                 ]

@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import os
 import grp
 import pwd
@@ -33,6 +34,13 @@ from code_analysis.core.git_ssh_auth import GIT_AUTH_FAILED, classify_ssh_auth_s
 
 SCOPE_VALUES = ["git_only", "worktree", "all"]
 GIT_ADMIN_TIMEOUT_SECONDS = 60.0
+
+logger = logging.getLogger(__name__)
+
+# Bound on how many changed paths get an individual mark_file_content_stale() call
+# after a git_pull_safe pull; beyond this, fall back to a project-wide UPDATE (the
+# per-file list would be impractical to iterate one row-lookup at a time).
+_PULL_STALE_MARK_PATH_CAP = 500
 
 
 def _user_name(uid: int) -> str:
@@ -263,6 +271,84 @@ def _status_snapshot(root: Path) -> Dict[str, Any]:
             "timed_out": stash_timeout,
         },
     }
+
+
+def _git_rev_parse_head(root: Path) -> Optional[str]:
+    """Return the current commit SHA at ``root``, or None on any failure."""
+    code, out, _err, timed_out = _run_git(root, ["rev-parse", "HEAD"])
+    if timed_out or code != 0:
+        return None
+    sha = out.strip()
+    return sha or None
+
+
+def _mark_pull_changed_files_stale(
+    root: Path, project_id: str, pre_head: Optional[str], post_head: Optional[str]
+) -> Dict[str, Any]:
+    """Mark files touched by a ``git pull`` as ``content_stale`` (bug 56c23bd9).
+
+    ``git pull`` rewrites file content on disk directly (bypassing every other CA
+    write path), so it is its own mass-write hole for the staleness flag. Diffs
+    ``pre_head..post_head`` for the changed paths and marks each one; falls back to
+    a project-wide UPDATE when the change set is too large to resolve file-by-file
+    or when the commit range could not be determined.
+    """
+    from code_analysis.commands.base_mcp_command import BaseMCPCommand
+    from code_analysis.core.database_driver_pkg.domain.files import (
+        mark_file_content_stale,
+    )
+    from code_analysis.core.sql_portable import sql_julian_timestamp_now_expr
+
+    try:
+        database = BaseMCPCommand._open_database_from_config()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("git_pull_safe: could not open database to mark stale: %s", exc)
+        return {"marked": 0, "mode": "skipped", "error": str(exc)}
+
+    if not pre_head or not post_head or pre_head == post_head:
+        # Nothing to diff (no-op pull, or HEAD unresolvable) -> no rows to mark.
+        return {"marked": 0, "mode": "no_change"}
+
+    code, out, _err, timed_out = _run_git(
+        root, ["diff", "--name-only", pre_head, post_head]
+    )
+    if timed_out or code != 0:
+        changed_paths: List[str] = []
+        fallback_reason = "diff_failed"
+    else:
+        changed_paths = [line.strip() for line in out.splitlines() if line.strip()]
+        fallback_reason = None
+
+    if fallback_reason or len(changed_paths) > _PULL_STALE_MARK_PATH_CAP:
+        now_sql = sql_julian_timestamp_now_expr(database)
+        try:
+            database.execute(
+                "UPDATE files SET content_stale = 1, content_stale_since = "
+                f"{now_sql} WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                (project_id,),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "git_pull_safe: project-wide content_stale mark failed: %s", exc
+            )
+            return {"marked": 0, "mode": "project_wide_failed", "error": str(exc)}
+        return {
+            "marked": len(changed_paths) or None,
+            "mode": "project_wide",
+            "reason": fallback_reason or "path_count_over_cap",
+        }
+
+    marked = 0
+    for rel in changed_paths:
+        try:
+            abs_path = str((root / rel).resolve())
+            if mark_file_content_stale(database, abs_path, project_id):
+                marked += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "git_pull_safe: mark_file_content_stale failed for %s: %s", rel, exc
+            )
+    return {"marked": marked, "mode": "per_file", "changed_paths": len(changed_paths)}
 
 
 def _metadata(
@@ -1320,6 +1406,7 @@ class GitPullSafeCommand(GitWorktreeCommand):
                     {"steps": steps},
                 )
             stash_ref = "stash@{0}"
+        pre_pull_head = _git_rev_parse_head(cast(Path, root))
         pull_args = ["git", "pull", "--rebase" if rebase else "--ff-only", remote]
         if ref:
             pull_args.append(ref)
@@ -1351,6 +1438,11 @@ class GitPullSafeCommand(GitWorktreeCommand):
                 "git pull failed during safe pull",
                 {"steps": steps, "stash_ref": stash_ref},
             )
+        post_pull_head = _git_rev_parse_head(cast(Path, root))
+        stale_result = _mark_pull_changed_files_stale(
+            cast(Path, root), project_id, pre_pull_head, post_pull_head
+        )
+        steps.append({"step": "mark_content_stale", "result": stale_result})
         if stash_ref and apply_stash:
             code, out, err, timed_out = _run_git(
                 cast(Path, root), ["stash", "apply", stash_ref]

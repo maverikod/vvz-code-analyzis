@@ -376,6 +376,13 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
             "where_clause": "(deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
         },
         {
+            "name": "idx_files_content_stale",
+            "table": "files",
+            "columns": ["project_id", "updated_at"],
+            "unique": False,
+            "where_clause": "(deleted = 0 OR deleted IS NULL) AND content_stale = 1",
+        },
+        {
             "name": "idx_code_duplicates_project",
             "table": "code_duplicates",
             "columns": ["project_id"],

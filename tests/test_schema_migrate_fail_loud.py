@@ -94,6 +94,20 @@ def test_run_migrate_schema_propagates_projects_root_segment_postgres_error() ->
             run_migrate_schema(db)
 
 
+def test_run_migrate_schema_propagates_files_content_stale_column_error() -> None:
+    """A raising files_content_stale_column migration must NOT be swallowed (bug 56c23bd9)."""
+    db = _StubDbNoTables()
+    boom = RuntimeError("simulated migration failure: files_content_stale_column")
+
+    with patch(
+        "code_analysis.core.database.migrations.files_content_stale_column."
+        "migrate_files_content_stale_column",
+        side_effect=boom,
+    ):
+        with pytest.raises(RuntimeError, match="simulated migration failure"):
+            run_migrate_schema(db)
+
+
 def test_run_migrate_schema_propagates_projects_root_path_per_server_instance_error() -> None:
     """A raising projects_root_path_per_server_instance migration must NOT be swallowed."""
     db = _StubDbNoTables()

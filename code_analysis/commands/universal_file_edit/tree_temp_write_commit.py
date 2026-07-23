@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -28,6 +29,8 @@ from code_analysis.core.edit_session import SessionTreeValidity
 from code_analysis.core.file_handlers.diff_support import unified_diff_text
 from code_analysis.core.tree_lifecycle.builder import TreeBuilder
 from code_analysis.tree.sibling_convention import sibling_tree_path
+
+logger = logging.getLogger(__name__)
 
 
 def serialize_tree_temp_session_source(session: "EditSession") -> str:
@@ -121,6 +124,22 @@ def commit_tree_temp_to_disk(
             Path(tmp_path).unlink(missing_ok=True)
         bm.restore_file(rel_str)
         raise
+
+    try:
+        from code_analysis.commands.base_mcp_command import BaseMCPCommand
+        from code_analysis.core.database_driver_pkg.domain.files import (
+            mark_file_content_stale,
+        )
+
+        mark_file_content_stale(
+            BaseMCPCommand._open_database_from_config(),
+            str(session.abs_path),
+            project_id,
+        )
+    except Exception:
+        logger.warning(
+            "mark_file_content_stale failed for %s", session.abs_path, exc_info=True
+        )
 
     final_bytes = session.abs_path.read_bytes()
     sha256_hex = hashlib.sha256(final_bytes).hexdigest()

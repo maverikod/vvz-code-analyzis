@@ -389,6 +389,24 @@ def build_file_data_atomic_batches(
     if ops_cc:
         batches.append(ops_cc)
 
+    # Reindex-success clear: this batch performs a full atomic reindex of the file
+    # (classes/methods/functions/imports/code_content), so any content_stale flag
+    # set by the write that triggered it (bug 56c23bd9) is resolved in the same
+    # transaction (defense-in-depth: compose_cst_writer.apply_changes /
+    # restore_backup_file both route through this function).
+    from ..sql_portable import sql_julian_timestamp_now_expr
+
+    _now_clear = sql_julian_timestamp_now_expr(None)
+    batches.append(
+        [
+            (
+                f"UPDATE files SET content_stale = 0, content_stale_since = NULL, "
+                f"updated_at = {_now_clear} WHERE id = ?",
+                (file_id,),
+            )
+        ]
+    )
+
     meta: dict[str, Any] = {
         "success": True,
         "file_id": file_id,

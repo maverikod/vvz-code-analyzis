@@ -258,7 +258,8 @@ def index_file_via_driver(
         if not update_result.get("skipped"):
             try:
                 driver.execute(
-                    "UPDATE files SET needs_chunking = 0 WHERE project_id = ?"
+                    "UPDATE files SET needs_chunking = 0, content_stale = 0, "
+                    "content_stale_since = NULL WHERE project_id = ?"
                     " AND (path = ? OR path = ? OR relative_path = ? OR relative_path = ?)",
                     (project_id, fp_param, abs_resolved, fp_param, abs_resolved),
                     None,

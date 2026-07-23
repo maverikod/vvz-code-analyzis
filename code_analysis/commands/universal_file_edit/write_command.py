@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -54,6 +55,8 @@ from code_analysis.commands.universal_file_edit.invalid_write_support import (
     try_clear_invalid_after_write,
     validate_invalid_session_for_commit,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UniversalFileWriteCommand(BaseMCPCommand):
@@ -446,18 +449,18 @@ class UniversalFileWriteCommand(BaseMCPCommand):
         return SuccessResult(data={"success": True, "phase": "preview", "diff": diff})
 
     def _second_call(
-        self, session: EditSession, _project_id: str
+        self, session: EditSession, project_id: str
     ) -> SuccessResult | ErrorResult:
         """Handle second write call: backup, commit, cleanup.
 
         Args:
             session: Active EditSession.
-            _project_id: Reserved for callers that delegate path helpers (unused here).
+            project_id: Project UUID; used to mark the written file's content stale
+                (bug 56c23bd9).
 
         Returns:
             SuccessResult with success flag and committed-phase diff.
         """
-        _ = _project_id
         fp_parts = Path(session.file_path).parts
         root_dir = session.abs_path.parents[len(fp_parts) - 1]
         rel = session.abs_path.relative_to(root_dir)
@@ -505,6 +508,18 @@ class UniversalFileWriteCommand(BaseMCPCommand):
                 write_sidecar_atomic(session.abs_path, tree)
 
         delete_lockfile(session.abs_path)
+        try:
+            from code_analysis.core.database_driver_pkg.domain.files import (
+                mark_file_content_stale,
+            )
+
+            mark_file_content_stale(
+                self._open_database_from_config(), str(session.abs_path), project_id
+            )
+        except Exception:
+            logger.warning(
+                "mark_file_content_stale failed for %s", session.abs_path, exc_info=True
+            )
         diff = unified_diff_text(
             original_content,
             code,

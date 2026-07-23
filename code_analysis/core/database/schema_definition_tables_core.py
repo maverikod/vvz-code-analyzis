@@ -229,6 +229,17 @@ def get_tables_core() -> Dict[str, Any]:
                     "default": "0",
                 },
                 {
+                    "name": "content_stale",
+                    "type": "BOOLEAN",
+                    "not_null": True,
+                    "default": "0",
+                },
+                {
+                    "name": "content_stale_since",
+                    "type": "REAL",
+                    "not_null": False,
+                },
+                {
                     "name": "editing_pid",
                     "type": "INTEGER",
                     "not_null": False,

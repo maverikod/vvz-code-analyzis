@@ -390,6 +390,12 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not add editing_pid column to files: {e}")
 
+    from code_analysis.core.database.migrations.files_content_stale_column import (
+        migrate_files_content_stale_column,
+    )
+
+    migrate_files_content_stale_column(db)
+
     from code_analysis.core.database.migrations.watch_dirs_server_instance import (
         migrate_watch_dirs_server_instance,
     )

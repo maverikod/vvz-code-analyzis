@@ -343,6 +343,7 @@ def unmark_file_deleted_via_driver(
         f"""
         UPDATE files
         SET deleted = 0, path = ?, original_path = NULL, version_dir = NULL,
+            content_stale = 1, content_stale_since = {_now},
             updated_at = {_now}
         WHERE id = ?
         """,

@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
@@ -36,6 +37,8 @@ from .text_ranges import (
 )
 
 TEXT_SUFFIXES = frozenset({".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"})
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_text_suffix(file_path: str) -> None:
@@ -303,6 +306,7 @@ def persist_plain_text_file_metadata(
                 return _locked_response()
             update_sql = (
                 f"UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
+                f"content_stale = 1, content_stale_since = {now_sql}, "
                 f"updated_at = {now_sql} WHERE id = ?"
             )
             database.execute(

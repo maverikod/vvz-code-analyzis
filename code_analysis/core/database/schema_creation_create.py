@@ -115,6 +115,8 @@ def run_create_schema(db: Any) -> None:
                 original_path TEXT,
                 version_dir TEXT,
                 needs_chunking INTEGER DEFAULT 0,
+                content_stale BOOLEAN NOT NULL DEFAULT 0,
+                content_stale_since REAL DEFAULT NULL,
                 editing_pid INTEGER DEFAULT NULL,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),

@@ -179,3 +179,48 @@ def test_mark_file_needs_chunking_no_row_returns_false() -> None:
         result = domain_files.mark_file_needs_chunking(driver, "/abs/a.py", "proj-1")
 
     assert result is False
+
+
+def test_mark_file_content_stale_sets_flag_and_timestamp() -> None:
+    """mark_file_content_stale: UPDATE sets content_stale=1 + content_stale_since, returns True (bug 56c23bd9)."""
+    driver = _FakeDriver(execute_rows={"affected_rows": 1})
+
+    with patch(
+        "code_analysis.core.database_driver_pkg.domain.files.get_file_by_path",
+        return_value={"id": "f1", "deleted": False},
+    ):
+        result = domain_files.mark_file_content_stale(driver, "/abs/a.py", "proj-1")
+
+    assert result is True
+    assert len(driver.execute_calls) == 1
+    sql, params = driver.execute_calls[0]
+    assert "content_stale = 1" in sql
+    assert "content_stale_since" in sql
+    assert params == ("f1",)
+
+
+def test_mark_file_content_stale_deleted_file_returns_false() -> None:
+    """mark_file_content_stale: soft-deleted row -> False, no execute() calls."""
+    driver = _FakeDriver()
+
+    with patch(
+        "code_analysis.core.database_driver_pkg.domain.files.get_file_by_path",
+        return_value={"id": "f1", "deleted": True},
+    ):
+        result = domain_files.mark_file_content_stale(driver, "/abs/a.py", "proj-1")
+
+    assert result is False
+    assert driver.execute_calls == []
+
+
+def test_mark_file_content_stale_no_row_returns_false() -> None:
+    """mark_file_content_stale: no matching file -> False."""
+    driver = _FakeDriver()
+
+    with patch(
+        "code_analysis.core.database_driver_pkg.domain.files.get_file_by_path",
+        return_value=None,
+    ):
+        result = domain_files.mark_file_content_stale(driver, "/abs/a.py", "proj-1")
+
+    assert result is False

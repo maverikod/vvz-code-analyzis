@@ -310,6 +310,10 @@ class WorkerStatusCommand:
             result["current_file"] = status_data.get("current_file")
             result["progress_percent"] = status_data.get("progress_percent")
             result["progress_updated_at"] = status_data.get("updated_at")
+            if "config_load_count" in status_data:
+                result["config_load_count"] = status_data.get("config_load_count")
+            if "cache_hit_count" in status_data:
+                result["cache_hit_count"] = status_data.get("cache_hit_count")
 
         # Summary
         result["summary"] = {

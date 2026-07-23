@@ -72,8 +72,13 @@ def partition_discovered_projects_by_db_soft_delete(
     Returns:
         (active_project_roots, resolved_paths_to_prune_from_traversal)
     """
+    from code_analysis.core.database.watch_dirs_partition import (
+        current_server_instance_id,
+    )
+
     active: List[ProjectRoot] = []
     excluded_resolved: Set[Path] = set()
+    sid = current_server_instance_id()
 
     for pr in discovered:
         try:
@@ -126,11 +131,6 @@ def partition_discovered_projects_by_db_soft_delete(
             excluded_resolved.add(root_resolved)
             continue
 
-        from code_analysis.core.database.watch_dirs_partition import (
-            current_server_instance_id,
-        )
-
-        sid = current_server_instance_id()
         res = database.execute(
             "SELECT id, deleted FROM projects "
             "WHERE server_instance_id = ? AND root_path = ? LIMIT 1",

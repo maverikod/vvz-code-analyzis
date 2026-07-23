@@ -163,10 +163,13 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         """,
         (time.time(), cycle_id),
     )
+    from ..server_instance import get_server_instance_id_cache_diagnostics
+
     write_worker_status(
         getattr(worker, "status_file_path", None),
         STATUS_OPERATION_IDLE,
         current_file=None,
         progress_percent=100.0 if cycle_stats.get("files_scanned", 0) else None,
+        extra=get_server_instance_id_cache_diagnostics(),
     )
     return cycle_stats

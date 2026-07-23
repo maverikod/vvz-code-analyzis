@@ -104,6 +104,11 @@ def write_worker_status(
             pass
 
 
+# Extra diagnostic keys passed through verbatim when present (opt-in whitelist so
+# arbitrary per-call `extra=` payloads do not leak unbounded fields into every reader).
+_PASSTHROUGH_EXTRA_KEYS = ("config_load_count", "cache_hit_count")
+
+
 def read_worker_status(status_file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
     """
     Read worker status from file (current_operation, current_file, progress_percent, updated_at).
@@ -129,6 +134,9 @@ def read_worker_status(status_file_path: Optional[Path]) -> Optional[Dict[str, A
         }
         if "progress_percent" in data:
             out["progress_percent"] = data["progress_percent"]
+        for key in _PASSTHROUGH_EXTRA_KEYS:
+            if key in data:
+                out[key] = data[key]
         return out
     except Exception as e:
         # Log must not raise (e.g. disk full); report error but do not propagate

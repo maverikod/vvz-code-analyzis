@@ -243,22 +243,53 @@ async def run_project_trash_restore_roundtrip_check(
                 ),
             )
 
+        # list_projects is paginated (default page_size 20, stable name-sort)
+        # and this check's disposable project name (verify_trashrestore_<hex>)
+        # sorts arbitrarily deep among the many pre-existing projects on a
+        # live server. Filter server-side with name_contains (applied BEFORE
+        # pagination) instead of scanning the unfiltered first page, or a
+        # server with >20 registered projects makes this assertion fail by
+        # construction regardless of whether the restore actually worked
+        # (bug c8ad0c21 iteration 4).
         projects_data = _unwrap(
             await client.call_validated(
-                "list_projects", {"include_deleted": False}
+                "list_projects",
+                {"include_deleted": False, "name_contains": project_name},
             )
         )
-        listed_ids = {
-            str(p.get("id"))
+        listed_rows = {
+            str(p.get("id")): p
             for p in (projects_data.get("items") or projects_data.get("projects") or [])
             if isinstance(p, dict)
         }
-        if project_id not in listed_ids:
+        listed_row = listed_rows.get(project_id)
+        if listed_row is None:
             return _outcome(
                 Status.FAILED,
                 truncate(
                     f"restored project {project_id} not present in "
-                    f"list_projects (root_path={restored_root!r})"
+                    f"list_projects(name_contains={project_name!r}) "
+                    f"(root_path={restored_root!r})"
+                ),
+            )
+        if listed_row.get("deleted"):
+            return _outcome(
+                Status.FAILED,
+                truncate(
+                    f"restored project {project_id} still marked deleted=true "
+                    f"in list_projects(name_contains={project_name!r}): "
+                    f"{listed_row!r}"
+                ),
+            )
+        listed_root = str(listed_row.get("root_path") or "")
+        if listed_root != project_name:
+            return _outcome(
+                Status.FAILED,
+                truncate(
+                    f"restored project {project_id} has unexpected root_path "
+                    f"{listed_root!r} in list_projects (expected "
+                    f"{project_name!r}, absolute restore root was "
+                    f"{restored_root!r})"
                 ),
             )
 

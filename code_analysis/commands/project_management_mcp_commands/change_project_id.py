@@ -20,7 +20,7 @@ from ._shared import (
     logger,
     uuid,
 )
-from ...core.database_driver_pkg.domain.projects import get_project
+from ...core.database_driver_pkg.domain.projects import get_project, insert_project_row
 from ...core.exceptions import CodeAnalysisError
 from ...core.project_root_path import persist_projects_root_path_stored_value
 from ...core.sql_portable import sql_julian_timestamp_now_expr
@@ -434,23 +434,30 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                         f"Updated project description in database: {new_description}"
                                     )
                         else:
-                            # Project doesn't exist in database, create it with new ID and description
+                            # Project doesn't exist in database, create it with new ID and
+                            # description. Route through the vetted insert_project_row
+                            # helper (same one used by the file watcher and the legacy
+                            # database client) instead of a hand-rolled INSERT: it is the
+                            # single place that fills every column the multi-instance
+                            # partition scheme depends on (server_instance_id,
+                            # deleted, processing_paused) plus its own orphan-reclaim
+                            # and duplicate-id handling. A bespoke INSERT that omits
+                            # server_instance_id leaves the new row unscoped (invisible
+                            # to get_project/list_projects for this server instance) and,
+                            # on a live Postgres deployment where the column carries a
+                            # NOT NULL constraint, fails outright (bug 3805fbbd).
                             root_stored = persist_projects_root_path_stored_value(
                                 project_root_absolute=root_path,
                                 watch_dir_id=None,
                                 database=database,
                             )
-                            database.execute(
-                                f"""
-                                INSERT INTO projects (id, root_path, name, comment, updated_at)
-                                VALUES (?, ?, ?, ?, {_now})
-                                """,
-                                (
-                                    new_project_id,
-                                    root_stored,
-                                    root_path.name,
-                                    new_description,
-                                ),
+                            insert_project_row(
+                                database,
+                                new_project_id,
+                                root_stored,
+                                root_path.name,
+                                comment=new_description,
+                                watch_dir_id=None,
                             )
                             database_updated = True
                             database_project_id = new_project_id

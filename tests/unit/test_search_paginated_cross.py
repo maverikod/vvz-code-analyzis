@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.commands.search_mcp_command import SearchMCPCommand
 from code_analysis.commands.search_paginated_cross import (
+    _prefilter_candidates,
     indexed_finding_payload,
     normalize_cross_finding,
     run_paginated_cross,
@@ -53,6 +57,28 @@ def _fake_assembler_factory(
 
     assembler.run_until_idle.side_effect = run
     return assembler
+
+
+@pytest.mark.asyncio
+async def test_prefilter_candidates_accepts_any_base_mcp_command_instance() -> None:
+    """command: BaseMCPCommand (retyped off the deleted ProjectCrossSearchCommand) -
+    any concrete BaseMCPCommand subclass works, since _prefilter_candidates only
+    ever calls the inherited _resolve_project_root / _open_database_from_config.
+    Proven here with SearchMCPCommand itself (the instance search_mcp_command.py
+    now actually constructs), not a MagicMock."""
+    command: BaseMCPCommand = SearchMCPCommand()
+
+    with patch.object(
+        BaseMCPCommand,
+        "_resolve_project_root",
+        side_effect=RuntimeError("no such project"),
+    ):
+        indexed, index_gap = _prefilter_candidates(
+            command, "pid", logging.getLogger(__name__)
+        )
+
+    assert indexed == []
+    assert index_gap == []
 
 
 def test_indexed_finding_payload_fulltext_maps_content_and_score() -> None:
@@ -222,3 +248,115 @@ async def test_run_paginated_cross_publishes_block_structural_grep(
             block_assembler_factory=_fake_assembler_factory,
         )
     assert pos == 1
+
+
+@pytest.mark.asyncio
+async def test_run_paginated_cross_global_fulltext_bypasses_command_class(
+    tmp_path: Path,
+) -> None:
+    """project_id=None -> fulltext goes through domain.full_text_search_global
+    directly (FulltextSearchMCPCommand, which hard-requires project_id, is never
+    constructed for this path)."""
+    session, layout = _session_and_layout(tmp_path)
+    command = MagicMock()
+    command._open_database_from_config.return_value = MagicMock(disconnect=MagicMock())
+
+    global_rows = [
+        {
+            "file_path": "a.py",
+            "content": "def foo(): pass",
+            "bm25_score": 0.4,
+            "entity_type": "function",
+            "entity_name": "foo",
+            "project_id": "proj-a",
+            "project_name": "Project A",
+        }
+    ]
+
+    with (
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.search.full_text_search_global",
+            return_value=global_rows,
+        ) as ft_global_mock,
+        patch(
+            "code_analysis.commands.search_paginated_cross.FulltextSearchMCPCommand",
+        ) as ft_cmd_class,
+    ):
+        pos = await run_paginated_cross(
+            command=command,
+            params={
+                "project_id": None,
+                "query": "foo",
+                "semantic_limit": 0,
+                "enable_grep": False,
+                "grep_patterns": [],
+            },
+            session=session,
+            layout=layout,
+            raw_config={"search_session": {"max_block_size_bytes": 65536}},
+        )
+
+    assert pos == 1
+    ft_global_mock.assert_called_once()
+    ft_cmd_class.assert_not_called()
+    block_path = layout.blocks_dir / "block_1.json"
+    data = json.loads(block_path.read_text(encoding="utf-8"))
+    results = data.get("results") or data.get("items") or []
+    assert len(results) >= 1
+
+
+@pytest.mark.asyncio
+async def test_run_paginated_cross_global_semantic_skips_on_faiss_with_note(
+    tmp_path: Path,
+) -> None:
+    """project_id=None + FAISS backend -> semantic phase skipped, a note is
+    written to the session's notes.json explaining why (mirrors how grep
+    phase-skips are reported via profile checkpoints, but this is
+    client-visible)."""
+    session, layout = _session_and_layout(tmp_path)
+    command = MagicMock()
+    command._open_database_from_config.return_value = MagicMock(disconnect=MagicMock())
+
+    with (
+        patch(
+            "code_analysis.core.database_driver_pkg.domain.search.full_text_search_global",
+            return_value=[],
+        ),
+        patch(
+            "code_analysis.core.vector_search_backend.effective_vector_search_backend",
+            return_value="faiss",
+        ),
+        patch(
+            "code_analysis.core.storage_paths.load_raw_config",
+            return_value={"code_analysis": {}},
+        ),
+        patch(
+            "code_analysis.commands.base_mcp_command.BaseMCPCommand._resolve_config_path",
+            return_value=tmp_path / "config.json",
+        ),
+    ):
+        (tmp_path / "config.json").write_text("{}")
+        pos = await run_paginated_cross(
+            command=command,
+            params={
+                "project_id": None,
+                "query": "foo",
+                "enable_semantic": True,
+                "semantic_limit": 5,
+                "fulltext_limit": 0,
+                "enable_grep": False,
+                "grep_patterns": [],
+            },
+            session=session,
+            layout=layout,
+            raw_config={"search_session": {"max_block_size_bytes": 65536}},
+        )
+
+    # No fulltext (limit=0) and no semantic (skipped) -> no findings at all, so
+    # no block gets published; this test's point is the note, not the block.
+    assert pos is None
+    notes_path = layout.root / "notes.json"
+    assert notes_path.is_file()
+    notes = json.loads(notes_path.read_text()).get("notes")
+    assert notes and "FAISS" in notes[0]
+    assert "pgvector" in notes[0]

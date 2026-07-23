@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import threading
@@ -34,7 +35,6 @@ from ..core.search_session.search_profile_log import (
 from ..core.search_session.session import SearchSession, SearchSessionState
 from .base_mcp_command import BaseMCPCommand
 from .command_metadata_helpers import build_command_metadata
-from .project_cross_search_command import ProjectCrossSearchCommand
 from .search_paginated_cross import run_paginated_cross
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,13 @@ def _run_paginated_cross_in_thread(
         """Return runner."""
         try:
             await run_paginated_cross(
-                command=ProjectCrossSearchCommand(),
+                # BaseMCPCommand-typed support instance (retyped off the deleted
+                # ProjectCrossSearchCommand): run_paginated_cross only ever calls
+                # its BaseMCPCommand-inherited _resolve_project_root /
+                # _open_database_from_config, so any concrete BaseMCPCommand
+                # works here - reuse SearchMCPCommand itself rather than adding
+                # a new throwaway class.
+                command=SearchMCPCommand(),
                 params=params,
                 session=session,
                 layout=layout,
@@ -100,11 +106,18 @@ class SearchMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "additionalProperties": False,
-            "required": ["project_id", "query"],
+            "required": ["query"],
             "properties": {
                 "project_id": {
-                    "type": "string",
-                    "description": "Project UUID. Use list_projects to discover valid values.",
+                    "type": ["string", "null"],
+                    "description": (
+                        "Project UUID. Use list_projects to discover valid values. "
+                        "Omit or pass null to search ALL projects (global search): "
+                        "fulltext always works globally; semantic works globally only "
+                        "on the pgvector backend (FAISS has no cross-project index and "
+                        "is skipped with a note); enable_grep=true requires an explicit "
+                        "project_id (grep scans one project's files on disk)."
+                    ),
                 },
                 "query": {
                     "type": "string",
@@ -220,9 +233,23 @@ class SearchMCPCommand(BaseMCPCommand):
         query = str(params.get("query") or "").strip()
         if not query:
             raise ValidationError("query must be non-empty", field="query", details={})
-        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        project_id = params.get("project_id")
         params["enable_semantic"] = bool(params.get("enable_semantic", True))
         params["enable_grep"] = bool(params.get("enable_grep", False))
+        if project_id is None:
+            # Global search (project_id=None) = all projects; grep scans one
+            # project's files on disk, so it has no meaning here - fail loud
+            # instead of silently searching zero/wrong files.
+            if params["enable_grep"]:
+                raise ValidationError(
+                    "grep requires project_id: enable_grep=true is not supported "
+                    "with project_id=None (global search); pass an explicit "
+                    "project_id or set enable_grep=false",
+                    field="project_id",
+                    details={"enable_grep": True, "project_id": None},
+                )
+        else:
+            BaseMCPCommand._validate_project_id_exists(project_id)
         return params
 
     async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:
@@ -305,6 +332,7 @@ class SearchMCPCommand(BaseMCPCommand):
         )
         payload.update(page)
         payload["search_still_running"] = search_still_running
+        payload["notes"] = self._read_session_notes(layout)
         profile.checkpoint(
             "search_execute_return",
             items=len(page.get("items") or []),
@@ -312,6 +340,22 @@ class SearchMCPCommand(BaseMCPCommand):
             first_block_position=first_block_position,
         )
         return SuccessResult(data=payload)
+
+    @staticmethod
+    def _read_session_notes(layout: SearchSessionDirectoryLayout) -> list[str]:
+        """Best-effort read of this session's notes.json (written by
+        run_paginated_cross, e.g. when a phase is skipped for global search -
+        see search_paginated_cross._write_session_note). Empty list when the
+        file does not exist yet or the search never needed to write one."""
+        notes_path = layout.root / "notes.json"
+        if not notes_path.is_file():
+            return []
+        try:
+            data = json.loads(notes_path.read_text())
+            notes = data.get("notes")
+            return [str(n) for n in notes] if isinstance(notes, list) else []
+        except Exception:
+            return []
 
     @staticmethod
     async def _wait_for_first_block(

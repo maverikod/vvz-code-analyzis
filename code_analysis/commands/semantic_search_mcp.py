@@ -283,11 +283,14 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             c.source_type,
                             f.path AS file_path,
                             f.content_stale,
+                            f.project_id AS project_id,
+                            p.name AS project_name,
                             c.bm25_score,
                             c.token_count,
                             (c.embedding_vec <=> ?::vector) AS dist
                         FROM code_chunks c
                         JOIN files f ON f.id = c.file_id
+                        JOIN projects p ON p.id = f.project_id
                         WHERE c.project_id = ?
                           AND c.embedding_vec IS NOT NULL
                         ORDER BY c.embedding_vec <=> ?::vector
@@ -320,6 +323,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             "text": row.get("chunk_text"),
                             "vector_backend": "pgvector",
                             "content_stale": bool(row.get("content_stale") or False),
+                            "project_id": row.get("project_id"),
+                            "project_name": row.get("project_name"),
                         }
                         if row.get("bm25_score") is not None:
                             item_pg["bm25_score"] = float(row["bm25_score"])

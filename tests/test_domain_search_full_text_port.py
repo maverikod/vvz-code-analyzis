@@ -71,3 +71,66 @@ def test_full_text_search_entity_type_filter_appended() -> None:
     sql, params = driver.calls[0]
     assert "c.entity_type = ?" in sql
     assert params == ("foo", "proj-1", "foo", "class", 10)
+
+
+def test_full_text_search_project_scoped_select_carries_project_attribution() -> None:
+    """Project-scoped fulltext SELECT still carries project_id/project_name (attribution
+    in both modes, bug — search(project_id=None) = all projects)."""
+    driver = _FakeDriver([])
+
+    domain_search.full_text_search(driver, "foo", "proj-1")
+
+    sql, _params = driver.calls[0]
+    assert "f.project_id AS project_id" in sql
+    assert "p.name AS project_name" in sql
+    assert "INNER JOIN projects p ON p.id = f.project_id" in sql
+
+
+def test_full_text_search_global_empty_query_returns_empty_without_execute() -> None:
+    """Global variant: same empty-query short-circuit as the project-scoped one."""
+    driver = _FakeDriver([{"entity_name": "x"}])
+
+    result = domain_search.full_text_search_global(driver, "///")
+
+    assert result == []
+    assert driver.calls == []
+
+
+def test_full_text_search_global_has_no_project_id_filter_and_carries_attribution() -> None:
+    """Global variant: no project_id bound param, no WHERE f.project_id filter,
+    but project_id/project_name attribution columns ARE in the SELECT."""
+    rows = [
+        {
+            "entity_type": "function",
+            "entity_name": "foo",
+            "content": "def foo(): pass",
+            "docstring": None,
+            "file_path": "a.py",
+            "project_id": "proj-1",
+            "project_name": "proj-one",
+        }
+    ]
+    driver = _FakeDriver(rows)
+
+    result = domain_search.full_text_search_global(driver, "foo bar", limit=5)
+
+    assert result == rows
+    sql, params = driver.calls[0]
+    assert "WHERE f.project_id" not in sql
+    assert "f.project_id AS project_id" in sql
+    assert "p.name AS project_name" in sql
+    assert "INNER JOIN projects p ON p.id = f.project_id" in sql
+    # fts_query, fts_query, limit - no project_id bound anywhere
+    assert params == ("foo bar", "foo bar", 5)
+    assert "proj-1" not in params
+
+
+def test_full_text_search_global_entity_type_filter_appended() -> None:
+    """Global variant: entity_type filter still appends its own clause/param."""
+    driver = _FakeDriver([])
+
+    domain_search.full_text_search_global(driver, "foo", entity_type="class", limit=10)
+
+    sql, params = driver.calls[0]
+    assert "c.entity_type = ?" in sql
+    assert params == ("foo", "foo", "class", 10)

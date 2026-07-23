@@ -54,10 +54,7 @@ from code_analysis.core.search_session.search_profile_log import (
 )
 from code_analysis.core.search_session.session import SearchSession
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
-from code_analysis.commands.project_cross_search_command import (
-    ProjectCrossSearchCommand,
-)
-from code_analysis.commands.project_cross_search_core import (
+from code_analysis.commands.search_paginated_cross_grep_evidence import (
     is_structural_grep_evidence,
     normalize_grep_hit,
 )
@@ -264,7 +261,7 @@ def _make_block_assembler(
 
 
 def _prefilter_candidates(
-    command: ProjectCrossSearchCommand,
+    command: BaseMCPCommand,
     project_id: str,
     log: logging.Logger,
     profile: SearchProfileRecorder | None = None,
@@ -359,7 +356,7 @@ def _prefilter_candidates(
 
 async def run_paginated_cross(
     *,
-    command: ProjectCrossSearchCommand,
+    command: BaseMCPCommand,
     params: dict[str, Any],
     session: SearchSession,
     layout: SearchSessionDirectoryLayout,
@@ -389,7 +386,8 @@ async def run_paginated_cross(
     )
     profile.checkpoint("cross_run_start", **request_summary_fields(params))
 
-    project_id = str(params.get("project_id", ""))
+    _raw_project_id = params.get("project_id")
+    project_id: Optional[str] = str(_raw_project_id) if _raw_project_id else None
     query = str(params.get("query", ""))
     enable_semantic = bool(params.get("enable_semantic", True))
     enable_grep = bool(params.get("enable_grep", False))
@@ -487,10 +485,63 @@ async def run_paginated_cross(
         update_manifest_atomic(layout, mutator)
 
     project_root: Optional[Any] = None
-    try:
-        project_root = command._resolve_project_root(project_id).resolve()
-    except Exception as exc:
-        log.warning("[TIMING] cannot resolve project root for grep normalize: %s", exc)
+    if project_id is not None:
+        # Global mode (project_id is None) never reaches grep (validated at the
+        # SearchMCPCommand layer: "grep requires project_id"), so there is no
+        # single project root to resolve here.
+        try:
+            project_root = command._resolve_project_root(project_id).resolve()
+        except Exception as exc:
+            log.warning(
+                "[TIMING] cannot resolve project root for grep normalize: %s", exc
+            )
+
+    def _write_session_note(note: str) -> None:
+        """Append a human-readable note to this session's notes.json (best-effort).
+
+        Own, self-contained artifact under the session's own directory (not a
+        change to the shared SearchSessionManifest dataclass) - the caller
+        (search_mcp_command.SearchMCPCommand.execute) reads it back and merges
+        it into the first-page response's "notes" list, e.g. to explain why a
+        phase (semantic, for FAISS + project_id=None) was skipped.
+        """
+        try:
+            notes_path = layout.root / "notes.json"
+            existing: list[str] = []
+            if notes_path.is_file():
+                import json as _json
+
+                try:
+                    existing = list(_json.loads(notes_path.read_text()).get("notes") or [])
+                except Exception:
+                    existing = []
+            existing.append(note)
+            atomic_write_json(notes_path, {"notes": existing})
+        except Exception as exc:  # noqa: BLE001 - a note failing to write is never fatal
+            log.warning("[TIMING] failed to write session note: %s", exc)
+
+    def _global_semantic_backend() -> str:
+        """Return effective_vector_search_backend for the configured driver, or
+        "" on any config-loading failure (treated as non-pgvector -> skip)."""
+        try:
+            from code_analysis.core.config import get_driver_config
+            from code_analysis.core.storage_paths import load_raw_config
+            from code_analysis.core.vector_search_backend import (
+                effective_vector_search_backend,
+            )
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            if not config_path.exists():
+                return ""
+            config_dict = load_raw_config(config_path)
+            code_analysis_config = config_dict.get("code_analysis", config_dict)
+            driver_cfg = get_driver_config(config_dict) or {}
+            driver_type = str(driver_cfg.get("type") or "").strip().lower()
+            configured_vsb = code_analysis_config.get("vector_search_backend")
+            return effective_vector_search_backend(driver_type, configured_vsb)
+        except Exception as exc:
+            log.warning("[TIMING] could not determine vector search backend: %s", exc)
+            return ""
 
     def _write_indexed_findings(
         raw_list: list[dict[str, Any]],
@@ -538,6 +589,25 @@ async def run_paginated_cross(
         """Return run semantic."""
         if semantic_limit <= 0:
             return []
+        if project_id is None:
+            # Global mode: FAISS has no cross-project index to query - skip the
+            # phase entirely (with an explicit note) rather than silently
+            # returning nothing; pgvector supports it, see _run_semantic_global.
+            backend = _global_semantic_backend()
+            if backend != "pgvector":
+                _write_session_note(
+                    "semantic phase skipped for project_id=None (global search): "
+                    f"FAISS-backed vector search has no cross-project index "
+                    f"(effective_vector_search_backend={backend!r}); use pgvector "
+                    "or pass an explicit project_id for semantic results."
+                )
+                profile.checkpoint(
+                    "semantic_phase_skipped",
+                    reason="global_search_requires_pgvector_backend",
+                    backend=backend,
+                )
+                return []
+            return await _run_semantic_global()
         profile.checkpoint("semantic_backend_start", limit=min(semantic_limit, 100))
         t_be = time.monotonic()
         try:
@@ -585,6 +655,8 @@ async def run_paginated_cross(
         """Return run fulltext."""
         if fulltext_limit <= 0:
             return []
+        if project_id is None:
+            return await _run_fulltext_global()
         profile.checkpoint("fulltext_backend_start", limit=fulltext_limit)
         t_be = time.monotonic()
         try:
@@ -627,6 +699,185 @@ async def run_paginated_cross(
             )
             return []
 
+    async def _run_semantic_global() -> List[dict[str, Any]]:
+        """Global semantic search (project_id is None): pgvector-only.
+
+        Bypasses SemanticSearchMCPCommand entirely (that command hard-requires
+        project_id in its own validate_params) - calls the pgvector query
+        directly against the shared database, same embedding-fetch shape as
+        SemanticSearchMCPCommand.execute()'s own pgvector branch but without a
+        c.project_id filter, with project_id/project_name attribution added to
+        the SELECT. FAISS backend has no cross-project index to query, so it is
+        never used here: the caller (_run_semantic) checks the effective
+        backend first and skips this function entirely (with a note) when it
+        is not pgvector.
+        """
+        if semantic_limit <= 0:
+            return []
+        profile.checkpoint(
+            "semantic_backend_start", limit=min(semantic_limit, 100), scope="global"
+        )
+        t_be = time.monotonic()
+        try:
+            import numpy as np
+
+            from code_analysis.commands.semantic_search_mcp import (
+                _omit_semantic_hit_for_docs_markdown,
+            )
+            from code_analysis.core.config import get_driver_config
+            from code_analysis.core.config_json import ConfigJSONDecodeError
+            from code_analysis.core.embedding_input import EmbeddingInput
+            from code_analysis.core.pgvector_embedding import (
+                numpy_embedding_to_pgvector_text,
+            )
+            from code_analysis.core.storage_paths import load_raw_config
+            from code_analysis.core.svo_client_manager import SVOClientManager
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            if not config_path.exists():
+                log.warning("[TIMING] semantic_global: config not found")
+                return []
+            try:
+                config_dict = load_raw_config(config_path)
+            except ConfigJSONDecodeError as exc:
+                log.warning("[TIMING] semantic_global: config invalid: %s", exc)
+                return []
+            code_analysis_config = config_dict.get("code_analysis", config_dict)
+            raw_docs_indexing = code_analysis_config.get("docs_indexing")
+            docs_di = raw_docs_indexing if isinstance(raw_docs_indexing, dict) else {}
+            docs_markdown_vectorize_enabled = bool(docs_di.get("vectorize"))
+            _ = get_driver_config  # imported for parity with the per-project path
+
+            svo = SVOClientManager(config_dict, root_dir=config_path.parent)
+            await svo.initialize()
+            try:
+                q_emb = await svo.get_embeddings([EmbeddingInput(text=query)])
+                if not q_emb or getattr(q_emb[0], "embedding", None) is None:
+                    log.warning("[TIMING] semantic_global: embedding service failed")
+                    return []
+                qv = np.array(getattr(q_emb[0], "embedding"), dtype="float32")
+                n = float(np.linalg.norm(qv))
+                if n <= 0:
+                    return []
+                query_vec = qv / n
+            finally:
+                await svo.close()
+
+            database = command._open_database_from_config(auto_analyze=False)
+            try:
+                qtxt = numpy_embedding_to_pgvector_text(query_vec)
+                pq = database.execute(
+                    """
+                    SELECT
+                        c.id AS chunk_id,
+                        c.file_id,
+                        c.vector_id,
+                        c.chunk_uuid,
+                        c.chunk_type,
+                        c.chunk_text,
+                        c.line,
+                        c.source_type,
+                        f.path AS file_path,
+                        f.content_stale,
+                        f.project_id AS project_id,
+                        p.name AS project_name,
+                        c.bm25_score,
+                        c.token_count,
+                        (c.embedding_vec <=> ?::vector) AS dist
+                    FROM code_chunks c
+                    JOIN files f ON f.id = c.file_id
+                    JOIN projects p ON p.id = f.project_id
+                    WHERE c.embedding_vec IS NOT NULL
+                    ORDER BY c.embedding_vec <=> ?::vector
+                    LIMIT ?
+                    """,
+                    (qtxt, qtxt, min(semantic_limit, 100)),
+                )
+            finally:
+                database.disconnect()
+            prow = pq.get("data", []) if isinstance(pq, dict) else []
+            rows: List[dict[str, Any]] = []
+            for row in prow:
+                dist = float(row.get("dist") or 0.0)
+                score = 1.0 / (1.0 + dist)
+                if min_score is not None and score < float(min_score):
+                    continue
+                if _omit_semantic_hit_for_docs_markdown(
+                    row.get("source_type"),
+                    docs_markdown_vectorize_enabled=docs_markdown_vectorize_enabled,
+                ):
+                    continue
+                item: dict[str, Any] = {
+                    "score": score,
+                    "distance": dist,
+                    "file_path": row.get("file_path"),
+                    "line": row.get("line"),
+                    "text": row.get("chunk_text"),
+                    "chunk_type": row.get("chunk_type"),
+                    "content_stale": bool(row.get("content_stale") or False),
+                    "project_id": row.get("project_id"),
+                    "project_name": row.get("project_name"),
+                }
+                rows.append(item)
+            if file_pattern:
+                rows = [r for r in rows if _path_matches_filter(str(r.get("file_path") or ""))]
+            profile.checkpoint(
+                "semantic_backend_done",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                rows=len(rows),
+                scope="global",
+            )
+            return rows
+        except Exception as exc:
+            log.warning("[TIMING] semantic_global exception: %s", exc)
+            profile.checkpoint(
+                "semantic_backend_error",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                error=str(exc),
+                scope="global",
+            )
+            return []
+
+    async def _run_fulltext_global() -> List[dict[str, Any]]:
+        """Global fulltext search (project_id is None): domain full_text_search_global."""
+        if fulltext_limit <= 0:
+            return []
+        profile.checkpoint("fulltext_backend_start", limit=fulltext_limit, scope="global")
+        t_be = time.monotonic()
+        try:
+            from code_analysis.core.database_driver_pkg.domain.search import (
+                full_text_search_global,
+            )
+
+            database = command._open_database_from_config(auto_analyze=False)
+            try:
+                rows = full_text_search_global(database, query, limit=fulltext_limit)
+            finally:
+                database.disconnect()
+            if file_pattern:
+                rows = [
+                    r
+                    for r in rows
+                    if isinstance(r, dict)
+                    and _path_matches_filter(str(r.get("file_path") or ""))
+                ]
+            profile.checkpoint(
+                "fulltext_backend_done",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                rows=len(rows),
+                scope="global",
+            )
+            return rows
+        except Exception as exc:
+            log.warning("[TIMING] fulltext_global exception: %s", exc)
+            profile.checkpoint(
+                "fulltext_backend_error",
+                backend_sec=round(time.monotonic() - t_be, 4),
+                error=str(exc),
+                scope="global",
+            )
+            return []
+
     async def _run_grep_phase() -> None:
         """Return run grep phase."""
         if not grep_patterns:
@@ -634,6 +885,10 @@ async def run_paginated_cross(
             profile.checkpoint("grep_phase_skipped", reason="no_patterns")
             _flush(search_completed=True)
             return
+        # grep_patterns is only non-empty when enable_grep is True, and
+        # SearchMCPCommand.validate_params rejects enable_grep=True with
+        # project_id=None ("grep requires project_id") before this ever runs.
+        assert project_id is not None, "grep phase reached with project_id=None"
 
         update_manifest_atomic(
             layout,

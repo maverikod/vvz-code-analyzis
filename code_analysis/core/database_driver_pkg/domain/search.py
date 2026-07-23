@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-__all__ = ["plain_query_to_fts5_match", "full_text_search"]
+__all__ = ["plain_query_to_fts5_match", "full_text_search", "full_text_search_global"]
 
 # PostgreSQL rejects inputs longer than ~1 MiB for to_tsvector(); UTF-8 can be 4 bytes/char.
 _PG_TSVECTOR_INPUT_MAX_CHARS = 200_000
@@ -82,6 +82,8 @@ def _full_text_search_postgresql(
             c.docstring,
             f.path AS file_path,
             f.content_stale,
+            f.project_id AS project_id,
+            p.name AS project_name,
             ts_rank_cd(
                 to_tsvector(
                     'simple',
@@ -95,6 +97,7 @@ def _full_text_search_postgresql(
             ) AS bm25_score
         FROM code_content c
         INNER JOIN files f ON f.id = c.file_id
+        INNER JOIN projects p ON p.id = f.project_id
         WHERE f.project_id = ?
           AND to_tsvector(
                 'simple',
@@ -107,6 +110,66 @@ def _full_text_search_postgresql(
             @@ plainto_tsquery('simple', ?)
     """
     params: List[Any] = [fts_query, project_id, fts_query]
+    if entity_type:
+        sql += " AND c.entity_type = ?"
+        params.append(entity_type)
+    sql += " ORDER BY bm25_score DESC LIMIT ?"
+    params.append(limit)
+
+    result = driver.execute(sql, tuple(params))
+    rows = result.get("data", [])
+    if not isinstance(rows, list):
+        return []
+    return [dict(r) for r in rows]
+
+
+def _full_text_search_postgresql_global(
+    driver: Any,
+    fts_query: str,
+    entity_type: Optional[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """PostgreSQL global variant: same as :func:`_full_text_search_postgresql` but
+    with no ``f.project_id`` filter (searches every project) and project
+    attribution (``project_id`` + ``project_name``) added to the SELECT so
+    callers can tell which project each hit came from (bug — search(project_id=None)
+    = all projects)."""
+    cap = _PG_TSVECTOR_INPUT_MAX_CHARS
+    sql = f"""
+        SELECT
+            c.entity_type,
+            c.entity_name,
+            c.content,
+            c.docstring,
+            f.path AS file_path,
+            f.content_stale,
+            f.project_id AS project_id,
+            p.name AS project_name,
+            ts_rank_cd(
+                to_tsvector(
+                    'simple',
+                    left(
+                        coalesce(c.content, '') || ' ' || coalesce(c.docstring, '')
+                        || ' ' || coalesce(c.entity_name, ''),
+                        {cap}
+                    )
+                ),
+                plainto_tsquery('simple', ?)
+            ) AS bm25_score
+        FROM code_content c
+        INNER JOIN files f ON f.id = c.file_id
+        INNER JOIN projects p ON p.id = f.project_id
+        WHERE to_tsvector(
+                'simple',
+                left(
+                    coalesce(c.content, '') || ' ' || coalesce(c.docstring, '')
+                    || ' ' || coalesce(c.entity_name, ''),
+                    {cap}
+                )
+            )
+            @@ plainto_tsquery('simple', ?)
+    """
+    params: List[Any] = [fts_query, fts_query]
     if entity_type:
         sql += " AND c.entity_type = ?"
         params.append(entity_type)
@@ -148,3 +211,21 @@ def full_text_search(
         return []
 
     return _full_text_search_postgresql(driver, fts_query, project_id, entity_type, limit)
+
+
+def full_text_search_global(
+    driver: Any,
+    query: str,
+    entity_type: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """Run full-text search across ALL projects (``search(project_id=None)``).
+
+    Same query semantics as :func:`full_text_search` but with no project
+    filter; each row carries ``project_id``/``project_name`` for attribution.
+    """
+    fts_query = plain_query_to_fts5_match(query)
+    if fts_query is None:
+        return []
+
+    return _full_text_search_postgresql_global(driver, fts_query, entity_type, limit)

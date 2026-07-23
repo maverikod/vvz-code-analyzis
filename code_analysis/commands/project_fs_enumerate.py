@@ -14,10 +14,14 @@ from typing import List
 
 from ..core.project_ignore_policy import (
     filter_paths_for_default_project_listing,
+    is_ignored_project_relative_path,
     path_is_under_project_local_venv,
 )
 from ..core.venv_path_policy import (
+    LIST_PROJECT_SKIP_FILE_SUFFIXES,
     build_allowlisted_site_packages_py_files,
+    default_project_walk_prune_ignore_dir_basenames,
+    directory_basename_pruned_from_default_project_walk,
     expand_ignore_exception_all_files,
     expand_ignore_exception_py_files,
     iter_project_files_excluding_venv,
@@ -72,5 +76,67 @@ def enumerate_project_paths(
         root,
         include_venv=show_venv,
         include_venv_ignore_exceptions=include_venv_ignore_exceptions,
+        show_hidden=show_hidden,
+    )
+
+
+def path_survives_default_project_listing_filter(
+    relative_posix: str,
+    *,
+    python_only: bool,
+    show_hidden: bool,
+) -> bool:
+    """True when a single discovered ``relative_posix`` would survive the same
+    per-path filters a full :func:`enumerate_project_paths` walk applies:
+
+    1. Ancestor-directory walk pruning (:func:`directory_basename_pruned_from_
+       default_project_walk`, per ancestor segment) -- this is where generic
+       ``ls -a`` dot-directory hiding actually happens for the real walk; it is
+       NOT re-derived from :func:`is_ignored_project_relative_path`, whose
+       per-segment dot-dir rule only covers a fixed named set, not arbitrary
+       dot dirs. Getting this wrong would fast-path a hidden file as a false hit
+       when ``show_hidden`` is false and the walk would never have discovered it.
+    2. The ``python_only`` extension gate.
+    3. The binary/bytecode suffix skip (:data:`LIST_PROJECT_SKIP_FILE_SUFFIXES`,
+       non-``python_only`` mode only).
+    4. :func:`is_ignored_project_relative_path` (known heavy-tree segment names,
+       adjacent-pair shapes like ``data/trash``, ignored file suffixes/globs).
+
+    Reused by any single-path fast path (e.g. ``list_project_files`` exact-file
+    ``file_pattern`` lookup) so this rule set lives in exactly one place -- do
+    not reimplement it at a call site.
+
+    Always evaluates step 4 as if ``show_venv=False`` and
+    ``include_venv_ignore_exceptions=False`` (belt-and-suspenders: step 1 already
+    prunes every ``.venv``/``venv`` ancestor unconditionally). Deciding whether a
+    venv path is genuinely reachable requires either RECORD-based site-packages
+    parsing (:func:`build_allowlisted_site_packages_py_files`) or
+    ``ignore_exceptions`` config-glob expansion -- both are walk-level, multi-path
+    mechanisms this single-path predicate does not replicate. Likewise does NOT
+    evaluate non-venv ``ignore_exceptions`` overrides: a path this returns
+    ``False`` for may still be reachable via such an expansion. Callers needing
+    an exact single-path verdict must treat ``False`` as "cannot prove
+    reachable by the fast per-path rules" (fall back to the full walk), never as
+    a hard exclusion verdict in its own right.
+    """
+    parts = [seg for seg in relative_posix.split("/") if seg]
+    if len(parts) > 1:
+        ignore_dirs = default_project_walk_prune_ignore_dir_basenames()
+        for seg in parts[:-1]:
+            if directory_basename_pruned_from_default_project_walk(
+                seg, ignore_dirs, show_hidden=show_hidden
+            ):
+                return False
+    if python_only:
+        if not relative_posix.endswith(".py"):
+            return False
+    else:
+        suffix = Path(relative_posix).suffix.lower()
+        if suffix in LIST_PROJECT_SKIP_FILE_SUFFIXES:
+            return False
+    return not is_ignored_project_relative_path(
+        relative_posix,
+        include_venv=False,
+        include_venv_ignore_exceptions=False,
         show_hidden=show_hidden,
     )

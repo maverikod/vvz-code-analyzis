@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import (
     CommandResult,
     ErrorResult,
@@ -17,13 +17,21 @@ from mcp_proxy_adapter.commands.result import (
 )
 
 from ..base_mcp_command import BaseMCPCommand
-from ...core.database_driver_pkg.domain.files import get_project_file_rows
+from ...core.database_driver_pkg.domain.files import (
+    get_file_by_path,
+    get_project_file_rows,
+)
 from ..file_management.relative_path_list_pattern import (
     canonical_relative_path,
     effective_listing_pattern,
+    normalize_listing_pattern,
+    pattern_has_fnmatch_magic,
     relative_path_matches_listing_pattern,
 )
-from ..project_fs_enumerate import enumerate_project_paths
+from ..project_fs_enumerate import (
+    enumerate_project_paths,
+    path_survives_default_project_listing_filter,
+)
 from ...core.venv_path_policy import project_root_listing_error
 from ...core.list_pagination import (
     build_list_page_payload,
@@ -94,6 +102,110 @@ def _fs_file_dict_with_optional_id(
             rel=rel, abs_path_str=abs_str, id_by_key=id_by_key
         ),
     }
+
+
+def _literal_pattern_candidate_relative_path(effective_pattern: str) -> Optional[str]:
+    """Return a literal relative-path candidate for ``effective_pattern``, else ``None``.
+
+    ``None`` means the pattern is either empty, a glob (fnmatch metacharacters), or an
+    absolute-looking path ``/...`` that can never match a project-relative path -- none
+    of those admit a single-file fast path (bug 04cb1578).
+    """
+    normalized = normalize_listing_pattern(effective_pattern)
+    if not normalized or pattern_has_fnmatch_magic(normalized):
+        return None
+    candidate = normalized.rstrip("/")
+    if not candidate or candidate.startswith("/"):
+        return None
+    return candidate
+
+
+def _exact_file_fast_path_payload(
+    *,
+    project_id: str,
+    project_root: Path,
+    candidate_rel: str,
+    python_only: bool,
+    show_hidden: bool,
+    open_db: Callable[[], Any],
+    page_size: Optional[int],
+    block_position: Optional[int],
+    limit: Optional[int],
+    offset: int,
+) -> Optional[Dict[str, Any]]:
+    """DB-first single-stat fast path for a literal (non-glob) ``file_pattern``.
+
+    Returns the exact same page-payload shape :func:`build_list_page_payload` would
+    for the full walk when ``candidate_rel`` unambiguously names one on-disk,
+    non-ignored, already-indexed regular file. Returns ``None`` on ANY miss or
+    ambiguity -- the caller must then run the existing full walk unchanged:
+    directory-prefix patterns, non-regular-file paths, paths
+    :func:`path_survives_default_project_listing_filter` cannot prove are not an
+    ``ignore_exceptions`` override, and files absent from the index (an unresolved
+    ``file_id`` would risk not byte-matching the slow path's own id-matching
+    semantics in :func:`_resolve_file_id_for_row`).
+    """
+    try:
+        candidate_abs = (project_root / candidate_rel).resolve()
+    except OSError:
+        return None
+    try:
+        candidate_abs.relative_to(project_root)
+    except ValueError:
+        return None
+    try:
+        if not candidate_abs.is_file():
+            return None
+    except OSError:
+        return None
+
+    rel = canonical_relative_path(project_root, candidate_abs)
+    if not path_survives_default_project_listing_filter(
+        rel,
+        python_only=python_only,
+        show_hidden=show_hidden,
+    ):
+        return None
+
+    try:
+        db = open_db()
+        row = get_file_by_path(
+            db, str(candidate_abs), project_id, include_deleted=False
+        )
+    except Exception:
+        row = None
+    if not row:
+        return None
+    raw_id = row.get("id")
+    file_id = str(raw_id).strip() if raw_id is not None else ""
+    if not file_id:
+        return None
+
+    file_dict: Dict[str, Any] = {
+        "project_id": project_id,
+        "path": str(candidate_abs),
+        "relative_path": rel,
+        "deleted": False,
+        "file_id": file_id,
+    }
+
+    page_size_r, offset_r, block_position_r = resolve_list_pagination(
+        {
+            "page_size": page_size,
+            "block_position": block_position,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+    page_items = paginate_sequence([file_dict], offset=offset_r, page_size=page_size_r)
+    return build_list_page_payload(
+        items=page_items,
+        total=1,
+        page_size=page_size_r,
+        block_position=block_position_r,
+        offset=offset_r,
+        legacy_items_key="files",
+    )
 
 
 class ListProjectFilesMCPCommand(BaseMCPCommand):
@@ -255,6 +367,33 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     },
                 )
 
+            effective_pattern = effective_listing_pattern(file_pattern, glob)
+            if effective_pattern:
+                candidate_rel = _literal_pattern_candidate_relative_path(
+                    effective_pattern
+                )
+                if candidate_rel is not None:
+                    # ``show_venv`` / ``include_venv_ignore_exceptions`` are deliberately
+                    # NOT forwarded: the fast path always treats a ``.venv``/``venv``
+                    # candidate as ambiguous and falls back (see
+                    # path_survives_default_project_listing_filter docstring).
+                    fast_payload = _exact_file_fast_path_payload(
+                        project_id=project_id,
+                        project_root=project_root,
+                        candidate_rel=candidate_rel,
+                        python_only=python_only,
+                        show_hidden=show_hidden,
+                        open_db=lambda: self._open_database_from_config(
+                            auto_analyze=False
+                        ),
+                        page_size=page_size,
+                        block_position=block_position,
+                        limit=limit,
+                        offset=offset,
+                    )
+                    if fast_payload is not None:
+                        return SuccessResult(data=fast_payload)
+
             fs_paths = enumerate_project_paths(
                 project_root,
                 show_venv=show_venv,
@@ -263,7 +402,6 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 show_hidden=show_hidden,
             )
 
-            effective_pattern = effective_listing_pattern(file_pattern, glob)
             if effective_pattern:
                 fs_paths = [
                     p

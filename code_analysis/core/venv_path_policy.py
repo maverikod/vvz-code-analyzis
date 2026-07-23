@@ -16,7 +16,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Collection, FrozenSet, List, Optional, Sequence, Set
+from typing import AbstractSet, Collection, FrozenSet, List, Optional, Sequence, Set
 
 from .fs_permissions import log_walk_error
 
@@ -355,7 +355,9 @@ def build_allowlisted_site_packages_py_files(
 
 
 # Suffixes skipped when listing ordinary project files (binaries / bytecode / native libs).
-_LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
+# Public: reused by project_fs_enumerate.path_survives_default_project_listing_filter
+# (list_project_files exact-path fast path) so the rule lives in exactly one place.
+LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
     {
         ".pyc",
         ".pyo",
@@ -373,6 +375,58 @@ _LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
+def default_project_walk_prune_ignore_dir_basenames() -> Set[str]:
+    """``ignore_dirs`` the default project walk unions into its per-name prune rule.
+
+    Exposed so single-path callers (e.g. the ``list_project_files`` exact-file
+    fast path) can replicate walk-pruning ancestor-by-ancestor without walking.
+    """
+    from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
+
+    return set(DEFAULT_IGNORE_PATTERNS) | {DATA_DIR_NAME, LOGS_DIR_NAME}
+
+
+def directory_basename_pruned_from_default_project_walk(
+    name: str,
+    ignore_dirs: AbstractSet[str],
+    *,
+    show_hidden: bool = False,
+) -> bool:
+    """True when directory basename ``name`` would be pruned by the default project
+    walk (:func:`iter_project_files_excluding_venv` /
+    :func:`iter_project_python_files_excluding_venv`).
+
+    Exact extraction of the walk's own per-name prune rule -- single source of truth
+    for both ``os.walk`` dir-list pruning (``_iter_project_walk_prune_dirs``, which
+    passes each entry once per ``os.walk`` step) and any single-path fast path that
+    must decide -- for one candidate path's ancestor directory names -- whether the
+    walk would ever have discovered it, without actually walking. ``.venv``/``venv``
+    are always pruned regardless of ``show_hidden``; dot-prefixed names and
+    :data:`~code_analysis.core.project_ignore_policy.LISTING_CACHE_DIRECTORY_SEGMENTS`
+    are pruned unless ``show_hidden`` is true; ``ignore_dirs`` (pass
+    :func:`default_project_walk_prune_ignore_dir_basenames`) are always pruned.
+    """
+    from .project_ignore_policy import LISTING_CACHE_DIRECTORY_SEGMENTS
+
+    if name in (".venv", "venv"):
+        return True
+    if show_hidden:
+        if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
+            return False
+        if name.startswith("."):
+            return False
+        if name in ignore_dirs:
+            return True
+        return False
+    if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
+        return True
+    if name in ignore_dirs:
+        return True
+    if name.startswith("."):
+        return True
+    return False
+
+
 def _iter_project_walk_prune_dirs(
     dirs: List[str],
     ignore_dirs: Set[str],
@@ -380,29 +434,13 @@ def _iter_project_walk_prune_dirs(
     show_hidden: bool = False,
 ) -> None:
     """In-place prune for ``os.walk`` (shared by Python-only and all-files walkers)."""
-    from .project_ignore_policy import LISTING_CACHE_DIRECTORY_SEGMENTS
-
-    def _prune_dir(name: str) -> bool:
-        """Return prune dir."""
-        if name in (".venv", "venv"):
-            return True
-        if show_hidden:
-            if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
-                return False
-            if name.startswith("."):
-                return False
-            if name in ignore_dirs:
-                return True
-            return False
-        if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
-            return True
-        if name in ignore_dirs:
-            return True
-        if name.startswith("."):
-            return True
-        return False
-
-    dirs[:] = [d for d in dirs if not _prune_dir(d)]
+    dirs[:] = [
+        d
+        for d in dirs
+        if not directory_basename_pruned_from_default_project_walk(
+            d, ignore_dirs, show_hidden=show_hidden
+        )
+    ]
 
 
 def iter_project_python_files_excluding_venv(
@@ -460,7 +498,7 @@ def iter_project_files_excluding_venv(
             except OSError:
                 continue
             suf = p.suffix.lower()
-            if suf in _LIST_PROJECT_SKIP_FILE_SUFFIXES:
+            if suf in LIST_PROJECT_SKIP_FILE_SUFFIXES:
                 continue
             files.append(p)
     return files

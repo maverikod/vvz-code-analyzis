@@ -235,8 +235,17 @@ def resolve_project_root_absolute_str(
         database=database,
     ).strip()
     if primary and Path(primary).is_absolute():
-        if not require_exists or _is_existing_directory(primary):
-            if _projectid_matches(Path(primary), project_id or ""):
+        primary_exists = _is_existing_directory(primary)
+        if not require_exists or primary_exists:
+            # When the target does not exist yet on disk (require_exists=False,
+            # e.g. restore_project_from_trash resolving the pre-move destination),
+            # there is nothing under ``primary`` for _projectid_matches to read --
+            # it always returns False, which would wrongly discard a primary path
+            # that was already correctly derived from the caller-supplied, trusted
+            # watch_dir_id. Trust it directly in that case. When primary DOES
+            # exist, keep validating the projectid match (guards against an
+            # unrelated project's folder occupying the same path).
+            if not primary_exists or _projectid_matches(Path(primary), project_id or ""):
                 return primary
 
     folders = _folder_name_candidates(raw, project_name)

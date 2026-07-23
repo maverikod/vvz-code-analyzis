@@ -16,7 +16,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from code_analysis.core.database_driver_pkg.drivers import postgres as postgres_mod
+from code_analysis.core.database_driver_pkg.drivers import (
+    postgres_migrations as postgres_migrations_mod,
+)
 from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
+from code_analysis.core.database_driver_pkg.drivers.postgres_migrations import (
+    ensure_postgres_schema,
+)
 from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
     _raise_classified,
     classify_postgres_error,
@@ -208,6 +214,61 @@ def test_postgres_sqlstate_survives_to_transient_error() -> None:
     assert t.error_kind == "deadlock"
     assert t.retryable is True
     assert t.commit_outcome_unknown is False
+
+
+@patch.object(postgres_migrations_mod.time, "sleep")
+def test_ensure_postgres_schema_retries_deadlock_then_succeeds(_sleep: Any) -> None:
+    """Bug c5e8fb49: ensure_postgres_schema retries once on injected DeadlockDetected."""
+    from psycopg import errors
+
+    calls: list[int] = []
+
+    def fake_once(conn: Any, schema_definition: Any, *, vector_dim: int = 384) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            raise errors.DeadlockDetected("deadlock")
+        return None
+
+    with patch.object(
+        postgres_migrations_mod, "_ensure_postgres_schema_once", side_effect=fake_once
+    ):
+        ensure_postgres_schema(MagicMock(), {})
+    assert len(calls) == 2, "expected exactly one retry after the injected deadlock"
+
+
+@patch.object(postgres_migrations_mod.time, "sleep")
+def test_ensure_postgres_schema_raises_after_exhausting_retries(_sleep: Any) -> None:
+    """Bug c5e8fb49: ensure_postgres_schema re-raises after exhausting bounded retries."""
+    from psycopg import errors
+
+    calls: list[int] = []
+
+    def fake_once(conn: Any, schema_definition: Any, *, vector_dim: int = 384) -> None:
+        calls.append(1)
+        raise errors.SerializationFailure("serialization failure")
+
+    with patch.object(
+        postgres_migrations_mod, "_ensure_postgres_schema_once", side_effect=fake_once
+    ):
+        with pytest.raises(errors.SerializationFailure):
+            ensure_postgres_schema(MagicMock(), {})
+    assert len(calls) == postgres_migrations_mod._SCHEMA_ENSURE_RETRY_POLICY.attempts
+
+
+def test_ensure_postgres_schema_does_not_retry_non_transient_error() -> None:
+    """A non-deadlock/serialization error (e.g. plain ValueError) is not retried."""
+    calls: list[int] = []
+
+    def fake_once(conn: Any, schema_definition: Any, *, vector_dim: int = 384) -> None:
+        calls.append(1)
+        raise ValueError("not a postgres transient error")
+
+    with patch.object(
+        postgres_migrations_mod, "_ensure_postgres_schema_once", side_effect=fake_once
+    ):
+        with pytest.raises(ValueError):
+            ensure_postgres_schema(MagicMock(), {})
+    assert len(calls) == 1, "non-retryable error must not trigger the retry loop"
 
 
 @patch.object(postgres_mod.time, "sleep")

@@ -105,6 +105,19 @@ def get_shared_database() -> DatabaseClient:
         return cast(DatabaseClient, _SharedDatabaseProxy(_client))
 
 
+def shared_database_status() -> str:
+    """Return ``"ok"`` when the shared DB is set for this process, else ``"unavailable"``.
+
+    Bug c5e8fb49 (boot race): health visibility. Before this, ``health`` had no
+    way to reflect a shared DB that failed to bootstrap (or was never set) — it
+    reported ``ok`` while ``get_shared_database()`` would raise
+    ``SharedDatabaseNotInitializedError`` for every command. Cheap, read-only
+    (reuses ``is_shared_database_current_process()``'s own check), safe to call
+    from a health probe on every request.
+    """
+    return "ok" if is_shared_database_current_process() else "unavailable"
+
+
 def close_shared_database() -> None:
     """Disconnect the real shared client and clear the holder.
 

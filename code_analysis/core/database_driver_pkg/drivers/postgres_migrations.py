@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, cast
 
 from code_analysis.core.database.schema_sync_models import IndexDef
@@ -19,6 +20,7 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_table_sql_postgres,
 )
 from code_analysis.core.database.postgres_schema_ddl import create_postgresql_schema
+from code_analysis.core.retry_policy import RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,18 @@ logger = logging.getLogger(__name__)
 # See PostgreSQL concurrent DDL on identical new relation names.
 _SCHEMA_ENSURE_LOCK_KEY1 = 425_001_707
 _SCHEMA_ENSURE_LOCK_KEY2 = 91_735
+
+# Bug c5e8fb49 (boot race): concurrent cold-boot schema-ensure attempts can still
+# collide with a PostgreSQL deadlock (40P01) or serialization failure (40001) even
+# with the advisory lock, when a competing session is mid-DDL on an overlapping
+# catalog row before it reaches the lock acquisition itself. The DDL body is
+# idempotent (IF NOT EXISTS + guarded column adds), so a clean re-run is safe.
+_SCHEMA_ENSURE_RETRY_POLICY = RetryPolicy(
+    attempts=3,
+    delay_seconds=0.5,
+    backoff_multiplier=2.0,
+    jitter_seconds=0.1,
+)
 
 
 def _rollback_conn(conn: Any) -> None:
@@ -434,7 +448,67 @@ def ensure_postgres_schema(
     *,
     vector_dim: int = 384,
 ) -> None:
-    """Create tables and indexes if missing (FTS5 virtual tables are not created)."""
+    """Create tables and indexes if missing (FTS5 virtual tables are not created).
+
+    Retries the whole locked attempt (``_ensure_postgres_schema_once``) up to
+    ``_SCHEMA_ENSURE_RETRY_POLICY.attempts`` times on PostgreSQL deadlock (40P01) or
+    serialization failure (40001) — SQLSTATE class 40, transient errors that can still
+    occur at cold-boot even with the advisory lock (see module docstring above the
+    policy). The retry loop wraps the *whole* try/except/finally of a single attempt,
+    not just its body: each attempt must re-acquire the advisory lock from a clean
+    state, and the previous attempt's own ``finally`` has already rolled back and
+    released that lock before the next attempt starts. Do not add a second lock here.
+    """
+    try:
+        from psycopg import errors as pg_errors
+    except ImportError:  # pragma: no cover - psycopg always available in production
+        pg_errors = None  # type: ignore[assignment]
+
+    retryable_excs: tuple = ()
+    if pg_errors is not None:
+        retryable_excs = (pg_errors.DeadlockDetected, pg_errors.SerializationFailure)
+
+    max_attempts = _SCHEMA_ENSURE_RETRY_POLICY.attempts
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _ensure_postgres_schema_once(conn, schema_definition, vector_dim=vector_dim)
+            return
+        except retryable_excs as exc:
+            if attempt >= max_attempts:
+                logger.error(
+                    "[DB_RETRY] backend=postgres layer=migrations "
+                    "operation=ensure_postgres_schema attempt=%s/%s exhausted "
+                    "sqlstate=%s error=%s",
+                    attempt,
+                    max_attempts,
+                    getattr(exc, "sqlstate", None),
+                    exc,
+                )
+                raise
+            delay = _SCHEMA_ENSURE_RETRY_POLICY.delay_for_attempt(attempt)
+            logger.warning(
+                "[DB_RETRY] backend=postgres layer=migrations "
+                "operation=ensure_postgres_schema attempt=%s/%s sqlstate=%s "
+                "error=%s; retrying in %.2fs",
+                attempt,
+                max_attempts,
+                getattr(exc, "sqlstate", None),
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+    raise RuntimeError(
+        "ensure_postgres_schema: retry loop exited without result or exception"
+    )
+
+
+def _ensure_postgres_schema_once(
+    conn: Any,
+    schema_definition: Dict[str, Any],
+    *,
+    vector_dim: int = 384,
+) -> None:
+    """Single attempt: acquire advisory lock, run migrations, release lock."""
     locked = False
     try:
         with conn.cursor() as cur:

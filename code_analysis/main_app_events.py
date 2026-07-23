@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 import threading
+import time
 from typing import Any, List, Optional
 
 from code_analysis.commands.base_mcp_command import (
@@ -26,6 +28,7 @@ from code_analysis.commands.base_mcp_command_open_db import (
     open_database_from_config_impl,
 )
 from code_analysis.core.constants import DEFAULT_SHUTDOWN_GRACE_TIMEOUT
+from code_analysis.core.retry_policy import RetryPolicy
 from code_analysis.core.runtime_lock_sessions import register_runtime_session
 from code_analysis.core.shared_database import (
     close_shared_database,
@@ -34,16 +37,106 @@ from code_analysis.core.shared_database import (
 from code_analysis.core.cst_tree.tree_builder import start_cst_tree_ttl_cleanup
 from code_analysis.core import command_offload
 from code_analysis.core.loop_liveness import loop_liveness_beat_loop
-
-# Strong references to long-lived background tasks. asyncio.create_task keeps only
-# a weak reference, so without this the beat task can be garbage-collected and stop.
-_background_tasks: set = set()
 from code_analysis.main_workers import (
     startup_database_driver,
     startup_file_watcher_worker,
     startup_indexing_worker,
     startup_vectorization_worker,
 )
+
+# Strong references to long-lived background tasks. asyncio.create_task keeps only
+# a weak reference, so without this the beat task can be garbage-collected and stop.
+_background_tasks: set = set()
+
+# Bug c5e8fb49 (boot race): bounded retry for the long-lived shared-DB bootstrap
+# (open + probe + set_shared_database). Total worst-case sleep across 4 retries
+# (5 attempts) is ~15.8s (1+2+4+8s plus jitter), well under the 60s
+# ``_db_open_done.wait`` timeout below so a genuinely-down DB still degrades on
+# the documented schedule rather than silently blocking the whole wait window.
+_DB_OPEN_RETRY_POLICY = RetryPolicy(
+    attempts=5,
+    delay_seconds=1.0,
+    backoff_multiplier=2.0,
+    jitter_seconds=0.2,
+)
+
+
+def _bootstrap_with_retry(
+    attempt_fn: Any,
+    *,
+    retry_policy: RetryPolicy,
+    logger: logging.Logger,
+    operation_name: str,
+    sleep_fn: Any = time.sleep,
+) -> Optional[BaseException]:
+    """Run ``attempt_fn()`` with bounded retry; return the last exception, or None on success.
+
+    Module-level and dependency-injected (``sleep_fn``) so the retry schedule is
+    unit-testable without a real ``time.sleep`` — used for the shared-DB bootstrap
+    (bug c5e8fb49) but kept generic (no closure over server-startup state).
+    """
+    max_attempts = retry_policy.attempts
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            attempt_fn()
+            return None
+        except Exception as e:
+            last_exc = e
+            if attempt >= max_attempts:
+                break
+            delay = retry_policy.delay_for_attempt(attempt)
+            logger.warning(
+                "[DB_RETRY] backend=postgres layer=bootstrap operation=%s "
+                "attempt=%s/%s error=%s; retrying in %.2fs",
+                operation_name,
+                attempt,
+                max_attempts,
+                e,
+                delay,
+            )
+            sleep_fn(delay)
+    return last_exc
+
+
+def _fail_loud_shared_database_bootstrap(
+    exc: BaseException,
+    logger: logging.Logger,
+    *,
+    max_attempts: int,
+    exit_fn: Any = os._exit,
+) -> None:
+    """Force the process to exit non-zero after the shared-DB bootstrap retry is exhausted.
+
+    Runs from a daemon thread (see ``thread.start()`` in
+    ``start_workers_on_startup``): a bare ``raise`` here would only kill this
+    thread — it would NOT stop the process, so nothing would trigger an s6
+    restart, and the process would keep running with no shared DB and no
+    further retry, serving every DB-dependent command a silent
+    ``SharedDatabaseNotInitializedError`` forever. The shared DB is a hard boot
+    requirement (``get_shared_database()`` backs virtually every command), so
+    once the bounded retry is exhausted the only correct move is to make the
+    whole process exit non-zero: ``os._exit(1)`` is the same fail-fast idiom
+    ``main()`` already uses on its own shutdown path (see ``main.py``'s
+    ``finally: ... os._exit(exit_code)``), chosen over ``sys.exit()``/``raise``
+    because both of those only unwind the current thread's stack, not the
+    interpreter. s6 supervises this process as the 40-casmgr longrun and
+    restarts it on exit (``docker/casmgr/s6/s6-rc.d/40-casmgr/run``). NOTE:
+    unlike 20-postgres, 40-casmgr has no ``finish`` script and no restart
+    backoff/throttle configured, so a persistently-down DB will make this
+    process flap-restart at s6's default (immediate) respawn rate — a
+    pre-existing s6 configuration gap, documented here; s6 config changes are
+    out of scope for this fix. ``exit_fn`` is injectable so tests can assert
+    the fail-loud path fires without killing the test process.
+    """
+    logger.critical(
+        "❌ [BACKGROUND] Failed to open shared database (integrity/connect/probe) "
+        "after %s attempts: %s",
+        max_attempts,
+        exc,
+        exc_info=exc,
+    )
+    exit_fn(1)
 
 
 def register_startup_shutdown_events(
@@ -92,7 +185,8 @@ def register_startup_shutdown_events(
                     _db_open_done.set()
                     return
 
-                try:
+                def _open_and_set_shared_database_once() -> None:
+                    """One bootstrap attempt: open long-lived DB, set shared holder."""
                     logger.info(
                         "🚀 [BACKGROUND] Opening long-lived database connection..."
                     )
@@ -118,15 +212,26 @@ def register_startup_shutdown_events(
                     logger.info(
                         "✅ [BACKGROUND] Long-lived database connection set (shared)"
                     )
-                except Exception as e:
-                    logger.error(
-                        "❌ [BACKGROUND] Failed to open shared database (integrity/connect/probe): %s",
-                        e,
-                        exc_info=True,
-                    )
-                    _db_open_error[0] = str(e)
+
+                last_exc = _bootstrap_with_retry(
+                    _open_and_set_shared_database_once,
+                    retry_policy=_DB_OPEN_RETRY_POLICY,
+                    logger=logger,
+                    operation_name="open_shared_database",
+                )
+
+                if last_exc is not None:
+                    _db_open_error[0] = str(last_exc)
                     _db_open_done.set()
-                    return
+                    # See _fail_loud_shared_database_bootstrap docstring for why a
+                    # hard process exit (not raise/sys.exit) is required here: this
+                    # runs on a daemon thread (thread.start() below).
+                    _fail_loud_shared_database_bootstrap(
+                        last_exc,
+                        logger,
+                        max_attempts=_DB_OPEN_RETRY_POLICY.attempts,
+                    )
+                    return  # pragma: no cover - unreachable in production (exit_fn exits)
 
                 _db_open_done.set()
 

@@ -22,6 +22,7 @@ from mcp_proxy_adapter.integrations.queuemgr_integration import (
 
 from code_analysis.core.cst_tree.tree_builder import _trees
 from code_analysis.core.dependency_compat import collect_dependency_compatibility
+from code_analysis.core.shared_database import shared_database_status
 
 
 class HealthCommand(Command):
@@ -85,9 +86,18 @@ class HealthCommand(Command):
 
         cfg_state = get_config_runtime_state()
         config_ok = cfg_state.valid
+        # Bug c5e8fb49 (boot race): shared DB is a required dependency (virtually
+        # every command reads it via get_shared_database()) — previously health had
+        # no field for it at all, so a boot-time bootstrap failure (or a shared DB
+        # never set) was invisible here while every command silently raised
+        # SharedDatabaseNotInitializedError. "unavailable" now degrades overall
+        # status the same way a required-but-broken config does.
+        db_status = shared_database_status()
 
         if not config_ok:
             overall_status = "config_error"
+        elif db_status != "ok":
+            overall_status = "database_error"
         elif dep["queue_ready"]:
             overall_status = "ok"
         else:
@@ -100,6 +110,7 @@ class HealthCommand(Command):
                 "cst_trees_loaded": len(_trees),
                 "components": {
                     "configuration": cfg_state.summary(),
+                    "shared_database": {"status": db_status},
                     "system": {
                         "python_version": sys.version,
                         "platform": platform.platform(),

@@ -23,7 +23,10 @@ from code_analysis.core.file_watcher_pkg.watch_dirs_mount_sync import (
 )
 from code_analysis.core.storage_paths import load_raw_config
 from code_analysis.core.watch_dir_settings import load_watch_dir_settings
-from code_analysis.core.watch_dirs_from_config import discover_projects_for_watch_specs
+from code_analysis.core.watch_dirs_from_config import (
+    discover_project_candidates_for_watch_specs,
+    discover_projects_for_watch_specs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,21 @@ def discover_projects_runtime(
     """Discover projects under mounted UUID4 watch directories."""
     specs = load_watch_dir_specs_runtime(config_path, database=database)
     return discover_projects_for_watch_specs(specs, watch_dir_id=watch_dir_id)
+
+
+def discover_project_candidates_runtime(
+    config_path: Path,
+    *,
+    database: Any | None = None,
+    watch_dir_id: Optional[str] = None,
+) -> List:
+    """Cheap (no-walk) candidate discovery under mounted UUID4 watch directories.
+
+    Used by the ``list_projects`` paginated fast path only; other runtime
+    callers keep using :func:`discover_projects_runtime` unchanged.
+    """
+    specs = load_watch_dir_specs_runtime(config_path, database=database)
+    return discover_project_candidates_for_watch_specs(specs, watch_dir_id=watch_dir_id)
 
 
 def runtime_has_watch_dirs(config_path: Path) -> bool:

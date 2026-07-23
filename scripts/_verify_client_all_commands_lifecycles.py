@@ -32,6 +32,9 @@ from _verify_client_all_commands_lifecycle_github import run_github_lifecycle
 from _verify_client_all_commands_lifecycle_list_files_fast import (
     run_list_project_files_exact_path_fast_check,
 )
+from _verify_client_all_commands_lifecycle_list_projects_fast import (
+    run_list_projects_paginated_fast_check,
+)
 from _verify_client_all_commands_lifecycle_queue import run_queue_lifecycle
 from _verify_client_all_commands_lifecycle_search import run_search_lifecycle
 from _verify_client_all_commands_lifecycle_session import run_session_lifecycle
@@ -49,6 +52,7 @@ _LIFECYCLE_RUNNERS = (
     run_worker_lifecycle,
     run_queue_lifecycle,
     run_list_project_files_exact_path_fast_check,
+    run_list_projects_paginated_fast_check,
 )
 
 

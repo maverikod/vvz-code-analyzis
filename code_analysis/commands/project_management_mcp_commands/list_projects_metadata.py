@@ -20,23 +20,47 @@ def get_list_projects_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Discover projects on disk from configured watch directories.\n\n"
             "Reads ``code_analysis.worker.watch_dirs`` in server config, scans each "
             "watch directory's **immediate child** folders for a valid ``projectid`` "
-            "file (same rules as the file watcher). Returns the same project dict "
-            "shape as the former database-backed command: ``id``, ``watch_dir``, "
-            "``name``, ``root_path``, ``comment``, ``watch_dir_id``, "
-            "``processing_paused``, ``deleted``, ``updated_at``.\n\n"
-            "``deleted`` and ``processing_paused`` come from ``projectid`` on disk. "
-            "``updated_at`` is always ``null`` here (the file watcher maintains it in "
-            "the database during scans).\n\n"
+            "file (same membership rule as the file watcher: immediate child + a "
+            "``projectid`` file that parses). A subdirectory with no ``projectid`` "
+            "file, or one whose ``projectid`` fails to parse, is simply not a "
+            "project and is skipped -- never raises, never appears in the result.\n\n"
+            "Discovery is a cheap pass only: one directory listing per watch dir "
+            "plus one ``projectid`` read per candidate. It does **not** walk into "
+            "any project's file tree, so cost does not scale with project size or "
+            "count of files -- only with the number of top-level catalog entries.\n\n"
+            "Paginated (search-aligned envelope): ``paginated: true``, ``items`` "
+            "(canonical) and ``projects`` (legacy alias, same list) for the current "
+            "page, plus ``count``, ``total``, ``page_size`` (default 20), "
+            "``block_position`` (1-based, default 1), ``has_more``, ``offset``. Use "
+            "``block_position`` (or legacy ``offset``/``limit``) to page through "
+            "large catalogs instead of receiving every project in one response.\n\n"
+            "Each project row: ``id``, ``watch_dir``, ``name``, ``root_path``, "
+            "``comment``, ``watch_dir_id``, ``processing_paused``, ``deleted``, "
+            "``updated_at``. ``deleted`` and ``processing_paused`` come from "
+            "``projectid`` on disk. ``updated_at`` is always ``null`` here (the file "
+            "watcher maintains it in the database during scans). Filters "
+            "(``name_contains``, ``comment_contains``, ``include_deleted``, "
+            "``watched_dir_id``) apply before pagination, so ``total`` always "
+            "reflects the filtered set, not just the current page.\n\n"
             "Does not query or write the database. Read-only."
         ),
         usage_examples=[
             {
-                "description": "List active projects under all configured watch dirs",
+                "description": "List the first page (20) of active projects",
                 "command": {},
                 "explanation": (
-                    "Returns non-deleted projects discovered on disk. "
+                    "Returns page 1 of non-deleted projects discovered on disk. "
                     "Omits rows with ``projectid.deleted: true`` unless "
-                    "``include_deleted`` is set."
+                    "``include_deleted`` is set. Check ``has_more``/``total`` to "
+                    "decide whether to fetch another page."
+                ),
+            },
+            {
+                "description": "Fetch the next page",
+                "command": {"page_size": 50, "block_position": 2},
+                "explanation": (
+                    "Rows 51-100 of the filtered, stably-sorted catalog "
+                    "(sorted by project folder name, id tie-break)."
                 ),
             },
             {
@@ -104,16 +128,38 @@ def get_list_projects_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         return_value=simple_success_return(
-            description="Discovery completed.",
+            description="Discovery completed; one page of the filtered catalog.",
             data_fields={
                 "projects": (
-                    "List of project dicts: id, watch_dir, name, root_path (segment under "
-                    "watch dir), comment, watch_dir_id, processing_paused, deleted, "
-                    "updated_at (null on disk discovery)."
+                    "Current page of project dicts (legacy key, same list as ``items``): "
+                    "id, watch_dir, name, root_path (segment under watch dir), comment, "
+                    "watch_dir_id, processing_paused, deleted, updated_at (null on disk "
+                    "discovery)."
                 ),
-                "count": "Number of projects after filters.",
+                "items": "Same list as ``projects`` (canonical pagination key).",
+                "paginated": "Always true.",
+                "count": "Number of projects in this page.",
+                "total": "Number of projects after filters, before pagination.",
+                "page_size": "Rows per page actually used (default 20, max 200).",
+                "block_position": "1-based page index actually used (default 1).",
+                "has_more": "True when further pages remain after this one.",
+                "offset": "Row offset actually used for this page.",
             },
             example={
+                "paginated": True,
+                "items": [
+                    {
+                        "id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "watch_dir": "/home/user/tools",
+                        "name": "code_analysis",
+                        "root_path": "code_analysis",
+                        "comment": "Code analysis server",
+                        "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "processing_paused": False,
+                        "deleted": False,
+                        "updated_at": None,
+                    }
+                ],
                 "projects": [
                     {
                         "id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
@@ -128,6 +174,11 @@ def get_list_projects_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     }
                 ],
                 "count": 1,
+                "total": 1,
+                "page_size": 20,
+                "block_position": 1,
+                "has_more": False,
+                "offset": 0,
             },
         ),
         best_practices=[
@@ -137,5 +188,11 @@ def get_list_projects_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "For ``updated_at`` reflecting last file activity, use database status commands "
             "or wait for the file watcher to sync ``projects.updated_at``.",
             "Read-only: does not register projects in the database; the file watcher does that.",
+            "Default page size is 20; on large catalogs, page with ``block_position`` "
+            "(or legacy ``offset``/``limit``) instead of assuming one call returns "
+            "every project.",
+            "``total`` reflects the filtered set (after ``name_contains``, "
+            "``comment_contains``, ``include_deleted``, ``watched_dir_id``), not the "
+            "whole catalog.",
         ],
     )

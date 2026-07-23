@@ -23,6 +23,14 @@ def _write_config(tmp_path: Path, watch_dirs: list[dict]) -> Path:
     return config_path
 
 
+def _write_mount_config(tmp_path: Path, *, mount_root: Path) -> Path:
+    """Return a config using the runtime mount-root shape (what discovery reads)."""
+    cfg = {"code_analysis": {"file_watcher": {"watch_mount_root": str(mount_root)}}}
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(cfg), encoding="utf-8")
+    return config_path
+
+
 def test_list_projects_validate_params_rejects_unknown_param() -> None:
     """Verify test list projects validate params rejects unknown param."""
     cmd = ListProjectsMCPCommand()
@@ -75,9 +83,11 @@ async def test_list_projects_command_disk_format(tmp_path: Path) -> None:
     """Verify test list projects command disk format."""
     from code_analysis.commands.command_metadata_helpers import REQUIRED_METADATA_KEYS
 
-    watch_root = tmp_path / "tools"
-    watch_root.mkdir()
+    mount_root = tmp_path / "watched"
+    mount_root.mkdir()
     wid = str(uuid.uuid4())
+    watch_root = mount_root / wid
+    watch_root.mkdir()
     pid = str(uuid.uuid4())
     project_dir = watch_root / "my_app"
     project_dir.mkdir()
@@ -93,7 +103,7 @@ async def test_list_projects_command_disk_format(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    config_path = _write_config(tmp_path, [{"id": wid, "path": str(watch_root)}])
+    config_path = _write_mount_config(tmp_path, mount_root=mount_root)
 
     meta = ListProjectsMCPCommand.metadata()
     for key in REQUIRED_METADATA_KEYS:
@@ -105,6 +115,12 @@ async def test_list_projects_command_disk_format(tmp_path: Path) -> None:
     result = await cmd.execute()
     assert isinstance(result, SuccessResult)
     assert result.data["count"] == 1
+    assert result.data["total"] == 1
+    assert result.data["paginated"] is True
+    assert result.data["page_size"] == 20
+    assert result.data["block_position"] == 1
+    assert result.data["has_more"] is False
+    assert result.data["items"] == result.data["projects"]
     project = result.data["projects"][0]
     assert project == {
         "id": pid,
@@ -117,7 +133,6 @@ async def test_list_projects_command_disk_format(tmp_path: Path) -> None:
         "deleted": False,
         "updated_at": None,
     }
-    assert "success" not in result.data
     assert "watch_dirs" not in result.data
 
     deleted_dir = watch_root / "trashed"

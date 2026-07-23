@@ -62,12 +62,20 @@ class ProjectRoot:
         project_id: Project ID (UUID4 string) loaded from projectid file
         description: Human-readable description of the project
         watch_dir: The watch_dir that contains this project (absolute path)
+        deleted: ``projectid.deleted`` flag, when already loaded by the caller
+            (cheap candidate discovery populates this from its single
+            ``load_project_info`` read; default False for callers that never
+            set it).
+        processing_paused: ``projectid.processing_paused`` flag, same sourcing
+            as ``deleted``.
     """
 
     root_path: Path
     project_id: str
     description: str
     watch_dir: Path
+    deleted: bool = False
+    processing_paused: bool = False
 
 
 def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[ProjectRoot]:
@@ -440,3 +448,101 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
     validate_no_duplicate_project_ids(discovered_projects)
 
     return discovered_projects
+
+
+def discover_project_candidates_in_directory(watch_dir: Path) -> List[ProjectRoot]:
+    """
+    Cheap immediate-child project discovery: no recursive/nested validation.
+
+    User decision (2026-07-23): a legitimate project is defined solely as
+    "immediate child of a watched directory with a correct ``projectid``
+    file" -- nothing else is checked at listing time. Unlike
+    :func:`discover_projects_in_directory`, this performs **no** ``os.walk``
+    anywhere (no :func:`validate_no_nested_projects` call), which makes it
+    safe to run over every candidate on every ``list_projects`` call
+    regardless of catalog size.
+
+    Membership test = ``projectid`` file presence at ``watch_dir/<subdir>/``.
+    A subdirectory without a ``projectid`` file is not a project and is
+    skipped silently (no log at all -- a foreign directory in a watched
+    catalog is an expected, normal shape, not worth event volume). A
+    ``projectid`` file that fails to parse (invalid JSON / missing ``id`` /
+    bad UUID4) skips its directory with a debug-level log only; one
+    malformed or foreign directory never fails the whole listing.
+
+    The historical "is this immediate child nested inside another immediate
+    child" guard from :func:`discover_projects_in_directory` is not
+    reproduced here: two immediate children of the same ``watch_dir`` are
+    always siblings (each exactly one path segment below ``watch_dir``), so
+    neither can ever be a subpath of the other -- that check can never fire
+    for this candidate set.
+
+    Duplicate ``project_id`` across immediate children of the SAME
+    ``watch_dir`` is still validated (an in-memory hash-map check, not a
+    walk) and raises :class:`DuplicateProjectIdError`, matching
+    :func:`discover_projects_in_directory`'s existing per-watch-dir dedupe
+    scope.
+
+    Args:
+        watch_dir: Watched directory to scan.
+
+    Returns:
+        ``ProjectRoot`` list (with ``deleted``/``processing_paused``
+        populated from the single ``load_project_info`` read each), stably
+        sorted by lowercased directory name with ``project_id`` as tie-break.
+
+    Raises:
+        DuplicateProjectIdError: If duplicate project_id detected.
+    """
+    watch_dir = Path(watch_dir).resolve()
+    if not watch_dir.exists() or not watch_dir.is_dir():
+        logger.warning(
+            f"Watch directory does not exist or is not a directory: {watch_dir}"
+        )
+        return []
+
+    try:
+        entries = list(watch_dir.iterdir())
+    except OSError as e:
+        logger.error(f"Error scanning watch directory {watch_dir}: {e}")
+        return []
+
+    from .project_resolution import load_project_info
+
+    candidates: List[ProjectRoot] = []
+    for item in entries:
+        try:
+            if not item.is_dir():
+                continue
+        except OSError:
+            continue
+        projectid_path = item / "projectid"
+        try:
+            if not (projectid_path.exists() and projectid_path.is_file()):
+                continue
+        except OSError:
+            continue
+        try:
+            info = load_project_info(item)
+        except (ProjectIdError, InvalidProjectIdFormatError) as e:
+            logger.debug(
+                f"Skipping unreadable/invalid projectid at {projectid_path}: {e}"
+            )
+            continue
+        candidates.append(
+            ProjectRoot(
+                root_path=info.root_path,
+                project_id=info.project_id,
+                description=info.description,
+                watch_dir=watch_dir,
+                deleted=info.deleted,
+                processing_paused=info.processing_paused,
+            )
+        )
+
+    candidates.sort(key=lambda p: (p.root_path.name.lower(), p.project_id))
+
+    # Validate no duplicate project_ids within this watch_dir
+    validate_no_duplicate_project_ids(candidates)
+
+    return candidates

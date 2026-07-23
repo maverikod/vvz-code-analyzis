@@ -12,12 +12,18 @@ from typing import Any, Dict, List, Optional, Type
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.exceptions import DuplicateProjectIdError, ValidationError
+from ...core.list_pagination import (
+    build_list_page_payload,
+    list_pagination_schema_properties,
+    paginate_sequence,
+    resolve_list_pagination,
+)
 from ...core.watch_dirs_from_config import (
     discovered_project_to_list_row,
     flatten_discovered_projects,
 )
 from ...core.watch_dirs_runtime import (
-    discover_projects_runtime,
+    discover_project_candidates_runtime,
     load_watch_dir_specs_runtime,
     runtime_has_watch_dirs,
 )
@@ -40,16 +46,20 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls: type["ListProjectsMCPCommand"]) -> Dict[str, Any]:
-        """Return the schema for watch-directory and project filters."""
+        """Return the schema for watch-directory, project filters, and pagination."""
+        pagination = list_pagination_schema_properties()
         return {
             "type": "object",
             "description": (
                 "Discover projects on disk under ``file_watcher.watch_mount_root``. "
                 "Only UUID4 immediate subdirectories count (same as file watcher). "
                 "Config ``worker.watch_dirs`` is applied on the host by "
-                "``casmgr-prepare-watch-mounts`` before server start."
+                "``casmgr-prepare-watch-mounts`` before server start. Paginated "
+                "(default page_size 20); use ``block_position`` for the next page "
+                "(same contract as ``search`` / ``list_project_files``)."
             ),
             "properties": {
+                **pagination,
                 "include_deleted": {
                     "type": "boolean",
                     "description": (
@@ -89,6 +99,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 {"watched_dir_id": "550e8400-e29b-41d4-a716-446655440000"},
                 {"name_contains": "vast_srv"},
                 {"comment_contains": "pipeline"},
+                {"page_size": 50, "block_position": 2},
             ],
         }
 
@@ -128,9 +139,23 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         name_contains: Optional[str] = None,
         comment_contains: Optional[str] = None,
         include_deleted: bool = False,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Discover projects on disk and apply the requested filters."""
+        """Discover projects on disk, apply filters, and return one page.
+
+        Discovery itself is the cheap no-walk candidate pass (see
+        ``discover_project_candidates_runtime`` /
+        ``project_discovery.discover_project_candidates_in_directory``): it
+        never runs the recursive ``validate_no_nested_projects`` walk, so cost
+        is bounded by the number of immediate-child catalog entries, not by
+        the size of any project's file tree. Pagination then slices the
+        filtered, stably-sorted candidate list; no parameter combination
+        forces a full-catalog scan of project internals.
+        """
         try:
             params = self.validate_params(
                 {
@@ -138,6 +163,10 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     "name_contains": name_contains,
                     "comment_contains": comment_contains,
                     "include_deleted": include_deleted,
+                    "page_size": page_size,
+                    "block_position": block_position,
+                    "limit": limit,
+                    "offset": offset,
                     **kwargs,
                 }
             )
@@ -148,7 +177,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
             config_path = self._resolve_config_path()
             try:
-                watch_results = discover_projects_runtime(
+                watch_results = discover_project_candidates_runtime(
                     config_path,
                     watch_dir_id=watched_dir_id,
                 )
@@ -214,23 +243,37 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     if str(p.get("comment") or "").lower().find(needle) >= 0
                 ]
 
-            parts: List[str] = []
-            if watched_dir_id:
-                parts.append(f"watched_dir_id: {watched_dir_id}")
-            if name_contains is not None:
-                parts.append(f"name_contains: {name_contains!r}")
-            if comment_contains is not None:
-                parts.append(f"comment_contains: {comment_contains!r}")
-            if include_deleted:
-                parts.append("include_deleted: true")
-            filter_msg = (" (filtered by " + ", ".join(parts) + ")") if parts else ""
+            # discover_project_candidates_runtime already returns a stable order
+            # (sorted by lowercased directory name, project_id tie-break) per
+            # watch dir; multiple watch dirs are concatenated in spec order, so
+            # re-sort the merged, filtered list once here for a single global
+            # stable order that pagination can safely page across.
+            projects.sort(
+                key=lambda p: (str(p.get("name") or "").lower(), str(p.get("id") or ""))
+            )
+
+            total = len(projects)
+            page_size_r, offset_r, block_position_r = resolve_list_pagination(
+                {
+                    "page_size": page_size,
+                    "block_position": block_position,
+                    "limit": limit,
+                    "offset": offset,
+                }
+            )
+            page_items = paginate_sequence(
+                projects, offset=offset_r, page_size=page_size_r
+            )
 
             return SuccessResult(
-                data={
-                    "projects": projects,
-                    "count": len(projects),
-                },
-                message=f"Found {len(projects)} project(s){filter_msg}",
+                data=build_list_page_payload(
+                    items=page_items,
+                    total=total,
+                    page_size=page_size_r,
+                    block_position=block_position_r,
+                    offset=offset_r,
+                    legacy_items_key="projects",
+                )
             )
         except ValidationError as e:
             return ErrorResult(

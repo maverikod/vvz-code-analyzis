@@ -19,7 +19,11 @@ from .file_watcher_pkg.multi_project_worker_specs import (
     WatchDirSpec,
     build_watch_dir_specs,
 )
-from .project_discovery import ProjectRoot, discover_projects_in_directory
+from .project_discovery import (
+    ProjectRoot,
+    discover_project_candidates_in_directory,
+    discover_projects_in_directory,
+)
 from .storage_paths import load_raw_config
 
 logger = logging.getLogger(__name__)
@@ -183,6 +187,87 @@ def discover_projects_for_watch_specs(
             )
         )
     return results
+
+
+def _candidate_to_disk_entry(
+    spec: WatchDirSpec,
+    project: ProjectRoot,
+) -> DiscoveredProjectOnDisk:
+    """Build a disk-entry row directly from an already-loaded candidate.
+
+    No second filesystem read: ``project.deleted`` / ``project.processing_paused``
+    were populated by the single ``load_project_info`` call inside
+    :func:`~code_analysis.core.project_discovery.discover_project_candidates_in_directory`
+    that produced ``project`` -- unlike :func:`_project_to_disk_entry`, which
+    re-reads ``projectid`` from disk a second time.
+    """
+    root_abs = project.root_path
+    return DiscoveredProjectOnDisk(
+        watch_dir_id=spec.watch_dir_id,
+        watch_dir_path=str(spec.watch_dir.resolve()),
+        project_id=project.project_id,
+        name=root_abs.name,
+        root_path=root_abs.name,
+        root_path_absolute=str(root_abs),
+        description=project.description,
+        deleted=project.deleted,
+        processing_paused=project.processing_paused,
+    )
+
+
+def discover_project_candidates_for_watch_specs(
+    specs: Sequence[WatchDirSpec],
+    *,
+    watch_dir_id: Optional[str] = None,
+) -> List[WatchDirDiscoveryResult]:
+    """Cheap candidate discovery for each watch-dir spec (no database, no walk).
+
+    Uses
+    :func:`~code_analysis.core.project_discovery.discover_project_candidates_in_directory`
+    (iterdir + projectid read only -- no ``validate_no_nested_projects`` walk) and
+    a single-read row builder (:func:`_candidate_to_disk_entry`). This is the
+    fast path consumed by ``list_projects`` pagination; it is intentionally NOT
+    a drop-in replacement for :func:`discover_projects_for_watch_specs`, which
+    every other existing caller (file watcher startup reconciliation, unwatched
+    project cleanup, ...) keeps using unchanged.
+
+    Args:
+        specs: Watch directory specs (typically from ``load_watch_dir_specs_from_config``).
+        watch_dir_id: When set, only scan the matching watch directory id.
+
+    Returns:
+        One ``WatchDirDiscoveryResult`` per spec (after optional id filter).
+    """
+    filter_id = (watch_dir_id or "").strip() or None
+    results: List[WatchDirDiscoveryResult] = []
+    for spec in specs:
+        if filter_id is not None and spec.watch_dir_id != filter_id:
+            continue
+        watch_path = spec.watch_dir.resolve()
+        exists = watch_path.exists() and watch_path.is_dir()
+        projects: List[DiscoveredProjectOnDisk] = []
+        if exists:
+            candidates = discover_project_candidates_in_directory(watch_path)
+            projects = [_candidate_to_disk_entry(spec, p) for p in candidates]
+        results.append(
+            WatchDirDiscoveryResult(
+                watch_dir_id=spec.watch_dir_id,
+                absolute_path=str(watch_path),
+                exists=exists,
+                projects=tuple(projects),
+            )
+        )
+    return results
+
+
+def discover_project_candidates_from_config(
+    config_path: Path,
+    *,
+    watch_dir_id: Optional[str] = None,
+) -> List[WatchDirDiscoveryResult]:
+    """Load watch dirs from config and run the cheap candidate discovery pass."""
+    specs = load_watch_dir_specs_from_config(config_path)
+    return discover_project_candidates_for_watch_specs(specs, watch_dir_id=watch_dir_id)
 
 
 def discover_projects_from_config(

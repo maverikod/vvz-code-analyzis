@@ -27,19 +27,42 @@ from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status
 from _verify_client_all_commands_fixtures import FixtureContext
 from _verify_client_all_commands_lifecycle_entities import run_entity_lifecycle
 from _verify_client_all_commands_lifecycle_fs import run_fs_lifecycle
+from _verify_client_all_commands_lifecycle_fulltext_seeded import (
+    run_search_fulltext_seeded_literal_check,
+)
 from _verify_client_all_commands_lifecycle_git import run_git_lifecycle
 from _verify_client_all_commands_lifecycle_github import run_github_lifecycle
+from _verify_client_all_commands_lifecycle_grep_bounded import (
+    run_search_grep_bounded_liveness_check,
+)
 from _verify_client_all_commands_lifecycle_list_files_fast import (
     run_list_project_files_exact_path_fast_check,
 )
 from _verify_client_all_commands_lifecycle_list_projects_fast import (
     run_list_projects_paginated_fast_check,
 )
+from _verify_client_all_commands_lifecycle_project_trash_restore import (
+    run_project_trash_restore_roundtrip_check,
+)
 from _verify_client_all_commands_lifecycle_queue import run_queue_lifecycle
+from _verify_client_all_commands_lifecycle_restore_db_dryrun import (
+    run_restore_database_dry_run_watch_dirs_fallback_check,
+)
 from _verify_client_all_commands_lifecycle_search import run_search_lifecycle
 from _verify_client_all_commands_lifecycle_session import run_session_lifecycle
 from _verify_client_all_commands_lifecycle_transfer import run_transfer_lifecycle
 from _verify_client_all_commands_lifecycle_workers import run_worker_lifecycle
+
+# NOTE: _verify_client_all_commands_lifecycle_watcher_config_load.py (bug 9f5d860e
+# regression guard) is INTENTIONALLY NOT registered here. Unlike every runner
+# below, it is not a `(client, fixtures) -> Dict[str, CommandOutcome]` lifecycle
+# check: it is a standalone CLI script (its own argparse host/port/cert/key/ca
+# args, its own connection) that samples `get_worker_status` twice ~10s apart to
+# detect a config-reparse storm. Folding it in here would add a mandatory ~10s
+# stall to every run of this shared, always-on sweep for every future caller.
+# Its own module docstring documents this as deliberate. Run it directly:
+#   python scripts/_verify_client_all_commands_lifecycle_watcher_config_load.py \
+#       --host <host> --port <port> --cert <cert> --key <key> --ca <ca>
 
 _LIFECYCLE_RUNNERS = (
     run_session_lifecycle,
@@ -53,6 +76,10 @@ _LIFECYCLE_RUNNERS = (
     run_queue_lifecycle,
     run_list_project_files_exact_path_fast_check,
     run_list_projects_paginated_fast_check,
+    run_project_trash_restore_roundtrip_check,
+    run_restore_database_dry_run_watch_dirs_fallback_check,
+    run_search_grep_bounded_liveness_check,
+    run_search_fulltext_seeded_literal_check,
 )
 
 

@@ -155,6 +155,15 @@ async def run_sweep(
             )
         )
         print(f"MISSING command never classified: {missing_name}")
+
+    # Synthetic lifecycle checks (e.g. list_project_files_exact_path_fast,
+    # list_projects_paginated_fast) are precomputed by run_lifecycles but
+    # name a check, not a live server command, so they never appear in
+    # live_names and would otherwise be silently dropped here -- merge any
+    # precomputed-only outcome not already covered so it is still printed
+    # and still affects the FAILED exit code like every other outcome.
+    for extra_name in sorted(set(precomputed) - covered_names):
+        outcomes.append(precomputed[extra_name])
     return outcomes
 
 

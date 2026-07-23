@@ -1,4 +1,5 @@
 # code_analysis — standing LAWS (universal). Referenced from common.yaml spawn protocol;
+# prompts-template: claude-prompts-v1 rev 1.1.0 (2026-07-23)
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 

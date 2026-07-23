@@ -551,10 +551,10 @@ def analyze_file(
         return {
             "file": rel_path,
             "status": "success",
-            "classes": 0,
-            "functions": 0,
-            "methods": 0,
-            "imports": 0,
+            "classes": sync_result.get("classes", 0),
+            "functions": sync_result.get("functions", 0),
+            "methods": sync_result.get("methods", 0),
+            "imports": sync_result.get("imports", 0),
             "entities_updated": entities_updated,
             "usages": usages_added,
         }

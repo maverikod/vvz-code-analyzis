@@ -117,6 +117,10 @@ def sync_file_to_db_atomic(
             ast_updated: True if AST was written.
             cst_updated: True if CST was written.
             entities_updated: Count of entities (classes, functions, methods, imports).
+            classes: Number of class rows written for this file.
+            functions: Number of function rows written for this file.
+            methods: Number of method rows written for this file.
+            imports: Number of import rows written for this file.
             error: Error message when success is False.
     """
     result: Dict[str, Any] = {
@@ -128,6 +132,10 @@ def sync_file_to_db_atomic(
         "ast_updated": False,
         "cst_updated": False,
         "entities_updated": 0,
+        "classes": 0,
+        "functions": 0,
+        "methods": 0,
+        "imports": 0,
         "error": None,
     }
 
@@ -332,6 +340,10 @@ def sync_file_to_db_atomic(
         result["ast_updated"] = meta.get("ast_updated", False)
         result["cst_updated"] = meta.get("cst_updated", False)
         result["entities_updated"] = meta.get("entities_updated", 0)
+        result["classes"] = meta.get("classes", 0)
+        result["functions"] = meta.get("functions", 0)
+        result["methods"] = meta.get("methods", 0)
+        result["imports"] = meta.get("imports", 0)
         return result
 
     try:

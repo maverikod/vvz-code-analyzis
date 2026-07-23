@@ -38,6 +38,9 @@ from _verify_client_all_commands_lifecycle_grep_bounded import (
 from _verify_client_all_commands_lifecycle_list_files_fast import (
     run_list_project_files_exact_path_fast_check,
 )
+from _verify_client_all_commands_lifecycle_list_files_glob_fast import (
+    run_list_project_files_glob_fast_check,
+)
 from _verify_client_all_commands_lifecycle_list_projects_fast import (
     run_list_projects_paginated_fast_check,
 )
@@ -75,6 +78,7 @@ _LIFECYCLE_RUNNERS = (
     run_worker_lifecycle,
     run_queue_lifecycle,
     run_list_project_files_exact_path_fast_check,
+    run_list_project_files_glob_fast_check,
     run_list_projects_paginated_fast_check,
     run_project_trash_restore_roundtrip_check,
     run_restore_database_dry_run_watch_dirs_fallback_check,

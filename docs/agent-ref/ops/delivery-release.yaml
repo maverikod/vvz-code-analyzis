@@ -4,16 +4,24 @@ project:
   version_sources: ['pyproject.toml (root; scripts/sync_code_analysis_client_version.py syncs the client)']
   build: './build.sh'
   deploy_host: 'root@192.168.254.26'
-  live_pipeline: 'scripts/verify_client_all_commands_live.py --host 192.168.254.26 --port 15010 (mint disposable mTLS cert per script docstring)'
+  live_pipeline: 'scripts/verify_client_all_commands_live.py --host 192.168.254.26 --port 15010 (mint disposable mTLS cert per script docstring)'   # aka "realsrv-test" in laws.yaml `bug_fix_cycle`
   production_servers: ['ai-editor-server-vvz', 'code-analysis-server-vvz']
 
+# Bug-handling trigger/loop framing (reproduce -> pipeline-red -> root-cause -> fix -> deploy ->
+# pipeline-green, looped) is DEFINED ONCE in laws.yaml `bug_fix_cycle` - not restated here.
+# The steps below are its mechanical implementation on this project.
 procedure:
-  - reproduce the defect and prove its cause before mutation
+  - reproduce the defect
+  - extend live_pipeline (realsrv-test, this file) with a covering check and confirm the
+    defect WITH the pipeline - RED - before any mutation (laws.yaml `bug_fix_cycle` step 2)
+  - find the root cause and prove it with evidence before mutation
   - implement the localized repair and focused regression test
   - run project checks
   - increment and align every version source
   - build, deploy, and run the single live pipeline from the active working branch
-  - verify registration, health, version, and changed behavior through MCP Proxy
+  - verify registration, health, version, and changed behavior through MCP Proxy; the
+    live_pipeline re-run must go GREEN - if still red, loop back to root-cause (laws.yaml
+    `bug_fix_cycle`)
   - record and verify the Plan Manager fix before closing the proven bug
   - merge the verified branch into local main, report the exact commit, and wait
     for user push confirmation
@@ -21,6 +29,12 @@ procedure:
 
 invariants:
   - exactly one real-server pipeline; extend it instead of adding another
+  - live_pipeline (realsrv-test) exercises ALL API methods of the server EXCEPT the
+    built-in mcp-proxy-adapter methods
+  - deploy_host scope - everything on deploy_host is a test target EXCEPT the doc-store
+    project's database - NEVER touch it (laws.yaml `bug_fix_cycle`)
+  - a test deploy is cheaper than extended model reasoning - prefer deploy-and-check over
+    analysis when judging "is it fixed" (laws.yaml `bug_fix_cycle` economy principle)
   - queue handoff is normal; selected client mode determines polling or messages
   - completed queue state is not success until the inner result is checked
   - do not deploy from or edit main before production verification

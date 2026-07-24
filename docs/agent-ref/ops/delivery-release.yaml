@@ -23,7 +23,8 @@ procedure:
     defect WITH the pipeline - RED - before any mutation (laws.yaml `bug_fix_cycle` step 2)
   - find the root cause and prove it with evidence before mutation
   - implement the localized repair and focused regression test
-  - run project checks
+  - run focused tests, the unit suite, and the QA gate tools (flake8, mypy — per
+    laws.yaml `editor_gate_no_bypass`)
   - increment and align every version source
   - build LOCALLY per `build_execution` above, then deploy and run the single live
     pipeline from the active working branch

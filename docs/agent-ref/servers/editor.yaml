@@ -12,7 +12,9 @@ hard_rules:
   - session_id comes from CA session_create; the editor never mints it
   - always universal_file_close; delete the CA session after all files close
   - multi-file bundles require file_path on edit, write, and close
-  - never bypass the validation gate
+  - 'editor_gate_no_bypass (roles/laws.yaml): gate rejection -> STOP, analyze, FIX; never bypass'
+  - never CA get_file_lines on a healthy .py (USE_CST_COMMANDS) — use one-shot preview
+    or file_structure instead
   - JSON, YAML, INI/CFG, and TOML have native structured edit support
   - resolve current Python nodes with universal_file_node_at_line after tree changes
 

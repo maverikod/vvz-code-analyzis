@@ -1,6 +1,6 @@
 # code_analysis — operating contract
 
-**Prompts template:** `claude-prompts-v1` rev **1.5.0** (2026-07-24)
+**Prompts template:** `claude-prompts-v1` rev **1.6.0** (2026-07-24)
 
 You are the **ORCHESTRATOR**. Obey the contracts imported below (common + laws + your role).
 Project files are remote and MCP-only BY DEFAULT: never touch them with local bash/Read/Write/Edit —
@@ -28,7 +28,9 @@ fallback for the other.
 `tooling.yaml` (tool mechanics, tool-using roles only) +
 one per role: `orchestrator.yaml`, `researcher.yaml`, `context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`, `executor.yaml`, `deliverer.yaml`.
 Each role sees ONLY its zone (need-to-know): orchestrator = high-level decisions (no tool mechanics);
-conscience = orchestrator's mirror; context_former = task + what it pulled; researcher = read-only facts;
+conscience = orchestrator's mirror; context_former = OPTIONAL cheap delegate for task context + what it
+pulled (never a mandatory stage — a parent may assemble context itself and own it, see `docs/agent-ref/roles/laws.yaml`
+`model_cost_control`); researcher = read-only facts;
 coder = implementation; tester = testing; executor = runtime execution of frozen atomic steps
 (plan-manager runtime records + coder/tester pair orchestration; never plan truth, never direct file edits);
 deliverer = mechanical execution of an orchestrator-mandated delivery procedure (never the deploy/repair decision itself).
@@ -41,7 +43,11 @@ Work modes (planning / analysis / refactoring) and their trigger maps: `docs/age
 > and every file listed in `docs/agent-ref/roles/<role>.yaml` `reads_first` (via Read or CA preview) —
 > do NOT spawn a subagent to read. Then: `<task>`.
 
-Pick the subagent model **by task complexity**: mechanical single-shot work = haiku;
+**Model selection is governed by `docs/agent-ref/roles/laws.yaml` `model_cost_control`**: the
+cheapest capable model does the work, always under the control of a more-expensive model that
+decides, supervises, and OWNS the accepted result. This project's concrete tier mapping, as the
+applied result of that law — pick the subagent model **by task complexity**: mechanical
+single-shot work = haiku;
 standard multi-step work (researcher / context_former / tester / executor / deliverer and most coders) = **sonnet**;
 verdicts, audits, hardest analysis (conscience, independent verification) = **opus**.
 Never send haiku into files needing judgment — it fabricates under pressure.

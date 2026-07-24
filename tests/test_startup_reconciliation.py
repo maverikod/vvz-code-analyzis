@@ -77,7 +77,7 @@ class FakeDB:
         if s.startswith("SELECT id, path, relative_path FROM files"):
             pid = params[0]
             return {"data": list(self.files_by_project.get(pid, []))}
-        if s.startswith("UPDATE files SET deleted = 1"):
+        if s.startswith("UPDATE files SET deleted = TRUE"):
             self.deleted_file_ids.append(params[0])
             return {"affected_rows": 1}
         return {"data": []}

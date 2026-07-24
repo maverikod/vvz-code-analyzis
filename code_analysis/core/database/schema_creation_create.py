@@ -71,8 +71,8 @@ def run_create_schema(db: Any) -> None:
                 name TEXT,
                 comment TEXT,
                 watch_dir_id TEXT,
-                deleted BOOLEAN DEFAULT 0,
-                processing_paused BOOLEAN DEFAULT 0,
+                deleted BOOLEAN DEFAULT FALSE,
+                processing_paused BOOLEAN DEFAULT FALSE,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL
@@ -111,11 +111,11 @@ def run_create_schema(db: Any) -> None:
                 lines INTEGER,
                 last_modified REAL,
                 has_docstring BOOLEAN,
-                deleted BOOLEAN DEFAULT 0,
+                deleted BOOLEAN DEFAULT FALSE,
                 original_path TEXT,
                 version_dir TEXT,
                 needs_chunking INTEGER DEFAULT 0,
-                content_stale BOOLEAN NOT NULL DEFAULT 0,
+                content_stale BOOLEAN NOT NULL DEFAULT FALSE,
                 content_stale_since REAL DEFAULT NULL,
                 editing_pid INTEGER DEFAULT NULL,
                 created_at REAL DEFAULT (julianday('now')),
@@ -131,7 +131,7 @@ def run_create_schema(db: Any) -> None:
         db._execute(
             """
             CREATE INDEX IF NOT EXISTS idx_files_deleted 
-            ON files(deleted) WHERE deleted = 1
+            ON files(deleted) WHERE deleted = TRUE
             """
         )
     except Exception:
@@ -194,9 +194,9 @@ def run_create_schema(db: Any) -> None:
                 cst_node_id TEXT,
                 args TEXT,
                 docstring TEXT,
-                is_abstract BOOLEAN DEFAULT 0,
-                has_pass BOOLEAN DEFAULT 0,
-                has_not_implemented BOOLEAN DEFAULT 0,
+                is_abstract BOOLEAN DEFAULT FALSE,
+                has_pass BOOLEAN DEFAULT FALSE,
+                has_not_implemented BOOLEAN DEFAULT FALSE,
                 created_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
                 UNIQUE(class_id, name, line)
@@ -587,7 +587,7 @@ def run_create_schema(db: Any) -> None:
     # Create indexes
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
-        "CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted) WHERE deleted = 1",
+        "CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted) WHERE deleted = TRUE",
         "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
         "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path ON indexing_errors(project_id, file_path)",
@@ -626,10 +626,10 @@ def run_create_schema(db: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
         "CREATE INDEX IF NOT EXISTS idx_code_chunks_created_at ON code_chunks(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_code_chunks_project_embedding_model ON code_chunks(project_id) WHERE embedding_model IS NOT NULL",
-        "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
+        "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = TRUE",
         "CREATE INDEX IF NOT EXISTS idx_files_deleted_project_id ON files(deleted, project_id)",
         "CREATE INDEX IF NOT EXISTS idx_files_updated_at ON files(updated_at)",
-        "CREATE INDEX IF NOT EXISTS idx_files_needs_indexing ON files(project_id, updated_at) WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
+        "CREATE INDEX IF NOT EXISTS idx_files_needs_indexing ON files(project_id, updated_at) WHERE (deleted = FALSE OR deleted IS NULL) AND needs_chunking = 1",
         "CREATE INDEX IF NOT EXISTS idx_code_duplicates_project ON code_duplicates(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_code_duplicates_hash ON code_duplicates(duplicate_hash)",
         "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_duplicate ON duplicate_occurrences(duplicate_id)",

@@ -211,7 +211,7 @@ def add_file(
                 f"""
                 UPDATE files
                 SET watch_dir_id = ?, path = ?, relative_path = ?, lines = ?,
-                    last_modified = ?, has_docstring = ?, deleted = 0,
+                    last_modified = ?, has_docstring = ?, deleted = FALSE,
                     updated_at = {_now}
                 WHERE id = ?
                 """,
@@ -586,7 +586,7 @@ def mark_file_content_stale(driver: Any, file_path: str, project_id: str) -> boo
         return False
     _now = sql_julian_timestamp_now_expr(driver)
     driver.execute(
-        f"UPDATE files SET content_stale = 1, content_stale_since = {_now} WHERE id = ?",
+        f"UPDATE files SET content_stale = TRUE, content_stale_since = {_now} WHERE id = ?",
         (file_id,),
     )
     return True

@@ -248,7 +248,7 @@ def _mark_missing_files_for_project(
 
     result = database.execute(
         "SELECT id, path, relative_path FROM files "
-        "WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+        "WHERE project_id = ? AND (deleted = FALSE OR deleted IS NULL)",
         (project_id,),
     )
     file_rows = (
@@ -266,7 +266,7 @@ def _mark_missing_files_for_project(
         if file_id is None:
             continue
         database.execute(
-            f"UPDATE files SET deleted = 1, updated_at = {now_sql} WHERE id = ?",
+            f"UPDATE files SET deleted = TRUE, updated_at = {now_sql} WHERE id = ?",
             (file_id,),
         )
         marked += 1

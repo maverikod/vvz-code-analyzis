@@ -55,7 +55,7 @@ def list_watch_dirs_with_paths(
     sid = current_server_instance_id()
     deleted_filter = ""
     if not include_deleted:
-        deleted_filter = " AND (wd.deleted IS NULL OR wd.deleted = 0)"
+        deleted_filter = " AND (wd.deleted IS NULL OR wd.deleted = FALSE)"
     rows = _database_query_rows(
         database,
         f"""
@@ -92,7 +92,7 @@ def list_watch_dir_path_pairs(database: Any) -> List[tuple[str, str]]:
           ON wd.server_instance_id = wdp.server_instance_id
          AND wd.id = wdp.watch_dir_id
         WHERE wdp.server_instance_id = ?
-          AND (wd.deleted IS NULL OR wd.deleted = 0)
+          AND (wd.deleted IS NULL OR wd.deleted = FALSE)
           AND wdp.absolute_path IS NOT NULL AND TRIM(wdp.absolute_path) != ''
         ORDER BY wdp.watch_dir_id
         """,

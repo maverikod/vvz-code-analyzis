@@ -220,11 +220,11 @@ def build_mark_deleted_program(project_id: str) -> LogicalWriteProgramV1:
         "batches": [
             [
                 (
-                    "UPDATE files SET deleted = 1 WHERE project_id = ?",
+                    "UPDATE files SET deleted = TRUE WHERE project_id = ?",
                     (project_id,),
                 ),
                 (
-                    "UPDATE projects SET deleted = 1 WHERE id = ?",
+                    "UPDATE projects SET deleted = TRUE WHERE id = ?",
                     (project_id,),
                 ),
             ]
@@ -238,11 +238,11 @@ def build_unmark_deleted_program(project_id: str) -> LogicalWriteProgramV1:
         "batches": [
             [
                 (
-                    "UPDATE files SET deleted = 0 WHERE project_id = ?",
+                    "UPDATE files SET deleted = FALSE WHERE project_id = ?",
                     (project_id,),
                 ),
                 (
-                    "UPDATE projects SET deleted = 0 WHERE id = ?",
+                    "UPDATE projects SET deleted = FALSE WHERE id = ?",
                     (project_id,),
                 ),
             ]

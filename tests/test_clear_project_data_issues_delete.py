@@ -102,7 +102,7 @@ def test_mark_project_deleted_uses_single_logical_write_rpc() -> None:
         db.execute_logical_write_operation.assert_called_once()
         prog = db.execute_logical_write_operation.call_args[0][0]
         stmts = [pair[0] for pair in prog["batches"][0]]
-        assert any(s.startswith("UPDATE files SET deleted = 1") for s in stmts)
-        assert any("UPDATE projects SET deleted = 1" in s for s in stmts)
+        assert any(s.startswith("UPDATE files SET deleted = TRUE") for s in stmts)
+        assert any("UPDATE projects SET deleted = TRUE" in s for s in stmts)
 
     asyncio.run(_run())

@@ -182,7 +182,7 @@ def test_mark_file_needs_chunking_no_row_returns_false() -> None:
 
 
 def test_mark_file_content_stale_sets_flag_and_timestamp() -> None:
-    """mark_file_content_stale: UPDATE sets content_stale=1 + content_stale_since, returns True (bug 56c23bd9)."""
+    """mark_file_content_stale: UPDATE sets content_stale=TRUE + content_stale_since, returns True (bug 56c23bd9)."""
     driver = _FakeDriver(execute_rows={"affected_rows": 1})
 
     with patch(
@@ -194,7 +194,7 @@ def test_mark_file_content_stale_sets_flag_and_timestamp() -> None:
     assert result is True
     assert len(driver.execute_calls) == 1
     sql, params = driver.execute_calls[0]
-    assert "content_stale = 1" in sql
+    assert "content_stale = TRUE" in sql
     assert "content_stale_since" in sql
     assert params == ("f1",)
 

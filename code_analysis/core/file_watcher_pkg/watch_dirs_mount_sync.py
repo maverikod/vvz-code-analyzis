@@ -168,18 +168,18 @@ def build_mark_watch_dir_absent_program(
         "batches": [
             [
                 (
-                    "UPDATE watch_dirs SET deleted = 1 "
+                    "UPDATE watch_dirs SET deleted = TRUE "
                     "WHERE server_instance_id = ? AND id = ?",
                     (sid, wid),
                 ),
                 (
-                    "UPDATE projects SET deleted = 1 "
+                    "UPDATE projects SET deleted = TRUE "
                     "WHERE watch_dir_id = ? "
                     "AND (server_instance_id IS NULL OR server_instance_id = ?)",
                     (wid, sid),
                 ),
                 (
-                    "UPDATE files SET deleted = 1 "
+                    "UPDATE files SET deleted = TRUE "
                     "WHERE project_id IN ("
                     "  SELECT id FROM projects "
                     "  WHERE watch_dir_id = ? "
@@ -252,7 +252,7 @@ def _activate_watch_dir_row(
     database.execute(
         """
         UPDATE watch_dirs
-        SET deleted = 0, name = ?, updated_at = julianday('now')
+        SET deleted = FALSE, name = ?, updated_at = julianday('now')
         WHERE server_instance_id = ? AND id = ?
         """,
         (watch_dir_id, server_instance_id, watch_dir_id),

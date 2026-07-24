@@ -226,8 +226,8 @@ def add_file(
             _now = sql_julian_timestamp_now_expr(self)
             self._execute(
                 f"""
-                UPDATE files 
-                SET deleted = 1, updated_at = {_now}
+                UPDATE files
+                SET deleted = TRUE, updated_at = {_now}
                 WHERE id = ?
                 """,
                 (wrong_file_id,),

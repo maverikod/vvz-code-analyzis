@@ -21,8 +21,25 @@ logger = logging.getLogger(__name__)
 _BOOL_FALSEY = (0, False)
 _BOOL_TRUTHY = (1, True)
 
-# Schema uses BOOLEAN; callers often pass SQLite-style 0/1 integers.
-_PG_BOOL_COLUMNS = frozenset({"deleted", "has_docstring", "processing_paused"})
+# Schema uses BOOLEAN; callers often pass SQLite-style 0/1 integers. Every column the
+# schema definition marks BOOLEAN (schema_definition_tables_core.py) must be listed
+# here, or a dict-based driver.insert()/update()/select() call with a bare 0/1 for
+# that column raises "operator does not exist: boolean = integer" on real PostgreSQL
+# (the incident #3 defect class -- content_stale, is_abstract, has_pass, and
+# has_not_implemented were missing from this set until the fix that added this
+# comment; see test_postgres_dml_boolean_literal_guard.py for the drift guard that
+# cross-checks this set against the schema definition).
+_PG_BOOL_COLUMNS = frozenset(
+    {
+        "deleted",
+        "has_docstring",
+        "processing_paused",
+        "content_stale",
+        "is_abstract",
+        "has_pass",
+        "has_not_implemented",
+    }
+)
 
 
 def _coerce_pg_boolean_values(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,29 +74,23 @@ def _normalize_postgres_returning_pk(value: Any) -> DbIdentity:
 def _postgres_where_clauses(
     where: Dict[str, Any],
 ) -> tuple[list[str], list[Any]]:
-    """Build WHERE fragments and bind values for portable bool vs 0/1."""
+    """Build WHERE fragments and bind values for portable bool vs 0/1.
+
+    Column-set-driven (over ``_PG_BOOL_COLUMNS``, not a hardcoded per-column
+    if/elif chain) so a column added to that set is automatically handled here
+    too -- the two used to drift independently (incident #3: ``content_stale``,
+    ``is_abstract``, ``has_pass``, ``has_not_implemented`` were BOOLEAN in the
+    schema but absent from both this function's dispatch and the old
+    ``_PG_BOOL_COLUMNS``).
+    """
     clauses: list[str] = []
     values: list[Any] = []
     for col, val in where.items():
-        if col == "deleted" and val in _BOOL_FALSEY:
-            clauses.append("(deleted IS NOT TRUE OR deleted IS NULL)")
+        if col in _PG_BOOL_COLUMNS and val in _BOOL_FALSEY:
+            clauses.append(f"({col} IS NOT TRUE OR {col} IS NULL)")
             continue
-        if col == "deleted" and val in _BOOL_TRUTHY:
-            clauses.append("(deleted IS TRUE)")
-            continue
-        if col == "has_docstring" and val in _BOOL_FALSEY:
-            clauses.append("(has_docstring IS NOT TRUE OR has_docstring IS NULL)")
-            continue
-        if col == "has_docstring" and val in _BOOL_TRUTHY:
-            clauses.append("(has_docstring IS TRUE)")
-            continue
-        if col == "processing_paused" and val in _BOOL_FALSEY:
-            clauses.append(
-                "(processing_paused IS NOT TRUE OR processing_paused IS NULL)"
-            )
-            continue
-        if col == "processing_paused" and val in _BOOL_TRUTHY:
-            clauses.append("(processing_paused IS TRUE)")
+        if col in _PG_BOOL_COLUMNS and val in _BOOL_TRUTHY:
+            clauses.append(f"({col} IS TRUE)")
             continue
         clauses.append(f"{col} = %s")
         values.append(val)

@@ -219,7 +219,23 @@ _COMPREHENSIVE_ANALYSIS_RESULTS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
 
 
 # SQLite schema often uses INTEGER 0/1 for these; PostgreSQL uses native BOOLEAN.
-_BOOL_COL_INT_ASSIGN = ("deleted", "has_docstring", "processing_paused")
+# Every column the schema definition marks BOOLEAN (schema_definition_tables_core.py)
+# must be listed here -- this tuple drifting out of sync with the schema is exactly
+# what caused incident #3 (1.6.77 deploy): ``content_stale`` (and, latently,
+# ``is_abstract``/``has_pass``/``has_not_implemented``) were BOOLEAN in the schema but
+# missing from this list, so raw ``content_stale = 0/1`` DML sailed through this
+# adapter unrewritten and hit PostgreSQL's "operator does not exist: boolean =
+# integer". test_postgres_dml_boolean_literal_guard.py cross-checks this tuple
+# against the schema-derived boolean-column set and fails on drift.
+_BOOL_COL_INT_ASSIGN = (
+    "deleted",
+    "has_docstring",
+    "processing_paused",
+    "content_stale",
+    "is_abstract",
+    "has_pass",
+    "has_not_implemented",
+)
 
 
 def _adapt_sqlite_bool_int_assignments_for_postgres(sql: str) -> str:

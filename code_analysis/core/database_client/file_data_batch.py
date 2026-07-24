@@ -400,7 +400,7 @@ def build_file_data_atomic_batches(
     batches.append(
         [
             (
-                f"UPDATE files SET content_stale = 0, content_stale_since = NULL, "
+                f"UPDATE files SET content_stale = FALSE, content_stale_since = NULL, "
                 f"updated_at = {_now_clear} WHERE id = ?",
                 (file_id,),
             )

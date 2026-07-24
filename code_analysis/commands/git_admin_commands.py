@@ -323,8 +323,8 @@ def _mark_pull_changed_files_stale(
         now_sql = sql_julian_timestamp_now_expr(database)
         try:
             database.execute(
-                "UPDATE files SET content_stale = 1, content_stale_since = "
-                f"{now_sql} WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                "UPDATE files SET content_stale = TRUE, content_stale_since = "
+                f"{now_sql} WHERE project_id = ? AND (deleted = FALSE OR deleted IS NULL)",
                 (project_id,),
             )
         except Exception as exc:  # noqa: BLE001

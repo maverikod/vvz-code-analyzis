@@ -141,5 +141,5 @@ def test_mark_pull_changed_files_stale_falls_back_project_wide_on_diff_failure(
     assert result["mode"] == "project_wide"
     assert len(fake_db.execute_calls) == 1
     sql, params = fake_db.execute_calls[0]
-    assert "content_stale = 1" in sql
+    assert "content_stale = TRUE" in sql
     assert params == ("proj-1",)

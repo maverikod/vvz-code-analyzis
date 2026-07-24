@@ -306,7 +306,7 @@ def persist_plain_text_file_metadata(
                 return _locked_response()
             update_sql = (
                 f"UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
-                f"content_stale = 1, content_stale_since = {now_sql}, "
+                f"content_stale = TRUE, content_stale_since = {now_sql}, "
                 f"updated_at = {now_sql} WHERE id = ?"
             )
             database.execute(

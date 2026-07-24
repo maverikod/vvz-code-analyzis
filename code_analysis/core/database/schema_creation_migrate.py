@@ -122,7 +122,7 @@ def run_migrate_schema(db: Any) -> None:
     if "deleted" not in files_columns:
         try:
             logger.info("Migrating files table: adding deleted column")
-            db._execute("ALTER TABLE files ADD COLUMN deleted BOOLEAN DEFAULT 0")
+            db._execute("ALTER TABLE files ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
             db._commit()
         except Exception as e:
             logger.warning(f"Could not add deleted column to files: {e}")
@@ -199,14 +199,14 @@ def run_migrate_schema(db: Any) -> None:
     if "deleted" not in projects_columns:
         try:
             logger.info("Migrating projects table: adding deleted column")
-            db._execute("ALTER TABLE projects ADD COLUMN deleted BOOLEAN DEFAULT 0")
+            db._execute("ALTER TABLE projects ADD COLUMN deleted BOOLEAN DEFAULT FALSE")
             db._commit()
         except Exception as e:
             logger.warning(f"Could not add deleted column to projects: {e}")
     try:
         db._execute("""
             CREATE INDEX IF NOT EXISTS idx_projects_deleted
-            ON projects(deleted) WHERE deleted = 1
+            ON projects(deleted) WHERE deleted = TRUE
             """)
         db._commit()
     except Exception as e:
@@ -236,7 +236,7 @@ def run_migrate_schema(db: Any) -> None:
         try:
             logger.info("Migrating projects table: adding processing_paused column")
             db._execute(
-                "ALTER TABLE projects ADD COLUMN processing_paused BOOLEAN DEFAULT 0"
+                "ALTER TABLE projects ADD COLUMN processing_paused BOOLEAN DEFAULT FALSE"
             )
             db._commit()
         except Exception as e:
@@ -247,7 +247,7 @@ def run_migrate_schema(db: Any) -> None:
         try:
             db._execute("""
                 CREATE INDEX IF NOT EXISTS idx_files_deleted 
-                ON files(deleted) WHERE deleted = 1
+                ON files(deleted) WHERE deleted = TRUE
                 """)
             db._commit()
             logger.info("Created index idx_files_deleted")

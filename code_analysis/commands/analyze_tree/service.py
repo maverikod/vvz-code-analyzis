@@ -137,7 +137,7 @@ def build_core(
         """
         SELECT id, path, relative_path, tree_checksum
         FROM files
-        WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)
+        WHERE project_id = ? AND (deleted = FALSE OR deleted IS NULL)
         """,
         (project_id,),
     )

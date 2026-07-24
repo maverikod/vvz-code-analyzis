@@ -148,7 +148,7 @@ def mark_file_deleted_via_driver(
             driver,
             f"""
             UPDATE files
-            SET deleted = 1, original_path = ?, version_dir = ?, updated_at = {_now}
+            SET deleted = TRUE, original_path = ?, version_dir = ?, updated_at = {_now}
             WHERE id = ?
             """,
             (str(original_path), str(file_trash_root), file_id),
@@ -220,7 +220,7 @@ def mark_file_deleted_via_driver(
         driver,
         f"""
         UPDATE files
-        SET deleted = 1, original_path = ?, version_dir = ?, path = ?, updated_at = {_now}
+        SET deleted = TRUE, original_path = ?, version_dir = ?, path = ?, updated_at = {_now}
         WHERE id = ?
         """,
         (str(original_path), str(file_trash_root), str(target_path), file_id),
@@ -342,8 +342,8 @@ def unmark_file_deleted_via_driver(
         driver,
         f"""
         UPDATE files
-        SET deleted = 0, path = ?, original_path = NULL, version_dir = NULL,
-            content_stale = 1, content_stale_since = {_now},
+        SET deleted = FALSE, path = ?, original_path = NULL, version_dir = NULL,
+            content_stale = TRUE, content_stale_since = {_now},
             updated_at = {_now}
         WHERE id = ?
         """,

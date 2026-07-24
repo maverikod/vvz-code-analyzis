@@ -156,9 +156,9 @@ class RepairDatabaseCommand:
                                 _now = sql_julian_timestamp_now_expr(self.database)
                                 self.database.execute(
                                     f"""
-                                    UPDATE files 
-                                    SET deleted = 0, 
-                                        original_path = NULL, 
+                                    UPDATE files
+                                    SET deleted = FALSE,
+                                        original_path = NULL,
                                         version_dir = NULL, 
                                         path = ?,
                                         updated_at = {_now}

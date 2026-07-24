@@ -84,7 +84,7 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
         "f.created_at, f.updated_at, p.root_path "
         "FROM files f "
         "JOIN projects p ON p.id = f.project_id "
-        "WHERE (f.deleted IS NULL OR f.deleted = 0) "
+        "WHERE (f.deleted IS NULL OR f.deleted = FALSE) "
         "AND SUBSTR(CAST(f.path AS TEXT), 1, 1) = '/' "
         "AND p.root_path IS NOT NULL "
         "AND (p.root_path = ? OR p.root_path LIKE ?)"
@@ -107,7 +107,7 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
     dup_sql = (
         "SELECT id, created_at, updated_at FROM files "
         "WHERE project_id = ? AND path = ? "
-        "AND (deleted IS NULL OR deleted = 0) AND id != ?"
+        "AND (deleted IS NULL OR deleted = FALSE) AND id != ?"
     )
 
     for abs_row in abs_rows:

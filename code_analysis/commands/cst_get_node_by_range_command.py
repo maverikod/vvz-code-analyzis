@@ -16,6 +16,7 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.cst_tree.tree_builder import get_tree
 from ..core.cst_tree.tree_range_finder import find_node_by_range, find_nodes_by_range
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,15 @@ class CSTGetNodeByRangeCommand(BaseMCPCommand):
         """Return the best CST node or all nodes intersecting a line range."""
         t_start = time.perf_counter()
         try:
+            # bug 88f06abc gap: this command reads the in-memory tree via tree_id
+            # only, with no project_id kwarg for run()'s gate to see.
+            existing_tree = get_tree(tree_id)
+            if existing_tree:
+                lock_err = self._project_locked_error_for_path(
+                    existing_tree.file_path
+                )
+                if lock_err:
+                    return lock_err
             t0 = time.perf_counter()
             if all_intersecting:
                 nodes = find_nodes_by_range(tree_id, start_line, end_line)

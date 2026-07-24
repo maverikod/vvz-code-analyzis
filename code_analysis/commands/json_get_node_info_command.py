@@ -125,6 +125,11 @@ class JsonGetNodeInfoCommand(BaseMCPCommand):
                     code="TREE_NOT_FOUND",
                     details={"tree_id": tree_id},
                 )
+            # bug 88f06abc gap: this command reads the in-memory tree via tree_id
+            # only, with no project_id kwarg for run()'s gate to see.
+            lock_err = self._project_locked_error_for_path(tree.file_path)
+            if lock_err:
+                return lock_err
 
             pointer: Optional[str] = None
             if node_id:

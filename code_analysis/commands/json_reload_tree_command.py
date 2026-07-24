@@ -16,7 +16,7 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.json_tree.tree_builder import reload_tree_from_file
+from ..core.json_tree.tree_builder import get_tree, reload_tree_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,13 @@ class JsonReloadTreeCommand(BaseMCPCommand):
         """Refresh an existing JSON tree session while preserving its tree id."""
         t_start = time.perf_counter()
         try:
+            existing = get_tree(tree_id)
+            if existing:
+                # bug 88f06abc gap: this command re-reads the file from disk using
+                # tree.file_path, with no project_id kwarg for run()'s gate to see.
+                lock_err = self._project_locked_error_for_path(existing.file_path)
+                if lock_err:
+                    return lock_err
             updated = reload_tree_from_file(tree_id)
             if not updated:
                 return ErrorResult(

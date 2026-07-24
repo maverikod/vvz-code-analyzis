@@ -99,7 +99,11 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                 resolve_storage_paths,
                 get_faiss_index_path,
             )
-            from ...core.trash_utils import merge_project_ids_for_clear_trash_db_phase
+            from ...core.project_exclusive_lock import is_project_exclusively_locked
+            from ...core.trash_utils import (
+                merge_project_ids_for_clear_trash_db_phase,
+                resolve_trash_entry_project_id,
+            )
             from ..clear_project_data_impl import _clear_project_data_impl
             from ..trash_commands import ClearTrashCommand
 
@@ -112,27 +116,59 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                 trash_dir = str(storage.trash_dir)
             trash_dir_path = Path(trash_dir)
 
+            # bug 88f06abc gap: clear_trash discovers project_ids internally
+            # (trash-folder projectid markers + DB soft-delete rows) rather than
+            # taking project_id as a kwarg, so run()'s literal-project_id gate
+            # never sees them. Skip any exclusively-locked project on BOTH the
+            # DB-clear phase and the disk-clear phase below instead of failing
+            # (or worse, silently mutating) the whole batch.
+            locked_project_ids: List[str] = []
+
             # Clear DB (and FAISS) for resolvable trash + DB-only soft-delete orphans,
             # then delete paths on disk (DB always before disk for any trash on disk).
-            if not dry_run:
-                database = self._open_database_from_config(auto_analyze=False)
-                try:
-                    soft_deleted = _soft_deleted_project_ids(database)
-                    project_ids = merge_project_ids_for_clear_trash_db_phase(
-                        trash_dir_path, soft_deleted
-                    )
-                    if project_ids:
-                        for project_id in project_ids:
-                            await _clear_project_data_impl(database, project_id)
-                            faiss_index_path = get_faiss_index_path(
-                                storage.faiss_dir, project_id
-                            )
-                            if faiss_index_path.exists():
-                                faiss_index_path.unlink()
-                finally:
-                    database.disconnect()
+            database = self._open_database_from_config(auto_analyze=False)
+            try:
+                soft_deleted = _soft_deleted_project_ids(database)
+                project_ids = merge_project_ids_for_clear_trash_db_phase(
+                    trash_dir_path, soft_deleted
+                )
+                for project_id in project_ids:
+                    if is_project_exclusively_locked(database, project_id):
+                        locked_project_ids.append(project_id)
+                if not dry_run:
+                    for project_id in project_ids:
+                        if project_id in locked_project_ids:
+                            continue
+                        await _clear_project_data_impl(database, project_id)
+                        faiss_index_path = get_faiss_index_path(
+                            storage.faiss_dir, project_id
+                        )
+                        if faiss_index_path.exists():
+                            faiss_index_path.unlink()
+            finally:
+                database.disconnect()
 
-            cmd = ClearTrashCommand(trash_dir=trash_dir, dry_run=dry_run)
+            # Resolve locked project_ids back to their on-disk trash folder names
+            # so ClearTrashCommand's file-system pass below skips them too.
+            excluded_folder_names: List[str] = []
+            if (
+                locked_project_ids
+                and trash_dir_path.exists()
+                and trash_dir_path.is_dir()
+            ):
+                locked_set = set(locked_project_ids)
+                for child in trash_dir_path.iterdir():
+                    if not child.is_dir():
+                        continue
+                    pid = resolve_trash_entry_project_id(trash_dir_path, child.name)
+                    if pid in locked_set:
+                        excluded_folder_names.append(child.name)
+
+            cmd = ClearTrashCommand(
+                trash_dir=trash_dir,
+                dry_run=dry_run,
+                exclude_names=excluded_folder_names,
+            )
             result = cmd.execute()
             if not result.get("success"):
                 return self._handle_error(
@@ -140,6 +176,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                     result.get("error", "CLEAR_TRASH_ERROR"),
                     "clear_trash",
                 )
+            result["skipped_locked_project_ids"] = locked_project_ids
             return SuccessResult(
                 data=result,
                 message=(

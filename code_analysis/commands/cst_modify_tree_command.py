@@ -111,6 +111,17 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     details={"tree_id": tree_id},
                 )
 
+            # bug 88f06abc gap: project_id/file_path are Optional here — when a
+            # caller omits them (common on session-based multi-step calls after
+            # the first), run()'s literal-project_id gate never fires even though
+            # this call still mutates the in-memory tree for a specific project's
+            # file. Gate on the tree's own file_path regardless of whether
+            # project_id was supplied, closing that path without weakening the
+            # already-covered combined-save branch below.
+            lock_err = self._project_locked_error_for_path(original_tree.file_path)
+            if lock_err:
+                return lock_err
+
             # Expand replace_many into multiple replace ops (all validated before apply)
             try:
                 operations = _expand_replace_many_operations(operations)

@@ -82,6 +82,11 @@ class CSTReloadTreeCommand(BaseMCPCommand):
                 "[TIMING] command=cst_reload_tree step=get_tree elapsed_sec=%.4f",
                 time.perf_counter() - t0,
             )
+            # bug 88f06abc gap: this command re-reads the file from disk using
+            # tree.file_path, with no project_id kwarg for run()'s gate to see.
+            lock_err = self._project_locked_error_for_path(tree.file_path)
+            if lock_err:
+                return lock_err
             t_reload = time.perf_counter()
             updated_tree = reload_tree_from_file(
                 tree_id=tree_id,

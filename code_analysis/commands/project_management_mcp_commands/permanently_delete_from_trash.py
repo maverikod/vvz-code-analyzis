@@ -73,6 +73,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
                 resolve_storage_paths,
                 get_faiss_index_path,
             )
+            from ...core.project_exclusive_lock import get_project_exclusive_lock
             from ...core.trash_utils import resolve_trash_entry_project_id
             from ..clear_project_data_impl import _clear_project_data_impl
             from ..trash_commands import PermanentlyDeleteFromTrashCommand
@@ -93,6 +94,24 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
             if project_id:
                 database = self._open_database_from_config(auto_analyze=False)
                 try:
+                    # bug 88f06abc gap: this command resolves project_id
+                    # internally from the trash folder's own projectid marker,
+                    # so run()'s literal-project_id gate never sees it. Fail
+                    # fast here (single target, unlike clear_trash's
+                    # skip-and-continue over a batch).
+                    lock = get_project_exclusive_lock(database, project_id)
+                    if lock:
+                        return ErrorResult(
+                            message=(
+                                f"Project {project_id!r} is exclusively locked "
+                                f"(owner={lock.get('owner')!r}, reason={lock.get('reason')!r}); "
+                                "the operation was refused. Use "
+                                "emergency_unlock_project if the lock is stuck "
+                                "(requires force=true and disk/DB reconciliation)."
+                            ),
+                            code="PROJECT_LOCKED",
+                            details={"project_id": project_id, "lock": lock},
+                        )
                     await _clear_project_data_impl(database, project_id)
                     faiss_index_path = get_faiss_index_path(
                         storage.faiss_dir, project_id

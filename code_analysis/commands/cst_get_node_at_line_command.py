@@ -92,6 +92,16 @@ class CSTGetNodeAtLineCommand(BaseMCPCommand):
                     details={"tree_id": tree_id, "line": line},
                 )
 
+            # bug 88f06abc gap: this command reads the in-memory tree via tree_id
+            # only, with no project_id kwarg for run()'s gate to see.
+            existing_tree = get_tree(tree_id)
+            if existing_tree:
+                lock_err = self._project_locked_error_for_path(
+                    existing_tree.file_path
+                )
+                if lock_err:
+                    return lock_err
+
             node = find_node_by_range(tree_id, line, line, prefer_exact=False)
             if not node:
                 return ErrorResult(

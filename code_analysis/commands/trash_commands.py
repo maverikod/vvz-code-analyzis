@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 # Regex for trash folder name: {original_name}_{YYYY-MM-DDThh-mm-ss}Z
 _TRASH_FOLDER_PATTERN = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)$")
@@ -177,16 +177,27 @@ class ClearTrashCommand:
     Optionally dry_run to only report what would be removed.
     """
 
-    def __init__(self, trash_dir: str, dry_run: bool = False):
+    def __init__(
+        self,
+        trash_dir: str,
+        dry_run: bool = False,
+        exclude_names: Optional[Sequence[str]] = None,
+    ):
         """
         Initialize clear trash command.
 
         Args:
             trash_dir: Path to trash directory.
             dry_run: If True, only list what would be removed; do not delete.
+            exclude_names: Direct-child folder/file names to leave untouched
+                (bug 88f06abc gap fix: the caller resolves each entry's owning
+                project_id and passes the entries whose project is currently
+                exclusively locked here, so a mid-rename project's trashed
+                data survives a concurrent clear_trash).
         """
         self.trash_dir = Path(trash_dir).resolve()
         self.dry_run = dry_run
+        self.exclude_names = frozenset(exclude_names or ())
 
     def execute(self) -> Dict[str, Any]:
         """
@@ -194,24 +205,32 @@ class ClearTrashCommand:
 
         Directories are removed recursively. Files (e.g. service files like
         .projectid, lock files) are also removed so the trash is fully cleared.
+        Entries named in ``self.exclude_names`` are left untouched and reported
+        separately under ``skipped_locked``.
 
         Returns:
-            Dict with success, removed_count, removed (list of names).
+            Dict with success, removed_count, removed (list of names), and
+            skipped_locked (list of excluded names, always present).
         """
         if not self.trash_dir.exists():
             return {
                 "success": True,
                 "removed_count": 0,
                 "removed": [],
+                "skipped_locked": [],
                 "dry_run": self.dry_run,
                 "trash_dir": str(self.trash_dir),
             }
 
         removed: List[str] = []
+        skipped_locked: List[str] = []
         errors: List[str] = []
         try:
             for child in list(self.trash_dir.iterdir()):
                 name = child.name
+                if name in self.exclude_names:
+                    skipped_locked.append(name)
+                    continue
                 removed.append(name)
                 if self.dry_run:
                     continue
@@ -234,6 +253,7 @@ class ClearTrashCommand:
             "success": len(errors) == 0,
             "removed_count": len(removed),
             "removed": removed,
+            "skipped_locked": skipped_locked,
             "dry_run": self.dry_run,
             "trash_dir": str(self.trash_dir),
             "errors": errors if errors else None,

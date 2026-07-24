@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.cst_tree.tree_builder import get_tree
 from ..core.cst_tree.tree_metadata import (
     get_node_children,
     get_node_descendants,
@@ -116,6 +117,15 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         """Return CST node metadata with optional code, children, and parent data."""
         t_start = time.perf_counter()
         try:
+            # bug 88f06abc gap: this command reads the in-memory tree via tree_id
+            # only, with no project_id kwarg for run()'s gate to see.
+            existing_tree = get_tree(tree_id)
+            if existing_tree:
+                lock_err = self._project_locked_error_for_path(
+                    existing_tree.file_path
+                )
+                if lock_err:
+                    return lock_err
             try:
                 depth = _normalize_children_depth(children_depth)
             except ValueError as e:

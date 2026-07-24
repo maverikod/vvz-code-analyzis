@@ -24,6 +24,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 
 
+from ..core.cst_tree.tree_builder import get_tree
 from ..core.cst_tree.tree_finder import find_nodes
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,15 @@ class CSTFindNodeCommand(BaseMCPCommand):
         require_one: bool = kwargs.get("require_one", False)
         include_code: bool = kwargs.get("include_code", False)
         try:
+            # bug 88f06abc gap: this command reads the in-memory tree via tree_id
+            # only, with no project_id kwarg for run()'s gate to see.
+            existing_tree = get_tree(tree_id)
+            if existing_tree:
+                lock_err = self._project_locked_error_for_path(
+                    existing_tree.file_path
+                )
+                if lock_err:
+                    return lock_err
             t0 = time.perf_counter()
             matches = find_nodes(
                 tree_id=tree_id,

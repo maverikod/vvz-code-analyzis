@@ -87,12 +87,19 @@ class JsonModifyTreeCommand(BaseMCPCommand):
         """Apply JSON tree operations and return updated node metadata."""
         t_start = time.perf_counter()
         try:
-            if not get_tree(tree_id):
+            existing_tree = get_tree(tree_id)
+            if not existing_tree:
                 return ErrorResult(
                     message=f"Tree not found: {tree_id}",
                     code="TREE_NOT_FOUND",
                     details={"tree_id": tree_id},
                 )
+            # bug 88f06abc gap: this command mutates the in-memory tree via
+            # tree_id only — json_modify_tree never takes project_id at all, so
+            # run()'s literal-project_id gate can never see it.
+            lock_err = self._project_locked_error_for_path(existing_tree.file_path)
+            if lock_err:
+                return lock_err
             if preview:
                 return ErrorResult(
                     message="preview is not implemented for json_modify_tree",

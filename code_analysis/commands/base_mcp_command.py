@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -341,6 +342,101 @@ class BaseMCPCommand(Command):
             return
         finally:
             db.disconnect()
+
+    @staticmethod
+    def _resolve_project_id_for_disk_path(absolute_path: str) -> Optional[str]:
+        """Best-effort recovery of the owning ``project_id`` for an absolute path.
+
+        Handle-based commands (the ``cst_*``/``json_*`` tree family: they operate
+        on an in-memory ``tree_id`` obtained from ``cst_load_file``/``json_load_file``
+        and, on later calls, often carry no ``project_id`` kwarg at all) cannot be
+        gated by ``run()``'s literal-``project_id`` check (bug 88f06abc gap). This
+        recovers the owning project by walking upward from ``absolute_path`` for the
+        nearest ``projectid`` marker file — the same marker
+        ``core/project_resolution.py`` reads at a project root — and returning its
+        ``id`` field.
+
+        Args:
+            absolute_path: Absolute filesystem path of the file a handle-based
+                command is about to read or mutate (e.g. ``CSTTree.file_path`` /
+                ``JSONTree.file_path``).
+
+        Returns:
+            The project UUID string when a ``projectid`` marker is found and
+            parses cleanly; otherwise None (including on any I/O/parse error or
+            when the walk reaches the filesystem root without finding one) — a
+            resolution miss fails OPEN, matching
+            ``is_project_exclusively_locked``'s fail-open philosophy so a lookup
+            failure never wedges an unrelated operation.
+        """
+        try:
+            current = Path(absolute_path).resolve()
+        except OSError:
+            return None
+        if current.is_file():
+            current = current.parent
+        # Bounded walk: real filesystem trees are nowhere near this deep; guards
+        # against any pathological cyclic-symlink edge case.
+        for _ in range(128):
+            pid_path = current / "projectid"
+            if pid_path.is_file():
+                try:
+                    data = json.loads(pid_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    return None
+                candidate = data.get("id") if isinstance(data, dict) else None
+                return candidate if isinstance(candidate, str) and candidate else None
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+        return None
+
+    @staticmethod
+    def _project_locked_error_for_path(absolute_path: str) -> Optional[ErrorResult]:
+        """Fail-fast ``PROJECT_LOCKED`` gate for handle-based commands (bug 88f06abc).
+
+        Companion to the ``run()`` gate and the ``_validate_project_id_exists`` /
+        ``_resolve_project_root`` checks below, for the one class of command those
+        cannot reach: the ``cst_*``/``json_*`` tree-handle family, which resolves
+        its target file only through an in-memory ``tree_id`` (no literal
+        ``project_id`` kwarg to trip ``run()``'s gate). Call this before any read
+        or mutation such a command performs, passing the absolute path recorded on
+        its in-memory tree.
+
+        Args:
+            absolute_path: Absolute filesystem path the handle-based command is
+                about to read from or write to.
+
+        Returns:
+            An ``ErrorResult`` with code ``PROJECT_LOCKED`` (same shape as the
+            ``run()`` gate) when the owning project is exclusively locked;
+            otherwise None — including when the owning project cannot be
+            determined at all (fail open, see
+            ``_resolve_project_id_for_disk_path``).
+        """
+        project_id = BaseMCPCommand._resolve_project_id_for_disk_path(absolute_path)
+        if not project_id:
+            return None
+        from ..core.project_exclusive_lock import get_project_exclusive_lock
+
+        db = BaseMCPCommand._open_database_from_config()
+        try:
+            lock = get_project_exclusive_lock(db, project_id)
+        finally:
+            db.disconnect()
+        if not lock:
+            return None
+        return ErrorResult(
+            message=(
+                f"Project {project_id!r} is exclusively locked "
+                f"(owner={lock.get('owner')!r}, reason={lock.get('reason')!r}); "
+                "the operation was refused. Use emergency_unlock_project if the "
+                "lock is stuck (requires force=true and disk/DB reconciliation)."
+            ),
+            code="PROJECT_LOCKED",
+            details={"project_id": project_id, "lock": lock},
+        )
 
     @staticmethod
     def _validate_watch_dir_id_exists(watch_dir_id: str) -> None:

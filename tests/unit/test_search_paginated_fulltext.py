@@ -59,6 +59,31 @@ def test_normalize_fulltext_finding_maps_fields() -> None:
     assert finding["text"] == "hello"
 
 
+def test_normalize_fulltext_finding_carries_project_attribution() -> None:
+    """Bug 29212ab2: project_id/project_name from the backend SELECT (both the
+    per-project and global(project_id=None) rows already carry them) must
+    survive normalization into the finding row, not be silently dropped."""
+    raw = {
+        "file_path": "src/a.py",
+        "chunk_text": "hello",
+        "rank": 0.5,
+        "project_id": "proj-a",
+        "project_name": "Project A",
+    }
+    finding = normalize_fulltext_finding(raw, index=0)
+    assert finding["project_id"] == "proj-a"
+    assert finding["project_name"] == "Project A"
+
+
+def test_normalize_fulltext_finding_project_attribution_absent_is_none() -> None:
+    """Per-project backend rows that never carried project_id (older/mocked
+    shape) must not error - the field is simply None, not KeyError."""
+    raw = {"file_path": "src/a.py", "chunk_text": "hello"}
+    finding = normalize_fulltext_finding(raw, index=0)
+    assert finding["project_id"] is None
+    assert finding["project_name"] is None
+
+
 @pytest.mark.asyncio
 async def test_run_paginated_fulltext_publishes_block_and_returns_1(
     tmp_path: Path,

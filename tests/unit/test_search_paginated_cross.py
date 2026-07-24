@@ -97,6 +97,36 @@ def test_indexed_finding_payload_fulltext_maps_content_and_score() -> None:
     assert payload["score"] == 0.2
 
 
+def test_indexed_finding_payload_fulltext_carries_project_attribution() -> None:
+    """Bug 29212ab2: the phase-1 fulltext/semantic -> finding mapping used by
+    both the per-project and global(project_id=None) cross-search paths must
+    not drop project_id/project_name from the backend row."""
+    raw = {
+        "file_path": "src/mod.py",
+        "content": "def foo() -> int:\n    return 1",
+        "bm25_score": 0.2,
+        "project_id": "proj-a",
+        "project_name": "Project A",
+    }
+    payload = indexed_finding_payload(raw, index=0, source="fulltext")
+    assert payload["project_id"] == "proj-a"
+    assert payload["project_name"] == "Project A"
+
+
+def test_indexed_finding_payload_semantic_carries_project_attribution() -> None:
+    """Same guard as above, for the semantic phase-1 mapping."""
+    raw = {
+        "file_path": "src/mod.py",
+        "chunk_text": "def foo() -> int:\n    return 1",
+        "score": 0.5,
+        "project_id": "proj-b",
+        "project_name": "Project B",
+    }
+    payload = indexed_finding_payload(raw, index=0, source="semantic")
+    assert payload["project_id"] == "proj-b"
+    assert payload["project_name"] == "Project B"
+
+
 def test_normalize_cross_finding_structural() -> None:
     """Verify test normalize cross finding structural."""
     raw = {
@@ -270,7 +300,16 @@ async def test_run_paginated_cross_global_fulltext_bypasses_command_class(
             "entity_name": "foo",
             "project_id": "proj-a",
             "project_name": "Project A",
-        }
+        },
+        {
+            "file_path": "b.py",
+            "content": "def foo(): pass",
+            "bm25_score": 0.3,
+            "entity_type": "function",
+            "entity_name": "foo",
+            "project_id": "proj-b",
+            "project_name": "Project B",
+        },
     ]
 
     with (
@@ -303,6 +342,10 @@ async def test_run_paginated_cross_global_fulltext_bypasses_command_class(
     data = json.loads(block_path.read_text(encoding="utf-8"))
     results = data.get("results") or data.get("items") or []
     assert len(results) >= 1
+    # bug 29212ab2: every global-mode hit must carry which project it came
+    # from - both seeded projects' ids must be represented, not [].
+    found_project_ids = {r.get("project_id") for r in results if isinstance(r, dict)}
+    assert {"proj-a", "proj-b"} <= found_project_ids
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,30 @@ def test_normalize_semantic_finding() -> None:
     assert finding["preview"] is None
 
 
+def test_normalize_semantic_finding_carries_project_attribution() -> None:
+    """Bug 29212ab2: project_id/project_name from the backend row (per-project
+    pgvector/FAISS branches and the global pgvector SELECT all already carry
+    them) must survive normalization into the finding row."""
+    raw = {
+        "file_path": "b.py",
+        "score": 0.9,
+        "chunk_text": "foo",
+        "project_id": "proj-b",
+        "project_name": "Project B",
+    }
+    finding = normalize_semantic_finding(raw, index=0)
+    assert finding["project_id"] == "proj-b"
+    assert finding["project_name"] == "Project B"
+
+
+def test_normalize_semantic_finding_project_attribution_absent_is_none() -> None:
+    """A raw row without project_id must not error - field is simply None."""
+    raw = {"file_path": "b.py", "score": 0.9}
+    finding = normalize_semantic_finding(raw, index=0)
+    assert finding["project_id"] is None
+    assert finding["project_name"] is None
+
+
 @pytest.mark.asyncio
 async def test_run_paginated_semantic_returns_1_on_results(tmp_path: Path) -> None:
     """Verify test run paginated semantic returns 1 on results."""

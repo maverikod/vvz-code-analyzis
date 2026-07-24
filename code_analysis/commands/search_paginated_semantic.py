@@ -49,7 +49,14 @@ _STRIP_KEYS = frozenset(
 
 
 def normalize_semantic_finding(raw: dict[str, Any], *, index: int) -> dict[str, Any]:
-    """Map a legacy semantic result to a JSON-safe finding."""
+    """Map a legacy semantic result to a JSON-safe finding.
+
+    ``project_id``/``project_name`` are carried through verbatim when present
+    on ``raw`` (both the per-project pgvector/FAISS branches and the
+    global-mode pgvector SELECT in ``search_paginated_cross._run_semantic_global``
+    already attribute each row to its owning project); dropping them here was
+    bug 29212ab2 (global search hits with empty project attribution).
+    """
     preview = raw.get("preview")
     return {
         "result_id": f"semantic-{index:06d}",
@@ -61,6 +68,8 @@ def normalize_semantic_finding(raw: dict[str, Any], *, index: int) -> dict[str, 
         "entity_type": raw.get("entity_type"),
         "entity_name": raw.get("entity_name"),
         "content_stale": bool(raw.get("content_stale") or False),
+        "project_id": raw.get("project_id"),
+        "project_name": raw.get("project_name"),
     }
 
 

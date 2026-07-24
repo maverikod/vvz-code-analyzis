@@ -49,7 +49,14 @@ _STRIP_KEYS = frozenset(
 
 
 def normalize_fulltext_finding(raw: dict[str, Any], *, index: int) -> dict[str, Any]:
-    """Map a legacy fulltext result dict to a JSON-safe finding."""
+    """Map a legacy fulltext result dict to a JSON-safe finding.
+
+    ``project_id``/``project_name`` are carried through verbatim when present
+    on ``raw`` (both the per-project and global-mode backend SELECTs already
+    attribute each row to its owning project - see
+    ``code_analysis.core.database_driver_pkg.domain.search``); dropping them
+    here was bug 29212ab2 (global search hits with empty project attribution).
+    """
     return {
         "result_id": f"fulltext-{index:06d}",
         "source": "fulltext",
@@ -60,6 +67,8 @@ def normalize_fulltext_finding(raw: dict[str, Any], *, index: int) -> dict[str, 
         "entity_type": raw.get("entity_type"),
         "entity_name": raw.get("entity_name"),
         "content_stale": bool(raw.get("content_stale") or False),
+        "project_id": raw.get("project_id"),
+        "project_name": raw.get("project_name"),
     }
 
 

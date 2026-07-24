@@ -50,6 +50,9 @@ from _verify_client_all_commands_lifecycle_list_files_glob_fast import (
 from _verify_client_all_commands_lifecycle_list_projects_fast import (
     run_list_projects_paginated_fast_check,
 )
+from _verify_client_all_commands_lifecycle_project_lock import (
+    run_project_lock_rename_roundtrip_check,
+)
 from _verify_client_all_commands_lifecycle_project_trash_restore import (
     run_project_trash_restore_roundtrip_check,
 )
@@ -92,6 +95,7 @@ _LIFECYCLE_RUNNERS = (
     run_search_fulltext_seeded_literal_check,
     run_content_stale_roundtrip_check,
     run_global_search_attribution_check,
+    run_project_lock_rename_roundtrip_check,
 )
 
 

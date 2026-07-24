@@ -26,12 +26,18 @@ from code_analysis_client import CodeAnalysisAsyncClient
 from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status
 from _verify_client_all_commands_fixtures import FixtureContext
 from _verify_client_all_commands_lifecycle_entities import run_entity_lifecycle
+from _verify_client_all_commands_lifecycle_content_stale import (
+    run_content_stale_roundtrip_check,
+)
 from _verify_client_all_commands_lifecycle_fs import run_fs_lifecycle
 from _verify_client_all_commands_lifecycle_fulltext_seeded import (
     run_search_fulltext_seeded_literal_check,
 )
 from _verify_client_all_commands_lifecycle_git import run_git_lifecycle
 from _verify_client_all_commands_lifecycle_github import run_github_lifecycle
+from _verify_client_all_commands_lifecycle_global_search import (
+    run_global_search_attribution_check,
+)
 from _verify_client_all_commands_lifecycle_grep_bounded import (
     run_search_grep_bounded_liveness_check,
 )
@@ -84,6 +90,8 @@ _LIFECYCLE_RUNNERS = (
     run_restore_database_dry_run_watch_dirs_fallback_check,
     run_search_grep_bounded_liveness_check,
     run_search_fulltext_seeded_literal_check,
+    run_content_stale_roundtrip_check,
+    run_global_search_attribution_check,
 )
 
 

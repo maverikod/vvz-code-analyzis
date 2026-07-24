@@ -2,11 +2,7 @@
 Global search (project_id=None) lifecycle check (cross-search removal;
 USER: search(project_id=None) = all projects).
 
-UNREGISTERED groundwork module (intentionally not wired into
-_verify_client_all_commands_lifecycles.run_lifecycles - see
-_verify_client_all_commands_lifecycle_content_stale.py's own "unregistered
-groundwork" precedent; owner: the search/db-collapse implementer who owns the
-registry).
+Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
 
 Flow: seed two disposable throwaway projects, each with one file containing a
 distinct globally-unique token, index both, then run

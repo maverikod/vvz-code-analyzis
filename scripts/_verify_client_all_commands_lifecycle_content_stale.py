@@ -1,11 +1,7 @@
 """
 Content-stale flag read-after-write lifecycle check (bug 56c23bd9).
 
-UNREGISTERED groundwork module (intentionally not wired into
-``_verify_client_all_commands_lifecycles.run_lifecycles`` — the search/
-db-collapse implementer owns the registry; this module is handed off for
-integration, per ``_verify_client_all_commands_lifecycle_fulltext_seeded.py``'s
-own "unregistered groundwork" precedent).
+Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
 
 Flow: seed a file, index it (baseline: not stale), edit its content through
 the live CA write path (``universal_file_open`` -> ``universal_file_edit`` ->

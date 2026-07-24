@@ -10,9 +10,15 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Match, Optional, Set
 
 from .schema_sync_models import IndexDef
+
+# Matches a bare `<identifier> = 0` / `<identifier> = 1` comparison, word-bounded so
+# it does not partially match inside a longer identifier (e.g. `is_deleted = 1` vs a
+# hypothetical `deleted = 1` substring search).
+_BOOL_EQ_INT_RE = re.compile(r"\b(?P<col>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<val>0|1)\b")
 
 
 def _map_column_type(sqlite_type: str) -> str:
@@ -137,25 +143,72 @@ def generate_create_table_sql_postgres(
     return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(col_defs)})"
 
 
-def _index_where_sqlite_to_pg(where_clause: str) -> str:
+def _boolean_columns_for_table(
+    schema_definition: Dict[str, Any], table_name: str
+) -> Set[str]:
+    """Return the set of column names typed BOOLEAN for one table in a schema definition."""
+    table_def = schema_definition.get("tables", {}).get(table_name, {})
+    return {
+        col["name"]
+        for col in table_def.get("columns", [])
+        if (col.get("type") or "").upper().strip() in ("BOOLEAN", "BOOL")
+    }
+
+
+def _index_where_sqlite_to_pg(
+    where_clause: str,
+    boolean_columns: Optional[Set[str]] = None,
+) -> str:
     """Map SQLite-style boolean comparisons in partial indexes to PostgreSQL BOOLEAN.
 
-    SQLite schema may use INTEGER 0/1 for legacy columns; PostgreSQL uses BOOLEAN
-    for ``deleted`` (and similar). ``needs_chunking`` remains INTEGER in the
-    logical schema, so ``needs_chunking = 1`` is left unchanged for PostgreSQL.
+    SQLite schema uses INTEGER 0/1 literals for BOOLEAN columns (``deleted``,
+    ``content_stale``, ...) inside partial-index WHERE clauses. PostgreSQL requires a
+    genuine boolean comparison against a BOOLEAN column: ``some_bool_col = 1`` raises
+    ``psycopg.errors.UndefinedFunction: operator does not exist: boolean = integer``
+    (1.6.76 deploy incident #2, ``idx_files_content_stale``). ``needs_chunking``
+    stays INTEGER in the logical schema, so ``needs_chunking = 1`` must be left
+    unchanged for PostgreSQL — the two literal shapes are indistinguishable by text
+    alone, hence ``boolean_columns`` (derived by the caller from the schema
+    definition's column types for this index's table) drives which identifiers get
+    rewritten, instead of hardcoding column names here.
+
+    When ``boolean_columns`` is not supplied, fall back to the historically-known
+    ``deleted`` column only, preserving the pre-fix behavior for any caller that has
+    not been updated to pass the schema definition. Every live call site in this
+    codebase (``postgres_schema_ddl.create_postgresql_indexes`` and the
+    ``postgres_migrations`` idempotent-ensure helpers) passes it explicitly.
     """
-    w = where_clause
-    w = w.replace("deleted = 1", "deleted IS TRUE")
-    w = w.replace("deleted = 0", "deleted IS FALSE")
-    return w
+    cols = boolean_columns if boolean_columns is not None else {"deleted"}
+
+    def _rewrite(match: "Match[str]") -> str:
+        col, val = match.group("col"), match.group("val")
+        if col not in cols:
+            return match.group(0)
+        return f"{col} IS {'TRUE' if val == '1' else 'FALSE'}"
+
+    return _BOOL_EQ_INT_RE.sub(_rewrite, where_clause)
 
 
-def generate_create_index_sql_postgres(index_def: IndexDef) -> str:
-    """CREATE INDEX for PostgreSQL (IF NOT EXISTS, partial indexes supported)."""
+def generate_create_index_sql_postgres(
+    index_def: IndexDef,
+    schema_definition: Optional[Dict[str, Any]] = None,
+) -> str:
+    """CREATE INDEX for PostgreSQL (IF NOT EXISTS, partial indexes supported).
+
+    ``schema_definition``, when provided, is used to derive which columns of
+    ``index_def.table`` are BOOLEAN so that ``<col> = 0/1`` literals in the WHERE
+    clause are rewritten to valid PostgreSQL boolean comparisons (see
+    ``_index_where_sqlite_to_pg``). Always pass it from a live caller.
+    """
     unique_str = "UNIQUE " if index_def.unique else ""
     columns_str = ", ".join(index_def.columns)
     if index_def.where_clause:
-        pg_where = _index_where_sqlite_to_pg(index_def.where_clause)
+        boolean_columns = None
+        if schema_definition is not None:
+            boolean_columns = _boolean_columns_for_table(
+                schema_definition, index_def.table
+            )
+        pg_where = _index_where_sqlite_to_pg(index_def.where_clause, boolean_columns)
         where_part = f" WHERE {pg_where}"
     else:
         where_part = ""

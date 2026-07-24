@@ -206,7 +206,7 @@ def idempotent_ensure_runtime_lock_tables(
                 unique=bool(idx.get("unique")),
                 where_clause=idx.get("where_clause"),
             )
-            cur.execute(generate_create_index_sql_postgres(idef))
+            cur.execute(generate_create_index_sql_postgres(idef, schema_definition))
     conn.commit()
 
 
@@ -274,7 +274,7 @@ def idempotent_ensure_client_session_tables(
                 unique=bool(idx.get("unique")),
                 where_clause=idx.get("where_clause"),
             )
-            cur.execute(generate_create_index_sql_postgres(idef))
+            cur.execute(generate_create_index_sql_postgres(idef, schema_definition))
     conn.commit()
 
 

@@ -82,7 +82,7 @@ def create_postgresql_indexes(
                 unique=bool(idx.get("unique")),
                 where_clause=idx.get("where_clause"),
             )
-            idx_sql = generate_create_index_sql_postgres(idef)
+            idx_sql = generate_create_index_sql_postgres(idef, schema_definition)
             cur.execute(idx_sql)
             executed.append(idx_sql[:200] + ("..." if len(idx_sql) > 200 else ""))
 

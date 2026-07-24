@@ -229,6 +229,94 @@ def test_venv_record_allowlisted_and_ignore_exceptions_unaffected_by_scoping(
             assert not any(".venv" in rel for rel in scoped)
 
 
+def _build_mixed_extension_siblings_fixture(root: Path, *, count: int) -> None:
+    """Build ``root/pkg/ast/<name NNN>.py`` plus a non-``.py`` sibling per file.
+
+    Mirrors the real-world shape behind bug 790cba35: a source directory
+    (``code_analysis/commands/ast/`` on the live project) where every
+    ``.py`` file has a same-stem non-``.py`` sibling (there: code_mapper's
+    ``*.py.tree`` CST cache). A ``python_only=False`` (all-files) listing of
+    such a directory returns roughly DOUBLE the item count of a
+    ``python_only=True`` listing -- exactly the shape that tripped up the
+    live ``list_project_files_glob_fast`` check, which sized its page budget
+    off a python_only control count while calling the SUT without
+    ``python_only``, so pagination silently truncated the (correct) full
+    result. This fixture reproduces that item-count shape so the matrix can
+    assert the SCOPED WALK itself (not the paginated command, and not the
+    check) stays byte-identical to a forced full walk for both
+    ``python_only`` settings -- pinning down that 790cba35 was a check-side
+    comparison bug, never a scoped-walk regression.
+    """
+    root.mkdir()
+    ast_dir = root / "pkg" / "ast"
+    ast_dir.mkdir(parents=True)
+    for i in range(count):
+        stem = f"module_{i:02d}"
+        (ast_dir / f"{stem}.py").write_text(f"# source {i}\n")
+        (ast_dir / f"{stem}.py.tree").write_text(f"# cst cache {i}\n")
+
+
+@pytest.mark.parametrize("python_only", [False, True])
+def test_scoped_matches_forced_full_walk_for_dir_prefix_with_many_non_python_siblings(
+    tmp_path: Path, python_only: bool
+) -> None:
+    """Dir-prefix scoping on a directory with .py + non-.py siblings (bug 790cba35).
+
+    Reproduces the exact item-count shape (~2x python-only count) that made
+    the live check's undersized, python_only-mismatched page budget truncate
+    real results. Both ``python_only`` settings must still see scoped ==
+    full for every one of the (deliberately > 20, so a naive small
+    ``page_size`` assumption would have truncated it) generated files.
+    """
+    root = tmp_path / "proj"
+    _build_mixed_extension_siblings_fixture(root, count=19)
+    pattern = "pkg/ast"
+
+    scoped = _matched_relative_paths(
+        root, pattern=pattern, python_only=python_only, request_pattern=pattern
+    )
+    full = _matched_relative_paths(
+        root, pattern=pattern, python_only=python_only, request_pattern=None
+    )
+
+    assert scoped == full
+    expected_count = 19 if python_only else 38
+    assert len(scoped) == expected_count
+    # The specific files bug 790cba35 reported as "missing" -- alphabetically
+    # late within the directory -- must be present regardless of directory
+    # size, proving there is no hidden truncation in the scoped walk itself.
+    assert "pkg/ast/module_18.py" in scoped
+    if not python_only:
+        assert "pkg/ast/module_18.py.tree" in scoped
+
+
+@pytest.mark.parametrize("python_only", [False, True])
+def test_scoped_matches_forced_full_walk_for_nested_glob_with_many_non_python_siblings(
+    tmp_path: Path, python_only: bool
+) -> None:
+    """Nested ``*.py`` glob on the same mixed-sibling shape: the glob's own
+    extension filter excludes ``.tree`` siblings even without
+    ``python_only``, so scoped/full parity must hold and match the
+    python-only-sized item count either way (the sub-case bug 790cba35
+    reported as already passing on the live check).
+    """
+    root = tmp_path / "proj"
+    _build_mixed_extension_siblings_fixture(root, count=19)
+    pattern = "pkg/ast/*.py"
+
+    scoped = _matched_relative_paths(
+        root, pattern=pattern, python_only=python_only, request_pattern=pattern
+    )
+    full = _matched_relative_paths(
+        root, pattern=pattern, python_only=python_only, request_pattern=None
+    )
+
+    assert scoped == full
+    assert len(scoped) == 19
+    assert "pkg/ast/module_18.py" in scoped
+    assert not any(rel.endswith(".py.tree") for rel in scoped)
+
+
 def test_scope_target_inside_always_pruned_dir_falls_back_to_root(
     tmp_path: Path,
 ) -> None:

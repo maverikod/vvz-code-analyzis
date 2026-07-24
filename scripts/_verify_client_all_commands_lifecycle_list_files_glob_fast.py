@@ -37,6 +37,24 @@ other lifecycle module contributes to. Does not replace the generic
 elsewhere (that generic call has no reason to target this specific project
 and pattern shape).
 
+Bug 790cba35 (check-side, fixed): the dir-prefix SUT call in
+:func:`_run_one_pattern_check` did not pass ``python_only=True``, unlike the
+python_only control it is diffed against. ``code_analysis/commands/ast/``
+has a non-``.py`` sibling (code_mapper's ``*.py.tree`` CST cache) next to
+every ``.py`` source file, so the real (correct) unfiltered item count under
+that directory is roughly double the control's python-only count --
+overflowing the ``page_size`` this check sizes off ``len(expected)`` and
+silently truncating the correct full result to one page, which read as a
+"missing files" scoped-walk regression. It was not one: a scoped
+python_only walk of this directory is byte-identical to a python_only
+forced-full-walk filtered to the same prefix (see
+``tests/test_list_project_files_subtree_scope_correctness_matrix.py``). The
+nested-glob sub-case never hit this because its own ``*.py`` glob filter
+(applied before pagination, unconditionally on the pattern) already excludes
+the ``.tree`` siblings even without ``python_only``. Fix: pass
+``python_only=True`` on the SUT call so it compares like-for-like with the
+control for both pattern shapes.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -189,11 +207,27 @@ async def _run_one_pattern_check(
     """
     started = time.monotonic()
     try:
+        # ``python_only=True`` MUST mirror the control's own filter (bug
+        # 790cba35): the control (``_fetch_all_python_relative_paths``) is a
+        # python_only=True listing, but a real source directory generally has
+        # non-.py siblings ``list_project_files`` (without python_only) would
+        # legitimately also return -- e.g. code_mapper's ``*.py.tree`` CST
+        # cache files sitting next to every ``.py`` file under
+        # ``code_analysis/commands/ast/``. Omitting python_only here does not
+        # make the SUT wrong; it silently doubles the item count relative to
+        # what ``page_size`` (sized off ``len(expected)``, the python-only
+        # count) budgets for, so pagination truncates the correct full result
+        # before every expected ``.py`` file is reached -- a check-side
+        # apples-to-oranges comparison, not a scoped-walk defect (the dir-
+        # prefix scoped walk was verified byte-identical to a forced full
+        # walk for this exact pattern; see
+        # tests/test_list_project_files_subtree_scope_correctness_matrix.py).
         resp = await client.call_validated(
             "list_project_files",
             {
                 "project_id": project_id,
                 "file_pattern": file_pattern,
+                "python_only": True,
                 "page_size": max(len(expected) + 5, 20),
             },
             auto_poll=False,

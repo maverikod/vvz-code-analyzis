@@ -91,10 +91,23 @@ async def run_project_lock_rename_roundtrip_check(
 
     # Step 2: confirm the project is still reachable under the same
     # project_id (no reindex required - deliberately no update_indexes call).
+    #
+    # Bug N2 (check-side, fixed): this used to call list_projects with NO
+    # page_size/filter and inspect ONLY page-1 items. list_projects paginates
+    # (default page_size=20) and sorts by (lower(name), id); on a real server
+    # with hundreds of registered projects the freshly-renamed
+    # ``verify_lock_renamed_*`` project can sort past page 1, so the check
+    # falsely synthesized "unreachable" even though rename_project itself
+    # worked correctly (confirmed live). Same class as the already-fixed N4
+    # ``list_project_files_glob_fast`` page-1-blindness bug. Fix: use the
+    # ``name_contains`` filter list_projects already supports to fetch just
+    # this fixture's row directly, regardless of catalog size or sort
+    # position - cheaper and more robust than paginating through the whole
+    # catalog.
     list_out, list_data = await call_step_with_data(
         client,
         "list_projects",
-        {},
+        {"name_contains": new_name},
         ok_reason="list_projects reachable after rename",
     )
     if list_out.status is not Status.EXECUTED_OK:
@@ -110,7 +123,8 @@ async def run_project_lock_rename_roundtrip_check(
         return _outcome(
             Status.FAILED,
             f"project_id {fixtures.project_id!r} not found in list_projects "
-            "after rename - project became unreachable",
+            f"(name_contains={new_name!r}) after rename - project became "
+            "unreachable",
         )
 
     # Step 3: rename back to the original name - proves the lock from step 1

@@ -212,6 +212,19 @@ def try_acquire_project_activity(
     _validate_activity(activity)
     _validate_ttl(ttl_seconds)
 
+    from .project_exclusive_lock import is_project_exclusively_locked
+
+    if is_project_exclusively_locked(database, project_id):
+        _log_coord(
+            "try_acquire",
+            project_id=project_id,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            activity=activity,
+            result="project_exclusively_locked",
+        )
+        return False
+
     now = time.time()
     lease_until = now + float(ttl_seconds)
     params = (

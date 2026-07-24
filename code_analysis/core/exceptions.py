@@ -288,6 +288,29 @@ class ProjectNotFoundError(CodeAnalysisError):
         self.project_id = project_id
 
 
+class ProjectLockedError(CodeAnalysisError):
+    """Raised when an operation targets a project held by the whole-project
+    exclusive lock (``core/project_exclusive_lock.py``, bugs 88f06abc,
+    5da73265)."""
+
+    def __init__(
+        self,
+        message: str,
+        project_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize project locked error.
+
+        Args:
+            message: Error message
+            project_id: Optional project ID that is exclusively locked
+            details: Optional additional details
+        """
+        super().__init__(message, code="PROJECT_LOCKED", details=details)
+        self.project_id = project_id
+
+
 class InvalidProjectIdFormatError(CodeAnalysisError):
     """Raised when projectid file has invalid format."""
 

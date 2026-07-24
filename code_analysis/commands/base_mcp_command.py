@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Final, Optional
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
@@ -78,6 +78,13 @@ class BaseMCPCommand(Command):
         it is backed up and recreated automatically.
     """
 
+    # Commands exempt from the project-exclusive-lock gate in run(): their whole
+    # purpose is to operate ON a locked project. Keep this list to the absolute
+    # minimum — anything added here silently bypasses PROJECT_LOCKED protection.
+    _PROJECT_LOCK_GATE_EXEMPT_COMMANDS: Final[frozenset] = frozenset(
+        {"emergency_unlock_project"}
+    )
+
     @classmethod
     async def run(cls, **kwargs: Any) -> Any:
         """Run the command off the main event loop to keep the server responsive.
@@ -94,8 +101,39 @@ class BaseMCPCommand(Command):
         ``use_queue=True`` commands already run in a separate worker process and
         never reach here; they are handled inline defensively. Offload can be
         disabled via config/env (escape hatch) — then we fall back to inline.
+
+        Before dispatch, a fast-fail gate refuses any command carrying a
+        literal ``project_id`` kwarg when that project is held by the
+        whole-project exclusive lock (``core/project_exclusive_lock.py``,
+        bugs 88f06abc, 5da73265), returning ``PROJECT_LOCKED`` immediately
+        instead of running. ``emergency_unlock_project`` is the sole exempt
+        command (see ``_PROJECT_LOCK_GATE_EXEMPT_COMMANDS``): its purpose is
+        to act on a locked project.
         """
         from ..core.command_offload import offload_command_run, offload_enabled
+
+        project_id = kwargs.get("project_id")
+        if project_id and getattr(cls, "name", None) not in (
+            cls._PROJECT_LOCK_GATE_EXEMPT_COMMANDS
+        ):
+            from ..core.project_exclusive_lock import get_project_exclusive_lock
+
+            db = cls._open_database_from_config()
+            try:
+                lock = get_project_exclusive_lock(db, str(project_id))
+            finally:
+                db.disconnect()
+            if lock:
+                return ErrorResult(
+                    message=(
+                        f"Project {project_id!r} is exclusively locked "
+                        f"(owner={lock.get('owner')!r}, reason={lock.get('reason')!r}); "
+                        "the operation was refused. Use emergency_unlock_project if the "
+                        "lock is stuck (requires force=true and disk/DB reconciliation)."
+                    ),
+                    code="PROJECT_LOCKED",
+                    details={"project_id": project_id, "lock": lock},
+                )
 
         if getattr(cls, "use_queue", False) or not offload_enabled():
             return await super().run(**kwargs)
@@ -290,6 +328,16 @@ class BaseMCPCommand(Command):
                     field="project_id",
                     details={"project_id": project_id},
                 )
+            from ..core.exceptions import ProjectLockedError
+            from ..core.project_exclusive_lock import is_project_exclusively_locked
+
+            if is_project_exclusively_locked(db, project_id):
+                raise ProjectLockedError(
+                    f"Project {project_id!r} is exclusively locked; the operation "
+                    "was refused. Use emergency_unlock_project if the lock is stuck.",
+                    project_id=project_id,
+                    details={"project_id": project_id},
+                )
             return
         finally:
             db.disconnect()
@@ -374,6 +422,16 @@ class BaseMCPCommand(Command):
                     details={"project_id": project_id},
                 )
             row = dict(rows[0])
+            from ..core.exceptions import ProjectLockedError
+            from ..core.project_exclusive_lock import is_project_exclusively_locked
+
+            if is_project_exclusively_locked(db, project_id):
+                raise ProjectLockedError(
+                    f"Project {project_id!r} is exclusively locked; the operation "
+                    "was refused. Use emergency_unlock_project if the lock is stuck.",
+                    project_id=project_id,
+                    details={"project_id": project_id},
+                )
             abs_str = resolve_project_root_absolute_str(
                 project_id=project_id,
                 root_path_stored=str(row.get("root_path") or ""),

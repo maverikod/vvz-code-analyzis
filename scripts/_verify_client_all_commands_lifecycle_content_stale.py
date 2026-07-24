@@ -3,13 +3,25 @@ Content-stale flag read-after-write lifecycle check (bug 56c23bd9).
 
 Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
 
-Flow: seed a file, index it (baseline: not stale), edit its content through
-the live CA write path (``universal_file_open`` -> ``universal_file_edit`` ->
-``universal_file_write`` commit — the exact write path ``mark_file_content_stale``
-hooks into, see ``code_analysis.commands.universal_file_edit.write_command``),
-confirm ``search`` now reports ``content_stale: true`` for that file's hits,
-then run ``update_indexes`` and confirm the SAME search reports
-``content_stale: false`` again (reindex-success clear).
+Flow: seed a file (``project_file_transfer_upload_save`` create mode, client
+facade ``file_sessions.upload_new``), index it (baseline: not stale), then
+overwrite its content through ``project_file_transfer_upload_save`` UPDATE
+mode (client facade ``file_sessions.upload(..., file_id=...)``) — the live,
+registered CA write path. ``universal_file_open`` / ``universal_file_edit`` /
+``universal_file_write`` are NOT registered on this server (editor-only
+surface, confirmed 404 via ``help(universal_file_save)`` and absent from
+``code_analysis/commands/registration.py`` / ``code_analysis/hooks_register_part2.py``
+— see ``registration.py``'s own docstring: "Content editing is not registered
+on this server"). ``project_file_transfer_upload_save`` delegates to the same
+``UniversalFileSaveCommand`` -> ``persist_plain_text_file_metadata`` pipeline
+(``code_analysis/core/file_handlers/text_handler.py``, wired in commit
+345f083c) that sets ``content_stale=1`` on its existing-row UPDATE branch, so
+this is the CA-native equivalent write path for triggering the flag.
+
+After the update-mode save, confirm ``search`` now reports
+``content_stale: true`` for that file's hits, then run ``update_indexes`` and
+confirm the SAME search reports ``content_stale: false`` again
+(reindex-success clear).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -135,67 +147,27 @@ async def run_content_stale_roundtrip_check(
             f"skipped: baseline update_indexes did not succeed ({index_outcome.reason})",
         )
 
-    open_outcome, open_data = await call_step_with_data(
-        client,
-        "universal_file_open",
-        {"project_id": fixtures.project_id, "file_path": relative_path},
-        ok_reason="universal_file_open completed for the seeded file",
+    updated_content = (
+        f'"""Seeded fixture for the content_stale roundtrip check.\n\n'
+        f"Rewritten with live token: {token}\n"
+        f'"""\n'
     )
-    if open_outcome.status is not Status.EXECUTED_OK:
-        return _outcome(
-            open_outcome.status,
-            f"skipped: universal_file_open did not succeed ({open_outcome.reason})",
-        )
-    write_session_id = str((open_data or {}).get("session_id") or "")
-    if not write_session_id:
-        return _outcome(Status.FAILED, "universal_file_open returned no session_id")
-
-    edit_outcome, _edit_data = await call_step_with_data(
-        client,
-        "universal_file_edit",
-        {
-            "project_id": fixtures.project_id,
-            "session_id": write_session_id,
-            "operations": [
-                {
-                    "type": "replace",
-                    "start_line": 3,
-                    "end_line": 3,
-                    "new_lines": [f"Rewritten with live token: {token}"],
-                }
-            ],
-        },
-        ok_reason="universal_file_edit staged the content_stale-triggering change",
-    )
-    if edit_outcome.status is not Status.EXECUTED_OK:
-        return _outcome(
-            edit_outcome.status,
-            f"skipped: universal_file_edit did not succeed ({edit_outcome.reason})",
-        )
-
-    write_outcome, _write_data = await call_step_with_data(
-        client,
-        "universal_file_write",
-        {
-            "project_id": fixtures.project_id,
-            "session_id": write_session_id,
-            "write_mode": "commit",
-        },
-        ok_reason="universal_file_write committed the content_stale-triggering change",
-    )
-    if write_outcome.status is not Status.EXECUTED_OK:
-        return _outcome(
-            write_outcome.status,
-            f"skipped: universal_file_write did not succeed ({write_outcome.reason})",
-        )
-
     try:
-        await client.call_validated(
-            "universal_file_close",
-            {"project_id": fixtures.project_id, "session_id": write_session_id},
+        await client.file_sessions.upload(
+            fixtures.session_id,
+            updated_content.encode("utf-8"),
+            file_id,
+            project_id=fixtures.project_id,
+            filename=relative_path,
         )
-    except Exception:  # noqa: BLE001 - cleanup only
-        pass
+    except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
+        return _outcome(
+            Status.FAILED,
+            truncate(
+                "project_file_transfer_upload_save (update mode / "
+                f"file_sessions.upload) failed: {exc!r}"
+            ),
+        )
 
     stale_outcome, stale_items, stale_job_id = await _search_for_token(
         client, fixtures.project_id, token
@@ -219,7 +191,7 @@ async def run_content_stale_roundtrip_check(
             Status.FAILED,
             f"post-write search hit for {relative_path} has content_stale="
             f"{stale_flag!r}, expected True (mark_file_content_stale did not fire "
-            "on the universal_file_write commit path)",
+            "on the project_file_transfer_upload_save update-mode write path)",
         )
 
     reindex_outcome, _reindex_data = await call_step_with_data(
@@ -262,6 +234,7 @@ async def run_content_stale_roundtrip_check(
 
     return _outcome(
         Status.EXECUTED_OK,
-        f"{relative_path}: content_stale=true immediately after universal_file_write "
-        "commit, content_stale=false after update_indexes - full roundtrip confirmed",
+        f"{relative_path}: content_stale=true immediately after "
+        "project_file_transfer_upload_save (update mode), content_stale=false "
+        "after update_indexes - full roundtrip confirmed",
     )

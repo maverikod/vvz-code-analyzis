@@ -4,12 +4,22 @@ USER: search(project_id=None) = all projects).
 
 Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
 
-Flow: seed two disposable throwaway projects, each with one file containing a
-distinct globally-unique token, index both, then run
+Flow: resolve a live ``watch_dir_id`` via ``list_watch_dirs`` (required by
+``create_project`` — verified live: ``create_project`` schema is
+``{watch_dir_id, project_name, description}`` all required,
+``additionalProperties: false``; the old seeder's ``{"name": ...}`` shape was
+never valid), seed two disposable throwaway projects each with one file
+containing a distinct globally-unique token, index both, then run
 search(project_id=None, query=<shared marker>) and confirm hits from BOTH
 projects come back with project attribution (project_id/project_name on each
 result). Also confirms enable_grep=true + project_id=None fails loud with a
 validation error instead of silently scanning zero/one project.
+
+Every seed sub-step's failure reason is threaded back to the caller verbatim
+(never swallowed to an opaque "seed step failed") — including a second latent
+schema mismatch found while fixing this check: ``session_create`` only
+accepts ``comment`` (+ optional ``role_ids``), also ``additionalProperties:
+false`` live; it does not take ``project_id``.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -42,37 +52,77 @@ def _project_ids_in_hits(items: List[Any]) -> set:
     return seen
 
 
+async def _resolve_watch_dir_id(
+    client: CodeAnalysisAsyncClient,
+) -> Tuple[Optional[str], str]:
+    """Resolve a live ``watch_dir_id`` for ``create_project`` via ``list_watch_dirs``.
+
+    Returns ``(watch_dir_id, reason)`` — ``watch_dir_id`` is ``None`` on any
+    failure, in which case ``reason`` carries the verbatim failing detail.
+    """
+    outcome, data = await call_step_with_data(
+        client,
+        "list_watch_dirs",
+        {},
+        ok_reason="list_watch_dirs completed",
+    )
+    if outcome.status is not Status.EXECUTED_OK:
+        return None, f"list_watch_dirs: {outcome.reason}"
+    watch_dirs = (data or {}).get("watch_dirs")
+    if not isinstance(watch_dirs, list) or not watch_dirs:
+        return None, f"list_watch_dirs returned no watch directories: {data!r}"
+    first = watch_dirs[0]
+    watch_dir_id = str(first.get("id") or "") if isinstance(first, dict) else ""
+    if not watch_dir_id:
+        return None, f"list_watch_dirs first row missing id: {first!r}"
+    return watch_dir_id, ""
+
+
 async def _seed_throwaway_project(
-    client: CodeAnalysisAsyncClient, *, token: str, label: str
-) -> Optional[Tuple[str, str]]:
+    client: CodeAnalysisAsyncClient, *, watch_dir_id: str, token: str, label: str
+) -> Tuple[Optional[str], Optional[str], str]:
     """Create a disposable project with one file containing ``token``.
 
-    Returns (project_id, session_id) or None on any failure (caller marks the
-    whole check FAILED with the reason - a broken seed step must not raise).
+    Returns ``(project_id, session_id, reason)`` — ``project_id`` is ``None``
+    on any failure (a broken seed step must not raise), in which case
+    ``reason`` carries the verbatim failing step's outcome/exception so the
+    caller never reports an opaque "seed step failed".
     """
     outcome, data = await call_step_with_data(
         client,
         "create_project",
-        {"name": f"verify-global-search-{label}-{uuid.uuid4().hex[:8]}"},
+        {
+            "watch_dir_id": watch_dir_id,
+            "project_name": f"verify-global-search-{label}-{uuid.uuid4().hex[:8]}",
+            "description": (
+                f"Disposable fixture for global-search attribution check ({label})"
+            ),
+            "create_venv": False,
+            "apply_template": False,
+        },
         ok_reason=f"throwaway project created for {label}",
     )
     if outcome.status is not Status.EXECUTED_OK:
-        return None
+        return None, None, f"create_project: {outcome.reason}"
     project_id = str((data or {}).get("project_id") or "")
     if not project_id:
-        return None
+        return None, None, f"create_project succeeded but returned no project_id: {data!r}"
 
     session_outcome, session_data = await call_step_with_data(
         client,
         "session_create",
-        {"project_id": project_id},
+        {"comment": f"verify-global-search-{label}"},
         ok_reason=f"session opened for {label}",
     )
     if session_outcome.status is not Status.EXECUTED_OK:
-        return None
+        return None, None, f"session_create: {session_outcome.reason}"
     session_id = str((session_data or {}).get("session_id") or "")
     if not session_id:
-        return None
+        return (
+            None,
+            None,
+            f"session_create succeeded but returned no session_id: {session_data!r}",
+        )
 
     content = (
         f'"""Seeded fixture for the global-search attribution check ({label}).\n\n'
@@ -86,10 +136,10 @@ async def _seed_throwaway_project(
             project_id,
             f"verify_global_{label}.py",
         )
-    except Exception:  # noqa: BLE001 - a broken seed step must not abort the sweep
-        return None
+    except Exception as exc:  # noqa: BLE001 - a broken seed step must not abort the sweep
+        return None, None, f"file_sessions.upload_new: {exc!r}"
     if not file_id:
-        return None
+        return None, None, "file_sessions.upload_new returned no file_id"
 
     index_outcome, _data = await call_step_with_data(
         client,
@@ -98,8 +148,8 @@ async def _seed_throwaway_project(
         ok_reason=f"update_indexes completed for {label}",
     )
     if index_outcome.status is not Status.EXECUTED_OK:
-        return None
-    return project_id, session_id
+        return None, None, f"update_indexes: {index_outcome.reason}"
+    return project_id, session_id, ""
 
 
 async def run_global_search_attribution_check(
@@ -121,15 +171,27 @@ async def run_global_search_attribution_check(
     _ = fixtures
     token = f"verifyglobal{uuid.uuid4().hex}"
 
-    seeded_a = await _seed_throwaway_project(client, token=token, label="a")
-    if seeded_a is None:
-        return _outcome(Status.FAILED, "seed step failed for throwaway project A")
-    project_a, _session_a = seeded_a
+    watch_dir_id, watch_dir_reason = await _resolve_watch_dir_id(client)
+    if watch_dir_id is None:
+        return _outcome(
+            Status.FAILED, f"could not resolve watch_dir_id: {watch_dir_reason}"
+        )
 
-    seeded_b = await _seed_throwaway_project(client, token=token, label="b")
-    if seeded_b is None:
-        return _outcome(Status.FAILED, "seed step failed for throwaway project B")
-    project_b, _session_b = seeded_b
+    project_a, _session_a, reason_a = await _seed_throwaway_project(
+        client, watch_dir_id=watch_dir_id, token=token, label="a"
+    )
+    if project_a is None:
+        return _outcome(
+            Status.FAILED, f"seed step failed for throwaway project A: {reason_a}"
+        )
+
+    project_b, _session_b, reason_b = await _seed_throwaway_project(
+        client, watch_dir_id=watch_dir_id, token=token, label="b"
+    )
+    if project_b is None:
+        return _outcome(
+            Status.FAILED, f"seed step failed for throwaway project B: {reason_b}"
+        )
 
     search_outcome, data = await call_step_with_data(
         client,

@@ -84,6 +84,27 @@ def test_normalize_fulltext_finding_project_attribution_absent_is_none() -> None
     assert finding["project_name"] is None
 
 
+def test_normalize_fulltext_finding_coerces_uuid_project_id_to_str() -> None:
+    """Regression for the N3 fallout: real Postgres backend SELECTs return
+    ``project_id`` as an actual ``uuid.UUID`` object, not str. Carrying it
+    through verbatim (as commit 813ba061 did) makes the downstream
+    ``json.dump`` in ``RawFindingBuffer.append_finding`` crash with
+    ``TypeError: Object of type UUID is not JSON serializable`` and kill the
+    whole search job. The normalizer must coerce to str while keeping the
+    attribution populated."""
+    project_id = uuid.uuid4()
+    raw = {
+        "file_path": "src/a.py",
+        "chunk_text": "hello",
+        "project_id": project_id,
+        "project_name": "Project A",
+    }
+    finding = normalize_fulltext_finding(raw, index=0)
+    assert finding["project_id"] == str(project_id)
+    assert isinstance(finding["project_id"], str)
+    assert finding["project_name"] == "Project A"
+
+
 @pytest.mark.asyncio
 async def test_run_paginated_fulltext_publishes_block_and_returns_1(
     tmp_path: Path,

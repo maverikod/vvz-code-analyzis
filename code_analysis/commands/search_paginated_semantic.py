@@ -51,13 +51,18 @@ _STRIP_KEYS = frozenset(
 def normalize_semantic_finding(raw: dict[str, Any], *, index: int) -> dict[str, Any]:
     """Map a legacy semantic result to a JSON-safe finding.
 
-    ``project_id``/``project_name`` are carried through verbatim when present
-    on ``raw`` (both the per-project pgvector/FAISS branches and the
+    ``project_id``/``project_name`` are carried through when present on
+    ``raw`` (both the per-project pgvector/FAISS branches and the
     global-mode pgvector SELECT in ``search_paginated_cross._run_semantic_global``
     already attribute each row to its owning project); dropping them here was
     bug 29212ab2 (global search hits with empty project attribution).
+    ``project_id`` is coerced to ``str`` because real Postgres SELECTs return
+    it as an actual ``uuid.UUID`` object, which the raw finding buffer's bare
+    ``json.dump`` cannot serialize (same bug's regression - a crashed search
+    job). ``project_name`` is a plain text column and is already ``str``.
     """
     preview = raw.get("preview")
+    raw_project_id = raw.get("project_id")
     return {
         "result_id": f"semantic-{index:06d}",
         "source": "semantic",
@@ -68,7 +73,7 @@ def normalize_semantic_finding(raw: dict[str, Any], *, index: int) -> dict[str, 
         "entity_type": raw.get("entity_type"),
         "entity_name": raw.get("entity_name"),
         "content_stale": bool(raw.get("content_stale") or False),
-        "project_id": raw.get("project_id"),
+        "project_id": str(raw_project_id) if raw_project_id else None,
         "project_name": raw.get("project_name"),
     }
 

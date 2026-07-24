@@ -83,6 +83,27 @@ def test_normalize_semantic_finding_project_attribution_absent_is_none() -> None
     assert finding["project_name"] is None
 
 
+def test_normalize_semantic_finding_coerces_uuid_project_id_to_str() -> None:
+    """Regression for the N3 fallout: real Postgres/pgvector rows return
+    ``project_id`` as an actual ``uuid.UUID`` object, not str. Carrying it
+    through verbatim (as commit 813ba061 did) makes the downstream
+    ``json.dump`` in ``RawFindingBuffer.append_finding`` crash with
+    ``TypeError: Object of type UUID is not JSON serializable`` and kill the
+    whole search job. The normalizer must coerce to str while keeping the
+    attribution populated."""
+    project_id = uuid.uuid4()
+    raw = {
+        "file_path": "b.py",
+        "score": 0.9,
+        "project_id": project_id,
+        "project_name": "Project B",
+    }
+    finding = normalize_semantic_finding(raw, index=0)
+    assert finding["project_id"] == str(project_id)
+    assert isinstance(finding["project_id"], str)
+    assert finding["project_name"] == "Project B"
+
+
 @pytest.mark.asyncio
 async def test_run_paginated_semantic_returns_1_on_results(tmp_path: Path) -> None:
     """Verify test run paginated semantic returns 1 on results."""

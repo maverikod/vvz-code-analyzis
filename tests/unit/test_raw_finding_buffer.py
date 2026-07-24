@@ -4,12 +4,32 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from unittest.mock import patch
 
 from code_analysis.core.search_session.raw_finding_buffer import (
     LOCK_FILENAME,
     RawFindingBuffer,
 )
+
+
+def test_append_finding_serializes_uuid_value(tmp_path) -> None:
+    """Bug 29212ab2 regression: real Postgres rows deliver ``project_id`` as an
+    actual ``uuid.UUID`` object (not str). ``append_finding``'s ``json.dump``
+    must not crash the whole search job on a stray non-JSON-native value -
+    it degrades such values to their str() form instead. Prior to the fix
+    this raised ``TypeError: Object of type UUID is not JSON serializable``.
+    """
+    buffer = RawFindingBuffer(tmp_path / "buffer")
+    project_id = uuid.uuid4()
+    payload = {"result_id": "fulltext-000001", "project_id": project_id}
+
+    written = buffer.append_finding("fulltext-000001", payload)
+
+    assert json.loads(written.read_text(encoding="utf-8")) == {
+        "result_id": "fulltext-000001",
+        "project_id": str(project_id),
+    }
 
 
 def test_append_list_remove_findings(tmp_path) -> None:

@@ -48,7 +48,13 @@ class RawFindingBuffer:
         final_path = self._buffer_dir / f"{finding_id}.json"
         tmp_path = self._buffer_dir / f"{finding_id}.json.tmp"
         with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False)
+            # default=str: any stray non-JSON-native value (uuid.UUID,
+            # Decimal, datetime, ...) degrades to its str() form instead of
+            # crashing the whole search job (bug 29212ab2 fallout - real
+            # Postgres rows deliver project_id as uuid.UUID). Correctness
+            # coercion also happens at the source in the normalizers; this
+            # is the boundary catch-all so one bad field can never kill a job.
+            json.dump(payload, handle, ensure_ascii=False, default=str)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, final_path)

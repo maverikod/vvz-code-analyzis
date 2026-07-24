@@ -19,7 +19,10 @@ from code_analysis.core.database.schema_sync_sql_postgres import (
     generate_create_index_sql_postgres,
     generate_create_table_sql_postgres,
 )
-from code_analysis.core.database.postgres_schema_ddl import create_postgresql_schema
+from code_analysis.core.database.postgres_schema_ddl import (
+    create_postgresql_indexes,
+    create_postgresql_tables,
+)
 from code_analysis.core.retry_policy import RetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -359,6 +362,39 @@ def _ensure_watch_dirs_server_instance_partition(
         )
 
 
+def _ensure_files_content_stale_columns(conn: Any, schema_manager: Any) -> None:
+    """Add ``files.content_stale`` / ``files.content_stale_since`` (1.6.75 deploy incident).
+
+    Unlike the other ``_ensure_*`` migrations in this module, this one MUST run
+    before :func:`create_postgresql_indexes` in :func:`_ensure_postgres_schema_once`,
+    not after: the schema definition's generic index list includes
+    ``idx_files_content_stale``, a partial index on ``files.content_stale``
+    (``schema_definition_indexes.py``). ``CREATE TABLE IF NOT EXISTS`` (the tables
+    phase) is a no-op on a pre-existing ``files`` table — it never adds the new
+    column — so creating that index before this migration raises
+    ``psycopg.errors.UndefinedColumn`` deterministically on any database with a
+    pre-existing ``files`` table (fresh databases are unaffected: the column ships
+    with ``CREATE TABLE`` on a brand-new table, which is why the fresh-project
+    pipeline never caught this).
+    """
+    from code_analysis.core.database.migrations.files_content_stale_column import (
+        migrate_files_content_stale_column,
+    )
+
+    _rollback_conn(conn)
+    try:
+        migrate_files_content_stale_column(
+            _PostgresConnMigrateAdapter(conn, schema_manager)
+        )
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL files content_stale column migration failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
 def _ensure_watch_dirs_deleted_column(conn: Any, schema_manager: Any) -> None:
     """Add ``watch_dirs.deleted`` (shared PG; not applied by CREATE TABLE IF NOT EXISTS)."""
     from code_analysis.core.database.migrations.watch_dirs_deleted_column import (
@@ -374,6 +410,35 @@ def _ensure_watch_dirs_deleted_column(conn: Any, schema_manager: Any) -> None:
         _rollback_conn(conn)
         logger.warning(
             "PostgreSQL watch_dirs deleted column migration failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+
+def _ensure_project_exclusive_locks_table(conn: Any, schema_manager: Any) -> None:
+    """Create ``project_exclusive_locks`` (new whole-project admin lock table, no TTL).
+
+    Unlike ``_ensure_files_content_stale_columns`` above, this is a brand-new
+    table (``CREATE TABLE IF NOT EXISTS``), not a new column on a pre-existing
+    table, so there is no index-before-column-exists ordering hazard (see the
+    1.6.75 deploy-incident comment in ``_ensure_postgres_schema_once``): no
+    schema-definition index references ``project_exclusive_locks``, so this
+    call is safe regardless of where it runs relative to
+    ``create_postgresql_indexes()``.
+    """
+    from code_analysis.core.database.migrations.project_exclusive_locks_table import (
+        migrate_project_exclusive_locks_table,
+    )
+
+    _rollback_conn(conn)
+    try:
+        migrate_project_exclusive_locks_table(
+            _PostgresConnMigrateAdapter(conn, schema_manager)
+        )
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL project_exclusive_locks table migration failed: %s",
             exc,
             exc_info=True,
         )
@@ -519,9 +584,23 @@ def _ensure_postgres_schema_once(
         locked = True
         _rollback_conn(conn)
         _drop_empty_broken_watch_dirs_if_needed(conn)
-        create_postgresql_schema(conn, schema_definition)
+        from .postgres_schema import PostgreSQLSchemaManager
+
+        # ORDERING IS LOAD-BEARING (1.6.75 deploy incident): tables -> additive
+        # column migrations that a schema-definition index depends on -> indexes.
+        # create_postgresql_tables() is CREATE TABLE IF NOT EXISTS, a no-op on a
+        # pre-existing table (does not add new columns). create_postgresql_indexes()
+        # includes idx_files_content_stale, a partial index on files.content_stale.
+        # Running indexes before the additive migration below raised
+        # psycopg.errors.UndefinedColumn deterministically on any DB with a
+        # pre-existing `files` table. Do NOT collapse this back into the combined
+        # create_postgresql_schema() convenience wrapper.
+        create_postgresql_tables(conn, schema_definition)
+        _ensure_files_content_stale_columns(conn, PostgreSQLSchemaManager(conn))
+        create_postgresql_indexes(conn, schema_definition)
         # Explicit idempotent pass for runtime lock tables and indexes.
         idempotent_ensure_runtime_lock_tables(conn, schema_definition)
+        _ensure_project_exclusive_locks_table(conn, PostgreSQLSchemaManager(conn))
         idempotent_ensure_client_session_tables(conn, schema_definition)
         _ensure_missing_column(
             conn,
@@ -533,7 +612,9 @@ def _ensure_postgres_schema_once(
             ),
         )
         # CREATE TABLE IF NOT EXISTS does not add columns to existing tables (same as SQLite
-        # run_migrate_schema / sqlite_migrations editing_pid).
+        # run_migrate_schema / sqlite_migrations editing_pid). No schema-definition index
+        # references editing_pid, so (unlike content_stale above) running this after the
+        # indexes phase is safe.
         _ensure_missing_column(
             conn,
             table_name="files",
@@ -541,8 +622,6 @@ def _ensure_postgres_schema_once(
             add_sql="ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL",
         )
         _ensure_pgvector_embedding_column(conn, vector_dim)
-        from .postgres_schema import PostgreSQLSchemaManager
-
         _ensure_watch_dirs_server_instance_partition(
             conn, PostgreSQLSchemaManager(conn)
         )

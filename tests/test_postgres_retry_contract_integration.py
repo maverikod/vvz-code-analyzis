@@ -271,6 +271,28 @@ def test_ensure_postgres_schema_does_not_retry_non_transient_error() -> None:
     assert len(calls) == 1, "non-retryable error must not trigger the retry loop"
 
 
+def test_ensure_postgres_schema_does_not_retry_undefined_column() -> None:
+    """1.6.75 deploy incident: psycopg.errors.UndefinedColumn (SQLSTATE 42703, e.g.
+    from CREATE INDEX idx_files_content_stale on a pre-existing old-shape files
+    table) is a deterministic schema bug, not a transient deadlock/serialization
+    failure (SQLSTATE class 40) — it must fail loud on the first attempt, never
+    be retried by the a43282df deadlock-retry loop."""
+    from psycopg import errors
+
+    calls: list[int] = []
+
+    def fake_once(conn: Any, schema_definition: Any, *, vector_dim: int = 384) -> None:
+        calls.append(1)
+        raise errors.UndefinedColumn('column "content_stale" does not exist')
+
+    with patch.object(
+        postgres_migrations_mod, "_ensure_postgres_schema_once", side_effect=fake_once
+    ):
+        with pytest.raises(errors.UndefinedColumn):
+            ensure_postgres_schema(MagicMock(), {})
+    assert len(calls) == 1, "UndefinedColumn must fail fast, not be retried"
+
+
 @patch.object(postgres_mod.time, "sleep")
 def test_postgres_rpc_error_result_has_structured_details(
     _sleep: Any,

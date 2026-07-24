@@ -133,7 +133,6 @@ def register_commands_part2(reg: registry) -> None:
             ClearTrashMCPCommand,
             CreateProjectMCPCommand,
             DeleteProjectMCPCommand,
-            DeleteUnwatchedProjectsMCPCommand,
             ListProjectsMCPCommand,
             ListTrashedProjectsMCPCommand,
             ListWatchDirsMCPCommand,
@@ -156,7 +155,6 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(CreateProjectMCPCommand, "custom")
         reg.register(ListWatchDirsMCPCommand, "custom")
         reg.register(DeleteProjectMCPCommand, "custom")
-        reg.register(DeleteUnwatchedProjectsMCPCommand, "custom")
         reg.register(ListProjectsMCPCommand, "custom")
         reg.register(ListTrashedProjectsMCPCommand, "custom")
         reg.register(PermanentlyDeleteFromTrashMCPCommand, "custom")

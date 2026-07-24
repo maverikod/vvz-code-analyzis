@@ -347,9 +347,8 @@ def test_candidate_discovery_matches_full_walker_membership(
     catalog: Dict[str, Any],
 ) -> None:
     """Parity: the cheap candidate pass and the full walker-facing discovery
-    (still used unchanged by watcher startup reconciliation /
-    delete_unwatched_projects_command) must agree on which project_ids are
-    members of the watch dir.
+    (still used unchanged by watcher startup reconciliation) must agree on
+    which project_ids are members of the watch dir.
 
     Proves dropping ``validate_no_nested_projects`` from the listing path does
     not add previously-excluded entries nor drop previously-included ones: the

@@ -43,7 +43,6 @@ VALIDATION_GROUPS = {
         "clear_trash",
         "restore_project_from_trash",
         "permanently_delete_from_trash",
-        "delete_unwatched_projects",
         "run_project_module",
         "run_project_script",
         "project_pip_check",
@@ -131,7 +130,6 @@ QUEUED_COMMANDS = {
     "split_file_to_package",
     "clear_trash",
     "permanently_delete_from_trash",
-    "delete_unwatched_projects",
     "project_pip_install",
     "run_project_script",
 }

@@ -120,7 +120,7 @@ ADAPTER_SAFE_TO_EXECUTE: FrozenSet[str] = frozenset(
     {"echo", "health", "help", "queue_health", "queue_list_jobs", "plugins", "roletest"}
 )
 
-# Fixed Bucket B list (27 entries) — NEVER invoked. Schema fetch only.
+# Fixed Bucket B list (25 entries) — NEVER invoked. Schema fetch only.
 BUCKET_B_REASONS: Dict[str, str] = {
     "reload": "process-wide adapter control command, out of project scope",
     "load": "process-wide adapter module lifecycle command",
@@ -137,9 +137,6 @@ BUCKET_B_REASONS: Dict[str, str] = {
     ),
     "restore_database": "database-wide integrity operation risk",
     "run_uuid_identity_migration": "one-time global DB migration, irreversible risk",
-    "delete_unwatched_projects": (
-        "global bulk purge across all projects on the shared server"
-    ),
     "clear_trash": (
         "global bulk purge across all projects' trash on the shared server"
     ),

@@ -252,12 +252,6 @@ COMMAND_MAP = [
         "project_management",
     ),
     (
-        "delete_unwatched_projects",
-        "code_analysis.commands.project_management_mcp_commands",
-        "DeleteUnwatchedProjectsMCPCommand",
-        "project_management",
-    ),
-    (
         "list_projects",
         "code_analysis.commands.project_management_mcp_commands",
         "ListProjectsMCPCommand",

@@ -11,7 +11,6 @@ from .change_project_id import ChangeProjectIdMCPCommand
 from .clear_trash import ClearTrashMCPCommand
 from .create_project import CreateProjectMCPCommand
 from .delete_project import DeleteProjectMCPCommand
-from .delete_unwatched_projects import DeleteUnwatchedProjectsMCPCommand
 from .list_projects import ListProjectsMCPCommand
 from .list_trashed_projects import ListTrashedProjectsMCPCommand
 from .list_watch_dirs import ListWatchDirsMCPCommand
@@ -24,7 +23,6 @@ __all__ = [
     "ClearTrashMCPCommand",
     "CreateProjectMCPCommand",
     "DeleteProjectMCPCommand",
-    "DeleteUnwatchedProjectsMCPCommand",
     "ListProjectsMCPCommand",
     "ListTrashedProjectsMCPCommand",
     "ListWatchDirsMCPCommand",

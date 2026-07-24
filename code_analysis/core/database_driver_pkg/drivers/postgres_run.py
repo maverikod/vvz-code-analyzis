@@ -562,9 +562,17 @@ def run_execute(
                         commit_err, for_commit=True, message_prefix="Failed to commit: "
                     )
         return last_result
-    except TransientDatabaseError:
-        raise
-    except DriverOperationError:
+    except (TransientDatabaseError, DriverOperationError):
+        # A connection handed back to the caller (pool or direct) after an error
+        # MUST be in a clean state. These two branches used to re-raise before
+        # reaching the rollback below, leaving the connection in an aborted
+        # transaction state for the NEXT command that reuses it (bug bb0b6ace:
+        # a pooled connection poisoned by a prior execute_batch/commit failure).
+        if not transaction_id:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
     except Exception as e:
         if not transaction_id:
@@ -707,9 +715,19 @@ def run_execute_batch(
                         commit_err, for_commit=True, message_prefix="Failed to commit: "
                     )
         return results
-    except TransientDatabaseError:
-        raise
-    except DriverOperationError:
+    except (TransientDatabaseError, DriverOperationError):
+        # See matching comment in run_execute: rollback must happen for EVERY
+        # exception type before it propagates, not just the generic-Exception
+        # branch. Statements grouped into an ``executemany`` run are classified
+        # to TransientDatabaseError/DriverOperationError INSIDE the loop (see
+        # the ``pg_errors``/``_raise_classified`` handling above), so those two
+        # types are the common case here, not the exception -- skipping rollback
+        # for them was the actual poisoning path (bug bb0b6ace).
+        if not transaction_id:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         raise
     except Exception as e:
         if not transaction_id:

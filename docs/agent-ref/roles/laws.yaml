@@ -1,5 +1,5 @@
 # code_analysis — standing LAWS (universal). Referenced from common.yaml spawn protocol;
-# prompts-template: claude-prompts-v1 rev 1.2.0 (2026-07-23)
+# prompts-template: claude-prompts-v1 rev 1.3.0 (2026-07-24)
 # read by EVERY role once per session before acting.
 # `variables` are pre-set per session by the user/orchestrator; defaults apply otherwise.
 
@@ -35,7 +35,18 @@ laws:
     terminal = LOCAL bash, CA = REMOTE REPO with analysis tools - git operations that touch
     the server-side project go through CA git_* commands (pull/push to sync the remote repo),
     and code analysis/search still uses CA tools. Commit a coherent verified task;
-    never push main.
+    never push main. HARD RULE (no exceptions): when the project is developed LOCALLY
+    (variables.file_access=local), EVERY script — build, test, and deploy runners
+    alike, e.g. the command named in ops/delivery-release.yaml `build` — and the
+    EDITOR run with LOCAL tools on the local checkout (local bash for scripts, local
+    Write/Edit for files). The MCP proxy in this profile is used ONLY for code
+    search/analysis (CA) and for server-side git sync (CA git_* commands) — NEVER to
+    execute a build/test/deploy script or to edit a file. Do not infer from
+    mcp_only (the DEFAULT, non-local profile) that delivery/build steps must run
+    remotely via terminal host-exec or the CA/editor servers: mcp_only is superseded
+    by this law whenever file_access=local. The orchestrator's ssh_repair standing
+    grant governs SERVER-SIDE production repair/deploy on the deploy host only — it
+    is not a routing instruction for where the local build script itself executes.
   local_ide_mode: >-
     [active when variables.file_access=local_ide] Files live locally and are edited by
     the HUMAN via the IDE; agents NEVER edit project files - they deliver proposed
@@ -86,8 +97,11 @@ laws:
     build); (3) client published to PyPI at the same version; (4) deploy to the
     single testing/production server (method not established earlier -> ASK THE
     USER first); (5) the ONE real-server test pipeline green against the deployed
-    instance; (6) branch_discipline post-deploy propagation. FULL PROCEDURE,
-    INVARIANTS, AND GOTCHAS: ops/delivery-release.yaml - read it BEFORE the first
+    instance; (6) branch_discipline post-deploy propagation. BUILD EXECUTION LOCUS:
+    see ops/delivery-release.yaml `build_execution` and local_mode's HARD RULE - the
+    build/test/deploy scripts run on LOCAL host tools from the local checkout; they
+    are never routed through the MCP proxy or remote terminal host-exec. FULL
+    PROCEDURE, INVARIANTS, AND GOTCHAS: ops/delivery-release.yaml - read it BEFORE the first
     release action (tooling.yaml trigger). A task that modified a server is complete
     only after all steps pass. (Owner: the delivery DECISION is orchestrator-level;
     its MECHANICS are delegated to the deliverer role (roles/deliverer.yaml) executing
@@ -98,7 +112,9 @@ laws:
     realsrv-test (the ONE real-server pipeline, ops/delivery-release.yaml `live_pipeline`) with
     a covering check and confirm the bug WITH the pipeline - RED - before any mutation; (3)
     find the root cause; (4) PROVE it with evidence, not hypothesis; (5) fix it; (6) MANDATORY
-    deploy to root@192.168.254.26 - everything on that server is a test target EXCEPT the
+    deploy to root@192.168.254.26 (build SCRIPT execution is LOCAL per local_mode's HARD
+    RULE / ops/delivery-release.yaml `build_execution` - only the deploy HOST itself is
+    remote) - everything on that server is a test target EXCEPT the
     doc-store project's database, which is NEVER touched; (7) re-run realsrv-test, which must
     exercise ALL API methods of the server EXCEPT the built-in mcp-proxy-adapter methods, and
     confirm GREEN. LOOP, do not stop short: not reproduced at (1) -> OK, done; still red after

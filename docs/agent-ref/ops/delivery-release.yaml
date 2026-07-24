@@ -3,6 +3,13 @@
 project:
   version_sources: ['pyproject.toml (root; scripts/sync_code_analysis_client_version.py syncs the client)']
   build: './build.sh'
+  build_execution: >-
+    LOCAL HOST, run by the model in the delivery chain (orchestrator/executor level),
+    from the LOCAL checkout at the release commit, via local shell — NOT via the MCP
+    proxy, NOT via terminal host-exec, NOT on deploy_host. Script path: ./build.sh
+    (relative to the local checkout root). See laws.yaml `local_mode` HARD RULE: the
+    MCP proxy is used ONLY for CA search/analysis in local development, never to run
+    build/test/deploy scripts.
   deploy_host: 'root@192.168.254.26'
   live_pipeline: 'scripts/verify_client_all_commands_live.py --host 192.168.254.26 --port 15010 (mint disposable mTLS cert per script docstring)'   # aka "realsrv-test" in laws.yaml `bug_fix_cycle`
   production_servers: ['ai-editor-server-vvz', 'code-analysis-server-vvz']
@@ -18,7 +25,8 @@ procedure:
   - implement the localized repair and focused regression test
   - run project checks
   - increment and align every version source
-  - build, deploy, and run the single live pipeline from the active working branch
+  - build LOCALLY per `build_execution` above, then deploy and run the single live
+    pipeline from the active working branch
   - verify registration, health, version, and changed behavior through MCP Proxy; the
     live_pipeline re-run must go GREEN - if still red, loop back to root-cause (laws.yaml
     `bug_fix_cycle`)
@@ -39,3 +47,5 @@ invariants:
   - completed queue state is not success until the inner result is checked
   - do not deploy from or edit main before production verification
   - the model never pushes main
+  - build script execution locus is LOCAL (see `build_execution`); only the deploy
+    target and production verification touch deploy_host

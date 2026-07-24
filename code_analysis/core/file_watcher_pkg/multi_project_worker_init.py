@@ -15,6 +15,8 @@ from code_analysis.core.database_driver_pkg.domain.projects import (
     get_all_projects, get_project, insert_project_row,
     relocate_project_root_after_disk_move)
 from code_analysis.core.path_normalization import normalize_path_simple
+from code_analysis.core.project_exclusive_lock import \
+    is_project_exclusively_locked
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
     persist_projects_root_path_stored_value,
@@ -134,6 +136,24 @@ def _verify_and_relocate_orphaned_projects(
         project_id = _project_row_field(proj, "id")
         raw_root = _project_row_field(proj, "root_path")
         if not project_id or not raw_root:
+            continue
+
+        # Whole-project exclusive admin lock (project_exclusive_locks,
+        # core/project_exclusive_lock.py) takes priority over this startup
+        # relocate pass, mirroring the periodic scan gate added in
+        # multi_project_worker_scan.py (bug 88f06abc class): rename_project /
+        # emergency_unlock_project hold this lock for the duration of a disk
+        # move + DB update, and server startup must not race that operation
+        # by relocating the same project concurrently. Skip/defer here,
+        # before any relocate for this project this startup cycle - never
+        # block or error; the next periodic scan will relocate once
+        # unlocked.
+        if is_project_exclusively_locked(database, project_id):
+            logger.debug(
+                "[WORKER_INIT] skip relocate project_id=%s "
+                "reason=project_exclusively_locked",
+                project_id,
+            )
             continue
 
         current_root = _resolve_project_row_absolute_path(
@@ -341,31 +361,52 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             )
                             new_norm = normalize_path_simple(str(new_rr))
                             if old_norm != new_norm:
-                                old_for_relocate = (
-                                    str(old_rr)
-                                    if old_rr is not None
-                                    else str(stored_root)
-                                )
-                                if relocate_project_root_after_disk_move(
-                                    database,
-                                    project_root_obj.project_id,
-                                    old_for_relocate,
-                                    str(new_rr),
-                                    new_watch_dir_id=wid,
+                                # Whole-project exclusive admin lock gate -
+                                # same invariant as the orphan-relocate pass
+                                # above and the periodic scan gate in
+                                # multi_project_worker_scan.py (bug 88f06abc
+                                # class): never relocate a project startup
+                                # discovers mid-flight rename_project /
+                                # emergency_unlock_project. Skip/defer only
+                                # the relocate itself - never block or error
+                                # - the rest of this project's startup
+                                # bookkeeping (watch_dir_id sync, metadata
+                                # refresh below) still runs unchanged; the
+                                # next periodic scan relocates once unlocked.
+                                if is_project_exclusively_locked(
+                                    database, project_root_obj.project_id
                                 ):
-                                    logger.info(
-                                        "[WATCHER_INIT] project_id=%s root_path %s -> %s",
+                                    logger.debug(
+                                        "[WORKER_INIT] skip relocate project_id=%s "
+                                        "reason=project_exclusively_locked",
                                         project_root_obj.project_id,
-                                        old_rr,
-                                        new_rr,
                                     )
                                 else:
-                                    logger.error(
-                                        "[WATCHER_INIT] failed to relocate project_id=%s "
-                                        "to %s (collision or DB error)",
-                                        project_root_obj.project_id,
-                                        new_rr,
+                                    old_for_relocate = (
+                                        str(old_rr)
+                                        if old_rr is not None
+                                        else str(stored_root)
                                     )
+                                    if relocate_project_root_after_disk_move(
+                                        database,
+                                        project_root_obj.project_id,
+                                        old_for_relocate,
+                                        str(new_rr),
+                                        new_watch_dir_id=wid,
+                                    ):
+                                        logger.info(
+                                            "[WATCHER_INIT] project_id=%s root_path %s -> %s",
+                                            project_root_obj.project_id,
+                                            old_rr,
+                                            new_rr,
+                                        )
+                                    else:
+                                        logger.error(
+                                            "[WATCHER_INIT] failed to relocate project_id=%s "
+                                            "to %s (collision or DB error)",
+                                            project_root_obj.project_id,
+                                            new_rr,
+                                        )
                         wd_id = (
                             project_obj.get("watch_dir_id")
                             if isinstance(project_obj, dict)

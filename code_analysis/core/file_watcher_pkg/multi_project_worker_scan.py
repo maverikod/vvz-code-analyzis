@@ -18,6 +18,8 @@ from code_analysis.core.database.files.trash_standalone_support import (
 from code_analysis.core.database_driver_pkg.domain.projects import (
     get_project, insert_project_row, relocate_project_root_after_disk_move)
 from code_analysis.core.path_normalization import normalize_path_simple
+from code_analysis.core.project_exclusive_lock import \
+    is_project_exclusively_locked
 from code_analysis.core.project_root_path import (
     find_project_id_by_resolved_absolute_root,
     persist_projects_root_path_stored_value, resolve_project_root_absolute_str)
@@ -377,6 +379,27 @@ def scan_watch_dir(
 
         for project_root_obj in discovered_projects:
             pid_p = project_root_obj.project_id
+            # Whole-project exclusive admin lock (project_exclusive_locks,
+            # core/project_exclusive_lock.py) takes priority over the watcher's
+            # own short-lease coordination below: rename_project / emergency
+            # unlock hold this lock for the duration of a disk move + DB update,
+            # and the watcher must not race that operation (relocate-by-UUID or
+            # any other per-cycle mutation) while it is held. Skip/defer here,
+            # before try_acquire_project_activity's own lease and before any
+            # project mutation this cycle - never block or error (bug 88f06abc
+            # gap: watcher was the one caller in this codebase not honoring the
+            # lock; try_acquire_project_activity already fails closed on a
+            # locked project internally, this makes that skip explicit at the
+            # watcher layer with an accurate log reason instead of relying on
+            # the incidental "watcher_staging" busy path below).
+            if is_project_exclusively_locked(database, pid_p):
+                logger.debug(
+                    "[WORKER_COORD] watcher skip project_id=%s "
+                    "reason=project_exclusively_locked",
+                    pid_p,
+                )
+                skipped_projects.add(pid_p)
+                continue
             if not try_acquire_project_activity(
                 database,
                 pid_p,

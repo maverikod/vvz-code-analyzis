@@ -96,8 +96,18 @@ class GitBranchCompareCommand(BaseMCPCommand):
         if outcome is not None:
             return availability_success_result(outcome)
 
-        rc, counts, err = run_git_read(
-            root, ["rev-list", "--left-right", "--count", f"{base}...{head}"]
+        # Single plumbing call for both ahead/behind counts and their commit
+        # lists, so the counts and the returned lists can never disagree
+        # (bug d05492ef: two separate calls could observe the refs at
+        # different moments, or the count call and the list call could
+        # disagree in scope, producing e.g. behind:5 with an empty list).
+        # `git log --left-right --oneline base...head` walks the full,
+        # untruncated symmetric difference in one subprocess invocation:
+        # "<" lines are base-only commits (behind), ">" lines are
+        # head-only commits (ahead). Counts are the exact lengths of those
+        # lists; only the returned lists are capped to max_commits.
+        rc, log_out, err = run_git_read(
+            root, ["log", "--left-right", "--oneline", f"{base}...{head}"]
         )
         if rc != 0:
             return ErrorResult(
@@ -105,20 +115,10 @@ class GitBranchCompareCommand(BaseMCPCommand):
                 code=cast(Any, "GIT_COMMAND_FAILED"),
                 details={"returncode": rc},
             )
-        behind, ahead = [int(part) for part in counts.split()]
-        commit_args = [
-            "log",
-            "--oneline",
-            f"--max-count={max(0, max_commits)}",
-            f"{base}..{head}",
-        ]
-        rc, commit_out, err = run_git_read(root, commit_args)
-        if rc != 0:
-            return ErrorResult(
-                message=err.strip() or "git command failed",
-                code=cast(Any, "GIT_COMMAND_FAILED"),
-                details={"returncode": rc},
-            )
+        behind_commits, ahead_commits = _parse_left_right_commits(log_out)
+        behind = len(behind_commits)
+        ahead = len(ahead_commits)
+        cap = max(0, max_commits)
         rc, files_out, err = run_git_read(
             root, ["diff", "--name-status", f"{base}...{head}"]
         )
@@ -135,21 +135,42 @@ class GitBranchCompareCommand(BaseMCPCommand):
             "head": head,
             "ahead": ahead,
             "behind": behind,
-            "commits": _parse_commits(commit_out),
+            "commits": ahead_commits[:cap],
+            "behind_commits": behind_commits[:cap],
             "files": _parse_name_status(files_out),
         }
         return SuccessResult(data=cast(Dict[str, Any], payload))
 
 
-def _parse_commits(output: str) -> List[Dict[str, str]]:
-    """Parse git log --oneline output."""
-    commits: List[Dict[str, str]] = []
+def _parse_left_right_commits(
+    output: str,
+) -> tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Parse `git log --left-right --oneline base...head` output.
+
+    Args:
+        output: Raw stdout from the left-right oneline log invocation.
+
+    Returns:
+        A tuple (behind_commits, ahead_commits): commits reachable only
+        from base ("<" marker, behind) and commits reachable only from
+        head (">" marker, ahead), each as {"commit", "message"} dicts in
+        the order git emitted them. The two lists are derived from the
+        same single subprocess call as the ahead/behind counts, so their
+        lengths always equal those counts exactly.
+    """
+    behind: List[Dict[str, str]] = []
+    ahead: List[Dict[str, str]] = []
     for line in output.splitlines():
         if not line:
             continue
-        commit, _, message = line.partition(" ")
-        commits.append({"commit": commit, "message": message})
-    return commits
+        marker, _, rest = line.partition(" ")
+        commit, _, message = rest.partition(" ")
+        entry = {"commit": commit, "message": message}
+        if marker == "<":
+            behind.append(entry)
+        elif marker == ">":
+            ahead.append(entry)
+    return behind, ahead
 
 
 def _parse_name_status(output: str) -> List[Dict[str, str]]:

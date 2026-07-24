@@ -478,7 +478,108 @@ async def test_git_branch_compare_reports_ahead_and_files(
     assert result.data["ahead"] == 1
     assert result.data["behind"] == 0
     assert result.data["commits"][0]["message"] == "feature"
+    assert result.data["behind_commits"] == []
     assert result.data["files"][0]["path"] == "feature.txt"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_compare_reports_zero_after_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify identical post-merge refs compare as 0/0 with empty lists.
+
+    Regression test for bug d05492ef: git_branch_compare previously
+    computed ahead/behind counts and the returned commit list from two
+    independently-scoped git calls, which could disagree (e.g.
+    behind:5 reported alongside an empty commit list) even when both
+    refs pointed at the very same commit after a merge.
+    """
+    repo = tmp_path / "merge-repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "branch", "-M", "main")
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "f.txt").write_text("base\nfeature\n", encoding="utf-8")
+    _git(repo, "commit", "-am", "feature commit")
+    _git(repo, "checkout", "main")
+    (repo / "other.txt").write_text("main-side\n", encoding="utf-8")
+    _git(repo, "add", "other.txt")
+    _git(repo, "commit", "-m", "main-side commit")
+    _git(repo, "merge", "--no-ff", "-m", "merge feature into main", "feature")
+    # Simulate origin/main having fetched the exact same merge commit.
+    _git(repo, "branch", "-f", "mirror", "main")
+
+    monkeypatch.setattr(
+        GitBranchCompareCommand,
+        "_resolve_project_root",
+        lambda _self, _project_id: repo,
+    )
+
+    result = await GitBranchCompareCommand().execute(
+        project_id=PROJECT_ID,
+        base="main",
+        head="mirror",
+    )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["ahead"] == 0
+    assert result.data["behind"] == 0
+    assert result.data["commits"] == []
+    assert result.data["behind_commits"] == []
+
+
+@pytest.mark.asyncio
+async def test_git_branch_compare_reports_symmetric_divergence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a genuine divergence reports counts matching both lists exactly."""
+    repo = tmp_path / "diverge-repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "branch", "-M", "main")
+    _git(repo, "checkout", "-b", "left-branch")
+    (repo / "left.txt").write_text("left\n", encoding="utf-8")
+    _git(repo, "add", "left.txt")
+    _git(repo, "commit", "-m", "left commit one")
+    (repo / "left2.txt").write_text("left2\n", encoding="utf-8")
+    _git(repo, "add", "left2.txt")
+    _git(repo, "commit", "-m", "left commit two")
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", "right-branch")
+    (repo / "right.txt").write_text("right\n", encoding="utf-8")
+    _git(repo, "add", "right.txt")
+    _git(repo, "commit", "-m", "right commit one")
+
+    monkeypatch.setattr(
+        GitBranchCompareCommand,
+        "_resolve_project_root",
+        lambda _self, _project_id: repo,
+    )
+
+    result = await GitBranchCompareCommand().execute(
+        project_id=PROJECT_ID,
+        base="left-branch",
+        head="right-branch",
+    )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["ahead"] == 1
+    assert result.data["behind"] == 2
+    assert len(result.data["commits"]) == result.data["ahead"]
+    assert len(result.data["behind_commits"]) == result.data["behind"]
+    assert result.data["commits"][0]["message"] == "right commit one"
+    behind_messages = {c["message"] for c in result.data["behind_commits"]}
+    assert behind_messages == {"left commit one", "left commit two"}
 
 
 @pytest.mark.asyncio

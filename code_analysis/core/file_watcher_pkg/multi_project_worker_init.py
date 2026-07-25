@@ -148,7 +148,7 @@ def _verify_and_relocate_orphaned_projects(
         # before any relocate for this project this startup cycle - never
         # block or error; the next periodic scan will relocate once
         # unlocked.
-        if is_project_exclusively_locked(database, project_id):
+        if is_project_exclusively_locked(database, str(project_id)):
             logger.debug(
                 "[WORKER_INIT] skip relocate project_id=%s "
                 "reason=project_exclusively_locked",

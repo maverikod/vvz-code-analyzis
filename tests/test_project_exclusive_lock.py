@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -21,6 +22,7 @@ from code_analysis.core.project_exclusive_lock import (
 )
 
 _PID = "550e8400-e29b-41d4-a716-446655440000"
+_PID_UUID = uuid.UUID(_PID)
 
 
 class _FakeLockDriver:
@@ -163,3 +165,66 @@ def test_emergency_unlock_with_force_when_nothing_locked_reports_previous_lock_n
 
     assert audit["cleared"] is True
     assert audit["previous_lock"] is None
+
+
+# ---------------------------------------------------------------------------
+# bug f96faa07: real uuid.UUID objects (not str-seeded fixtures) must resolve
+# the lock correctly instead of silently fail-opening. PostgreSQL drivers
+# commonly hand back uuid.UUID for a UUID column (e.g. straight from a
+# get_all_projects row) -- every public function in this module must be
+# tolerant of that, not merely of a pre-stringified test id.
+# ---------------------------------------------------------------------------
+
+
+def test_is_locked_with_real_uuid_object_resolves_true_not_fail_open() -> None:
+    """A real uuid.UUID project_id must resolve an existing lock as True.
+
+    Before bug f96faa07 was fixed, ``is_project_exclusively_locked`` raised
+    inside ``_validate_project_id`` on a non-str ``project_id`` (a real
+    ``uuid.UUID`` was rejected by the ``isinstance(project_id, str)`` check),
+    which the function's own except-clause silently swallowed into a
+    fail-open ``False`` -- i.e. "not locked" -- even though the lock row
+    genuinely exists. This is the live-log-proven defect: the gate never
+    actually gated for any UUID-object caller.
+    """
+    db = _FakeLockDriver()
+    acquire_project_exclusive_lock(db, _PID, owner="tester", reason="r")
+
+    assert is_project_exclusively_locked(db, _PID_UUID) is True
+
+
+def test_is_locked_with_real_uuid_object_resolves_false_when_unlocked() -> None:
+    """A real uuid.UUID project_id on an unlocked project correctly reports False."""
+    db = _FakeLockDriver()
+
+    assert is_project_exclusively_locked(db, _PID_UUID) is False
+
+
+def test_acquire_and_release_accept_real_uuid_object() -> None:
+    """acquire/release round-trip using a real uuid.UUID, not a pre-stringified id."""
+    db = _FakeLockDriver()
+
+    ok = acquire_project_exclusive_lock(
+        db, _PID_UUID, owner="tester", reason="uuid-object test"
+    )
+    assert ok is True
+    # Look the row up with the plain str form too -- both representations
+    # must refer to the same canonical row.
+    row = get_project_exclusive_lock(db, _PID)
+    assert row is not None
+    assert row["owner"] == "tester"
+
+    release_project_exclusive_lock(db, _PID_UUID)
+    assert is_project_exclusively_locked(db, _PID_UUID) is False
+
+
+def test_get_project_exclusive_lock_rejects_non_uuid_non_str_type() -> None:
+    """A genuinely invalid project_id type (e.g. int) still raises loudly.
+
+    The UUID-tolerance added for bug f96faa07 must not widen into silently
+    accepting arbitrary types -- only str and uuid.UUID are valid identifiers.
+    """
+    db = _FakeLockDriver()
+
+    with pytest.raises(ValueError):
+        get_project_exclusive_lock(db, 12345)  # type: ignore[arg-type]

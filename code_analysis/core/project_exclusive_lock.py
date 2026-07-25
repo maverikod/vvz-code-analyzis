@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Final, Optional, cast
+import uuid
+from typing import Any, Dict, Final, Optional, Union, cast
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +40,37 @@ _ACQUIRE_SQL = (
 _RELEASE_SQL = f"DELETE FROM {TABLE} WHERE project_id = ?"
 
 
-def _validate_project_id(project_id: str) -> None:
-    """Raise ``ValueError`` unless ``project_id`` is a non-empty string.
+def _coerce_and_validate_project_id(project_id: Union[str, uuid.UUID]) -> str:
+    """Coerce ``project_id`` to ``str`` (UUID-tolerant) and validate non-empty.
+
+    This is the single coercion/validation choke point every public function
+    in this module funnels ``project_id`` through (bug f96faa07). PostgreSQL
+    drivers commonly hand back a raw ``uuid.UUID`` object for a ``UUID``
+    column (e.g. rows from ``get_all_projects``); the previous
+    str-only ``isinstance`` check rejected that object with ``ValueError``,
+    which ``is_project_exclusively_locked`` then swallowed as a fail-open
+    "not locked" result -- silently turning the whole-project lock gate into
+    a no-op for every UUID-object caller. Accepting and normalizing
+    ``uuid.UUID`` here closes that class of bug for every caller uniformly,
+    including future ones, while still rejecting genuinely empty/blank/None
+    input exactly as before.
 
     Args:
-        project_id: Candidate project UUID.
+        project_id: Candidate project identifier: either a non-empty ``str``
+            or a ``uuid.UUID`` instance.
+
+    Returns:
+        The canonical non-empty string form of ``project_id``.
 
     Raises:
-        ValueError: If ``project_id`` is not a non-empty string.
+        ValueError: If ``project_id`` is ``None``, empty, blank, or any type
+            other than ``str``/``uuid.UUID``.
     """
+    if isinstance(project_id, uuid.UUID):
+        project_id = str(project_id)
     if not isinstance(project_id, str) or not project_id.strip():
         raise ValueError("project_id must be a non-empty string")
+    return project_id
 
 
 def _validate_owner(owner: str) -> None:
@@ -83,13 +104,15 @@ def _affected(result: Dict[str, Any]) -> int:
 
 
 def acquire_project_exclusive_lock(
-    database: Any, project_id: str, owner: str, reason: str
+    database: Any, project_id: Union[str, uuid.UUID], owner: str, reason: str
 ) -> bool:
     """Take the whole-project exclusive lock.
 
     Args:
         database: Shared driver object exposing ``.execute()``/``.select()``.
-        project_id: Project UUID to lock.
+        project_id: Project UUID to lock; a ``str`` or a raw ``uuid.UUID``
+            (e.g. straight from a PostgreSQL driver row) are both accepted
+            and normalized to ``str`` before use.
         owner: Free-text identifier of the lock holder (e.g.
             ``"rename_project:<uuid>"``).
         reason: Free-text human-readable reason for the lock.
@@ -99,9 +122,11 @@ def acquire_project_exclusive_lock(
         anyone (no TTL to steal — the caller must retry later or report busy).
 
     Raises:
-        ValueError: If ``project_id`` or ``owner`` is not a non-empty string.
+        ValueError: If ``project_id`` is empty/None/blank (or any type other
+            than ``str``/``uuid.UUID``), or ``owner`` is not a non-empty
+            string.
     """
-    _validate_project_id(project_id)
+    project_id = _coerce_and_validate_project_id(project_id)
     _validate_owner(owner)
     now = time.time()
     res = cast(
@@ -124,20 +149,24 @@ def acquire_project_exclusive_lock(
     return ok
 
 
-def release_project_exclusive_lock(database: Any, project_id: str) -> None:
+def release_project_exclusive_lock(
+    database: Any, project_id: Union[str, uuid.UUID]
+) -> None:
     """Unconditionally delete the lock row for ``project_id``.
 
     Args:
         database: Shared driver object exposing ``.execute()``.
-        project_id: Project UUID to unlock.
+        project_id: Project UUID to unlock; a ``str`` or a raw ``uuid.UUID``
+            are both accepted and normalized to ``str`` before use.
 
     Returns:
         None. Idempotent no-op (no error) when nothing was locked.
 
     Raises:
-        ValueError: If ``project_id`` is not a non-empty string.
+        ValueError: If ``project_id`` is empty/None/blank (or any type other
+            than ``str``/``uuid.UUID``).
     """
-    _validate_project_id(project_id)
+    project_id = _coerce_and_validate_project_id(project_id)
     res = cast(
         Dict[str, Any],
         database.execute(_RELEASE_SQL, (project_id,), transaction_id=None),
@@ -152,22 +181,24 @@ def release_project_exclusive_lock(database: Any, project_id: str) -> None:
 
 
 def get_project_exclusive_lock(
-    database: Any, project_id: str
+    database: Any, project_id: Union[str, uuid.UUID]
 ) -> Optional[Dict[str, Any]]:
     """Return the lock row for ``project_id``, or None if unlocked.
 
     Args:
         database: Shared driver object exposing ``.select()``.
-        project_id: Project UUID to look up.
+        project_id: Project UUID to look up; a ``str`` or a raw ``uuid.UUID``
+            are both accepted and normalized to ``str`` before use.
 
     Returns:
         Dict with keys ``project_id``, ``locked_at``, ``owner``, ``reason``,
         or None if no lock row exists.
 
     Raises:
-        ValueError: If ``project_id`` is not a non-empty string.
+        ValueError: If ``project_id`` is empty/None/blank (or any type other
+            than ``str``/``uuid.UUID``).
     """
-    _validate_project_id(project_id)
+    project_id = _coerce_and_validate_project_id(project_id)
     rows = database.select(TABLE, where={"project_id": project_id})
     if not rows:
         return None
@@ -183,16 +214,25 @@ def get_project_exclusive_lock(
     return cast(Dict[str, Any], row)
 
 
-def is_project_exclusively_locked(database: Any, project_id: str) -> bool:
+def is_project_exclusively_locked(
+    database: Any, project_id: Union[str, uuid.UUID]
+) -> bool:
     """Return True iff a lock row exists for ``project_id``.
 
     Fail-open on lookup errors (returns False, logs a warning), matching the
     defensive style of ``try_acquire_project_activity``'s callers: a broken
-    lookup must never permanently wedge unrelated project operations.
+    lookup must never permanently wedge unrelated project operations. A raw
+    ``uuid.UUID`` object (e.g. straight from a PostgreSQL driver row) is
+    accepted and normalized to ``str`` internally via
+    ``_coerce_and_validate_project_id`` -- it is NOT a lookup error and must
+    resolve the lock correctly, not fail open (bug f96faa07). Only a
+    genuinely empty/None/blank ``project_id`` still fails open with the
+    warning below.
 
     Args:
         database: Shared driver object exposing ``.select()``.
-        project_id: Project UUID to check.
+        project_id: Project UUID to check; a ``str`` or a raw ``uuid.UUID``
+            are both accepted.
 
     Returns:
         True if a lock row exists; False if unlocked or the lookup failed.
@@ -211,7 +251,7 @@ def is_project_exclusively_locked(database: Any, project_id: str) -> bool:
 
 def emergency_unlock_project_lock(
     database: Any,
-    project_id: str,
+    project_id: Union[str, uuid.UUID],
     *,
     force: bool,
     reason: str,
@@ -225,7 +265,9 @@ def emergency_unlock_project_lock(
 
     Args:
         database: Shared driver object exposing ``.select()``/``.execute()``.
-        project_id: Project UUID to force-unlock.
+        project_id: Project UUID to force-unlock; a ``str`` or a raw
+            ``uuid.UUID`` are both accepted and normalized to ``str`` before
+            use.
         force: Must be True to actually clear the lock; anything else raises.
         reason: Free-text human-readable reason for the forced clear, folded
             into the audit log line.
@@ -240,9 +282,10 @@ def emergency_unlock_project_lock(
         "nothing to unlock" case, still logged).
 
     Raises:
-        ValueError: If ``force`` is not True, or ``project_id`` is invalid.
+        ValueError: If ``force`` is not True, or ``project_id`` is
+            empty/None/blank (or any type other than ``str``/``uuid.UUID``).
     """
-    _validate_project_id(project_id)
+    project_id = _coerce_and_validate_project_id(project_id)
     if force is not True:
         raise ValueError(
             "emergency_unlock_project_lock refuses to clear without force=True"

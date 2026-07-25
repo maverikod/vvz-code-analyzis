@@ -28,8 +28,9 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 from code_analysis.core.file_watcher_pkg import (
@@ -40,6 +41,9 @@ from code_analysis.core.file_watcher_pkg import (
 )
 from code_analysis.core.file_watcher_pkg.multi_project_worker_specs import (
     WatchDirSpec,
+)
+from code_analysis.core.project_exclusive_lock import (
+    acquire_project_exclusive_lock,
 )
 
 _LOCKED_ID = "33333333-3333-4333-8333-333333333333"
@@ -83,6 +87,60 @@ def _make_two_projects(tmp_path: Path) -> Dict[str, Path]:
         "locked_root": locked_root,
         "unlocked_root": unlocked_root,
     }
+
+
+class _RealLockDriver:
+    """Minimal ``project_exclusive_locks`` backing store for the REAL lock module.
+
+    Unlike ``_fake_is_locked_factory`` below (a string-keyed stub that
+    replaces ``is_project_exclusively_locked`` entirely), this drives the
+    REAL ``core.project_exclusive_lock`` functions end-to-end -- including
+    their ``project_id`` type handling -- so a test using it exercises the
+    exact bug f96faa07 failure mode: a raw ``uuid.UUID`` object reaching
+    ``is_project_exclusively_locked`` must resolve the real lock row, not
+    silently fail open.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the instance with an empty lock-row store."""
+        self._rows: Dict[str, Dict[str, Any]] = {}
+
+    def select(
+        self,
+        table_name: str,
+        where: Optional[Dict[str, Any]] = None,
+        columns: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return the lock row for ``where["project_id"]`` if present."""
+        assert table_name == "project_exclusive_locks"
+        pid = str((where or {}).get("project_id") or "")
+        row = self._rows.get(pid)
+        return [dict(row)] if row else []
+
+    def execute(
+        self, sql: str, params: Optional[tuple] = None, transaction_id: Any = None
+    ) -> Dict[str, Any]:
+        """Emulate the two SQL statements the module issues."""
+        if sql.startswith("INSERT INTO project_exclusive_locks"):
+            project_id, locked_at, owner, reason = params  # type: ignore[misc]
+            if project_id in self._rows:
+                return {"affected_rows": 0}
+            self._rows[project_id] = {
+                "project_id": project_id,
+                "locked_at": locked_at,
+                "owner": owner,
+                "reason": reason,
+            }
+            return {"affected_rows": 1}
+        if sql.startswith("DELETE FROM project_exclusive_locks"):
+            (project_id,) = params  # type: ignore[misc]
+            existed = project_id in self._rows
+            self._rows.pop(project_id, None)
+            return {"affected_rows": 1 if existed else 0}
+        raise AssertionError(f"unexpected SQL: {sql}")
 
 
 def _fake_is_locked_factory(calls: List[str]) -> Any:
@@ -335,3 +393,73 @@ def test_initialize_watch_dirs_still_relocates_unlocked_project(
 
     relocated_ids = [c.args[1] for c in relocate_mock.call_args_list]
     assert _UNLOCKED_ID in relocated_ids
+
+
+# ---------------------------------------------------------------------------
+# bug f96faa07: real uuid.UUID row ids (as a PostgreSQL driver actually
+# returns for a UUID column) must still be gated correctly. These tests use
+# the REAL ``is_project_exclusively_locked`` (imported into ``init_mod`` at
+# module load, NOT monkeypatched here) backed by ``_RealLockDriver``, unlike
+# every test above which replaces the gate with a string-keyed stub -- that
+# stub-based approach is exactly why this regression shipped undetected: it
+# never exercised the real function's project_id type handling.
+# ---------------------------------------------------------------------------
+
+
+def test_orphan_relocate_skips_locked_project_with_real_uuid_row_id(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A get_all_projects row whose ``id`` is a real uuid.UUID (not a str) for
+    an exclusively-locked project must still be skipped, not relocated.
+
+    RED on 546e35cc / 1.6.80: ``multi_project_worker_init.py`` line ~151
+    passed the raw ``uuid.UUID`` straight to ``is_project_exclusively_locked``,
+    which internally raised on the ``isinstance(project_id, str)`` check and
+    silently fail-opened to "not locked" -- so the locked project WAS
+    relocated (gate no-op). GREEN after the caller coerces with ``str()`` and
+    the lock module itself is made UUID-tolerant (defense in depth).
+    """
+    paths = _make_two_projects(tmp_path)
+    database = _RealLockDriver()
+    # Seed a REAL lock row via the production acquire function, exactly as
+    # rename_project / emergency_unlock_project would.
+    acquire_project_exclusive_lock(
+        database, _LOCKED_ID, owner="rename_project:test", reason="mid-rename"
+    )
+
+    def _fake_get_all_projects(_db: Any) -> List[Dict[str, Any]]:
+        """DB rows whose ``id`` is a raw uuid.UUID, as PostgreSQL returns it."""
+        return [
+            {"id": uuid.UUID(_LOCKED_ID), "root_path": "/orphan/locked"},
+            {"id": uuid.UUID(_UNLOCKED_ID), "root_path": "/orphan/unlocked"},
+        ]
+
+    monkeypatch.setattr(init_mod, "get_all_projects", _fake_get_all_projects)
+    # Force "could not be resolved" for both rows so the function treats
+    # both as outside config and proceeds to search for a projectid match.
+    monkeypatch.setattr(
+        init_mod,
+        "_resolve_project_row_absolute_path",
+        lambda *_a, **_k: None,
+    )
+
+    relocate_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        init_mod, "relocate_project_root_after_disk_move", relocate_mock
+    )
+
+    init_mod._verify_and_relocate_orphaned_projects(
+        database,
+        {"wd-1": paths["watch_dir"]},
+        "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)",
+    )
+
+    relocated_ids = [str(c.args[1]) for c in relocate_mock.call_args_list]
+    assert _LOCKED_ID not in relocated_ids, (
+        "locked project (real uuid.UUID row id) was relocated -- the "
+        "exclusive-lock gate silently no-op'd (bug f96faa07)"
+    )
+    assert _UNLOCKED_ID in relocated_ids, (
+        "gate over-skipped: the unlocked project (real uuid.UUID row id) "
+        "must still be relocated as before"
+    )

@@ -55,15 +55,29 @@ def _outcome(status: Status, reason: str) -> Dict[str, CommandOutcome]:
 
 
 def _seeded_path_in_hits(items: List[Any], relative_path: str) -> bool:
-    """True if any fulltext hit's file_path matches the seeded relative path."""
+    """True if any fulltext hit's file_path matches the seeded relative path.
+
+    Tolerates both the ABSOLUTE ``file_path`` fulltext/semantic hits carry
+    (``.../<project_root>/<relative_path>`` — ``file_disk_registration.py``
+    resolves+stores ``str(path.resolve())``; ``search.py``'s SQL selects
+    ``f.path AS file_path``) and a plain relative form other search sources
+    may return, instead of requiring an exact match against a project-relative
+    path (bug N1 / 0d632d0e, Cause A — the same fix applied to the sibling
+    ``_content_stale_for_path`` helper in
+    ``_verify_client_all_commands_lifecycle_content_stale.py``). This is a
+    correctness fix to the shared matching helper only; it does not resolve
+    bug 67e50972 (this check's own 0-hits-across-both-attempts finding is a
+    separate, still-open defect left untouched).
+    """
     wanted = relative_path.replace("\\", "/").lstrip("./")
+    wanted_suffix = "/" + wanted
     for row in items:
         if not isinstance(row, dict):
             continue
         candidate = str(
             row.get("file_path") or row.get("path") or row.get("relative_path") or ""
-        ).replace("\\", "/").lstrip("./")
-        if candidate == wanted:
+        ).replace("\\", "/")
+        if candidate == wanted or candidate.endswith(wanted_suffix):
             return True
     return False
 

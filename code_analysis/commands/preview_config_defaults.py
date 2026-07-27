@@ -20,7 +20,10 @@ DEFAULT_FULL_TEXT_MAX_LINES = 200
 
 def get_preview_config_defaults() -> dict[str, Any]:
     """Load preview/grep default caps from active server config."""
-    raw = BaseMCPCommand._get_raw_config()
+    try:
+        raw = BaseMCPCommand._get_raw_config()
+    except FileNotFoundError:
+        raw = {}
     full_text = raw.get("preview_full_text_max_lines")
     if full_text is None:
         full_text_default: int | None = DEFAULT_FULL_TEXT_MAX_LINES

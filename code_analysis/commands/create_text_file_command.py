@@ -479,12 +479,19 @@ class CreateTextFileMCPCommand(BaseMCPCommand):
             }
             if backup_uuid:
                 payload_out["backup_uuid"] = backup_uuid
+            try:
+                config_data = BaseMCPCommand._get_raw_config()
+            except FileNotFoundError:
+                logger.warning(
+                    "create_text_file: config file missing, using default optional git-on-write behavior"
+                )
+                config_data = {}
             git_ok, git_err = commit_after_write(
                 root_dir.resolve(),
                 [absolute_path],
                 "create_text_file",
                 commit_message_override=None,
-                config_data=BaseMCPCommand._get_raw_config(),
+                config_data=config_data,
             )
             if not git_ok and git_err:
                 logger.warning("Git commit after create_text_file: %s", git_err)

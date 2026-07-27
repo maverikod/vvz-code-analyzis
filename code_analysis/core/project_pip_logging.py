@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .storage_paths import load_raw_config
+from .config_json import load_config_json
+from .server_log_dir import server_log_dir_from_config_data
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +46,8 @@ def resolve_server_log_dir() -> Path:
     resolved against the config file's directory — same rules as daemon logging.
     """
     config_path = _resolve_active_config_path()
-    data = load_raw_config(config_path)
-    server = data.get("server") or {}
-    if not isinstance(server, dict):
-        server = {}
-    log_dir_str = server.get("log_dir", "./logs")
-    if not isinstance(log_dir_str, str) or not log_dir_str.strip():
-        log_dir_str = "./logs"
-    log_dir = Path(log_dir_str).expanduser()
-    if not log_dir.is_absolute():
-        log_dir = (config_path.parent / log_dir).resolve()
-    return log_dir.resolve()
+    data = load_config_json(config_path)
+    return server_log_dir_from_config_data(data, config_path).resolve()
 
 
 def write_project_pip_session_log(
@@ -136,9 +128,14 @@ def write_project_pip_session_log(
         }
 
     try:
-        rel = log_path.resolve().relative_to(config_dir.resolve())
-        rel_str = rel.as_posix()
-    except ValueError:
+        config_dir_abs = str(config_dir.resolve())
+        log_path_abs = str(log_path.resolve())
+        prefix = config_dir_abs.rstrip("/\\") + "/"
+        if log_path_abs.startswith(prefix):
+            rel_str = log_path_abs[len(prefix) :].replace("\\", "/")
+        else:
+            rel_str = None
+    except OSError:
         rel_str = None
 
     logger.info(

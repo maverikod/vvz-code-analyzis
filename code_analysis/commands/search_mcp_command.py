@@ -277,7 +277,14 @@ class SearchMCPCommand(BaseMCPCommand):
             params.get("first_block_wait_seconds", _FIRST_BLOCK_WAIT_SECONDS)
         )
         config_path = self._resolve_config_path()
-        raw_config = self._get_raw_config()
+        try:
+            raw_config = self._get_raw_config()
+        except FileNotFoundError:
+            logger.warning(
+                "Config file %s not found; search will use default isolated config.",
+                config_path,
+            )
+            raw_config = {}
         profile = open_search_profile_recorder(
             job_id=search_id,
             raw_config=raw_config,

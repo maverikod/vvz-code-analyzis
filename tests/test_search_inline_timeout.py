@@ -32,6 +32,15 @@ from code_analysis.core.search_timeouts import (
 )
 
 
+def _skip_if_queue_env_unavailable(exc: Exception) -> None:
+    """Skip queue integration tests when the sandbox lacks semaphore support."""
+    message = str(exc).lower()
+    if "permission denied" in message or "semlock" in message:
+        pytest.skip(
+            "queue manager requires multiprocessing semaphores unavailable in this environment"
+        )
+
+
 async def _drain_queue_jobs_before_shutdown() -> None:
     """Stop auto-queued jobs and pending start tasks so pytest loop teardown is clean."""
     await cancel_pending_enqueue_start_tasks()
@@ -58,11 +67,16 @@ async def queue_manager():
     """Return queue manager."""
     hooks.execute_custom_commands_hooks(registry)
     await shutdown_global_queue_manager()
-    await init_global_queue_manager(
-        in_memory=True,
-        max_concurrent_jobs=2,
-        completed_job_retention_seconds=3600,
-    )
+    try:
+        await init_global_queue_manager(
+            in_memory=True,
+            max_concurrent_jobs=2,
+            completed_job_retention_seconds=3600,
+        )
+    except Exception as exc:
+        await shutdown_global_queue_manager()
+        _skip_if_queue_env_unavailable(exc)
+        raise
     try:
         yield
     finally:

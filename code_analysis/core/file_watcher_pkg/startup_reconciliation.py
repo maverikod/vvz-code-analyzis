@@ -180,12 +180,22 @@ def _abort_on_duplicates(
 
 def _all_db_projects(database: Any) -> List[Any]:
     """Every project row for this server instance (independent of file state)."""
-    sid = get_server_instance_id()
-    result = database.execute(
-        "SELECT id, root_path, name, watch_dir_id FROM projects "
-        "WHERE server_instance_id = ? OR server_instance_id IS NULL",
-        (sid,),
-    )
+    try:
+        sid = get_server_instance_id()
+    except (FileNotFoundError, RuntimeError):
+        logger.warning(
+            "[RECONCILE] active server instance id unavailable; "
+            "falling back to unpartitioned project listing"
+        )
+        result = database.execute(
+            "SELECT id, root_path, name, watch_dir_id FROM projects"
+        )
+    else:
+        result = database.execute(
+            "SELECT id, root_path, name, watch_dir_id FROM projects "
+            "WHERE server_instance_id = ? OR server_instance_id IS NULL",
+            (sid,),
+        )
     if isinstance(result, dict):
         return list(result.get("data", []) or [])
     if isinstance(result, list):

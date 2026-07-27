@@ -11,6 +11,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_FLAKE8_CONFIG_FILENAMES = (".flake8", "setup.cfg", "tox.ini")
+
 
 def lint_with_flake8(
     file_path: Path, ignore: Optional[List[str]] = None
@@ -37,13 +39,14 @@ def _lint_with_subprocess(
     try:
         # Resolve flake8 via the server interpreter (python -m flake8), never a
         # bare PATH binary — see tool_runtime for the PATH-drift rationale.
-        cmd = tool_command("flake8", "--max-line-length=88", str(file_path))
+        cmd = tool_command("flake8", str(file_path))
         if ignore:
             cmd.extend(["--ignore", ",".join(ignore)])
 
         # Sanitize PYTHONPATH so the project's `code_analysis.commands.ast`
         # package cannot shadow the stdlib `ast` module flake8 imports.
         env = sanitized_env()
+        workdir = _find_flake8_workdir(file_path)
 
         result = subprocess.run(
             cmd,
@@ -51,6 +54,7 @@ def _lint_with_subprocess(
             text=True,
             timeout=30,
             env=env,
+            cwd=workdir,
         )
 
         if module_missing(result.stderr, "flake8"):
@@ -84,3 +88,12 @@ def _lint_with_subprocess(
     except Exception as e:
         logger.warning(f"Error during linting: {e}")
         return (False, str(e), [])
+
+
+def _find_flake8_workdir(file_path: Path) -> Path:
+    """Return the nearest ancestor directory containing a flake8 config."""
+    for directory in (file_path.parent, *file_path.parent.parents):
+        for config_name in _FLAKE8_CONFIG_FILENAMES:
+            if (directory / config_name).is_file():
+                return directory
+    return file_path.parent

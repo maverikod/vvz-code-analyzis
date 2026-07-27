@@ -99,7 +99,9 @@ class _StubClient:
         self.file_sessions = _StubFileSessions()
         self.calls: List[Any] = []
         self._search_stale_sequence = (
-            search_stale_sequence if search_stale_sequence is not None else [True, False]
+            search_stale_sequence
+            if search_stale_sequence is not None
+            else [False, True, False]
         )
         self._search_call_count = 0
 
@@ -110,6 +112,20 @@ class _StubClient:
 
         if command == "update_indexes":
             return {"success": True, "data": {}}
+
+        if command in {
+            "git_identity_set",
+            "git_add",
+            "git_commit",
+            "git_branch_checkout",
+            "git_remote_add",
+            "git_remote_remove",
+            "git_pull_safe",
+        }:
+            return {"success": True, "data": {}}
+
+        if command == "git_status":
+            return {"success": True, "data": {"branch": "main"}}
 
         if command == "search":
             relative_path = (
@@ -195,7 +211,7 @@ async def test_roundtrip_fails_loud_when_upload_raises() -> None:
 @pytest.mark.asyncio
 async def test_roundtrip_fails_when_flag_never_clears_after_reindex() -> None:
     """content_stale still true after update_indexes -> FAILED, not a false green."""
-    client = _StubClient(search_stale_sequence=[True, True])
+    client = _StubClient(search_stale_sequence=[False, True, True])
 
     outcomes = await run_content_stale_roundtrip_check(client, _fixtures())
 

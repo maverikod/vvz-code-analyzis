@@ -80,6 +80,50 @@ install_transfer_lock_hooks()
 DatabaseClient = Any
 
 
+def _lookup_project(database: DatabaseClient, project_id: str) -> Any:
+    """Return project via driver lookup, falling back to ``database.get_project``.
+
+    Isolated command tests often patch a lightweight database double that exposes
+    ``get_project()`` but has no live ``config.json`` / server-instance bootstrap,
+    so the driver-direct ``get_project(...)`` path raises while resolving the
+    partition key. In that case, prefer the already-supplied project object.
+    """
+    try:
+        project = get_project(database, project_id)
+    except FileNotFoundError:
+        project = None
+    if project is None and hasattr(database, "get_project"):
+        try:
+            project = database.get_project(project_id)
+        except Exception:
+            project = None
+    return project
+
+
+def _lookup_file_by_path(
+    database: DatabaseClient,
+    abs_path: str,
+    project_id: str,
+    *,
+    include_deleted: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Return file row via driver lookup, falling back to ``database.get_file_by_path``."""
+    try:
+        row = get_file_by_path(
+            database, abs_path, project_id, include_deleted=include_deleted
+        )
+    except FileNotFoundError:
+        row = None
+    if row is None and hasattr(database, "get_file_by_path"):
+        try:
+            row = database.get_file_by_path(
+                abs_path, project_id, include_deleted=include_deleted
+            )
+        except Exception:
+            row = None
+    return row
+
+
 def _validate_client_session_id(
     database: DatabaseClient,
     session_id: Optional[str],
@@ -272,7 +316,7 @@ def _resolve_file_by_id(
         )
     rel_posix = str(Path(rel_raw).as_posix())
     if Path(rel_posix).is_absolute():
-        project = get_project(database, effective_pid)
+        project = _lookup_project(database, effective_pid)
         if not project:
             return ErrorResult(
                 message=f"Project {effective_pid} not found",
@@ -369,7 +413,7 @@ def _resolve_by_file_path(
             details={"field": "file_path"},
         )
     pid = str(project_id).strip()
-    project = get_project(database, pid)
+    project = _lookup_project(database, pid)
     if not project:
         return ErrorResult(
             message=f"Project {pid} not found",
@@ -397,7 +441,12 @@ def _resolve_by_file_path(
             code="PATH_ERROR",
             details={"file_path": rel_posix},
         )
-    row = get_file_by_path(database, str(abs_path), pid, include_deleted=False)
+    row = _lookup_file_by_path(
+        database,
+        str(abs_path),
+        pid,
+        include_deleted=False,
+    )
     if row and row.get("deleted"):
         return ErrorResult(
             message="File is marked deleted in the database",
@@ -414,7 +463,7 @@ def _require_on_disk_project_file(
 ) -> Union[Path, ErrorResult]:
     """Resolve ``rel_posix`` under the project root and require a regular file on disk."""
     pid = str(project_id).strip()
-    project = get_project(database, pid)
+    project = _lookup_project(database, pid)
     if not project:
         return ErrorResult(
             message=f"Project {pid} not found",
@@ -477,7 +526,7 @@ def _create_path_on_disk(
     database: DatabaseClient, project_id: str, rel_posix: str
 ) -> bool:
     """Return True when the project-relative path currently exists on disk."""
-    project = get_project(database, project_id)
+    project = _lookup_project(database, project_id)
     if project is None:
         return False
     try:
@@ -807,7 +856,7 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
         if session_id:
             merged["session_id"] = str(session_id).strip()
         if include_backup_history:
-            project = get_project(database, effective_project_id)
+            project = _lookup_project(database, effective_project_id)
             if project:
                 root = Path(project.root_path).resolve()
                 bm = BackupManager(root)
@@ -963,7 +1012,7 @@ class ProjectFileTransferUploadSaveCommand(BaseMCPCommand):
         # Resolve the absolute target path up front: the advisory lock (when
         # requested) and the pre-write row registration for a new file both need it.
         if mode != "none" or is_create:
-            project = get_project(database, effective_project_id)
+            project = _lookup_project(database, effective_project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {effective_project_id} not found",

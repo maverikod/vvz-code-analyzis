@@ -18,7 +18,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-__all__ = ["plain_query_to_fts5_match", "full_text_search", "full_text_search_global"]
+__all__ = [
+    "plain_query_to_fts5_match",
+    "plain_query_to_postgres_tsquery",
+    "full_text_search",
+    "full_text_search_global",
+]
 
 # PostgreSQL rejects inputs longer than ~1 MiB for to_tsvector(); UTF-8 can be 4 bytes/char.
 _PG_TSVECTOR_INPUT_MAX_CHARS = 200_000
@@ -62,14 +67,30 @@ def plain_query_to_fts5_match(query: str) -> Optional[str]:
     return s
 
 
+def plain_query_to_postgres_tsquery(query: str) -> Optional[str]:
+    """Turn free text into a prefix-matching PostgreSQL ``to_tsquery`` string.
+
+    Reuses the same normalization as :func:`plain_query_to_fts5_match`, then
+    converts each surviving token to ``<token>:*`` joined by ``&`` so the
+    PostgreSQL path honors the documented "partial word matching" contract.
+    """
+    normalized = plain_query_to_fts5_match(query)
+    if normalized is None:
+        return None
+    tokens = re.findall(r"\w+", normalized, flags=re.UNICODE)
+    if not tokens:
+        return None
+    return " & ".join(f"{token}:*" for token in tokens)
+
+
 def _full_text_search_postgresql(
     driver: Any,
-    fts_query: str,
+    ts_query: str,
     project_id: str,
     entity_type: Optional[str],
     limit: int,
 ) -> List[Dict[str, Any]]:
-    """PostgreSQL: ``tsvector`` / ``plainto_tsquery`` over ``code_content`` rows.
+    """PostgreSQL: ``tsvector`` / prefix ``to_tsquery`` over ``code_content`` rows.
 
     Exact port of ``_ClientAPISearchMixin._full_text_search_postgresql``.
     """
@@ -93,7 +114,7 @@ def _full_text_search_postgresql(
                         {cap}
                     )
                 ),
-                plainto_tsquery('simple', ?)
+                to_tsquery('simple', ?)
             ) AS bm25_score
         FROM code_content c
         INNER JOIN files f ON f.id = c.file_id
@@ -107,9 +128,9 @@ def _full_text_search_postgresql(
                     {cap}
                 )
             )
-            @@ plainto_tsquery('simple', ?)
+            @@ to_tsquery('simple', ?)
     """
-    params: List[Any] = [fts_query, project_id, fts_query]
+    params: List[Any] = [ts_query, project_id, ts_query]
     if entity_type:
         sql += " AND c.entity_type = ?"
         params.append(entity_type)
@@ -125,7 +146,7 @@ def _full_text_search_postgresql(
 
 def _full_text_search_postgresql_global(
     driver: Any,
-    fts_query: str,
+    ts_query: str,
     entity_type: Optional[str],
     limit: int,
 ) -> List[Dict[str, Any]]:
@@ -154,7 +175,7 @@ def _full_text_search_postgresql_global(
                         {cap}
                     )
                 ),
-                plainto_tsquery('simple', ?)
+                to_tsquery('simple', ?)
             ) AS bm25_score
         FROM code_content c
         INNER JOIN files f ON f.id = c.file_id
@@ -167,9 +188,9 @@ def _full_text_search_postgresql_global(
                     {cap}
                 )
             )
-            @@ plainto_tsquery('simple', ?)
+            @@ to_tsquery('simple', ?)
     """
-    params: List[Any] = [fts_query, fts_query]
+    params: List[Any] = [ts_query, ts_query]
     if entity_type:
         sql += " AND c.entity_type = ?"
         params.append(entity_type)
@@ -206,11 +227,11 @@ def full_text_search(
         List of dicts with keys: entity_type, entity_name, content,
         docstring, file_path.
     """
-    fts_query = plain_query_to_fts5_match(query)
-    if fts_query is None:
+    ts_query = plain_query_to_postgres_tsquery(query)
+    if ts_query is None:
         return []
 
-    return _full_text_search_postgresql(driver, fts_query, project_id, entity_type, limit)
+    return _full_text_search_postgresql(driver, ts_query, project_id, entity_type, limit)
 
 
 def full_text_search_global(
@@ -224,8 +245,8 @@ def full_text_search_global(
     Same query semantics as :func:`full_text_search` but with no project
     filter; each row carries ``project_id``/``project_name`` for attribution.
     """
-    fts_query = plain_query_to_fts5_match(query)
-    if fts_query is None:
+    ts_query = plain_query_to_postgres_tsquery(query)
+    if ts_query is None:
         return []
 
-    return _full_text_search_postgresql_global(driver, fts_query, entity_type, limit)
+    return _full_text_search_postgresql_global(driver, ts_query, entity_type, limit)

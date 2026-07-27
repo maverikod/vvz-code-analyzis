@@ -46,10 +46,26 @@ fi
 
 mkdir -p "$CONFIG_DIR"
 
-_finalize_instance_uuid() {
+_generate_instance_uuid() {
     if command -v uuidgen >/dev/null 2>&1; then
-        local instance_uuid
-        instance_uuid="$(uuidgen)"
+        uuidgen
+        return 0
+    fi
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        head -n1 /proc/sys/kernel/random/uuid
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import uuid; print(uuid.uuid4())'
+        return 0
+    fi
+    return 1
+}
+
+_finalize_instance_uuid() {
+    local instance_uuid
+    instance_uuid="$(_generate_instance_uuid || true)"
+    if [[ -n "${instance_uuid:-}" ]]; then
         sed -i "s/REPLACE_ON_INSTALL/${instance_uuid}/" "$CONFIG"
     fi
 }

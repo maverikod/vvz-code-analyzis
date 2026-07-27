@@ -59,6 +59,24 @@ def test_normalize_fulltext_finding_maps_fields() -> None:
     assert finding["text"] == "hello"
 
 
+def test_normalize_fulltext_finding_maps_current_backend_row_shape() -> None:
+    """Current full_text_search rows use ``content`` + ``bm25_score``."""
+    raw = {
+        "file_path": "src/a.py",
+        "content": "def hello() -> None:\n    pass",
+        "bm25_score": 0.75,
+        "line": 10,
+        "entity_type": "function",
+        "entity_name": "hello",
+    }
+    finding = normalize_fulltext_finding(raw, index=4)
+    assert finding["result_id"] == "fulltext-000004"
+    assert finding["text"] == raw["content"]
+    assert finding["score"] == raw["bm25_score"]
+    assert finding["entity_type"] == "function"
+    assert finding["entity_name"] == "hello"
+
+
 def test_normalize_fulltext_finding_carries_project_attribution() -> None:
     """Bug 29212ab2: project_id/project_name from the backend SELECT (both the
     per-project and global(project_id=None) rows already carry them) must

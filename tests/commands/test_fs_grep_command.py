@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from mcp_proxy_adapter.commands.result import SuccessResult
 
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.fs_grep_budget import (
     GREP_BUDGET_EXCEEDED,
     GREP_HARD_TIMEOUT,
@@ -17,14 +18,18 @@ from code_analysis.commands.fs_grep_command import FsGrepCommand
 
 @pytest.mark.asyncio
 async def test_fs_grep_skips_large_files_before_reading(tmp_path) -> None:
-    """Verify test fs grep skips large files before reading."""
+    """Verify fs_grep still skips large files without a local config file."""
     project_root = tmp_path / "project"
     project_root.mkdir()
     (project_root / "small.txt").write_text("needle here\n", encoding="utf-8")
     (project_root / "large.txt").write_text("needle\n" * 20, encoding="utf-8")
+    missing_config = tmp_path / "missing-config.json"
 
-    with patch.object(
-        FsGrepCommand, "_resolve_project_root", return_value=project_root
+    with (
+        patch.object(FsGrepCommand, "_resolve_project_root", return_value=project_root),
+        patch.object(
+            BaseMCPCommand, "_resolve_config_path", return_value=missing_config
+        ),
     ):
         cmd = FsGrepCommand()
         result = await cmd.execute(

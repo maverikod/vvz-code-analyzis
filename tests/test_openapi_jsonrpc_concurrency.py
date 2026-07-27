@@ -15,9 +15,16 @@ from code_analysis.openapi_mcp_proxy_compat import invalidate_openapi_cache
 
 
 @pytest.fixture
-def app():
+def app(tmp_path: Path):
     """Return app."""
-    config_path = Path(__file__).resolve().parents[1] / "config.json"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        (
+            '{"server": {"host": "127.0.0.1", "port": 8000, "protocol": "http"}, '
+            '"queue_manager": {"enabled": false}}'
+        ),
+        encoding="utf-8",
+    )
     app_config = load_raw_config(config_path)
     application = create_app_with_events(app_config, config_path, worker_manager=None)
     yield application

@@ -42,7 +42,7 @@ def test_batch_processor_chunk_only_select_orders_chunks_by_file_position() -> N
     from code_analysis.core.vectorization_worker_pkg import batch_processor
 
     src = inspect.getsource(batch_processor.process_chunk_only_files)
-    assert "ORDER BY cc.ordinal ASC, cc.id ASC" in src
+    assert "ORDER BY cc.chunk_ordinal ASC, cc.id ASC" in src
 
 
 def test_batch_processor_embedding_ready_orders_chunks_newest_first() -> None:

@@ -6,6 +6,36 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_adapter_modules() -> None:
+    """Restore adapter/bootstrap modules after each test.
+
+    These tests intentionally evict ``mcp_proxy_adapter`` modules from
+    ``sys.modules`` to verify bootstrap behavior. Without restoring the prior
+    module objects, later tests may import a new ``ErrorResult`` class object
+    while already-imported command modules still hold the old one, breaking
+    ``isinstance`` checks by suite order alone.
+    """
+    tracked = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "mcp_proxy_adapter"
+        or name.startswith("mcp_proxy_adapter.")
+        or name == "code_analysis.mcp_adapter_bootstrap"
+    }
+    yield
+    for name in list(sys.modules):
+        if (
+            name == "mcp_proxy_adapter"
+            or name.startswith("mcp_proxy_adapter.")
+            or name == "code_analysis.mcp_adapter_bootstrap"
+        ):
+            del sys.modules[name]
+    sys.modules.update(tracked)
+
 
 def test_install_redirects_adapter_logs_from_config_file(
     tmp_path: Path, monkeypatch

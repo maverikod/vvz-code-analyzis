@@ -93,6 +93,8 @@ async def test_lock_file_without_transfer() -> None:
     async def _exec(command: str, params: dict, **_: object) -> dict:
         """Return exec."""
         calls.append((command, params))
+        if command == "session_validate":
+            return {"success": True, "data": {"session_id": params["session_id"]}}
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
         if command == "session_open_file":
@@ -126,6 +128,7 @@ async def test_lock_file_without_transfer() -> None:
         out = await fs.lock_file("sid", "pid", "fid")
 
     assert out["acquired"] is True
+    assert ("session_validate", {"session_id": "sid"}) in calls
     assert (
         "session_open_file",
         {"session_id": "sid", "project_id": "pid", "file_id": "fid"},
@@ -140,6 +143,8 @@ async def test_download_by_file_id_without_project_id() -> None:
     async def _exec(command: str, params: dict, **_: object) -> dict:
         """Return exec."""
         calls.append((command, params))
+        if command == "session_validate":
+            return {"success": True, "data": {"session_id": params["session_id"]}}
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
         if command == "project_file_transfer_download_begin":
@@ -177,6 +182,7 @@ async def test_download_by_file_id_without_project_id() -> None:
         begin, _receipt = await fs.download("sid", "/tmp/out.bin", "fid", lock=True)
 
     assert begin["file_id"] == "fid"
+    assert ("session_validate", {"session_id": "sid"}) in calls
     assert (
         "project_file_transfer_download_begin",
         {
@@ -197,6 +203,8 @@ async def test_download_lock_false_uses_none_mode() -> None:
     async def _exec(command: str, params: dict, **_: object) -> dict:
         """Return exec."""
         calls.append((command, params))
+        if command == "session_validate":
+            return {"success": True, "data": {"session_id": params["session_id"]}}
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
         if command == "project_file_transfer_download_begin":
@@ -230,6 +238,7 @@ async def test_download_lock_false_uses_none_mode() -> None:
         fs = FileSessionClient(client)
         await fs.download("sid", "/tmp/out.bin", "fid", lock=False)
 
+    assert ("session_validate", {"session_id": "sid"}) in calls
     assert (
         "project_file_transfer_download_begin",
         {
@@ -267,6 +276,8 @@ async def test_upload_existing_file_by_file_id() -> None:
     async def _exec(command: str, params: dict, **_: object) -> dict:
         """Return exec."""
         calls.append((command, params))
+        if command == "session_validate":
+            return {"success": True, "data": {"session_id": params["session_id"]}}
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
         if command == "project_file_transfer_upload_save":
@@ -303,6 +314,7 @@ async def test_upload_existing_file_by_file_id() -> None:
         out = await fs.upload("sid", b"data", "fid", unlock=True)
 
     assert out["file_id"] == "fid"
+    assert ("session_validate", {"session_id": "sid"}) in calls
     assert (
         "project_file_transfer_upload_save",
         {
@@ -324,6 +336,8 @@ async def test_upload_unlock_false() -> None:
     async def _exec(command: str, params: dict, **_: object) -> dict:
         """Return exec."""
         calls.append((command, params))
+        if command == "session_validate":
+            return {"success": True, "data": {"session_id": params["session_id"]}}
         if command == "session_list_file_locks":
             return {"success": True, "data": {"locks": [], "count": 0}}
         if command == "project_file_transfer_upload_save":
@@ -356,6 +370,7 @@ async def test_upload_unlock_false() -> None:
         fs = FileSessionClient(client)
         await fs.upload("sid", b"data", "fid", unlock=False)
 
+    assert ("session_validate", {"session_id": "sid"}) in calls
     assert (
         "project_file_transfer_upload_save",
         {

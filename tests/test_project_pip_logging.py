@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,58 @@ def test_write_project_pip_session_log_creates_file(
     assert "job_id=job-abc" in text
     assert "--- process ---" in text
     assert "returncode=0" in text
+    rel = out["pip_output_log_relative"]
+    assert isinstance(rel, str)
+    assert rel.startswith(f"logs/{PROJECT_PIP_LOG_SUBDIR}/")
+
+
+def test_write_project_pip_session_log_relative_path_ignores_adapter_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Relative log path stays config-relative even if adapter patched os.path hooks."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"server": {"log_dir": "logs"}}', encoding="utf-8")
+    monkeypatch.setattr(
+        "code_analysis.core.project_pip_logging._resolve_active_config_path",
+        lambda: cfg,
+    )
+
+    orig_join = os.path.join
+    orig_exists = os.path.exists
+    orig_makedirs = os.makedirs
+    redirected_root = tmp_path / "casmgr-logs"
+
+    def fake_join(first: str, *parts: str) -> str:
+        if first in ("./logs", "logs"):
+            return orig_join(str(redirected_root), *parts)
+        return orig_join(first, *parts)
+
+    def fake_exists(path: object) -> bool:
+        if path in ("./logs", "logs"):
+            return orig_exists(redirected_root)
+        return orig_exists(path)
+
+    def fake_makedirs(name: object, *args: object, **kwargs: object) -> None:
+        if name in ("./logs", "logs"):
+            orig_makedirs(redirected_root, *args, **kwargs)
+            return
+        orig_makedirs(name, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "join", fake_join)
+    monkeypatch.setattr(os.path, "exists", fake_exists)
+    monkeypatch.setattr(os, "makedirs", fake_makedirs)
+
+    out = write_project_pip_session_log(
+        command_name="project_pip_install",
+        project_id="550e8400-e29b-41d4-a716-446655440000",
+        pip_args=["install", "requests"],
+        stdout="stdout-line\n",
+        stderr="stderr-line\n",
+        returncode=0,
+        timed_out=False,
+    )
+
+    assert out["pip_logs_directory"] == str((tmp_path / "logs").resolve())
     rel = out["pip_output_log_relative"]
     assert isinstance(rel, str)
     assert rel.startswith(f"logs/{PROJECT_PIP_LOG_SUBDIR}/")

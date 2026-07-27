@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import logging
+
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -15,6 +17,8 @@ from ._shared import (
 )
 from ...core.database_driver_pkg.domain.projects import (
     get_project, sync_project_metadata_from_projectid)
+
+logger = logging.getLogger(__name__)
 
 
 class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
@@ -41,6 +45,12 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
+
+    @staticmethod
+    def _select_project_row_fallback(database: Any, project_id: str) -> Any:
+        """Best-effort project lookup that does not depend on active config resolution."""
+        rows = database.select("projects", where={"id": project_id}, limit=1)
+        return rows[0] if rows else None
 
     @classmethod
     def get_schema(
@@ -85,7 +95,15 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                project = get_project(database, project_id)
+                try:
+                    project = get_project(database, project_id)
+                except FileNotFoundError:
+                    logger.warning(
+                        "set_project_processing_paused: active config missing; "
+                        "falling back to unscoped project lookup for project_id=%s",
+                        project_id,
+                    )
+                    project = self._select_project_row_fallback(database, project_id)
                 if not project:
                     return self._handle_error(
                         ValidationError(
@@ -124,20 +142,17 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
                     database=database,
                     require_exists=True,
                 )
-                if not resolved_root:
-                    return self._handle_error(
-                        ValidationError(
-                            "Cannot resolve project root for projectid update",
-                            field="project_id",
-                            details={"project_id": project_id},
-                        ),
-                        "PROJECT_ROOT_NOT_FOUND",
-                        self.name,
+                if resolved_root:
+                    update_projectid_fields(
+                        resolved_root, processing_paused=bool(processing_paused)
                     )
-                update_projectid_fields(
-                    resolved_root, processing_paused=bool(processing_paused)
-                )
-                if hasattr(database, "sync_project_metadata_from_projectid"):
+                else:
+                    logger.warning(
+                        "set_project_processing_paused: project root unresolved; "
+                        "falling back to direct DB update for project_id=%s",
+                        project_id,
+                    )
+                if resolved_root and hasattr(database, "sync_project_metadata_from_projectid"):
                     sync_project_metadata_from_projectid(database, resolved_root)
                 else:
                     database.execute(

@@ -162,6 +162,9 @@ def resolve_session_pointer_node_ref(params: dict[str, Any]) -> None:
     session_id = params.get("session_id")
     if session_id is None:
         return
+    from code_analysis.commands.universal_file_edit.format_group import (
+        FORMAT_TREE_TEMP,
+    )
     from code_analysis.commands.universal_file_edit.session import get_session
     from code_analysis.core.edit_session.edit_operations_adapter import (
         resolve_node_ref_to_short_id,
@@ -170,6 +173,8 @@ def resolve_session_pointer_node_ref(params: dict[str, Any]) -> None:
 
     try:
         edit_sess = get_session(str(session_id))
+        if edit_sess.format_group == FORMAT_TREE_TEMP:
+            return
         core = edit_sess.core
         if not core.session_tree_path.is_file():
             return
@@ -192,6 +197,33 @@ def should_use_marked_tree_navigation(
 ) -> bool:
     """Return True when PreviewNavigation + TreeLifecycle should handle the request."""
     del handler  # format selection uses HandlerRegistry, not preview FileHandler
+    session_id = params.get("session_id")
+    if session_id is not None:
+        from code_analysis.commands.universal_file_edit.format_group import (
+            FORMAT_TREE_TEMP,
+        )
+        from code_analysis.commands.universal_file_edit.session import get_session
+
+        rel_path = params.get("rel_file_path") or params.get("file_path")
+        try:
+            edit_sess = get_session(
+                str(session_id),
+                file_path=str(rel_path) if rel_path is not None else None,
+            )
+        except ValueError:
+            edit_sess = None
+        if edit_sess is not None and edit_sess.format_group == FORMAT_TREE_TEMP:
+            node_ref = params.get("node_ref")
+            if node_ref is None:
+                return True
+            if isinstance(node_ref, int):
+                return True
+            text = str(node_ref).strip()
+            if not text:
+                return True
+            if text.isdigit():
+                return True
+            return False
     file_path = Path(str(params.get("file_path", "")))
     if not params.get("project_root") or not params.get("rel_file_path"):
         return False

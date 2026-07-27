@@ -9,7 +9,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from pathlib import Path
@@ -19,6 +18,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
+from ..core.command_offload import run_sync_in_offload_pool
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.git_integration import commit_after_write
 from ..core.json_tree.json_saver import save_json_tree_to_file
@@ -192,14 +192,15 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     )
                     return SuccessResult(data=payload)
 
-                result = await asyncio.to_thread(
-                    save_json_tree_to_file,
-                    tree_id=tree_id,
-                    file_path=str(absolute_path),
-                    root_dir=root_dir,
-                    project_id=project_id,
-                    database=database,
-                    backup=backup,
+                result = await run_sync_in_offload_pool(
+                    lambda: save_json_tree_to_file(
+                        tree_id=tree_id,
+                        file_path=str(absolute_path),
+                        root_dir=root_dir,
+                        project_id=project_id,
+                        database=database,
+                        backup=backup,
+                    )
                 )
             finally:
                 database.disconnect()
@@ -225,12 +226,20 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                 if isinstance(commit_message, str) and commit_message.strip()
                 else None
             )
+            try:
+                config_data = BaseMCPCommand._get_raw_config()
+            except FileNotFoundError:
+                logger.warning(
+                    "json_save_tree: config file missing, using default optional git-on-write behavior"
+                )
+                config_data = {}
+
             git_ok, git_err = commit_after_write(
                 root_dir,
                 [absolute_path],
                 "json_save_tree",
                 commit_message_override=cm,
-                config_data=BaseMCPCommand._get_raw_config(),
+                config_data=config_data,
             )
             if not git_ok and git_err:
                 logger.warning("Git commit after json_save_tree: %s", git_err)

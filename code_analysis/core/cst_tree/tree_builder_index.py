@@ -54,6 +54,9 @@ from .tree_sidecar import (
 logger = logging.getLogger(__name__)
 
 
+_DEFINITION_NODE_TYPES = frozenset(("FunctionDef", "AsyncFunctionDef", "ClassDef"))
+
+
 def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
     """Record SHA256 + length of logical source (no ``# @node-id`` markers) on tree."""
     logical = strip_inline_node_id_lines_from_source(source)
@@ -237,6 +240,9 @@ def _build_tree_index(
 
         parent = parents.get(node)
 
+        name = get_node_name(node)
+        qualname = get_node_qualname(node, class_stack, func_stack)
+
         node_id: Optional[str] = None
         marker_path = build_marker_path(path_indices)
         exact_key = build_exact_node_key(
@@ -249,7 +255,21 @@ def _build_tree_index(
         if persisted_node_ids and marker_path in persisted_node_ids:
             node_id = persisted_node_ids[marker_path]
         elif exact_key in exact_key_to_id:
-            node_id = exact_key_to_id.pop(exact_key)
+            candidate_id = exact_key_to_id[exact_key]
+            candidate_prev_meta = (
+                previous_metadata_map.get(candidate_id)
+                if previous_metadata_map is not None
+                else None
+            )
+            if candidate_prev_meta is not None and candidate_prev_meta.type == node_type:
+                if node_type in _DEFINITION_NODE_TYPES:
+                    if (
+                        candidate_prev_meta.name == name
+                        and candidate_prev_meta.qualname == qualname
+                    ):
+                        node_id = exact_key_to_id.pop(exact_key)
+                else:
+                    node_id = exact_key_to_id.pop(exact_key)
         elif (
             pinned_node_id
             and previous_metadata_map
@@ -270,8 +290,6 @@ def _build_tree_index(
         parent_id = node_to_uuid.get(id(parent)) if parent else None
         tree.parent_map[node_id] = parent_id
 
-        name = get_node_name(node)
-        qualname = get_node_qualname(node, class_stack, func_stack)
         kind = get_node_kind(node, class_stack)
         prev_meta = (
             previous_metadata_map.get(node_id) if previous_metadata_map else None

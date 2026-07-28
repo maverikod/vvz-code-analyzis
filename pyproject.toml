@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis"
-<<<<<<< HEAD
 version = "1.6.83"
 description = "Code analysis MCP server, database tooling, and AST/CST commands"
 readme = { file = "docs/README.md", content-type = "text/markdown" }

@@ -120,42 +120,65 @@ class BaseMCPCommand(Command):
         never reach here; they are handled inline defensively. Offload can be
         disabled via config/env (escape hatch) — then we fall back to inline.
 
-        Before dispatch, a fast-fail gate refuses any command carrying a
-        literal ``project_id`` kwarg when that project is held by the
-        whole-project exclusive lock (``core/project_exclusive_lock.py``,
-        bugs 88f06abc, 5da73265), returning ``PROJECT_LOCKED`` immediately
-        instead of running. ``emergency_unlock_project`` is the sole exempt
-        command (see ``_PROJECT_LOCK_GATE_EXEMPT_COMMANDS``): its purpose is
-        to act on a locked project.
+        A fast-fail gate refuses any command carrying a literal ``project_id``
+        kwarg when that project is held by the whole-project exclusive lock
+        (``core/project_exclusive_lock.py``, bugs 88f06abc, 5da73265),
+        returning ``PROJECT_LOCKED`` immediately instead of running.
+        ``emergency_unlock_project`` is the sole exempt command (see
+        ``_PROJECT_LOCK_GATE_EXEMPT_COMMANDS``): its purpose is to act on a
+        locked project.
+
+        Bug 4d1a2895 (mechanism card 8e6acb34): the lock gate does a
+        synchronous PG lookup (``get_project_exclusive_lock``) that serializes
+        on ``PostgreSQLOperations``' single main connection under an unbounded
+        ``threading.Lock``. Running that lookup here, inline, BEFORE dispatch
+        onto the offload pool, put it back on the main event loop exactly like
+        the command bodies above — under concurrent load it stalled the loop
+        (and the heartbeat) for seconds. The gate is therefore folded into
+        ``_gated_run`` below and dispatched through the SAME offload call as
+        the command body, so neither piece ever runs on the main loop.
         """
         from ..core.command_offload import offload_command_run, offload_enabled
 
-        project_id = kwargs.get("project_id")
-        if project_id and getattr(cls, "name", None) not in (
-            cls._PROJECT_LOCK_GATE_EXEMPT_COMMANDS
-        ):
-            from ..core.project_exclusive_lock import get_project_exclusive_lock
+        parent_run = super().run  # zero-arg super: safe here, top of run()
 
-            db = cls._open_database_from_config()
-            try:
-                lock = get_project_exclusive_lock(db, str(project_id))
-            finally:
-                db.disconnect()
-            if lock:
-                return ErrorResult(
-                    message=(
-                        f"Project {project_id!r} is exclusively locked "
-                        f"(owner={lock.get('owner')!r}, reason={lock.get('reason')!r}); "
-                        "the operation was refused. Use emergency_unlock_project if the "
-                        "lock is stuck (requires force=true and disk/DB reconciliation)."
-                    ),
-                    code="PROJECT_LOCKED",
-                    details={"project_id": project_id, "lock": lock},
-                )
+        project_id = kwargs.get("project_id")
+        lock_gate_active = bool(project_id) and getattr(cls, "name", None) not in (
+            cls._PROJECT_LOCK_GATE_EXEMPT_COMMANDS
+        )
+
+        async def _gated_run(**inner_kwargs: Any) -> Any:
+            """Lock pre-check + command body as one offloaded unit (bug 4d1a2895).
+
+            Both pieces run together on the offload worker thread (or inline,
+            when offload is disabled) — never split across the main loop and
+            the pool — so the synchronous PG lock lookup can no longer stall
+            the event loop ahead of dispatch.
+            """
+            if lock_gate_active:
+                from ..core.project_exclusive_lock import get_project_exclusive_lock
+
+                db = cls._open_database_from_config()
+                try:
+                    lock = get_project_exclusive_lock(db, str(project_id))
+                finally:
+                    db.disconnect()
+                if lock:
+                    return ErrorResult(
+                        message=(
+                            f"Project {project_id!r} is exclusively locked "
+                            f"(owner={lock.get('owner')!r}, reason={lock.get('reason')!r}); "
+                            "the operation was refused. Use emergency_unlock_project if the "
+                            "lock is stuck (requires force=true and disk/DB reconciliation)."
+                        ),
+                        code="PROJECT_LOCKED",
+                        details={"project_id": project_id, "lock": lock},
+                    )
+            return await parent_run(**inner_kwargs)
 
         if getattr(cls, "use_queue", False) or not offload_enabled():
-            return await super().run(**kwargs)
-        return await offload_command_run(super().run, kwargs)
+            return await _gated_run(**kwargs)
+        return await offload_command_run(_gated_run, kwargs)
 
     @staticmethod
     def _open_database_from_config(auto_analyze: bool = False) -> DatabaseClient:

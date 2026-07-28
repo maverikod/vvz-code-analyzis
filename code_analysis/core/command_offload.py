@@ -68,10 +68,17 @@ class _OffloadPool:
 async def _await_concurrent_future(
     future: "concurrent.futures.Future[T]",
 ) -> T:
-    """Poll a concurrent future cooperatively from the current asyncio loop."""
-    while not future.done():
-        await asyncio.sleep(0.01)
-    return future.result()
+    """Bridge a worker-thread ``concurrent.futures.Future`` onto the running loop.
+
+    Uses ``asyncio.wrap_future`` so the awaiting coroutine is woken directly by
+    the future's completion callback instead of polling on a timer. The prior
+    implementation polled every 10ms (``asyncio.sleep(0.01)``), which matched
+    neither this module's docstring (it already claimed ``wrap_future``) nor
+    the "stays responsive" goal: each poll iteration is itself a scheduled
+    loop callback, adding needless wakeups under concurrent load (bug
+    4d1a2895 / mechanism card 8e6acb34).
+    """
+    return await asyncio.wrap_future(future)
 
 
 def configure_offload(

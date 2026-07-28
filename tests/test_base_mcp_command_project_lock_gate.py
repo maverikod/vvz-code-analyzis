@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.core import command_offload
 from code_analysis.core.exceptions import ProjectLockedError
 
 _PID = "550e8400-e29b-41d4-a716-446655440000"
@@ -63,6 +65,39 @@ class _DummyEmergencyUnlockCommand(_DummyLockedAwareCommand):
 
     name = "emergency_unlock_project"
     executed = False
+
+
+class _DummyOffloadCommand(BaseMCPCommand):
+    """Minimal concrete command that takes the DEFAULT (offloaded) run() path.
+
+    ``use_queue`` is left at the adapter default (``False``), so ``run()``
+    dispatches through ``offload_command_run`` instead of the inline branch
+    the other dummies above force via ``use_queue = True``.
+    """
+
+    name = "dummy_offload_lock_gate_command"
+    version = "1.0.0"
+    descr = "test double"
+    category = "test"
+    author = "test"
+    email = "test@example.com"
+
+    executed = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Return a permissive schema accepting an optional project_id."""
+        return {
+            "type": "object",
+            "properties": {"project_id": {"type": "string"}},
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(self, **kwargs):
+        """Record that execute was reached and return a trivial success."""
+        type(self).executed = True
+        return SuccessResult(data={}, message="ok")
 
 
 def _run(cls: "type[BaseMCPCommand]", **kwargs: Any) -> Any:
@@ -129,6 +164,87 @@ class TestRunGate:
         assert result is sentinel
         mock_super_run.assert_awaited_once()
         mock_get_lock.assert_not_called()
+
+
+class TestRunGateOffloadedPath:
+    """Bug 4d1a2895 / mechanism card 8e6acb34: the lock gate must be fused into
+    the SAME offloaded unit as the command body, so the (DB-serialized, PG)
+    lock lookup never runs on the main event loop ahead of dispatch. These
+    tests exercise the DEFAULT (non-``use_queue``) path, which now goes
+    through ``offload_command_run`` for real (the pool is not mocked), and
+    assert the lock check itself executes on a worker thread.
+    """
+
+    def test_locked_project_blocks_before_execute_and_runs_off_caller_thread(
+        self,
+    ) -> None:
+        """The lock check runs on the offload worker thread, not the caller's."""
+        _DummyOffloadCommand.executed = False
+        fake_db = MagicMock()
+        caller_thread = threading.current_thread().name
+        lock_thread_names: list[str] = []
+
+        def _get_lock(db: Any, pid: Any) -> Dict[str, Any]:
+            lock_thread_names.append(threading.current_thread().name)
+            return _LOCK_ROW
+
+        mock_super_run = AsyncMock()
+        try:
+            with (
+                patch.object(
+                    BaseMCPCommand, "_open_database_from_config", return_value=fake_db
+                ),
+                patch(
+                    "code_analysis.core.project_exclusive_lock.get_project_exclusive_lock",
+                    side_effect=_get_lock,
+                ) as mock_get_lock,
+                patch.object(Command, "run", new=mock_super_run),
+            ):
+                result = _run(_DummyOffloadCommand, project_id=_PID)
+        finally:
+            command_offload.shutdown()
+
+        assert isinstance(result, ErrorResult)
+        assert result.code == "PROJECT_LOCKED"
+        assert _DummyOffloadCommand.executed is False
+        mock_get_lock.assert_called_once_with(fake_db, _PID)
+        mock_super_run.assert_not_awaited()
+        fake_db.disconnect.assert_called_once()
+        assert lock_thread_names, "the lock check never ran"
+        assert lock_thread_names[0] != caller_thread
+        assert lock_thread_names[0].startswith("cmd-worker")
+
+    def test_unlocked_project_reaches_body_via_offload_pool(self) -> None:
+        """No lock -> parent_run executes, also dispatched onto the worker pool."""
+        fake_db = MagicMock()
+        body_thread_names: list[str] = []
+
+        async def _fake_parent_run(**kwargs: Any) -> Any:
+            body_thread_names.append(threading.current_thread().name)
+            return SuccessResult(data={}, message="ok")
+
+        try:
+            with (
+                patch.object(
+                    BaseMCPCommand, "_open_database_from_config", return_value=fake_db
+                ),
+                patch(
+                    "code_analysis.core.project_exclusive_lock.get_project_exclusive_lock",
+                    return_value=None,
+                ) as mock_get_lock,
+                patch.object(
+                    Command, "run", new=AsyncMock(side_effect=_fake_parent_run)
+                ),
+            ):
+                result = _run(_DummyOffloadCommand, project_id=_PID)
+        finally:
+            command_offload.shutdown()
+
+        assert isinstance(result, SuccessResult)
+        mock_get_lock.assert_called_once_with(fake_db, _PID)
+        fake_db.disconnect.assert_called_once()
+        assert body_thread_names
+        assert body_thread_names[0].startswith("cmd-worker")
 
 
 class TestStaticHelperDefenseInDepth:

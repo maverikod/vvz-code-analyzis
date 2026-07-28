@@ -284,7 +284,14 @@ class BaseMCPCommand(Command):
     def _get_search_sessions_root() -> Path:
         """Writable on-disk root for paginated search session directories."""
         config_path = BaseMCPCommand._resolve_config_path()
-        config_data = load_raw_config(config_path)
+        try:
+            config_data = load_raw_config(config_path)
+        except FileNotFoundError:
+            logger.warning(
+                "Config file %s not found; using default search session storage paths.",
+                config_path,
+            )
+            config_data = {}
         return resolve_search_sessions_root(
             config_data=config_data,
             config_path=config_path,
@@ -508,7 +515,13 @@ class BaseMCPCommand(Command):
         db = BaseMCPCommand._open_database_from_config()
         try:
             rows = db.select("projects", where={"id": project_id})
-            if not rows:
+            project = None
+            if hasattr(db, "get_project"):
+                try:
+                    project = db.get_project(project_id)
+                except Exception:
+                    project = None
+            if not rows and not project:
                 hint = ""
                 if "-" not in project_id or len(project_id) < 36:
                     hint = " Use list_projects to get the project id (UUID), or read projectid in the project root."
@@ -517,7 +530,7 @@ class BaseMCPCommand(Command):
                     field="project_id",
                     details={"project_id": project_id},
                 )
-            row = dict(rows[0])
+            row = dict(rows[0]) if rows else {}
             from ..core.exceptions import ProjectLockedError
             from ..core.project_exclusive_lock import is_project_exclusively_locked
 
@@ -528,18 +541,28 @@ class BaseMCPCommand(Command):
                     project_id=project_id,
                     details={"project_id": project_id},
                 )
-            abs_str = resolve_project_root_absolute_str(
-                project_id=project_id,
-                root_path_stored=str(row.get("root_path") or ""),
-                watch_dir_id=(
-                    str(row["watch_dir_id"])
-                    if row.get("watch_dir_id") is not None
-                    else None
-                ),
-                project_name=str(row.get("name") or "").strip() or None,
-                database=db,
-                require_exists=True,
-            ).strip()
+            project_root_attr = str(getattr(project, "root_path", "") or "").strip()
+            row_root_path = str(row.get("root_path") or "").strip()
+            if row_root_path and Path(row_root_path).is_absolute():
+                abs_str = str(Path(row_root_path).resolve())
+            elif not row and project_root_attr and Path(project_root_attr).is_absolute():
+                abs_str = str(Path(project_root_attr).resolve())
+            else:
+                abs_str = resolve_project_root_absolute_str(
+                    project_id=project_id,
+                    root_path_stored=str(row_root_path or project_root_attr or ""),
+                    watch_dir_id=(
+                        str(row["watch_dir_id"])
+                        if row.get("watch_dir_id") is not None
+                        else getattr(project, "watch_dir_id", None)
+                    ),
+                    project_name=str(
+                        row.get("name") or getattr(project, "name", "") or ""
+                    ).strip()
+                    or None,
+                    database=db,
+                    require_exists=True,
+                ).strip()
             if not abs_str or not Path(abs_str).is_absolute():
                 raise ValidationError(
                     f"Cannot resolve absolute project root for project_id {project_id!r}",

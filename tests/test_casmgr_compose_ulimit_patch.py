@@ -217,6 +217,12 @@ def test_postinst_invokes_the_patch_step():
     assert "casmgr-compose-ulimit-patch" in postinst
 
 
+def test_debian_control_python_dependency_matches_host_helper_runtime():
+    control = (REPO_ROOT / "debian" / "control").read_text(encoding="utf-8")
+    assert "python3 (>= 3.10)" in control
+    assert "python3 (<< 3.13)" not in control
+
+
 def test_shipped_compose_template_has_target_ulimits():
     compose = (
         REPO_ROOT / "docker" / "docker-compose.allinone.yml"

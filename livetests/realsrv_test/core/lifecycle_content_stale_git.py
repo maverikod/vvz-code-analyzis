@@ -126,7 +126,10 @@ async def stage_stale_content_via_git_pull(
             filename=relative_path,
         )
     except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
-        return f"new-content write on {STALE_BRANCH} failed: {exc!r}"
+        return (
+            "project_file_transfer_upload_save "
+            f"new-content write on {STALE_BRANCH} failed: {exc!r}"
+        )
 
     ok, _data, reason = await require_step(
         client,

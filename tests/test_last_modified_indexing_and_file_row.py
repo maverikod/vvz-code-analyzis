@@ -58,6 +58,55 @@ def test_analyze_file_skipped_when_db_mtime_matches_disk() -> None:
         sync_mock.assert_not_called()
 
 
+def test_analyze_file_reindexes_when_mtime_matches_but_code_content_missing() -> None:
+    """mtime parity alone must not skip a file whose search rows are absent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_dir = Path(tmp)
+        project_id = str(uuid.uuid4())
+        path = temp_dir / "same.py"
+        path.write_text("x = 1\n", encoding="utf-8")
+        mtime = path.stat().st_mtime
+
+        class _Db:
+            """Represent Db."""
+
+            def get_file_by_path(self, p: str, pid: str):
+                """Return get file by path."""
+                return {"id": 7, "last_modified": mtime}
+
+            def execute(self, sql: str, params=None):
+                """Return no code_content rows for the existing file."""
+                if "FROM code_content" in sql:
+                    return {"data": []}
+                raise AssertionError(f"unexpected SQL: {sql!r}")
+
+            def mark_file_needs_chunking(self, *a, **k):
+                """Return mark file needs chunking."""
+                return None
+
+        db = _Db()
+        with patch(
+            "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
+        ) as sync_mock, patch(
+            "code_analysis.commands.update_indexes_analyzer.get_file_by_path",
+            lambda driver, path, project_id, include_deleted=False: driver.get_file_by_path(
+                path, project_id
+            ),
+        ), patch(
+            "code_analysis.commands.update_indexes_analyzer.mark_file_needs_chunking",
+            lambda driver, *a, **k: driver.mark_file_needs_chunking(*a, **k),
+        ):
+            sync_mock.return_value = {"success": True, "entities_updated": 0}
+            out = analyze_file(
+                database=db,
+                file_path=path,
+                project_id=project_id,
+                root_path=temp_dir,
+            )
+        assert out.get("status") == "success"
+        sync_mock.assert_called_once()
+
+
 def test_analyze_file_succeeds_when_db_last_modified_is_none() -> None:
     """update_indexes must not subtract None from disk mtime."""
     with tempfile.TemporaryDirectory() as tmp:

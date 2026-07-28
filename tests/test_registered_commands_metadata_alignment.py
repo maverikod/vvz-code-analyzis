@@ -11,9 +11,12 @@ from code_analysis.commands.command_metadata_helpers import finalize_command_met
 from code_analysis.hooks import register_code_analysis_commands
 from mcp_proxy_adapter.commands.command_registry import registry
 
+_PREV_LOGGING_DISABLE = logging.root.manager.disable
 logging.disable(logging.CRITICAL)
-
-register_code_analysis_commands(registry)
+try:
+    register_code_analysis_commands(registry)
+finally:
+    logging.disable(_PREV_LOGGING_DISABLE)
 
 _REGISTERED: list[Type[Any]] = [
     cls

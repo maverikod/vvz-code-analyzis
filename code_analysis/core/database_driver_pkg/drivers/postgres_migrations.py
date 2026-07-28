@@ -244,7 +244,7 @@ def _migrate_legacy_subordinate_sessions_table(conn: Any) -> None:
             "subordinate_session_id"
         )
         cur.execute("DROP TABLE subordinate_sessions CASCADE")
-    conn.commit()
+    # The caller owns the enclosing schema-ensure transaction and final commit.
 
 
 def idempotent_ensure_client_session_tables(

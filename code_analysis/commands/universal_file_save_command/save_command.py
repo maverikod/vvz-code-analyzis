@@ -340,12 +340,20 @@ class UniversalFileSaveCommand(BaseMCPCommand):
                     if isinstance(commit_message, str) and commit_message.strip()
                     else None
                 )
+                try:
+                    raw_config = BaseMCPCommand._get_raw_config()
+                except FileNotFoundError:
+                    logger.warning(
+                        "universal_file_save missing config.json for post-write git hook; "
+                        "continuing with empty config"
+                    )
+                    raw_config = {}
                 git_ok, git_err = commit_after_write(
                     root_dir.resolve(),
                     [absolute_path],
                     "universal_file_save",
                     commit_message_override=cm,
-                    config_data=BaseMCPCommand._get_raw_config(),
+                    config_data=raw_config,
                 )
                 if not git_ok and git_err:
                     logger.warning("Git commit after universal_file_save: %s", git_err)

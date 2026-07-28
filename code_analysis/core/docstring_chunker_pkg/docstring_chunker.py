@@ -33,6 +33,7 @@ from code_analysis.core.database.code_chunk_sql import (
     CODE_CHUNK_UPSERT_PARAM_COUNT,
     build_code_chunk_upsert_batch,
 )
+from code_analysis.core.command_offload import run_sync_in_offload_pool
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
 from ..docs_markdown_vector_gate import DOCS_MARKDOWN_SOURCE_TYPE
@@ -366,14 +367,14 @@ class DocstringChunker:
             if asyncio.iscoroutinefunction(upsert_batch):
                 await upsert_batch(param_rows)
             else:
-                await asyncio.to_thread(upsert_batch, param_rows)
+                await run_sync_in_offload_pool(lambda: upsert_batch(param_rows))
             return
         ops = build_code_chunk_upsert_batch(param_rows)
         execute_batch = self.database.execute_batch
         if asyncio.iscoroutinefunction(execute_batch):
             await execute_batch(ops)
         else:
-            await asyncio.to_thread(execute_batch, ops)
+            await run_sync_in_offload_pool(lambda: execute_batch(ops))
 
     def _chunker_params_for_items(self, items: List[_DocItem]) -> Dict[str, Any]:
         """Return chunker params for items."""
@@ -568,7 +569,7 @@ class DocstringChunker:
             if asyncio.iscoroutinefunction(lw):
                 await lw(program)
             else:
-                await asyncio.to_thread(lw, program)
+                await run_sync_in_offload_pool(lambda: lw(program))
         else:
             await self._persist_code_chunk_param_rows(all_param_rows)
 
@@ -866,7 +867,7 @@ class DocstringChunker:
                 """Return run."""
                 ex(sql, params)
 
-            await asyncio.to_thread(_run)
+            await run_sync_in_offload_pool(_run)
 
     async def process_markdown_document(
         self,

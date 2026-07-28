@@ -76,7 +76,7 @@ def repo_with_remote(tmp_path: Path) -> Path:
     """Create a small repository with local and remote-tracking branches."""
     remote = tmp_path / "remote.git"
     repo = tmp_path / "repo"
-    _git(tmp_path, "init", "--bare", str(remote))
+    _git(tmp_path, "init", "--bare", "--initial-branch=main", str(remote))
     _git(tmp_path, "clone", str(remote), str(repo))
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test User")

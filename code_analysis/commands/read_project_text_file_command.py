@@ -32,6 +32,7 @@ from .registration import (
 from .universal_file_read_command import UniversalFileReadCommand
 from ..core.exceptions import ValidationError
 from ..core.file_handlers.registry import HANDLER_PYTHON
+from ..core.file_handlers.python_handler import read_python_lines_payload
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,37 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
             blocked = reject_if_non_python_code_text_path(file_path)
             if blocked is not None:
                 return blocked
+
+            if is_python_text_path(file_path):
+                database = self._open_database_from_config(auto_analyze=False)
+                absolute_path = self._resolve_file_path_from_project(
+                    database, project_id, file_path
+                )
+                payload = read_python_lines_payload(
+                    project_relative_path=file_path,
+                    absolute_path=absolute_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    allow_healthy_line_ops=True,
+                )
+                if not payload.get("success"):
+                    return ErrorResult(
+                        message=str(payload.get("message", "read failed")),
+                        code=str(payload.get("code", "INVALID_RANGE")),
+                        details={
+                            "project_id": project_id,
+                            "file_path": file_path,
+                            "handler_id": HANDLER_PYTHON,
+                            "operation": "read",
+                        },
+                    )
+                data = dict(payload)
+                data["success"] = True
+                data["handler_id"] = HANDLER_PYTHON
+                data["operation"] = "read"
+                data["project_id"] = project_id
+                data["file_path"] = file_path
+                return SuccessResult(data=data)
 
             inner = UniversalFileReadCommand()
             result = await inner.execute(

@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,19 +21,28 @@ from code_analysis.commands.git_admin_commands import (
 )
 
 
+def _git_env() -> Dict[str, str]:
+    """Build a git subprocess env without clobbering the active PATH."""
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t.com",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t.com",
+        }
+    )
+    return env
+
+
 def _git(root: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
         cwd=root,
         check=True,
         capture_output=True,
-        env={
-            "GIT_AUTHOR_NAME": "t",
-            "GIT_AUTHOR_EMAIL": "t@t.com",
-            "GIT_COMMITTER_NAME": "t",
-            "GIT_COMMITTER_EMAIL": "t@t.com",
-            "PATH": "/usr/bin:/bin",
-        },
+        env=_git_env(),
     )
 
 

@@ -129,28 +129,50 @@ def resolve_file_path_from_project(
     Raises:
         ValidationError: If project not found, watch_dir not found, or path invalid.
     """
-    project = get_project(database, project_id)
-    if not project:
+    rows = database.select("projects", where={"id": project_id})
+    project = None
+    try:
+        project = get_project(database, project_id)
+    except FileNotFoundError:
+        # Isolated command tests patch the database handle directly and do not
+        # provide a live server config.json / server_instance_id bootstrap.
+        # Fall back to the already selected project row in that case.
+        project = None
+    if project is None and hasattr(database, "get_project"):
+        try:
+            project = database.get_project(project_id)
+        except Exception:
+            project = None
+    if not rows and not project:
         raise ValidationError(
             f"Project with ID {project_id} not found in database",
             field="project_id",
             details={"project_id": project_id},
         )
 
-    rows = database.select("projects", where={"id": project_id})
     row = dict(rows[0]) if rows else {}
-    root_str = resolve_project_root_absolute_str(
-        project_id=project_id,
-        root_path_stored=str(row.get("root_path") or project.root_path or ""),
-        watch_dir_id=(
-            str(row["watch_dir_id"])
-            if row.get("watch_dir_id") is not None
-            else project.watch_dir_id
-        ),
-        project_name=str(row.get("name") or project.name or "").strip() or None,
-        database=database,
-        require_exists=True,
-    ).strip()
+    project_root_attr = str(getattr(project, "root_path", "") or "").strip()
+    row_root_path = str(row.get("root_path") or "").strip()
+    if row_root_path and Path(row_root_path).is_absolute():
+        root_str = str(Path(row_root_path).resolve())
+    elif not row and project_root_attr and Path(project_root_attr).is_absolute():
+        root_str = str(Path(project_root_attr).resolve())
+    else:
+        root_str = resolve_project_root_absolute_str(
+            project_id=project_id,
+            root_path_stored=str(row_root_path or project_root_attr or ""),
+            watch_dir_id=(
+                str(row["watch_dir_id"])
+                if row.get("watch_dir_id") is not None
+                else getattr(project, "watch_dir_id", None)
+            ),
+            project_name=str(
+                row.get("name") or getattr(project, "name", "") or ""
+            ).strip()
+            or None,
+            database=database,
+            require_exists=True,
+        ).strip()
     if not root_str or not Path(root_str).is_absolute():
         raise ValidationError(
             f"Cannot resolve absolute project root for project_id {project_id}",
@@ -174,7 +196,7 @@ def resolve_file_path_from_project(
                 "relative_file_path": relative_file_path,
                 "absolute_path": str(resolved_path),
                 "project_root": root_str,
-                "project_name": project.name,
+                "project_name": str(row.get("name") or getattr(project, "name", "")),
             },
         )
 

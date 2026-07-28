@@ -58,11 +58,41 @@ def extract_restore_dirs_from_watch_dirs_table(database: Any) -> list[str]:
         Deduplicated list of absolute watch-directory paths (insertion order
         preserved). May be empty when no watch dirs are registered.
     """
-    from ..core.database.watch_dirs_query import list_watch_dir_path_pairs
+    from ..core.database.watch_dirs_query import (
+        _database_query_rows,
+        list_watch_dir_path_pairs,
+    )
+    from ..core.project_root_path import _normalize_existing_watch_dir_path
 
     seen: set[str] = set()
     out: list[str] = []
-    for _watch_dir_id, absolute_path in list_watch_dir_path_pairs(database):
+    try:
+        pairs = list_watch_dir_path_pairs(database)
+    except FileNotFoundError:
+        # Restore planning may run in isolated test/bootstrap contexts where no
+        # active server config exists, so the current server instance cannot be
+        # resolved. Fall back to an unscoped read of available watch_dir_paths
+        # instead of failing before we can even build the dry-run plan.
+        rows = _database_query_rows(
+            database,
+            """
+            SELECT watch_dir_id, absolute_path
+            FROM watch_dir_paths
+            WHERE absolute_path IS NOT NULL AND TRIM(absolute_path) != ''
+            ORDER BY watch_dir_id
+            """,
+            (),
+        )
+        pairs = [
+            (
+                str(row.get("watch_dir_id") or "").strip(),
+                _normalize_existing_watch_dir_path(
+                    str(row.get("absolute_path") or "")
+                ),
+            )
+            for row in rows
+        ]
+    for _watch_dir_id, absolute_path in pairs:
         if absolute_path and absolute_path not in seen:
             seen.add(absolute_path)
             out.append(absolute_path)

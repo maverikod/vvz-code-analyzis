@@ -6,13 +6,12 @@ email: vasilyvz@gmail.com
 """
 
 from __future__ import annotations
-
-import asyncio
 from typing import Any, Dict, List, Type, cast
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from code_analysis.core.command_offload import run_sync_in_offload_pool
 from code_analysis.commands.universal_file_edit.edit_command_metadata import (
     get_universal_file_edit_metadata,
 )
@@ -192,7 +191,9 @@ class UniversalFileEditCommand(BaseMCPCommand):
         Returns:
             SuccessResult with success/update flags, or ErrorResult on failure.
         """
-        return await asyncio.to_thread(run_sidecar_cst_edit_batch, session, operations)
+        return await run_sync_in_offload_pool(
+            lambda: run_sidecar_cst_edit_batch(session, operations)
+        )
 
     async def _apply_tree_temp(
         self, session: EditSession, operations: List[Dict[str, Any]]
@@ -209,10 +210,11 @@ class UniversalFileEditCommand(BaseMCPCommand):
         Returns:
             SuccessResult with ``success``/``updated`` flags, or ErrorResult on failure.
         """
-        return await asyncio.to_thread(
-            tree_temp_edit_batch.apply_tree_temp_mutations,
-            session,
-            operations,
+        return await run_sync_in_offload_pool(
+            lambda: tree_temp_edit_batch.apply_tree_temp_mutations(
+                session,
+                operations,
+            )
         )
 
     async def _apply_text(
@@ -220,4 +222,6 @@ class UniversalFileEditCommand(BaseMCPCommand):
     ) -> SuccessResult | ErrorResult:
         """Apply text edits to ``session.draft_path`` sorted bottom-up."""
 
-        return await asyncio.to_thread(run_text_draft_apply, session, operations)
+        return await run_sync_in_offload_pool(
+            lambda: run_text_draft_apply(session, operations)
+        )

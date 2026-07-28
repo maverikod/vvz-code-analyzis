@@ -228,7 +228,16 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                         details=e.details,
                     )
 
-            config_data = self._get_raw_config()
+            try:
+                config_data = self._get_raw_config()
+            except FileNotFoundError:
+                # The config only controls optional healthy-file and git-on-write
+                # behavior. In isolated test/workspace contexts, missing config
+                # must not turn a valid text replacement into a hard failure.
+                logger.warning(
+                    "replace_file_lines: config file missing, using default optional behavior"
+                )
+                config_data = {}
             allow_on_healthy = config_data.get("code_analysis", {}).get(
                 "allow_line_commands_on_healthy_files", False
             )
@@ -313,7 +322,7 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                 [absolute_path],
                 "replace_file_lines",
                 commit_message_override=None,
-                config_data=BaseMCPCommand._get_raw_config(),
+                config_data=config_data,
             )
             if not git_ok and git_err:
                 logger.warning("Git commit after replace_file_lines: %s", git_err)

@@ -117,17 +117,27 @@ def generate_create_table_sql_postgres(
     for fk in table_def.get("foreign_keys", []):
         ref_table = fk["references_table"]
         ref_cols = list(fk.get("references_columns") or [])
-        ref_table_def = tables.get(ref_table, {})
-        ref_pk_cols = [
-            col["name"]
-            for col in ref_table_def.get("columns", [])
-            if col.get("primary_key")
-        ]
-        # PostgreSQL: FK must reference a UNIQUE/PRIMARY KEY column set. Legacy
-        # single-column refs (e.g. files.watch_dir_id -> watch_dirs.id) are invalid
-        # once watch_dirs uses composite PK (server_instance_id, id).
-        if len(ref_pk_cols) > 1 and ref_cols != ref_pk_cols:
-            continue
+        ref_table_def = tables.get(ref_table)
+        if ref_table_def:
+            ref_pk_cols = [
+                col["name"]
+                for col in ref_table_def.get("columns", [])
+                if col.get("primary_key")
+            ]
+            ref_unique_sets = {
+                tuple(uc.get("columns", []))
+                for uc in ref_table_def.get("unique_constraints", [])
+                if uc.get("columns")
+            }
+            valid_ref_sets = set(ref_unique_sets)
+            if ref_pk_cols:
+                valid_ref_sets.add(tuple(ref_pk_cols))
+            # PostgreSQL: FK must reference a PRIMARY KEY or UNIQUE column set.
+            # Composite watch_dirs PKs remain valid for scoped refs, while the legacy
+            # files.watch_dir_id -> watch_dirs.id path stays valid because watch_dirs.id
+            # is declared UNIQUE in the logical schema.
+            if ref_cols and tuple(ref_cols) not in valid_ref_sets:
+                continue
         fk_cols = ", ".join(fk["columns"])
         ref_cols_sql = ", ".join(ref_cols)
         on_delete = fk.get("on_delete", "")

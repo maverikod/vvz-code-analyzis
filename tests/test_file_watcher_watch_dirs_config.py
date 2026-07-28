@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import uuid
 
 from code_analysis.core.file_watcher_pkg.multi_project_worker_specs import (
     WatchDirSpec,
@@ -15,19 +16,26 @@ from code_analysis.core.file_watcher_pkg.watch_dirs_config import (
 )
 
 
-def _minimal_config(watch_dirs: list) -> dict:
+def _minimal_config(
+    watch_dirs: list,
+    *,
+    watch_mount_root: str | None = None,
+) -> dict:
     """Return minimal config."""
+    file_watcher = {
+        "enabled": True,
+        "scan_interval": 45,
+        "ignore_patterns": ["*.tmp"],
+    }
+    if watch_mount_root is not None:
+        file_watcher["watch_mount_root"] = watch_mount_root
     return {
         "code_analysis": {
             "worker": {
                 "enabled": True,
                 "watch_dirs": watch_dirs,
             },
-            "file_watcher": {
-                "enabled": True,
-                "scan_interval": 45,
-                "ignore_patterns": ["*.tmp"],
-            },
+            "file_watcher": file_watcher,
         }
     }
 
@@ -50,12 +58,18 @@ def test_parse_worker_watch_dirs_raw_validates_format() -> None:
 
 def test_load_file_watcher_runtime_settings(tmp_path: Path) -> None:
     """Verify test load file watcher runtime settings."""
-    watch = tmp_path / "watch"
+    mount_root = tmp_path / "mount"
+    mount_root.mkdir()
+    watch_dir_id = str(uuid.uuid4())
+    watch = mount_root / watch_dir_id
     watch.mkdir()
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
-            _minimal_config([{"id": "wd-1", "path": str(watch)}]),
+            _minimal_config(
+                [{"id": "wd-1", "path": str(tmp_path / "legacy-watch")}],
+                watch_mount_root=str(mount_root),
+            ),
         ),
         encoding="utf-8",
     )
@@ -65,7 +79,8 @@ def test_load_file_watcher_runtime_settings(tmp_path: Path) -> None:
     assert settings.scan_interval == 45
     assert settings.ignore_patterns == ["*.tmp"]
     assert len(settings.watch_dir_specs) == 1
-    assert settings.watch_dir_specs[0].watch_dir_id == "wd-1"
+    assert settings.watch_dir_specs[0].watch_dir_id == watch_dir_id
+    assert settings.watch_dir_specs[0].watch_dir == watch.resolve()
 
 
 def test_load_file_watcher_runtime_settings_empty_watch_dirs(tmp_path: Path) -> None:

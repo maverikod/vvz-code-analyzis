@@ -74,13 +74,17 @@ class TestReplaceFileLinesAnchor:
     """Represent TestReplaceFileLinesAnchor."""
 
     async def test_correct_anchor_writes(self, tmp_path: Path) -> None:
-        """Verify test correct anchor writes."""
+        """Verify text anchor writes still succeed without a local config file."""
         f = tmp_path / "notes.txt"
         f.write_text("alpha beta\ngamma delta\n", encoding="utf-8")
+        missing_config = tmp_path / "missing-config.json"
 
         with (
             patch.object(
                 BaseMCPCommand, "_resolve_project_root", return_value=tmp_path
+            ),
+            patch.object(
+                BaseMCPCommand, "_resolve_config_path", return_value=missing_config
             ),
             patch(
                 "code_analysis.commands.replace_file_lines_command.commit_after_write",

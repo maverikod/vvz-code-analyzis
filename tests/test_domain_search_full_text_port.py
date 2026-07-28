@@ -37,8 +37,16 @@ def test_full_text_search_empty_query_returns_empty_without_execute() -> None:
     assert driver.calls == []
 
 
+def test_plain_query_to_postgres_tsquery_builds_prefix_match_terms() -> None:
+    """PostgreSQL fulltext path honors documented partial-word matching."""
+    assert domain_search.plain_query_to_postgres_tsquery("foo bar") == "foo:* & bar:*"
+    assert domain_search.plain_query_to_postgres_tsquery("mcp-proxy/adapter") == (
+        "mcp:* & proxy:* & adapter:*"
+    )
+
+
 def test_full_text_search_builds_tsvector_query_and_returns_rows() -> None:
-    """Real query -> tsvector/plainto_tsquery SQL against code_content, rows returned as-is."""
+    """Real query -> tsvector/to_tsquery SQL against code_content, rows returned as-is."""
     rows = [
         {
             "entity_type": "function",
@@ -55,11 +63,11 @@ def test_full_text_search_builds_tsvector_query_and_returns_rows() -> None:
     assert result == rows
     assert len(driver.calls) == 1
     sql, params = driver.calls[0]
-    assert "plainto_tsquery" in sql
+    assert "to_tsquery" in sql
     assert "to_tsvector" in sql
     assert "code_content" in sql
-    # fts_query, project_id, fts_query, limit (no entity_type filter requested)
-    assert params == ("foo bar", "proj-1", "foo bar", 5)
+    # ts_query, project_id, ts_query, limit (no entity_type filter requested)
+    assert params == ("foo:* & bar:*", "proj-1", "foo:* & bar:*", 5)
 
 
 def test_full_text_search_entity_type_filter_appended() -> None:
@@ -70,7 +78,7 @@ def test_full_text_search_entity_type_filter_appended() -> None:
 
     sql, params = driver.calls[0]
     assert "c.entity_type = ?" in sql
-    assert params == ("foo", "proj-1", "foo", "class", 10)
+    assert params == ("foo:*", "proj-1", "foo:*", "class", 10)
 
 
 def test_full_text_search_project_scoped_select_carries_project_attribution() -> None:
@@ -120,8 +128,8 @@ def test_full_text_search_global_has_no_project_id_filter_and_carries_attributio
     assert "f.project_id AS project_id" in sql
     assert "p.name AS project_name" in sql
     assert "INNER JOIN projects p ON p.id = f.project_id" in sql
-    # fts_query, fts_query, limit - no project_id bound anywhere
-    assert params == ("foo bar", "foo bar", 5)
+    # ts_query, ts_query, limit - no project_id bound anywhere
+    assert params == ("foo:* & bar:*", "foo:* & bar:*", 5)
     assert "proj-1" not in params
 
 
@@ -133,4 +141,4 @@ def test_full_text_search_global_entity_type_filter_appended() -> None:
 
     sql, params = driver.calls[0]
     assert "c.entity_type = ?" in sql
-    assert params == ("foo", "foo", "class", 10)
+    assert params == ("foo:*", "foo:*", "class", 10)

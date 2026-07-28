@@ -42,6 +42,17 @@ from ..core.path_normalization import normalize_path_simple
 logger = logging.getLogger(__name__)
 
 
+def _get_project_fallback(database: Any, project_id: str) -> Any:
+    """Best-effort project lookup for isolated tests without active config bootstrap."""
+    getter = getattr(database, "get_project", None)
+    if callable(getter):
+        project = getter(project_id)
+        if project is not None:
+            return project
+    rows = database.select("projects", where={"id": project_id}, limit=1)
+    return rows[0] if rows else None
+
+
 def _reject_if_not_plain_text_path(file_path: str) -> ErrorResult | None:
     """Return an error when a path is not an allowed plain-text file."""
     suffix = Path(file_path).suffix.lower()
@@ -358,7 +369,15 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             absolute_path = self._resolve_file_path_from_project(
                 database, project_id, file_path
             )
-            project = get_project(database, project_id)
+            try:
+                project = get_project(database, project_id)
+            except FileNotFoundError:
+                logger.warning(
+                    "write_project_text_lines: active config missing; "
+                    "falling back to direct project lookup for project_id=%s",
+                    project_id,
+                )
+                project = _get_project_fallback(database, project_id)
             if not project:
                 return ErrorResult(
                     message=f"Project {project_id} not found",
@@ -486,12 +505,21 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
 
                     file_id = meta_result.get("file_id")
 
+                    try:
+                        raw_config = BaseMCPCommand._get_raw_config()
+                    except FileNotFoundError:
+                        logger.warning(
+                            "write_project_text_lines: active config missing; "
+                            "falling back to empty config for post-write git hook"
+                        )
+                        raw_config = {}
+
                     git_ok, git_err = commit_after_write(
                         root_dir.resolve(),
                         [absolute_path],
                         "write_project_text_lines",
                         commit_message_override=None,
-                        config_data=BaseMCPCommand._get_raw_config(),
+                        config_data=raw_config,
                     )
                     if not git_ok and git_err:
                         logger.warning(

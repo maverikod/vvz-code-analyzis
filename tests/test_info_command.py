@@ -66,9 +66,35 @@ async def test_info_command_reads_debian_compressed_info(
 
 
 @pytest.mark.asyncio
-async def test_info_command_rejects_unknown_node() -> None:
-    """Unknown nodes fail with a stable error code."""
+async def test_info_command_rejects_unknown_node_as_validation_error() -> None:
+    """Schema validation rejects arbitrary node names before manual lookup."""
     result = await InfoCommand().execute(node="No such node")
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_info_command_reports_missing_known_node_from_manual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Listed nodes still use INFO_NODE_NOT_FOUND when the loaded manual lacks them."""
+    monkeypatch.setattr(
+        info_module,
+        "_load_manual_nodes",
+        lambda: (
+            {"Top": "top-level help"},
+            {
+                "format": "info",
+                "path": "/tmp/fake.info",
+                "mtime": None,
+                "size_bytes": 0,
+            },
+        ),
+    )
+    monkeypatch.setattr(info_module, "_add_dynamic_nodes", lambda nodes: dict(nodes))
+
+    result = await InfoCommand().execute(node="Installation")
 
     assert isinstance(result, ErrorResult)
     assert result.code == "INFO_NODE_NOT_FOUND"

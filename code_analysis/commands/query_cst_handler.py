@@ -406,12 +406,22 @@ def run_replace_flow(
     )
     if write_error is not None:
         return write_error
+
+    try:
+        raw_config = BaseMCPCommand._get_raw_config()
+    except FileNotFoundError:
+        logger.warning(
+            "query_cst replace: active config missing; "
+            "falling back to empty config for post-write git hook"
+        )
+        raw_config = {}
+
     git_ok, git_err = commit_after_write(
         root_path,
         [target],
         "query_cst",
         commit_message_override=None,
-        config_data=BaseMCPCommand._get_raw_config(),
+        config_data=raw_config,
     )
     if not git_ok and git_err:
         logger.warning("Git commit after query_cst replace: %s", git_err)

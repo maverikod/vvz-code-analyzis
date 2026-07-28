@@ -55,7 +55,9 @@ def test_handler_suffix_groups_match_product_contract() -> None:
         groups[r["handler_id"]].add(r["suffix"])
     by_id = {k: frozenset(v) for k, v in groups.items()}
 
-    assert by_id[HANDLER_TEXT] == frozenset({".md", ".txt", ".rst", ".adoc"})
+    assert by_id[HANDLER_TEXT] == frozenset(
+        {".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"}
+    )
     assert by_id[HANDLER_JSON] == frozenset({".json"})
     assert by_id[HANDLER_YAML] == frozenset({".yaml", ".yml"})
     assert by_id[HANDLER_PYTHON] == frozenset({".py", ".pyi", ".pyw"})

@@ -76,6 +76,20 @@ def _docs_virtual_docstring_for_fts(relative_path: str, body: str) -> Optional[s
     return _docs_file_first_summary_line(body)
 
 
+def _file_has_code_content(database: Any, file_id: Any) -> bool:
+    """Return whether the file already has at least one fulltext-visible row."""
+    try:
+        result = database.execute(
+            "SELECT 1 AS present FROM code_content WHERE file_id = ? LIMIT 1",
+            (file_id,),
+        )
+    except Exception:
+        logger.debug("Could not probe code_content presence for file_id=%s", file_id)
+        return True
+    rows = result.get("data", []) if isinstance(result, dict) else []
+    return bool(rows)
+
+
 def _mirror_markdown_into_code_content_fulltext(
     database: Any,
     file_id: Any,
@@ -295,7 +309,8 @@ def analyze_file(
         file_record = get_file_by_path(database, abs_file_path, project_id)
         if file_record and not force:
             db_lm = _last_modified_to_unix(file_record.get("last_modified"))
-            if db_lm is not None and abs(db_lm - file_mtime) <= tol:
+            has_code_content = _file_has_code_content(database, file_record.get("id"))
+            if db_lm is not None and abs(db_lm - file_mtime) <= tol and has_code_content:
                 _heartbeat(PHASE_SKIPPED)
                 logger.debug(
                     "Skipping unchanged file %s (db_mtime=%s disk_mtime=%s)",

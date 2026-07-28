@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
+from ..command_offload import run_sync_in_offload_pool
 from .logical_write_program import LogicalWriteProgramV1, SqlParamPair
 
 logger = logging.getLogger(__name__)
@@ -93,14 +94,14 @@ async def submit_logical_write_or_fallback_async(
         program: LogicalWriteProgramV1 = {"batches": inner}
         if asyncio.iscoroutinefunction(lw):
             return await lw(program)
-        return await asyncio.to_thread(lw, program)
+        return await run_sync_in_offload_pool(lambda: lw(program))
     execute_batch = database.execute_batch
     last: Any = None
     for batch_ops in inner:
         if asyncio.iscoroutinefunction(execute_batch):
             last = await execute_batch(batch_ops)
         else:
-            last = await asyncio.to_thread(execute_batch, batch_ops)
+            last = await run_sync_in_offload_pool(lambda: execute_batch(batch_ops))
     return last
 
 

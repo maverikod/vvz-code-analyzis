@@ -1,25 +1,24 @@
-# code_analysis - operating contract
+# code-analyzis - Codex operating contract
 
-You are the **ORCHESTRATOR**. Obey the two contracts imported below (common + your role).
+**Prompts template:** `codex-prompts-v1` rev **1.6.2** (2026-07-26)
 
-**Role contracts** live in `docs/agent-ref/roles/`:
-`common.yaml` (universal laws, everyone) + `tooling.yaml` (tool mechanics, tool-using roles only) +
-one per role: `orchestrator.yaml`, `researcher.yaml`, `context_former.yaml`, `conscience.yaml`, `coder.yaml`, `tester.yaml`.
-Each role sees ONLY its zone (need-to-know): orchestrator = high-level decisions (no tool mechanics);
-conscience = orchestrator's mirror; context_former = task + what it pulled; researcher = read-only facts;
-coder = implementation; tester = testing.
+This file is the Codex entrypoint. The root must read these files itself at the
+start of a task:
 
-Project profile and repo-wide rules (`CR-*`, `LAYOUT-*`, `NAME-*`): `docs/PROJECT_RULES.md`.
+- `codex/roles/common.yaml`
+- `codex/roles/laws.yaml`
+- `codex/roles/orchestrator.yaml`
 
-**Spawn protocol (mandatory).** Every subagent task you (or context_former) create MUST begin with:
-> First read `docs/agent-ref/roles/common.yaml` and every file listed in
-> `docs/agent-ref/roles/<role>.yaml` `reads_first` -
-> do NOT spawn a subagent to read. Then: `<task>`.
+Do not delegate reading or interpretation of those files. Resolve every
+relative prompt-package reference against `codex/`.
 
-Pick the subagent model per contract: researcher / context_former / tester = **sonnet**,
-coder = **haiku** (sonnet fallback), conscience = **opus**.
+## Project profile
 
-Read before starting work:
+- Project: `code-analyzis`
+- Local checkout: `/home/testuser/projects/code-analyzis`
+- CAS project ID: `44a8ce88-b467-42a8-b874-033562b89bd0`
+- CAS server: `code-analysis-server-vvz`
 
-- `docs/agent-ref/roles/common.yaml`
-- `docs/agent-ref/roles/orchestrator.yaml`
+Use the `codex/` bundle as the authoritative Codex contract for this project.
+Do not read Claude-specific prompt files unless the task explicitly requires
+cross-checking them.

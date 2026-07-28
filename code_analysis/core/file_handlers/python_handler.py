@@ -476,12 +476,20 @@ class PythonFileHandler(BaseFileHandler):
             git_cmd = str(
                 request.extra.get("git_command_name") or "python_file_handler_save"
             )
+            try:
+                raw_config = BaseMCPCommand._get_raw_config()
+            except FileNotFoundError:
+                logger.warning(
+                    "python file handler save missing config.json for post-create git hook; "
+                    "continuing with empty config"
+                )
+                raw_config = {}
             git_ok, git_err = commit_after_write(
                 root.resolve(),
                 [target],
                 git_cmd,
                 commit_message_override=request.extra.get("commit_message"),
-                config_data=BaseMCPCommand._get_raw_config(),
+                config_data=raw_config,
             )
             if not git_ok and git_err:
                 logger.warning("Git commit after new Python file save: %s", git_err)

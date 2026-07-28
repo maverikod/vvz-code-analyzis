@@ -196,7 +196,10 @@ class GetFileLinesCommand(BaseMCPCommand):
                 )
 
             text = absolute_path.read_text(encoding="utf-8", errors="replace")
-            config_data = self._get_raw_config()
+            try:
+                config_data = self._get_raw_config()
+            except FileNotFoundError:
+                config_data = {}
             allow_on_healthy = config_data.get("code_analysis", {}).get(
                 "allow_line_commands_on_healthy_files", False
             )

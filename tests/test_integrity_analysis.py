@@ -185,8 +185,8 @@ def test_docker_server_dockerfile_exists() -> None:
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
-    assert (repo / "docker/casmgr-server/Dockerfile").is_file()
-    assert (repo / "docker/docker-compose.yml").is_file()
+    assert (repo / "docker/casmgr/Dockerfile").is_file()
+    assert (repo / "docker/docker-compose.allinone.yml").is_file()
 
 
 def test_dedupe_cycle_rotations() -> None:

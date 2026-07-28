@@ -115,22 +115,10 @@ class SearchGetPageCommand(BaseMCPCommand):
         ordering = str(params.get("ordering") or "temporal")
         wait = bool(params.get("wait_for_new_results", False))
         timeout = float(params.get("wait_timeout_seconds") or 0)
-        profile = open_search_profile_recorder(
-            job_id=job_id,
-            raw_config=self._get_raw_config(),
-            config_path=self._resolve_config_path(),
-        )
-        profile.checkpoint(
-            "get_page_start",
-            block_position=pos,
-            ordering=ordering,
-            wait=wait,
-        )
         ctx = HttpAccessContext(sessions_root=self._get_search_sessions_root())
         layout = resolve_session_layout(ctx, job_id)
 
         if not layout.root.is_dir():
-            profile.checkpoint("get_page_error", code=SESSION_NOT_FOUND)
             return ErrorResult(
                 message=f"Search session not found: {job_id}",
                 code=SESSION_NOT_FOUND,  # type: ignore[arg-type]
@@ -143,6 +131,22 @@ class SearchGetPageCommand(BaseMCPCommand):
                     message=f"Session {job_id} is closed; block_position continuation is invalid.",
                     code=CLOSED_SESSION,  # type: ignore[arg-type]
                 )
+
+        try:
+            raw_config = self._get_raw_config()
+        except FileNotFoundError:
+            raw_config = {}
+        profile = open_search_profile_recorder(
+            job_id=job_id,
+            raw_config=raw_config,
+            config_path=self._resolve_config_path(),
+        )
+        profile.checkpoint(
+            "get_page_start",
+            block_position=pos,
+            ordering=ordering,
+            wait=wait,
+        )
 
         # Choose block directory based on ordering.
         if ordering == "relevance":

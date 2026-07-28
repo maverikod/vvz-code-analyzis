@@ -12,17 +12,18 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .base_handler import FileHandler
 from .block_handlers import render_block
 from .budget import PreviewBudget
 from .errors import (
     INPUT_ERROR_CONFLICTING_PARAMETERS,
+    INPUT_ERROR_UNKNOWN_NODE_REF,
     PreviewError,
     input_error,
 )
-from .models import Block, NavigationResult, Node
+from .models import Block, NavigationResult, Node, NodeKind
 from .selector import apply_selector
 from .session import resolve_session
 from .node_ref_params import normalize_optional_node_ref
@@ -33,8 +34,24 @@ from .marked_tree_navigation import (
     resolve_session_pointer_node_ref,
     should_use_marked_tree_navigation,
 )
+from .tree_temp_preview_focus import (
+    TreeTempPreviewResolveError,
+    looks_like_sidecar_stable_id,
+    tree_temp_preview_children_to_preview_nodes,
+    resolve_tree_temp_preview_focus,
+)
 
 _PYTHON_EXTENSIONS = frozenset({".py", ".pyi", ".pyw"})
+
+
+def _tree_temp_focus_node_kind(tree_type: object) -> NodeKind:
+    """Return preview focus NodeKind for a tree-temp container."""
+    normalized = str(tree_type or "").lower()
+    if normalized == "array":
+        return NodeKind.SEQUENCE
+    if normalized == "object":
+        return NodeKind.MAPPING
+    return NodeKind.TREE_NODE
 
 
 def navigate(
@@ -60,6 +77,61 @@ def navigate(
     Returns:
         NavigationResult on success, or PreviewError on failure.
     """
+    tree_temp_roots = params.get("tree_temp_roots")
+    if isinstance(tree_temp_roots, list):
+        raw_node_ref = normalize_optional_node_ref(params.get("node_ref"))
+        try:
+            focus = resolve_tree_temp_preview_focus(
+                roots=tree_temp_roots,
+                node_ref=raw_node_ref,
+            )
+        except TreeTempPreviewResolveError as exc:
+            return input_error(
+                INPUT_ERROR_UNKNOWN_NODE_REF,
+                str(exc),
+                details={"node_ref": params.get("node_ref")},
+            )
+        block_set = tree_temp_preview_children_to_preview_nodes(
+            list(focus.container.children or [])
+        )
+        selector_result = apply_selector(
+            params.get("selector"), block_set, budget.preview_lines
+        )
+        if isinstance(selector_result, PreviewError):
+            return selector_result
+        selected_blocks: list[Block] = []
+        for node in selector_result:
+            summary = render_block(node, budget.value_preview_len)
+            raw_text = (node.attributes or {}).get("text")
+            block_text = raw_text if isinstance(raw_text, str) else None
+            selected_blocks.append(
+                Block(
+                    node_kind=node.node_kind,
+                    node_ref=node.node_ref,
+                    summary=summary,
+                    text=block_text,
+                )
+            )
+        if raw_node_ref is not None and looks_like_sidecar_stable_id(raw_node_ref):
+            focus_node_ref = raw_node_ref
+        elif focus.effective_mode == "root_view":
+            focus_node_ref = ""
+        else:
+            focus_node_ref = str(focus.container.stable_id)
+        return NavigationResult(
+            focus_node=Node(
+                node_kind=_tree_temp_focus_node_kind(focus.container.type),
+                node_ref=focus_node_ref,
+                type_label="tree_sidecar_focus",
+                name=focus.container.key,
+                attributes=dict(focus.navigation_context),
+                _children=list(block_set),
+            ),
+            total_blocks=len(block_set),
+            selected_blocks=selected_blocks,
+            tree_id=None,
+        )
+
     marked_params = dict(params)
     resolve_session_pointer_node_ref(marked_params)
     if should_use_marked_tree_navigation(handler, marked_params):

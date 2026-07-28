@@ -67,6 +67,12 @@ from .universal_file_preview.session import merge_edit_session_into_preview_para
 from code_analysis.commands.preview_command_metadata import (
     get_universal_file_preview_metadata,
 )
+from code_analysis.commands.universal_file_edit.tree_temp_open_support import (
+    acquire_tree_temp_for_open,
+)
+from code_analysis.commands.universal_file_preview.tree_temp_preview_focus import (
+    looks_like_sidecar_stable_id,
+)
 
 _GLOB_CHARS = frozenset("*?[")
 
@@ -403,6 +409,28 @@ class UniversalFilePreviewCommand(BaseMCPCommand):
             nav_kwargs["file_path"] = abs_file_path
             nav_kwargs["project_root"] = project_root
             nav_kwargs["rel_file_path"] = kwargs["file_path"]
+            node_ref_raw = normalize_optional_node_ref(kwargs.get("node_ref"))
+            if (
+                kwargs.get("session_id") is None
+                and node_ref_raw is not None
+                and looks_like_sidecar_stable_id(node_ref_raw)
+            ):
+                ext = Path(abs_file_path).suffix.lower()
+                handler_id = "json" if ext == ".json" else "yaml" if ext in (
+                    ".yaml",
+                    ".yml",
+                ) else None
+                if handler_id is not None:
+                    try:
+                        acquisition = acquire_tree_temp_for_open(
+                            project_root=project_root.resolve(),
+                            source_abs=Path(abs_file_path).resolve(),
+                            handler_id=handler_id,
+                            raw_source_bytes=Path(abs_file_path).read_bytes(),
+                        )
+                        nav_kwargs["tree_temp_roots"] = acquisition.roots
+                    except Exception:
+                        pass
             # Thread caps through nav_kwargs so open_root receives budget even when
             # resolve_session returns session=None (plain preview, text edit session).
             nav_kwargs["preview_budget"] = budget

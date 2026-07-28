@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import asyncio
 import logging
 import re
 from datetime import datetime
@@ -14,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from code_analysis.logging import importance_from_level
 
+from ..core.command_offload import run_sync_in_offload_pool
 from ..core.list_pagination import (
     DEFAULT_LIST_PAGE_SIZE,
     apply_pagination_fields,
@@ -248,7 +248,7 @@ class LogViewerCommand:
                         logger.warning("Skip reading %s: %s", p, e)
                 return out_lines
 
-            lines = await asyncio.to_thread(_read_all_log_files_sync)
+            lines = await run_sync_in_offload_pool(_read_all_log_files_sync)
             result["total_lines"] = len(lines)
             result["files_read"] = len(files_to_read)
             if self.tail:

@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
+from ..core.command_offload import run_sync_in_offload_pool
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..core.cst_tree.tree_save_verification import SaveVerificationError
 from ..core.cst_tree.tree_builder import reload_tree_from_file
@@ -196,16 +197,17 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             },
                         )
                         try:
-                            result = await asyncio.to_thread(
-                                save_tree_to_file,
-                                tree_id=tree_id,
-                                file_path=str(absolute_file_path),
-                                root_dir=project_root,
-                                project_id=project_id,
-                                database=database,
-                                validate=validate,
-                                backup=backup,
-                                commit_message=commit_message,
+                            result = await run_sync_in_offload_pool(
+                                lambda: save_tree_to_file(
+                                    tree_id=tree_id,
+                                    file_path=str(absolute_file_path),
+                                    root_dir=project_root,
+                                    project_id=project_id,
+                                    database=database,
+                                    validate=validate,
+                                    backup=backup,
+                                    commit_message=commit_message,
+                                )
                             )
                         except SaveVerificationError as exc:
                             logger.warning(
@@ -312,7 +314,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                         "attempt": attempt,
                                     },
                                 )
-                                time.sleep(delay)
+                                await asyncio.sleep(delay)
                                 continue
                             if is_rpc_connect_refused_message(err_msg):
                                 elapsed = time.perf_counter() - t_retry_start
@@ -360,7 +362,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                         "attempt": attempt,
                                     },
                                 )
-                                time.sleep(delay)
+                                await asyncio.sleep(delay)
                                 continue
                             return ErrorResult(
                                 message=err_msg,
@@ -413,12 +415,19 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         else:
                             result["tree_reloaded"] = False
 
+                        try:
+                            config_data = BaseMCPCommand._get_raw_config()
+                        except FileNotFoundError:
+                            logger.warning(
+                                "cst_save_tree: config file missing, using default optional git-on-write behavior"
+                            )
+                            config_data = {}
                         git_ok, git_err = commit_after_write(
                             project_root,
                             [Path(absolute_file_path)],
                             "cst_save_tree",
                             commit_message_override=commit_message,
-                            config_data=BaseMCPCommand._get_raw_config(),
+                            config_data=config_data,
                         )
                         if not git_ok and git_err:
                             logger.warning(

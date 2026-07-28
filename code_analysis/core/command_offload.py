@@ -25,9 +25,11 @@ import contextvars
 import logging
 import os
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 _lock = threading.Lock()
 _pool: Optional["_OffloadPool"] = None
@@ -61,6 +63,15 @@ class _OffloadPool:
 
     def shutdown(self, wait: bool = True) -> None:
         self._executor.shutdown(wait=wait)
+
+
+async def _await_concurrent_future(
+    future: "concurrent.futures.Future[T]",
+) -> T:
+    """Poll a concurrent future cooperatively from the current asyncio loop."""
+    while not future.done():
+        await asyncio.sleep(0.01)
+    return future.result()
 
 
 def configure_offload(
@@ -144,7 +155,19 @@ async def offload_command_run(
         return ctx.run(loop.run_until_complete, coro)
 
     future = pool.submit(worker)
-    # wrap_future schedules a main-loop callback on completion; if the caller is
-    # cancelled (wait_for timeout) CancelledError propagates here while the worker
-    # thread finishes and its result is discarded (threads can't be force-killed).
-    return await asyncio.wrap_future(future)
+    # If the caller is cancelled (wait_for timeout), CancelledError propagates
+    # here while the worker thread finishes and its result is discarded
+    # (threads can't be force-killed).
+    return await _await_concurrent_future(future)
+
+
+async def run_sync_in_offload_pool(fn: Callable[[], T]) -> T:
+    """Run one synchronous callable on the shared offload pool and await its result."""
+    pool = _get_pool()
+    ctx = contextvars.copy_context()
+
+    def worker() -> T:
+        return ctx.run(fn)
+
+    future = pool.submit(worker)
+    return await _await_concurrent_future(future)

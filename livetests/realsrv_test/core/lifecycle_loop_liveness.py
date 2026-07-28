@@ -21,6 +21,18 @@ while designing this check), so this polls at a fixed short interval for the
 whole heavy-load duration instead of firing one shot -- still one bounded
 round: no retry-on-failure, hard overall timeout.
 
+Before the storm, one heavy ``search`` call is fired alone and awaited to
+completion (excluded from every measurement below). This absorbs cold-start
+skew -- a freshly (re)started server serves its first heavy fulltext query
+much slower than a warm one (caches, connection setup, JIT-ish warmup paths),
+and that skew previously leaked into the storm timings and pushed a
+perfectly healthy run past the hard ceiling (observed live against a
+just-deployed 1.6.88: the ceiling fired before the control-latency verdict
+was ever evaluated). The hard ceiling itself is deliberately generous -- a
+runaway-detection bound, not a normal-completion bound -- so a slow-but-
+healthy run still completes and reports a real control-latency verdict
+instead of an inconclusive timeout.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -49,7 +61,12 @@ _HEAVY_PROJECT_ID = "44a8ce88-b467-42a8-b874-033562b89bd0"
 _HEAVY_CONCURRENCY = 32
 _CONTROL_LATENCY_BUDGET_SECONDS = 10.0
 _CONTROL_POLL_INTERVAL_SECONDS = 0.3
-_HARD_TIMEOUT_SECONDS = 90.0
+# Runaway-detection bound, not a normal-completion bound: warm-up (one heavy
+# call) plus the K=32 storm can legitimately take minutes on a healthy but
+# busy/cold server (K=32 calibration on a warm server already saw individual
+# heavy calls up to ~88s; a cold-started server is slower still). This must
+# only fire on a genuinely stuck/runaway check, never on a slow-but-healthy one.
+_HARD_TIMEOUT_SECONDS = 240.0
 
 _HEAVY_SEARCH_PARAMS = {
     "query": "def ",
@@ -117,12 +134,21 @@ async def _poll_control(
 async def _run_check(client: CodeAnalysisAsyncClient) -> Tuple[Status, str]:
     """Run the bounded concurrent-load-vs-control-latency check once.
 
+    A single warm-up heavy call runs first, awaited to completion and
+    excluded from every measurement below -- it exists only to absorb
+    cold-start skew (fresh connections, cold caches) so the timed storm
+    reflects steady-state server behavior, not restart transients.
+
     Args:
         client: Connected async client.
 
     Returns:
         (status, reason); reason always includes the measured timings.
     """
+    warmup_t0 = time.monotonic()
+    _, warmup_ok, _, warmup_err = await _run_heavy(client, -1)
+    warmup_elapsed = time.monotonic() - warmup_t0
+
     stop_event = asyncio.Event()
     heavy_tasks = [
         asyncio.create_task(_run_heavy(client, i)) for i in range(_HEAVY_CONCURRENCY)
@@ -139,6 +165,8 @@ async def _run_check(client: CodeAnalysisAsyncClient) -> Tuple[Status, str]:
     control_errors = [s for s in samples if not s[0]]
 
     reason = (
+        f"warmup_ok={warmup_ok} warmup_elapsed_s={warmup_elapsed:.3f}"
+        f"{'' if warmup_ok else f' warmup_error={warmup_err!r}'}; "
         f"K={_HEAVY_CONCURRENCY} heavy=search(project={_HEAVY_PROJECT_ID}); "
         f"heavy_timings_s={heavy_timings}; heavy_failures={len(heavy_failures)}; "
         f"control_samples={len(samples)}; "

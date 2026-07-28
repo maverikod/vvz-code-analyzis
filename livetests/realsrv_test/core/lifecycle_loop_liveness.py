@@ -59,7 +59,16 @@ CHECK_NAME = "loop_liveness_under_concurrent_load"
 _HEAVY_PROJECT_ID = "44a8ce88-b467-42a8-b874-033562b89bd0"
 
 _HEAVY_CONCURRENCY = 32
-_CONTROL_LATENCY_BUDGET_SECONDS = 10.0
+# 3.0s, not 10.0s: `health` is a trivial, DB-free, loop-serviced call with no
+# reason to ever take seconds on a healthy server. The original 10.0s budget
+# was a miscalibration -- it tolerated exactly the symptom under
+# investigation (bug 4d1a2895: the whole-project-lock pre-check runs
+# synchronously on the event loop before offload dispatch) instead of
+# catching it. A `health` call stalling for multiple seconds under K=32 read
+# load means the event loop itself, or a blocking call on its DB access path
+# (mechanism card 8e6acb34), is stalled -- that is the defect, not a
+# tolerance to design around.
+_CONTROL_LATENCY_BUDGET_SECONDS = 3.0
 _CONTROL_POLL_INTERVAL_SECONDS = 0.3
 # Runaway-detection bound, not a normal-completion bound: warm-up (one heavy
 # call) plus the K=32 storm can legitimately take minutes on a healthy but

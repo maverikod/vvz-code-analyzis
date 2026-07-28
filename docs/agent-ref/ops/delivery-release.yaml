@@ -11,7 +11,13 @@ project:
     MCP proxy is used ONLY for CA search/analysis in local development, never to run
     build/test/deploy scripts.
   deploy_host: 'root@192.168.254.26'
-  live_pipeline: 'scripts/verify_client_all_commands_live.py --host 192.168.254.26 --port 15010 (mint disposable mTLS cert per script docstring)'   # aka "realsrv-test" in laws.yaml `bug_fix_cycle`
+  live_pipeline: >-
+    realsrv-test --host 192.168.254.26 --port 15010 --cert <cert> --key <key> --ca <ca>
+    (no-args = all suites; --list to list suites; subset run: realsrv-test [suite ...] --cert ... --key ... --ca ...;
+    mint disposable mTLS cert per livetests/realsrv_test/_cli.py docstring;
+    package: livetests/, distribution realsrv-test 0.1.0, install: pip install -e livetests/;
+    shim preserved at scripts/verify_client_all_commands_live.py for backward compatibility)
+    # aka "realsrv-test" in laws.yaml `bug_fix_cycle`
   production_servers: ['ai-editor-server-vvz', 'code-analysis-server-vvz']
 
 # Bug-handling trigger/loop framing (reproduce -> pipeline-red -> root-cause -> fix -> deploy ->

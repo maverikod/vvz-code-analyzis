@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "realsrv-test"
+version = "0.1.0"
+description = "Installable CLI that runs the code-analysis-server live acceptance pipeline"
+requires-python = ">=3.10"
+authors = [
+    { name = "Vasiliy Zdanovskiy", email = "vasilyvz@gmail.com" },
+]
+dependencies = [
+    "code-analysis-client>=1.0.26",
+]
+
+[project.scripts]
+realsrv-test = "realsrv_test._cli:main_sync"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["realsrv_test*"]

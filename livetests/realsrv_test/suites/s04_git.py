@@ -12,10 +12,8 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import realsrv_test._bootstrap  # noqa: F401 — must run before any scripts/ import
-
-from _verify_client_all_commands_lifecycle_git import run_git_lifecycle
-from _verify_client_all_commands_lifecycle_github import run_github_lifecycle
+from realsrv_test.core.lifecycle_git import run_git_lifecycle
+from realsrv_test.core.lifecycle_github import run_github_lifecycle
 
 SUITE_NAME = "git"
 LIFECYCLE_RUNNERS = (run_git_lifecycle, run_github_lifecycle)

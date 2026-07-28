@@ -11,16 +11,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import realsrv_test._bootstrap  # noqa: F401 — must run before any scripts/ import
-
-from _verify_client_all_commands_lifecycle_search import run_search_lifecycle
-from _verify_client_all_commands_lifecycle_grep_bounded import (
+from realsrv_test.core.lifecycle_search import run_search_lifecycle
+from realsrv_test.core.lifecycle_grep_bounded import (
     run_search_grep_bounded_liveness_check,
 )
-from _verify_client_all_commands_lifecycle_fulltext_seeded import (
+from realsrv_test.core.lifecycle_fulltext_seeded import (
     run_search_fulltext_seeded_literal_check,
 )
-from _verify_client_all_commands_lifecycle_global_search import (
+from realsrv_test.core.lifecycle_global_search import (
     run_global_search_attribution_check,
 )
 

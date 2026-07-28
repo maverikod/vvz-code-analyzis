@@ -2,7 +2,7 @@
 Disposable-project teardown for the live-server all-commands verifier.
 
 Closes the sweep-wide session and purges the disposable project created by
-``_verify_client_all_commands_fixtures.seed_fixtures``, or — per the
+``realsrv_test.core.fixtures.seed_fixtures``, or — per the
 operator's ``--keep-project`` flag — leaves it in place for manual inspection.
 Trash purge resolves the disposable project's trash folder name via a
 read-only ``list_trashed_projects`` lookup (always safe to call) and passes it
@@ -17,7 +17,7 @@ is out of the DB either way, and trash is a safe holding area for manual (or
 absent (a "not found in database" rejection, see ``_ALREADY_ABSENT_MARKER``),
 that is logged and treated as a successful delete rather than an abort — this
 is the sole caller of ``project_set_mark_del`` in the whole verifier (see
-``_verify_client_all_commands_catalog.BUCKET_B_REASONS``), so an "already
+``realsrv_test.core.catalog.BUCKET_B_REASONS``), so an "already
 absent" outcome only happens on a re-run against a stale fixture or a
 teardown retry, never mid-sweep. Any other failure still aborts loudly.
 
@@ -31,10 +31,10 @@ from typing import Optional
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import schema_has_project_id
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import schema_has_project_id
+from realsrv_test.core.fixtures import FixtureContext
 
-# Same marker _verify_client_all_commands_fixtures_registration.py polls for:
+# Same marker realsrv_test.core.fixtures_registration.py polls for:
 # the server's rejection text when a project_id no longer has a DB row. Used
 # here to make project_set_mark_del teardown idempotent — if some earlier
 # step already deleted the disposable project, teardown must not abort.

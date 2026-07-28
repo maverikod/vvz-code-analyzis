@@ -29,12 +29,12 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+_LIVETESTS_DIR = Path(__file__).resolve().parents[1] / "livetests"
+if str(_LIVETESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_LIVETESTS_DIR))
 
-from _verify_client_all_commands_catalog import Status  # noqa: E402
-from _verify_client_all_commands_lifecycle_global_search import (  # noqa: E402
+from realsrv_test.core.catalog import Status  # noqa: E402
+from realsrv_test.core.lifecycle_global_search import (  # noqa: E402
     CHECK_NAME,
     run_global_search_attribution_check,
 )

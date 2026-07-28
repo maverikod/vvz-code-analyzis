@@ -1,10 +1,10 @@
 """
 Shared call/skip helpers for the ordered command lifecycles.
 
-Each ``_verify_client_all_commands_lifecycle_*`` module builds one ordered flow
+Each ``realsrv_test.core.lifecycle_*`` module builds one ordered flow
 of interdependent commands (session, transfer, search, git, github, entities,
 fs, workers, queue) and returns a ``{command_name: CommandOutcome}`` mapping
-consumed by ``_verify_client_all_commands_lifecycles.run_lifecycles``. This
+consumed by ``realsrv_test.core.sweep.run_lifecycles``. This
 module holds the two small helpers every lifecycle module uses to call one
 step and to record a step skipped because an earlier dependency failed.
 
@@ -18,8 +18,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient, JobFailedError
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_classifiers import classify_job_failed_error
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.classifiers import classify_job_failed_error
 
 
 async def call_step_with_data(
@@ -37,7 +37,7 @@ async def call_step_with_data(
     its lifecycle or the overall sweep.
 
     A raised :class:`JobFailedError` gets its own branch, routed through
-    :func:`_verify_client_all_commands_classifiers.classify_job_failed_error`
+    :func:`realsrv_test.core.classifiers.classify_job_failed_error`
     instead of the generic handler below. Root cause this branch fixes
     (verified empirically against live run logs for ``git_branch_set_upstream``
     / ``git_branch_track_remote``, jobs ``4914da2b-16dc-4c24-843f-7a6a2656b098``

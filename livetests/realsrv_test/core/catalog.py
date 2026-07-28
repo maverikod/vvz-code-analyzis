@@ -4,15 +4,15 @@ Static classification catalog for the live-server all-commands verifier.
 Holds the enums/dataclass used to record a per-command verification outcome,
 the fixed safety lists (Bucket B, outage-risk commands, standard adapter
 commands), and a small generic parameter-value provider table used by the
-sweep engine (``_verify_client_all_commands_sweep.py``) to synthesize
+sweep engine (``realsrv_test.core.sweep.py``) to synthesize
 required-parameter values for commands it has never seen before.
 
 This module intentionally holds **only** static data and pure helper
 functions (schema inspection, string classification, value synthesis) — no
 network calls and no fixture lifecycle. See
-``_verify_client_all_commands_fixtures.py`` for the disposable project/git
+``realsrv_test.core.fixtures.py`` for the disposable project/git
 fixture that supplies the values referenced here, and
-``_verify_client_all_commands_sweep.py`` for the engine that ties both
+``realsrv_test.core.sweep.py`` for the engine that ties both
 together against a live server.
 
 Author: Vasiliy Zdanovskiy
@@ -27,7 +27,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, FrozenSet
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a runtime import cycle
-    from _verify_client_all_commands_fixtures import FixtureContext
+    from realsrv_test.core.fixtures import FixtureContext
 
 
 class Bucket(str, Enum):
@@ -114,7 +114,7 @@ STANDARD_ADAPTER_COMMANDS: FrozenSet[str] = frozenset(
 # Everything else in STANDARD_ADAPTER_COMMANDS is classified verify-only, except
 # long_task/job_status/queue_add_job/queue_get_job_status/queue_get_job_logs/
 # queue_stop_job/queue_delete_job, which the queue lifecycle
-# (_verify_client_all_commands_lifecycle_queue.py) executes as an ordered chain
+# (realsrv_test.core.lifecycle_queue.py) executes as an ordered chain
 # via the precomputed-outcomes table classify_command consults first.
 ADAPTER_SAFE_TO_EXECUTE: FrozenSet[str] = frozenset(
     {"echo", "health", "help", "queue_health", "queue_list_jobs", "plugins", "roletest"}

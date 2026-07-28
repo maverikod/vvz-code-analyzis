@@ -30,7 +30,7 @@ must equal the control's.
 
 Reported under its own synthetic outcome name, ``list_project_files_glob_fast``
 -- mirrors the conventions of
-``_verify_client_all_commands_lifecycle_list_files_fast.py``: purely
+``realsrv_test.core.lifecycle_list_files_fast.py``: purely
 additive, one more precomputed outcome merged into the same table every
 other lifecycle module contributes to. Does not replace the generic
 ``list_project_files`` classification the main alphabetical sweep performs
@@ -67,8 +67,8 @@ from typing import Any, Dict, List, Set
 
 from code_analysis_client import CodeAnalysisAsyncClient, QueuedJob
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "list_project_files_glob_fast"
 

@@ -10,9 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import realsrv_test._bootstrap  # noqa: F401 — must run before any scripts/ import
-
-from _verify_client_all_commands_lifecycle_transfer import run_transfer_lifecycle
+from realsrv_test.core.lifecycle_transfer import run_transfer_lifecycle
 
 SUITE_NAME = "transfer"
 LIFECYCLE_RUNNERS = (run_transfer_lifecycle,)

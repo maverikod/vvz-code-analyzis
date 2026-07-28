@@ -1,7 +1,7 @@
 """
 Git-federation helpers for the content_stale roundtrip check (bug N1 / 0d632d0e).
 
-Split out of ``_verify_client_all_commands_lifecycle_content_stale.py`` to
+Split out of ``realsrv_test.core.lifecycle_content_stale.py`` to
 stay under CR-008's module-size guideline (~350 lines prefer-split, ~450+
 must-split). See that module's docstring for the full rationale of why a
 ``git_pull_safe``-based design replaced the original ``.py``-write and
@@ -17,8 +17,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Status
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
+from realsrv_test.core.catalog import Status
+from realsrv_test.core.lifecycle_common import call_step_with_data
 
 STALE_BRANCH = "stale_source"
 SELF_REMOTE = "content_stale_selfremote"

@@ -13,7 +13,7 @@ client would create a new project file. Once the files exist, this module
 gives the project a minimal real git history (``git_add`` + ``git_commit``,
 git itself is initialized automatically by ``create_project``), waits for the
 project to register in the database, and seeds a throwaway feature branch.
-Teardown lives in ``_verify_client_all_commands_teardown.py`` (split out to
+Teardown lives in ``realsrv_test.core.teardown.py`` (split out to
 keep this module under the project's module-size guideline — CR-008).
 
 Author: Vasiliy Zdanovskiy
@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_fixtures_registration import (
+from realsrv_test.core.fixtures_registration import (
     resolve_seeded_file_ids,
     seed_feature_branch,
     wait_for_project_registered,
@@ -332,5 +332,5 @@ async def seed_fixtures(
     return fixtures
 
 
-# NOTE: teardown_fixtures() moved to _verify_client_all_commands_teardown.py
+# NOTE: teardown_fixtures() moved to realsrv_test.core.teardown.py
 # (kept fixtures.py under the ~400-line module-size guideline — CR-008).

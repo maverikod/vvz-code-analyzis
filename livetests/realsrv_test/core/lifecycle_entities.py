@@ -4,7 +4,7 @@ Code-entity lookup command group for the live-server all-commands verifier.
 All of these need a real class/function name from the seeded project rather
 than a generic value — ``fixtures.class_name`` / ``fixtures.function_name``
 name the ``SampleClass`` / ``greet`` fixture seeded by
-``_verify_client_all_commands_fixtures._PY_FIXTURE_CONTENT``, where
+``realsrv_test.core.fixtures._PY_FIXTURE_CONTENT``, where
 ``SampleClass.sample_method`` calls ``greet()`` so dependency/usage lookups
 have a real edge to report.
 
@@ -19,9 +19,9 @@ from typing import Any, Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import CommandOutcome
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step
+from realsrv_test.core.catalog import CommandOutcome
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step
 
 
 def _stringify_uuids(value: Any) -> Any:

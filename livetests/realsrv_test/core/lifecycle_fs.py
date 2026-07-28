@@ -14,7 +14,7 @@ alphabetically before many commands (``get_ast``, ``get_file_lines``,
 ``change_project_id`` gets a real UUID4 and, on success, mutates
 ``fixtures.project_id`` in place so every later fixture use (including final
 teardown) targets the renamed project. The sweep engine
-(``_verify_client_all_commands_sweep.run_sweep``) must call
+(``realsrv_test.core.sweep.run_sweep``) must call
 :func:`run_change_project_id_last` after every other command has run, not as
 part of the precomputed lifecycle map, since renaming the disposable project
 mid-sweep would invalidate ``project_id`` for every command that follows it
@@ -31,9 +31,9 @@ from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step
 
 _COPY_PATH = "verify_module_copy.py"
 _MOVED_PATH = "verify_module_moved.py"

@@ -2,14 +2,14 @@
 Post-``create_project`` fixture bootstrap: DB registration wait, index
 refresh, seeded-file-id resolution, and a throwaway feature branch.
 
-Isolates the polling/indexing steps ``_verify_client_all_commands_fixtures.seed_fixtures``
+Isolates the polling/indexing steps ``realsrv_test.core.fixtures.seed_fixtures``
 needs after ``create_project`` returns, so callers relying on ``file_id``
 (session locks, transfer-by-id commands, advisory locks) and a second branch
 (``git_branch_compare``, upstream/tracking) do not race the server's own
 project-registration and indexing pipeline.
 
 ``wait_for_project_registered`` runs after the fixture files are uploaded
-through the client session (see ``_verify_client_all_commands_fixtures``) and
+through the client session (see ``realsrv_test.core.fixtures``) and
 confirms registration with a real DB-dependent call (``check_vectors``), not
 just a snapshot listing, before letting the analysis phase (search,
 revectorize, rebuild_faiss, repair_database, repair_worker_status,
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 from code_analysis_client import CodeAnalysisAsyncClient
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a runtime import cycle
-    from _verify_client_all_commands_fixtures import FixtureContext
+    from realsrv_test.core.fixtures import FixtureContext
 
 _REGISTRATION_TIMEOUT_SECONDS = 180.0
 _REGISTRATION_POLL_INTERVAL_SECONDS = 5.0
@@ -146,7 +146,7 @@ async def resolve_seeded_file_ids(
     """Fallback resolution for any seeded ``file_id`` not already captured.
 
     ``client.file_sessions.upload_new`` already returns each ``file_id``
-    directly at upload time (see ``_verify_client_all_commands_fixtures``), so
+    directly at upload time (see ``realsrv_test.core.fixtures``), so
     this is now only a safety net for the case where an id came back empty —
     it re-reads ``list_project_files`` and fills in only the fields still
     unset, without overwriting ids already known to be good. Does nothing (no

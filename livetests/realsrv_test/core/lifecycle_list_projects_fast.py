@@ -12,7 +12,7 @@ paginated the same way as ``list_project_files`` / ``search``.
 
 Reported under its own synthetic outcome name, ``list_projects_paginated_fast``
 -- mirrors the conventions of
-``_verify_client_all_commands_lifecycle_list_files_fast.py``: purely additive,
+``realsrv_test.core.lifecycle_list_files_fast.py``: purely additive,
 one more precomputed outcome merged into the same table every other lifecycle
 module contributes to. Does not replace the generic ``list_projects`` call the
 main alphabetical sweep may also perform elsewhere.
@@ -28,8 +28,8 @@ from typing import Any, Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient, QueuedJob
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "list_projects_paginated_fast"
 

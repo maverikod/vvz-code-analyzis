@@ -11,7 +11,7 @@ applied before the ``dry_run`` gate.
 
 This check calls ``restore_database`` with ``dry_run=true`` only (a real,
 non-dry-run restore is destructive -- see
-``_verify_client_all_commands_catalog.BUCKET_B_REASONS['restore_database']`` --
+``realsrv_test.core.catalog.BUCKET_B_REASONS['restore_database']`` --
 and stays out of scope for every other command in this verifier; this is a
 narrow, additive, read-only exception carved out specifically to cover the
 b9b36e13 regression without ever touching a real rebuild). Asserts the call
@@ -33,8 +33,8 @@ from code_analysis_client import (
     JobFailedError,
 )
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "restore_database_dry_run_watch_dirs_fallback"
 

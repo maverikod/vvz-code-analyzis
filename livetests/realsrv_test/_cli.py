@@ -3,8 +3,11 @@ CLI entry point for the realsrv-test live acceptance pipeline.
 
 Console-script: ``realsrv-test`` (defined in livetests/pyproject.toml).
 
-With no arguments, runs ALL suites sequentially against the live server and
-exits non-zero on any FAILED outcome or teardown error.
+With no arguments, runs ALL suites sequentially (auto-discovered from
+``realsrv_test.suites``) plus the generic alphabetical sweep over every live
+command, and exits non-zero on any FAILED outcome or teardown error.  With
+positional suite names, runs ONLY those suites' ordered lifecycles (no
+generic sweep).
 
 Options
 -------
@@ -45,15 +48,8 @@ import asyncio
 import sys
 from typing import Sequence
 
-import realsrv_test._bootstrap  # noqa: F401 — must run before any scripts/ import
-
-from realsrv_test.suites import list_suites
-from _verify_client_all_commands_sweep import print_summary
-from _verify_client_all_commands_fixtures import seed_fixtures
-from _verify_client_all_commands_sweep import run_sweep
-from _verify_client_all_commands_teardown import teardown_fixtures
-
-from code_analysis_client import CodeAnalysisAsyncClient
+from realsrv_test.core.pipeline import run_pipeline
+from realsrv_test.suites import collect_runners, list_suites
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -118,93 +114,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "suites",
         nargs="*",
         metavar="SUITE",
-        help="Run only the named suites (default: all suites).",
+        help="Run only the named suites (default: all suites + full sweep).",
     )
     return parser
 
 
 def _cmd_list() -> None:
-    """Print all available suite names to stdout and return."""
-    suites = list_suites()
+    """Print all available suite names to stdout."""
     print("Available suites:")
-    for name, runners in suites:
-        runner_count = len(runners)
-        print(f"  {name}  ({runner_count} lifecycle runner(s))")
-
-
-async def _run(args: argparse.Namespace) -> int:
-    """Execute the pipeline and return the process exit code.
-
-    Args:
-        args: Parsed CLI arguments.
-
-    Returns:
-        0 on full success, 1 on any FAILED outcome or teardown error.
-    """
-    if not args.cert or not args.key or not args.ca:
-        print(
-            "ERROR: --cert, --key, and --ca are required for live runs.\n"
-            "       Use --list to list suites without connecting.",
-            file=sys.stderr,
-        )
-        return 1
-
-    requested: Sequence[str] = args.suites
-    available_suites = list_suites()
-    available_names = [name for name, _ in available_suites]
-
-    if requested:
-        unknown = sorted(set(requested) - set(available_names))
-        if unknown:
-            print(
-                f"ERROR: unknown suite(s): {unknown}. "
-                f"Available: {available_names}",
-                file=sys.stderr,
-            )
-            return 1
-
-    settings = {
-        "host": args.host,
-        "port": args.port,
-        "protocol": "https",
-        "ssl": {"cert": args.cert, "key": args.key, "ca": args.ca},
-    }
-
-    # timeout=120.0: same as the old script (ReadTimeout observed at 60s default
-    # during project_pip_check/project_pip_list after a venv-bootstrap job).
-    async with CodeAnalysisAsyncClient.from_adapter_settings(
-        settings, check_hostname=False, timeout=120.0
-    ) as client:
-        try:
-            await client.rpc.health()
-        except Exception as exc:
-            print(f"FAILED health-check: {exc!r}")
-            return 1
-
-        try:
-            fixtures = await seed_fixtures(client, args.project_prefix)
-        except Exception as exc:
-            print(f"FAILED fixture setup: {exc!r}")
-            return 1
-
-        exit_code = 0
-        try:
-            outcomes = await run_sweep(client, fixtures)
-            failed_count = print_summary(outcomes)
-            if failed_count:
-                exit_code = 1
-        finally:
-            teardown_ok = await teardown_fixtures(
-                client, fixtures, keep_project=args.keep_project
-            )
-            if not teardown_ok:
-                exit_code = 1
-
-    return exit_code
+    for name, runners in list_suites():
+        print(f"  {name}  ({len(runners)} lifecycle runner(s))")
 
 
 async def _async_main(argv: Sequence[str] | None = None) -> int:
-    """Parse args and dispatch to the appropriate sub-command.
+    """Parse args, resolve the runner list from suite discovery, and run.
 
     Args:
         argv: Argument list; ``None`` reads from ``sys.argv``.
@@ -219,7 +142,35 @@ async def _async_main(argv: Sequence[str] | None = None) -> int:
         _cmd_list()
         return 0
 
-    return await _run(args)
+    if not args.cert or not args.key or not args.ca:
+        print(
+            "ERROR: --cert, --key, and --ca are required for live runs.\n"
+            "       Use --list to list suites without connecting.",
+            file=sys.stderr,
+        )
+        return 1
+
+    requested: Sequence[str] = args.suites
+    try:
+        runners = collect_runners(requested or None)
+    except KeyError as exc:
+        print(f"ERROR: {exc.args[0]}", file=sys.stderr)
+        return 1
+
+    settings = {
+        "host": args.host,
+        "port": args.port,
+        "protocol": "https",
+        "ssl": {"cert": args.cert, "key": args.key, "ca": args.ca},
+    }
+
+    return await run_pipeline(
+        settings,
+        runners,
+        full_sweep=not requested,
+        project_prefix=args.project_prefix,
+        keep_project=args.keep_project,
+    )
 
 
 def main_sync(argv: Sequence[str] | None = None) -> None:

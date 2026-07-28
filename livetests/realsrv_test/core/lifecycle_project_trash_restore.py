@@ -11,7 +11,7 @@ Uses its own disposable project (created/destroyed entirely within this
 check) rather than the shared sweep-wide :class:`FixtureContext` project,
 since ``project_set_mark_del`` is destructive and the shared fixture must
 survive for the rest of the command sweep (see
-``_verify_client_all_commands_catalog.BUCKET_B_REASONS['project_set_mark_del']``).
+``realsrv_test.core.catalog.BUCKET_B_REASONS['project_set_mark_del']``).
 Only ``fixtures.watch_dir_id`` is reused (already resolved once via
 ``list_watch_dirs`` during sweep-wide fixture setup).
 
@@ -37,8 +37,8 @@ from typing import Any, Dict, Optional
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "project_trash_restore_roundtrip"
 
@@ -108,7 +108,7 @@ async def _cleanup(
     Runs a full mark-del (``delete_from_disk=False`` -> trash + DB clear),
     then resolves and permanently deletes the trash folder. Never raises --
     logs a WARN on any failure, mirroring
-    ``_verify_client_all_commands_teardown.teardown_fixtures``.
+    ``realsrv_test.core.teardown.teardown_fixtures``.
 
     Args:
         client: Connected async client.

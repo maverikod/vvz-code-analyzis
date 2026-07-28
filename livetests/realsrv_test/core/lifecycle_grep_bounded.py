@@ -16,7 +16,7 @@ asserts two things that were both false before the 0c124699 fix:
    used to leave frozen at ``0`` for its entire run, making a live grep scan
    indistinguishable from a genuinely hung one to a polling client.
 
-Conventions follow ``_verify_client_all_commands_lifecycle_list_files_fast.py``
+Conventions follow ``realsrv_test.core.lifecycle_list_files_fast.py``
 (a single-check, catalog-shaped module returning ``{CHECK_NAME: CommandOutcome}``).
 
 Author: Vasiliy Zdanovskiy
@@ -32,9 +32,9 @@ from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step_with_data
 
 CHECK_NAME = "search_grep_bounded_liveness"
 

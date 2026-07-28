@@ -14,10 +14,10 @@ new ``search`` call for the same token, and report which attempt (if either)
 found the seeded file — that split is the bisection signal an integrator
 needs to confirm or rule out the race, not a verdict on the underlying bug.
 
-Conventions follow ``_verify_client_all_commands_lifecycle_list_files_fast.py``
+Conventions follow ``realsrv_test.core.lifecycle_list_files_fast.py``
 (a single-check, catalog-shaped module returning ``{CHECK_NAME: CommandOutcome}``,
 not one of the ordered command lifecycles in
-``_verify_client_all_commands_lifecycle_common.py``/``call_step_with_data``
+``realsrv_test.core.lifecycle_common.py``/``call_step_with_data``
 reused directly here for the ``update_indexes`` step, but this module owns its
 own ``search`` calls and result parsing since ``search``'s own response already
 carries the first result block inline (see ``SearchMCPCommand.execute`` -
@@ -37,9 +37,9 @@ from typing import Any, Dict, List, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step_with_data
 
 CHECK_NAME = "search_fulltext_seeded_literal_immediate"
 
@@ -64,7 +64,7 @@ def _seeded_path_in_hits(items: List[Any], relative_path: str) -> bool:
     may return, instead of requiring an exact match against a project-relative
     path (bug N1 / 0d632d0e, Cause A — the same fix applied to the sibling
     ``_content_stale_for_path`` helper in
-    ``_verify_client_all_commands_lifecycle_content_stale.py``). This is a
+    ``realsrv_test.core.lifecycle_content_stale.py``). This is a
     correctness fix to the shared matching helper only; it does not resolve
     bug 67e50972 (this check's own 0-hits-across-both-attempts finding is a
     separate, still-open defect left untouched).

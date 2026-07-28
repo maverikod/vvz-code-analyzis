@@ -28,8 +28,8 @@ from typing import Any, Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient, QueuedJob
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "list_project_files_exact_path_fast"
 

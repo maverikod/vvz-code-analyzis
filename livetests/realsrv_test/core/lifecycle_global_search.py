@@ -2,7 +2,7 @@
 Global search (project_id=None) lifecycle check (cross-search removal;
 USER: search(project_id=None) = all projects).
 
-Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
+Registered in ``realsrv_test.core.sweep.run_lifecycles``.
 
 Flow: resolve a live ``watch_dir_id`` via ``list_watch_dirs`` (required by
 ``create_project`` — verified live: ``create_project`` schema is
@@ -32,8 +32,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.lifecycle_common import call_step_with_data
 
 CHECK_NAME = "search_global_project_id_none_finds_all_projects"
 

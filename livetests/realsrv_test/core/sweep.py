@@ -4,8 +4,15 @@ Sweep engine for the live-server all-commands verifier.
 Enumerates every command the live server currently exposes (via the ``help``
 adapter command with no ``cmdname``), cross-checks that catalog against the
 local in-process command registry for a drift report, then delegates each
-command to ``_verify_client_all_commands_classifiers.classify_command`` and
+command to ``realsrv_test.core.classifiers.classify_command`` and
 prints a final summary/table.
+
+The list of ordered lifecycle runners is NOT hardcoded here: it is passed in
+by the caller, derived from the auto-discovered suite modules in
+``realsrv_test.suites`` — that discovery is the single source of truth for
+what runs.  (``realsrv_test.core.watcher_config_load_check`` is a deliberate
+exception: a standalone CLI regression check with its own ~10s stall, never
+part of a suite — see its module docstring.)
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -13,20 +20,86 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Dict, List, Set
+from typing import Awaitable, Callable, Dict, List, Sequence, Set
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_classifiers import classify_command
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_fs import run_change_project_id_last
-from _verify_client_all_commands_lifecycles import run_lifecycles
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.classifiers import classify_command
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_fs import run_change_project_id_last
+
+# One ordered lifecycle: an async (client, fixtures) -> {command_name: outcome}.
+LifecycleRunner = Callable[
+    [CodeAnalysisAsyncClient, FixtureContext],
+    Awaitable[Dict[str, CommandOutcome]],
+]
 
 # Executed last, outside the alphabetical loop, because it mutates
 # fixtures.project_id — running it in alphabetical position would invalidate
 # project_id for every command that sorts after "change_project_id".
 _DEFERRED_LAST = ("change_project_id",)
+
+
+async def run_lifecycles(
+    client: CodeAnalysisAsyncClient,
+    fixtures: FixtureContext,
+    runners: Sequence[LifecycleRunner],
+) -> Dict[str, CommandOutcome]:
+    """Run the given ordered lifecycles once and merge their outcomes.
+
+    A lifecycle crashing outright (as opposed to one of its own steps
+    failing, which each module already contains) is caught here so it cannot
+    abort the remaining lifecycles or the sweep.
+
+    Args:
+        client: Connected async client.
+        fixtures: The disposable project/session fixture for this run.
+        runners: Ordered lifecycle runners collected from the auto-discovered
+            suite modules (``realsrv_test.suites``).
+
+    Returns:
+        Mapping of every lifecycle-covered command name to its outcome, plus
+        ``create_project`` credited from the fixture-setup phase.
+    """
+    outcomes: Dict[str, CommandOutcome] = {}
+    for runner in runners:
+        try:
+            outcomes.update(await runner(client, fixtures))
+        except Exception as exc:  # noqa: BLE001 - one lifecycle must not abort the rest
+            print(f"WARN  lifecycle {runner.__name__} crashed: {exc!r}")
+
+    outcomes["create_project"] = CommandOutcome(
+        "create_project",
+        Bucket.BUCKET_A,
+        Status.EXECUTED_OK,
+        "executed during fixture setup (disposable project); not re-executed standalone",
+    )
+    return outcomes
+
+
+async def run_suite_subset(
+    client: CodeAnalysisAsyncClient,
+    fixtures: FixtureContext,
+    runners: Sequence[LifecycleRunner],
+) -> List[CommandOutcome]:
+    """Run only the given lifecycle runners — no generic alphabetical sweep.
+
+    Used by the CLI's positional suite selection: a subset run exercises only
+    the named suites' ordered lifecycles (plus the fixture-credited
+    ``create_project``), skipping the full live-catalog sweep that a no-args
+    run performs.
+
+    Args:
+        client: Connected async client.
+        fixtures: The disposable project/session fixture for this run.
+        runners: Lifecycle runners from the selected suites only.
+
+    Returns:
+        One :class:`CommandOutcome` per command those lifecycles covered.
+    """
+    precomputed = await run_lifecycles(client, fixtures, runners)
+    return [precomputed[name] for name in sorted(precomputed)]
 
 
 async def enumerate_live_commands(client: CodeAnalysisAsyncClient) -> Dict[str, str]:
@@ -83,12 +156,14 @@ def report_drift(live_names: Set[str], local_names: Set[str]) -> None:
 
 
 async def run_sweep(
-    client: CodeAnalysisAsyncClient, fixtures: FixtureContext
+    client: CodeAnalysisAsyncClient,
+    fixtures: FixtureContext,
+    runners: Sequence[LifecycleRunner],
 ) -> List[CommandOutcome]:
     """Enumerate, drift-check, and classify every live command.
 
     Runs every ordered lifecycle once up front (see
-    ``_verify_client_all_commands_lifecycles.run_lifecycles``) to build a
+    ``realsrv_test.core.sweep.run_lifecycles``) to build a
     precomputed outcomes table that ``classify_command`` consults first, then
     classifies every remaining live command in alphabetical order.
     ``change_project_id`` is deferred to run last (outside the alphabetical
@@ -106,6 +181,9 @@ async def run_sweep(
     Args:
         client: Connected async client.
         fixtures: The disposable project/session fixture for this run.
+        runners: Ordered lifecycle runners collected from the auto-discovered
+            suite modules (``realsrv_test.suites``) — the single source of
+            execution truth for the lifecycle phase.
 
     Returns:
         One :class:`CommandOutcome` per live command name.
@@ -119,7 +197,7 @@ async def run_sweep(
     except Exception as exc:
         print(f"WARN  could not build local registry for drift check: {exc!r}")
 
-    precomputed = await run_lifecycles(client, fixtures)
+    precomputed = await run_lifecycles(client, fixtures, runners)
 
     deferred = [name for name in _DEFERRED_LAST if name in live_names]
     ordered_names = sorted(live_names - set(deferred)) + deferred

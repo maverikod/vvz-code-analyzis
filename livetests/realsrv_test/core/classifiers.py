@@ -6,7 +6,7 @@ model (REMOVED cross-check, Bucket B safety list, adapter-safe commands,
 outage-risk gate, generic Bucket A execution) and returns a
 :class:`CommandOutcome`. ``classify_command`` is the dispatcher that routes a
 live command name to the right branch; the sweep engine
-(``_verify_client_all_commands_sweep.py``) calls only that dispatcher.
+(``realsrv_test.core.sweep.py``) calls only that dispatcher.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -25,7 +25,7 @@ from code_analysis_client.server_api import (
     REMOVED_COMMANDS,
 )
 
-from _verify_client_all_commands_catalog import (
+from realsrv_test.core.catalog import (
     ADAPTER_SAFE_TO_EXECUTE,
     BUCKET_B_REASONS,
     MISSING,
@@ -41,7 +41,7 @@ from _verify_client_all_commands_catalog import (
     schema_has_project_id,
     truncate,
 )
-from _verify_client_all_commands_fixtures import FixtureContext
+from realsrv_test.core.fixtures import FixtureContext
 
 
 def _removed_reason(name: str) -> str:
@@ -412,7 +412,7 @@ async def classify_command(
 
     Precedence: precomputed ordered-lifecycle outcome (session, transfer,
     search, git, github, entities, fs, workers, queue — see
-    ``_verify_client_all_commands_lifecycles.run_lifecycles``), then REMOVED
+    ``realsrv_test.core.sweep.run_lifecycles``), then REMOVED
     cross-check, then fixed Bucket B safety list, then adapter-safe
     (echo/health/help/queue_health/queue_list_jobs/plugins/roletest), then
     remaining standard-adapter infra (verify-only), then outage-risk gate,

@@ -8,7 +8,7 @@ top-level ``job_id``/``status`` envelope to poll by hand any more), and on
 failure it raises :class:`code_analysis_client.JobFailedError` instead of
 returning a ``status: failed`` envelope. This lifecycle no longer needs its
 own bespoke wait loop — a raised ``JobFailedError`` is classified via
-``_verify_client_all_commands_classifiers.classify_job_failed_error`` (a
+``realsrv_test.core.classifiers.classify_job_failed_error`` (a
 structured inner error, e.g. a pip/venv rejection, becomes an expected-error
 outcome; anything else stays FAILED).
 ``project_pip_check`` / ``_list`` / ``_search`` / ``_show`` / ``_uninstall``
@@ -27,10 +27,10 @@ from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient, JobFailedError
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_classifiers import classify_job_failed_error
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.classifiers import classify_job_failed_error
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step
 
 _PACKAGES = ["pip"]
 

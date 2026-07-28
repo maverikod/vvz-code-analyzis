@@ -16,19 +16,20 @@ memoizes the config-file-backed instance id for the process lifetime
 (``code_analysis/core/server_instance.py``); ``config_load_count`` is the
 process-local counter incremented once per real disk load (cache miss).
 
-This is a STANDALONE smoke check, deliberately NOT registered in
-``_verify_client_all_commands_lifecycles.py`` (that shared registry drives the
+This is a STANDALONE smoke check, deliberately NOT registered as a suite in
+``realsrv_test.suites`` (that discovery drives the
 always-on live command sweep; this script targets one specific regression and
 must not be folded into it).
 
 ============================================================
 USAGE: connecting to the real target server
 ============================================================
-Same mTLS connection recipe as ``verify_client_all_commands_live.py`` — see
-that script's module docstring for how to generate a disposable client
-certificate. Example::
+Same mTLS connection recipe as the ``realsrv-test`` CLI — see
+``realsrv_test._cli`` for how to generate a disposable client certificate.
+Relative ``--cert``/``--key``/``--ca`` paths resolve against the caller's
+current working directory (prefer absolute paths in automation). Example::
 
-    python scripts/_verify_client_all_commands_lifecycle_watcher_config_load.py \\
+    python -m realsrv_test.core.watcher_config_load_check \\
         --host 192.168.254.26 --port 15010 \\
         --cert verifier.crt --key verifier.key --ca ca.crt
 
@@ -40,23 +41,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
-from pathlib import Path
 from typing import Any, Dict, Optional
 
-_REPO = Path(__file__).resolve().parents[1]
-_CLIENT = _REPO / "client"
-_EXAMPLES = _CLIENT / "examples"
-for _p in (_REPO, _CLIENT, _EXAMPLES):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
-
-from _common import chdir_repo_root, ensure_client_package_on_path  # noqa: E402
-
-ensure_client_package_on_path()
-chdir_repo_root()
-
-from code_analysis_client import CodeAnalysisAsyncClient  # noqa: E402
+from code_analysis_client import CodeAnalysisAsyncClient
 
 # Sampling window and the acceptance threshold for the delta. A few loads (hot
 # reload / concurrent first-call races) are tolerated; hundreds of loads in a

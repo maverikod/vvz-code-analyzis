@@ -1,7 +1,7 @@
 """
 Content-stale flag read-after-write lifecycle check (bug 56c23bd9).
 
-Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
+Registered in ``realsrv_test.core.sweep.run_lifecycles``.
 
 CHECK-SIDE FIX (bug N1 / 0d632d0e). The original version of this module was
 an unsatisfiable false positive, live-reproduced against 192.168.254.26:15010
@@ -14,7 +14,7 @@ fulltext ``search`` rows always carry an ABSOLUTE ``file_path``
 (``file_disk_registration.py`` resolves+stores ``str(path.resolve())``;
 ``core/database_driver_pkg/domain/search.py``'s SQL selects
 ``f.path AS file_path``) — a real hit could never match. The identical
-helper in the sibling ``_verify_client_all_commands_lifecycle_fulltext_
+helper in the sibling ``realsrv_test.core.lifecycle_fulltext_
 seeded.py`` module has the same bug and is fixed the same way there (that
 module's own deeper 0-hit finding is bug 67e50972, separate and NOT touched
 by this fix).
@@ -57,7 +57,7 @@ second of the two real ``content_stale=TRUE`` setters bug 56c23bd9 covers:
    ``git_commit`` it on the project's default branch. The seed write already
    did a synchronous reindex, so the baseline token is fulltext-findable
    with ``content_stale=False`` here — asserted.
-2. Via ``_verify_client_all_commands_lifecycle_content_stale_git.
+2. Via ``realsrv_test.core.lifecycle_content_stale_git.
    stage_stale_content_via_git_pull``: branch off, overwrite the same file
    with NEW-token content (normal write, synchronous reindex — DB
    ``code_content`` now holds the NEW content) and commit it there; switch
@@ -89,10 +89,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
-from _verify_client_all_commands_lifecycle_content_stale_git import (
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step_with_data
+from realsrv_test.core.lifecycle_content_stale_git import (
     GIT_IDENTITY_EMAIL,
     GIT_IDENTITY_NAME,
     best_effort_remote_remove,

@@ -20,9 +20,9 @@ from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import CommandOutcome
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step
+from realsrv_test.core.catalog import CommandOutcome
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step
 
 _REMOTE_NAME_1 = "origin_test"
 _REMOTE_NAME_2 = "origin_test2"

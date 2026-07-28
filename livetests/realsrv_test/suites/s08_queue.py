@@ -11,9 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import realsrv_test._bootstrap  # noqa: F401 — must run before any scripts/ import
-
-from _verify_client_all_commands_lifecycle_queue import run_queue_lifecycle
+from realsrv_test.core.lifecycle_queue import run_queue_lifecycle
 
 SUITE_NAME = "queue"
 LIFECYCLE_RUNNERS = (run_queue_lifecycle,)

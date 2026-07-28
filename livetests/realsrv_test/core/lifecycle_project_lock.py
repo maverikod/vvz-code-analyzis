@@ -2,7 +2,7 @@
 rename_project / emergency_unlock_project lock-roundtrip lifecycle check
 (bugs 88f06abc, 5da73265).
 
-Registered in ``_verify_client_all_commands_lifecycles.run_lifecycles``.
+Registered in ``realsrv_test.core.sweep.run_lifecycles``.
 
 Flow, against the disposable ``fixtures.project_id``:
 1. ``rename_project`` to a fresh uuid-based name -> confirm the returned
@@ -32,9 +32,9 @@ from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from _verify_client_all_commands_catalog import Bucket, CommandOutcome, Status, truncate
-from _verify_client_all_commands_fixtures import FixtureContext
-from _verify_client_all_commands_lifecycle_common import call_step_with_data
+from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.fixtures import FixtureContext
+from realsrv_test.core.lifecycle_common import call_step_with_data
 
 CHECK_NAME = "project_exclusive_lock_rename_roundtrip"
 

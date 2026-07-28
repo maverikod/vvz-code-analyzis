@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -16,7 +18,79 @@ class PipelineCheck:
 
     name: str
     description: str
-    pytest_targets: tuple[str, ...]
+    pytest_targets: tuple[str, ...] = ()
+    runner: Callable[[], int] | None = None
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _run_command(argv: Sequence[str]) -> int:
+    completed = subprocess.run(
+        list(argv),
+        cwd=_repo_root(),
+        check=False,
+    )
+    return int(completed.returncode)
+
+
+def _pytest_command(pytest_targets: Sequence[str]) -> list[str]:
+    return [sys.executable, "-m", "pytest", *pytest_targets]
+
+
+def _run_pytest(pytest_targets: Sequence[str]) -> int:
+    return _run_command(_pytest_command(pytest_targets))
+
+
+def _resolve_live_verifier_ssl_paths() -> dict[str, str]:
+    env = os.environ
+    paths = {
+        "cert": env.get("PIPELINE_LIVE_CERT", "/etc/casmgr/mtls/client.crt"),
+        "key": env.get("PIPELINE_LIVE_KEY", "/etc/casmgr/mtls/client.key"),
+        "ca": env.get("PIPELINE_LIVE_CA", "/etc/casmgr/mtls/ca.crt"),
+    }
+    missing = [name for name, raw_path in paths.items() if not Path(raw_path).exists()]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            "live-deployed-server requires readable mTLS files for "
+            f"{joined}; override with PIPELINE_LIVE_CERT/KEY/CA if needed"
+        )
+    return paths
+
+
+def _live_verifier_command() -> list[str]:
+    env = os.environ
+    ssl_paths = _resolve_live_verifier_ssl_paths()
+    host = env.get("PIPELINE_LIVE_HOST", "192.168.254.26")
+    port = env.get("PIPELINE_LIVE_PORT", "15010")
+    project_prefix = env.get("PIPELINE_LIVE_PROJECT_PREFIX", "pipeline_live")
+    return [
+        sys.executable,
+        "scripts/verify_client_all_commands_live.py",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--cert",
+        ssl_paths["cert"],
+        "--key",
+        ssl_paths["key"],
+        "--ca",
+        ssl_paths["ca"],
+        "--project-prefix",
+        project_prefix,
+    ]
+
+
+def _run_live_deployed_server() -> int:
+    try:
+        command = _live_verifier_command()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _run_command(command)
 
 
 _CHECKS: tuple[PipelineCheck, ...] = (
@@ -131,8 +205,11 @@ _CHECKS: tuple[PipelineCheck, ...] = (
     ),
     PipelineCheck(
         name="info-command",
-        description="Verify info command validation and runtime missing-node contracts stay aligned.",
-        pytest_targets=("tests/test_info_command.py",),
+        description="Verify info command runtime metadata and single-source client versioning contracts stay aligned.",
+        pytest_targets=(
+            "tests/test_info_command.py",
+            "tests/test_client_version_single_source.py",
+        ),
     ),
     PipelineCheck(
         name="integrity-analysis",
@@ -164,8 +241,9 @@ _CHECKS: tuple[PipelineCheck, ...] = (
     ),
     PipelineCheck(
         name="mcp-queue-regressions",
-        description="Verify queue integration tests skip cleanly when multiprocessing semaphores are unavailable in the sandbox.",
+        description="Verify queue command-execution regressions keep config/bootstrap state available in child processes and skip cleanly when multiprocessing semaphores are unavailable in the sandbox.",
         pytest_targets=(
+            "tests/test_base_mcp_command_resolve_config_path.py",
             "tests/test_mcp_queue_regressions.py",
             "tests/test_search_inline_timeout.py",
         ),
@@ -282,6 +360,24 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "tests/unit/test_search_get_status_command.py",
         ),
     ),
+    PipelineCheck(
+        name="trash-list-name-parse",
+        description="Verify list_trashed_projects preserves original_name when unique-suffix trash folders are created.",
+        pytest_targets=("tests/test_trash_list_name_parsing.py",),
+    ),
+    # "live-fixture-rename-sync" (verifies the live verifier keeps fixture
+    # project_name/root in sync after rename_project roundtrips) existed in
+    # casmgr:1.6.87 (built from an uncommitted tree, versions 1.6.84-87 exist
+    # in no branch) but its test file, tests/test_live_fixture_rename_sync.py,
+    # was never committed and its content could not be recovered from the
+    # docker image diff alone. Deliberately NOT re-registered here -- doing so
+    # would reference a nonexistent test file. Re-add once the test is
+    # rewritten from a real spec, not guessed from a name.
+    PipelineCheck(
+        name="live-deployed-server",
+        description="Run the mTLS all-commands verifier against the deployed CAS server.",
+        runner=_run_live_deployed_server,
+    ),
 )
 
 _CHECKS_BY_NAME = {check.name: check for check in _CHECKS}
@@ -291,23 +387,6 @@ _FULL_SUITE_TARGETS: tuple[str, ...] = ("tests",)
 def list_checks() -> tuple[PipelineCheck, ...]:
     """Return the immutable pipeline check catalog."""
     return _CHECKS
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
-def _pytest_command(pytest_targets: Sequence[str]) -> list[str]:
-    return [sys.executable, "-m", "pytest", *pytest_targets]
-
-
-def _run_pytest(pytest_targets: Sequence[str]) -> int:
-    completed = subprocess.run(
-        _pytest_command(pytest_targets),
-        cwd=_repo_root(),
-        check=False,
-    )
-    return int(completed.returncode)
 
 
 def _print_check_catalog() -> None:
@@ -325,6 +404,8 @@ def run_check(check_name: str) -> int:
             file=sys.stderr,
         )
         return 2
+    if check.runner is not None:
+        return check.runner()
     return _run_pytest(check.pytest_targets)
 
 

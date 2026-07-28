@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Final, Optional
@@ -31,7 +32,10 @@ from ..core.storage_paths import (
     resolve_search_sessions_root,
     resolve_storage_paths,
 )
-from ..core.shared_database import get_shared_database
+from ..core.shared_database import (
+    SharedDatabaseNotInitializedError,
+    get_shared_database,
+)
 from .base_mcp_command_resolve_path import resolve_file_path_from_project
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,19 @@ logger = logging.getLogger(__name__)
 # below are duck-typed driver-shaped objects (PostgreSQLDriver in production). Kept
 # as an ``Any`` alias so existing type annotations do not need per-site rewrites.
 DatabaseClient = Any
+
+_ENV_CASMGR_CONFIG: Final[str] = "CASMGR_CONFIG"
+_SYSTEM_DEFAULT_CONFIG: Final[Path] = Path("/etc/casmgr/config.json")
+
+
+def _normalize_config_path_candidate(raw: str) -> Path:
+    """Resolve a config-path candidate relative to the current working directory."""
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    else:
+        path = path.resolve()
+    return path
 
 
 def _get_socket_path_from_db_path(db_path: Path) -> str:
@@ -142,8 +159,23 @@ class BaseMCPCommand(Command):
 
     @staticmethod
     def _open_database_from_config(auto_analyze: bool = False) -> DatabaseClient:
-        """Return the shared long-lived database client (no per-command open)."""
-        return get_shared_database()
+        """Return the process-local shared database client.
+
+        Queue workers and other child execution paths may run before the shared
+        database holder was explicitly initialized for their current process.
+        In that case, lazily initialize a process-local shared client once and
+        retry the lookup instead of failing every DB-backed command with
+        ``SharedDatabaseNotInitializedError``.
+        """
+        try:
+            return get_shared_database()
+        except SharedDatabaseNotInitializedError:
+            from ..core.shared_database_spawn_init import (
+                ensure_shared_database_for_current_process,
+            )
+
+            ensure_shared_database_for_current_process()
+            return get_shared_database()
 
     def _open_database(
         self: "BaseMCPCommand",
@@ -242,6 +274,9 @@ class BaseMCPCommand(Command):
 
         Priority:
         - mcp_proxy_adapter global config (cfg.config_path)
+        - process argv --config
+        - CASMGR_CONFIG env
+        - /etc/casmgr/config.json when present
         - cwd/config.json
         """
 
@@ -250,8 +285,31 @@ class BaseMCPCommand(Command):
 
             cfg = get_config()
             cfg_path = getattr(cfg, "config_path", None)
-            if isinstance(cfg_path, str) and cfg_path.strip():
-                return Path(cfg_path).expanduser().resolve()
+            if cfg_path is not None:
+                cfg_path_str = str(cfg_path).strip()
+                if cfg_path_str:
+                    cfg_path_resolved = _normalize_config_path_candidate(cfg_path_str)
+                    if cfg_path_resolved.is_file():
+                        return cfg_path_resolved
+        except Exception:
+            pass
+
+        try:
+            from ..core.server_log_dir import discover_config_path_from_argv
+
+            argv_cfg = discover_config_path_from_argv()
+            if argv_cfg is not None:
+                return argv_cfg.resolve()
+        except Exception:
+            pass
+
+        env_cfg = (os.environ.get(_ENV_CASMGR_CONFIG) or "").strip()
+        if env_cfg:
+            return _normalize_config_path_candidate(env_cfg)
+
+        try:
+            if _SYSTEM_DEFAULT_CONFIG.is_file():
+                return _SYSTEM_DEFAULT_CONFIG.resolve()
         except Exception:
             pass
 

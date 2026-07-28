@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 # Regex for trash folder name: {original_name}_{YYYY-MM-DDThh-mm-ss}Z
-_TRASH_FOLDER_PATTERN = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)$")
+# with an optional unique suffix added by ensure_unique_trash_path(): _1, _2, ...
+_TRASH_FOLDER_PATTERN = re.compile(
+    r"^(.+)_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z)(?:_(\d+))?$"
+)
 
 
 def _parse_trash_folder_name(folder_name: str) -> tuple[str, Optional[str]]:

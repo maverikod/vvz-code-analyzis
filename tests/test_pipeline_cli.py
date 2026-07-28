@@ -61,6 +61,8 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "verify-lifecycle-content-stale-save",
         "watcher-project-metadata",
         "search-close-pagination",
+        "trash-list-name-parse",
+        "live-deployed-server",
     ]
 
 
@@ -116,6 +118,8 @@ def test_main_list_prints_catalog(capsys) -> None:
     assert "verify-lifecycle-content-stale-save" in captured.out
     assert "watcher-project-metadata" in captured.out
     assert "search-close-pagination" in captured.out
+    assert "trash-list-name-parse" in captured.out
+    assert "live-deployed-server" in captured.out
 
 
 def test_run_check_executes_expected_pytest_targets(monkeypatch) -> None:

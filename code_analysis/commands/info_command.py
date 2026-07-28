@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import gzip
 import json
+import os
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
@@ -64,6 +65,8 @@ DOCKER_IMAGE_PATH_CANDIDATES = [
     Path.cwd() / "debian" / "casmgr-docker-image",
 ]
 
+DEFAULT_DOCKER_IMAGE_REPOSITORY = "vasilyvz/casmgr"
+
 
 def _first_existing_path(candidates: List[Path]) -> Optional[Path]:
     """Return the first readable file from a candidate list."""
@@ -117,6 +120,43 @@ def _read_first_line(candidates: List[Path]) -> Optional[str]:
     except OSError:
         return None
     return None
+
+
+def _docker_ref_tag(ref: str) -> Optional[str]:
+    """Return the tag component from an image ref."""
+    text = ref.strip()
+    if not text or ":" not in text:
+        return None
+    _, tag = text.rsplit(":", 1)
+    tag = tag.strip()
+    return tag or None
+
+
+def _default_docker_image_ref(version: str) -> Optional[str]:
+    """Build the default casmgr image reference for a package version."""
+    text = str(version or "").strip()
+    if not text or text == "unknown":
+        return None
+    return f"{DEFAULT_DOCKER_IMAGE_REPOSITORY}:{text}"
+
+
+def _resolve_runtime_docker_image(version: str) -> Optional[str]:
+    """Resolve the runtime casmgr image ref with env-first precedence."""
+    env_ref = os.environ.get("CASMGR_IMAGE_REF", "").strip()
+    if env_ref:
+        return env_ref
+
+    file_ref = _read_first_line(DOCKER_IMAGE_PATH_CANDIDATES)
+    env_version = os.environ.get("CASMGR_VERSION", "").strip()
+    canonical_ref = _default_docker_image_ref(env_version or version)
+
+    if file_ref:
+        file_tag = _docker_ref_tag(file_ref)
+        expected_tag = (env_version or str(version or "")).strip() or None
+        if expected_tag is None or file_tag == expected_tag:
+            return file_ref
+
+    return canonical_ref or file_ref
 
 
 def _strip_info_control_lines(text: str) -> str:
@@ -431,11 +471,12 @@ def _add_dynamic_nodes(nodes: Dict[str, str]) -> Dict[str, str]:
 
 def _runtime_package_info(source: Dict[str, Any]) -> Dict[str, Any]:
     """Collect runtime package metadata displayed with every info response."""
+    version = _safe_distribution_version("code-analysis")
     return {
         "package": "casmgr-server",
         "python_distribution": "code-analysis",
-        "version": _safe_distribution_version("code-analysis"),
-        "docker_image": _read_first_line(DOCKER_IMAGE_PATH_CANDIDATES),
+        "version": version,
+        "docker_image": _resolve_runtime_docker_image(version),
         "manual": source,
     }
 
@@ -516,7 +557,7 @@ class InfoCommand(Command):
                     "installed by the Debian package as `info casmgr-server`. It reads "
                     "`/usr/share/info/casmgr-server.info` at execution time, so package "
                     "upgrades immediately update command output. The response also includes "
-                    "the runtime Python package version, pinned PostgreSQL Docker image, "
+                    "the runtime Python package version, runtime casmgr Docker image, "
                     "manual source path, file mtime, and available Info nodes. Use this "
                     "command to inspect installation, config, secrets, mTLS, admin commands, "
                     "systemd, upgrade/removal, and troubleshooting guidance through MCP."
@@ -598,7 +639,7 @@ class InfoCommand(Command):
                             "package": {
                                 "package": "casmgr-server",
                                 "version": "1.6.6",
-                                "docker_image": "vasilyvz/casmgr-postgres:1.6.6",
+                                "docker_image": "vasilyvz/casmgr:1.6.6",
                             },
                             "nodes": ["Top", "Overview", "Installation"],
                             "items": [{"node": "Installation", "text": "..."}],

@@ -1,19 +1,45 @@
 """
 Thread-safe PostgreSQL connection pool: configurable write + read lanes.
 
-Lane sizes default to 3 write + 2 read (first-free slot per lane) and can be
-overridden via the ``write_pool_size`` / ``read_pool_size`` constructor
-parameters (wired from ``config.json``).
+Lane sizes (first-free slot per lane) are set by the ``write_pool_size`` /
+``read_pool_size`` constructor parameters; this class's own parameter defaults
+(3 write, 2 read) are a bare-minimum fallback for direct/test instantiation.
+Production always passes both explicitly -- ``PostgreSQLDriver.connect()``
+wires them from ``config.json``'s ``pool_write_size`` / ``pool_read_size``,
+whose *own* defaults are 3 write + 12 read. The read lane's effective default
+was raised from 2 to 12 by bug 8e6acb34's fix (that change lives in
+``postgres.py``, not here): the offload worker pool allows up to
+``min(32, cpu_count*4)`` concurrent commands, each running a project-scoped
+lock-gate ``select()`` before its body, plus ordinary read RPCs (e.g.
+``full_text_search``) that were already routed here via ``execute()``.
 
 Used only for **self-managed** driver work (no external ``transaction_id``, or
 ``transaction_id=\"local\"``). Explicit RPC transactions use separate connections
-via ``PostgreSQLTransactionManager`` and do not lease from this pool.
+via ``PostgreSQLTransactionManager`` and do not lease from this pool. ``select()``
+joined ``execute()`` / ``execute_batch()`` on this pool's read lane as of bug
+8e6acb34 (previously ``select()`` ran on the driver's single main connection
+under an unbounded lock, serializing every project-scoped command process-wide).
 
 **Contention:** if all write connections are busy with long-running
 self-managed writes, ``acquire(write=True)`` waits up to ``max_wait_seconds`` (default
 30s) for a slot, then raises ``DriverOperationError``. The read connections
 are independent; read traffic can proceed while writes are saturated, subject to DB
 locks and SQL semantics.
+
+**HARD INVARIANT -- no nested acquire.** A caller must never call ``acquire()``
+on this pool while it already holds a connection leased from the *same* pool
+instance (whether from the same or the other lane). Each lane hands out its
+``pool_size`` connections and blocks the caller until one frees; a thread that
+tries to acquire a second connection while sitting inside its own ``with
+acquire(...)`` block can deadlock the pool once the lane is saturated (that
+thread occupies one slot and blocks forever waiting for another, which can
+only free if the deadlocked thread itself releases -- it cannot). Every
+production call site (``PostgreSQLDriver.execute``, ``.execute_batch``,
+``.select`` / ``._select_via_pool``) acquires exactly once per call and
+returns/raises before the ``with`` block exits; none call back into
+``self._pool`` while already inside one of their own ``with pool.acquire(...)``
+blocks. Verified by grep across the driver package (2026-07): the only
+``pool.acquire(`` call sites are those three, each a single, non-nested lease.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

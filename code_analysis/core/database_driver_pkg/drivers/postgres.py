@@ -149,7 +149,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._qa_transient_injections_remaining: int = 0
         self._pool_max_wait_seconds: float = 30.0
         self._pool_write_size: int = 3
-        self._pool_read_size: int = 2
+        # Default 12, not 2 (bug 8e6acb34): the offload worker pool allows up to
+        # min(32, cpu_count*4) concurrent commands, each running a project-scoped
+        # lock-gate select() before its body (base_mcp_command.py _gated_run());
+        # with a 2-connection read lane, 32 concurrent selects funnel through 2
+        # connections and serialize. Still overridable via config `pool_read_size`.
+        self._pool_read_size: int = 12
         self._schema_vector_dim: int = 384
         # Transaction reaper (safety net for orphaned explicit transactions).
         self._transaction_max_age_seconds: float = 300.0
@@ -269,17 +274,23 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             )
             self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
 
-            # Connection topology (phase 1): one **main** ``self.conn`` for schema manager,
-            # ``PostgreSQLOperations``, and ``commit``/``rollback`` on the default session;
-            # a configurable number of pool connections (write_pool_size + read_pool_size,
-            # defaults 3 write + 2 read) for self-managed ``execute`` / ``execute_batch``
-            # only; ``begin_transaction`` / explicit ``transaction_id`` uses additional
+            # Connection topology (phase 1, extended by bug 8e6acb34 fix): one
+            # **main** ``self.conn`` for schema manager, ``PostgreSQLOperations``
+            # insert/update/delete, and ``commit``/``rollback`` on the default
+            # session; a configurable number of pool connections (write_pool_size
+            # + read_pool_size, defaults 3 write + 12 read) for self-managed
+            # ``execute`` / ``execute_batch`` AND ``select`` (select() now leases a
+            # read-lane connection instead of running on ``self.conn`` — see
+            # ``PostgreSQLDriver.select()`` and ``PostgreSQLOperations.select()``);
+            # ``begin_transaction`` / explicit ``transaction_id`` uses additional
             # connections from ``PostgreSQLTransactionManager`` (not the pool).
             self._pool_max_wait_seconds = float(
                 config.get("pool_max_wait_seconds", 30.0)
             )
             self._pool_write_size = int(config.get("pool_write_size", 3))
-            self._pool_read_size = int(config.get("pool_read_size", 2))
+            # Default 12 (bug 8e6acb34 fix); see the matching comment on the
+            # __init__ default above for the rationale. Still overridable.
+            self._pool_read_size = int(config.get("pool_read_size", 12))
             query_log_path = config.get("query_log_path")
             if query_log_path:
                 from ..query_journal import (
@@ -590,20 +601,50 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Return select."""
-        if not self._operations:
-            raise DriverOperationError("Operations manager not initialized")
+        """Return select.
+
+        Bug 8e6acb34 fix: routed through the pool's **read** lane instead of the
+        single main connection. Every ``select()`` is self-managed and never runs
+        inside an open transaction (it commits internally --
+        ``PostgreSQLOperations.select()``), so it is always safe to lease a
+        pooled connection here, unconditionally -- unlike ``execute()`` /
+        ``execute_batch()`` there is no explicit-transaction branch to consider:
+        callers needing transactional reads use ``execute()`` with a
+        ``transaction_id`` instead. Same reconnect-once-on-lost-connection
+        behavior as before; ``self._pool`` / ``self._operations`` are re-read
+        fresh on the retry since ``_reconnect_main()`` rebuilds both.
+        """
         try:
-            return self._operations.select(
+            return self._select_via_pool(
                 table_name, where, columns, limit, offset, order_by
             )
         except Exception as e:
             if _is_connection_lost_error(e):
                 self._reconnect_main()
-                return self._operations.select(
+                return self._select_via_pool(
                     table_name, where, columns, limit, offset, order_by
                 )
             raise
+
+    def _select_via_pool(
+        self,
+        table_name: str,
+        where: Optional[Dict[str, Any]],
+        columns: Optional[List[str]],
+        limit: Optional[int],
+        offset: Optional[int],
+        order_by: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """Lease a read-lane connection and run the select through it."""
+        if not self._operations:
+            raise DriverOperationError("Operations manager not initialized")
+        if not self._pool:
+            raise DriverOperationError("Database connection pool not initialized")
+        operations = self._operations
+        with self._pool.acquire(write=False) as pc:
+            return operations.select(
+                table_name, where, columns, limit, offset, order_by, connection=pc
+            )
 
     def execute_batch(
         self,

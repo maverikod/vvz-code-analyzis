@@ -726,7 +726,13 @@ async def _run_usages_idempotent_check(
         """
         files_processed = (data or {}).get("files_processed")
         files_skipped = (data or {}).get("files_skipped")
-        if files_processed == 1 and files_skipped == 0:
+        # The project is single-FIXTURE, not single-FILE: project bootstrap
+        # also drops auxiliary text files (e.g. .gitignore) into the tree, and
+        # since bug fe1cf739 update_indexes indexes those too, so
+        # files_processed legitimately exceeds 1. The anti-false-GREEN
+        # property lives entirely in files_skipped: if the mtime-unchanged
+        # guard had skipped our fixture file, it would be counted there.
+        if files_skipped == 0 and isinstance(files_processed, int) and files_processed >= 1:
             return None
         return _outcome(
             CHECK_NAME_USAGES_IDEMPOTENT,

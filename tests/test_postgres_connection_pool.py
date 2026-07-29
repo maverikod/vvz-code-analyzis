@@ -52,8 +52,10 @@ def _tracking_psycopg_module() -> Tuple[MagicMock, List[MagicMock]]:
     return mod, conns
 
 
-def test_pool_opens_five_connections(mock_psycopg_module: MagicMock) -> None:
-    """Verify test pool opens five connections."""
+def test_pool_construction_opens_zero_connections(
+    mock_psycopg_module: MagicMock,
+) -> None:
+    """Lazy pool (bug 8e6acb34 follow-up): construction never calls psycopg.connect()."""
     with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
             PostgreSQLConnectionPool,
@@ -61,7 +63,7 @@ def test_pool_opens_five_connections(mock_psycopg_module: MagicMock) -> None:
 
         pool = PostgreSQLConnectionPool({"dbname": "test"})
         try:
-            assert mock_psycopg_module.connect.call_count == 5
+            assert mock_psycopg_module.connect.call_count == 0
             snap = pool.snapshot()
             assert snap["write"]["capacity"] == 3
             assert snap["read"]["capacity"] == 2
@@ -69,6 +71,79 @@ def test_pool_opens_five_connections(mock_psycopg_module: MagicMock) -> None:
             assert snap["read"]["in_use"] == 0
             assert snap["write"]["waiters"] == 0
             assert snap["read"]["waiters"] == 0
+            assert snap["write"]["established"] == 0
+            assert snap["read"]["established"] == 0
+        finally:
+            pool.close_all()
+
+
+def test_pool_establishes_exactly_one_connection_per_slot_on_first_use(
+    mock_psycopg_module: MagicMock,
+) -> None:
+    """Each acquire() of a NEW slot connects once; re-acquiring the same slot reuses it."""
+    with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
+        from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
+            PostgreSQLConnectionPool,
+        )
+
+        pool = PostgreSQLConnectionPool({"dbname": "test"}, write_pool_size=1)
+        try:
+            assert mock_psycopg_module.connect.call_count == 0
+            with pool.acquire(write=True) as c1:
+                pass
+            assert mock_psycopg_module.connect.call_count == 1
+            assert pool.snapshot()["write"]["established"] == 1
+            # Re-acquiring the (single) write slot reuses the same connection
+            # -- no second connect().
+            with pool.acquire(write=True) as c2:
+                assert c2 is c1
+            assert mock_psycopg_module.connect.call_count == 1
+        finally:
+            pool.close_all()
+
+
+def test_pool_failed_lazy_connect_leaves_slot_retryable(
+    mock_psycopg_module: MagicMock,
+) -> None:
+    """A slot whose first connect() raises is released unestablished, not stuck busy."""
+    calls = {"n": 0}
+
+    def _connect(**_kwargs: object) -> MagicMock:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("connection refused")
+        c = MagicMock()
+        c.autocommit = False
+        c.rollback = MagicMock()
+        return c
+
+    mock_psycopg_module.connect.side_effect = _connect
+
+    with patch.dict(sys.modules, {"psycopg": mock_psycopg_module}):
+        from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
+            PostgreSQLConnectionPool,
+        )
+
+        pool = PostgreSQLConnectionPool({"dbname": "test"}, write_pool_size=1)
+        try:
+            with pytest.raises(DriverConnectionError) as ei:
+                with pool.acquire(write=True):
+                    pass
+            assert "Failed to lazily establish" in str(ei.value)
+            assert isinstance(ei.value.__cause__, OSError)
+
+            # Slot released as unestablished (not busy, not half-open) --
+            # snapshot shows idle capacity and no established connection.
+            snap = pool.snapshot()
+            assert snap["write"]["in_use"] == 0
+            assert snap["write"]["idle"] == 1
+            assert snap["write"]["established"] == 0
+
+            # A later acquire retries the same slot and succeeds.
+            with pool.acquire(write=True) as c:
+                assert c is not None
+            assert calls["n"] == 2
+            assert pool.snapshot()["write"]["established"] == 1
         finally:
             pool.close_all()
 
@@ -167,7 +242,7 @@ def test_four_threads_share_write_pool(mock_psycopg_module: MagicMock) -> None:
 
 
 def test_first_free_write_uses_lowest_slot() -> None:
-    """First write lease maps to the first built connection (index 0 in write lane)."""
+    """First write lease lazily connects and maps to write-lane slot 0."""
     mod, conns = _tracking_psycopg_module()
     with patch.dict(sys.modules, {"psycopg": mod}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
@@ -176,9 +251,10 @@ def test_first_free_write_uses_lowest_slot() -> None:
 
         pool = PostgreSQLConnectionPool({"dbname": "test"})
         try:
-            assert len(conns) == 5
+            assert len(conns) == 0, "lazy pool: nothing connected until first acquire"
             with pool.acquire(write=True) as c:
                 assert c is conns[0]
+            assert len(conns) == 1
         finally:
             pool.close_all()
 
@@ -213,7 +289,14 @@ def test_first_free_write_skips_busy_lower_index() -> None:
 
 
 def test_first_free_read_skips_busy_lower_index() -> None:
-    """Read lane is 2 connections; second read uses index 1 while index 0 is busy."""
+    """Read lane is 2 connections; second read uses slot 1 while slot 0 is busy.
+
+    Lazy pool: this test only ever acquires ``write=False``, so no write-lane
+    connection is ever established here -- the first two ``psycopg.connect()``
+    calls tracked by ``_tracking_psycopg_module`` correspond to read-lane
+    slots 0 and 1 (``conns[0]``, ``conns[1]``), not to write-then-read
+    construction order as under the old eager-connect pool.
+    """
     mod, conns = _tracking_psycopg_module()
     with patch.dict(sys.modules, {"psycopg": mod}):
         from code_analysis.core.database_driver_pkg.drivers.postgres_connection_pool import (
@@ -221,13 +304,12 @@ def test_first_free_read_skips_busy_lower_index() -> None:
         )
 
         pool = PostgreSQLConnectionPool({"dbname": "test"})
-        # conns[3], conns[4] are read pool in construction order
         release = threading.Event()
 
         def hold_read0() -> None:
             """Return hold read0."""
             with pool.acquire(write=False) as c:
-                assert c is conns[3]
+                assert c is conns[0]
                 release.wait(timeout=5.0)
 
         tr = threading.Thread(target=hold_read0)
@@ -235,7 +317,7 @@ def test_first_free_read_skips_busy_lower_index() -> None:
         time.sleep(0.05)
         try:
             with pool.acquire(write=False) as c:
-                assert c is conns[4]
+                assert c is conns[1]
         finally:
             release.set()
             tr.join(timeout=5.0)
@@ -341,7 +423,7 @@ def test_read_lease_not_blocked_when_all_write_slots_busy() -> None:
         )
 
         pool = PostgreSQLConnectionPool({"dbname": "test"})
-        assert len(conns) == 5
+        assert len(conns) == 0, "lazy pool: nothing connected until first acquire"
         started = threading.Barrier(3 + 1)
         release_writes = threading.Event()
         errors: list[BaseException] = []
@@ -359,11 +441,18 @@ def test_read_lease_not_blocked_when_all_write_slots_busy() -> None:
         for t in threads:
             t.start()
         started.wait(timeout=5.0)
+        # All 3 write threads reached the barrier -> each already completed
+        # its acquire() (and therefore its lazy connect) before this point,
+        # so exactly 3 connections exist now, all write-lane.
+        assert len(conns) == 3
         try:
             t0 = time.monotonic()
             with pool.acquire(write=False) as c:
                 elapsed = time.monotonic() - t0
-                assert c is conns[3] or c is conns[4]
+                # The read lane has never been touched before this call, so
+                # this is deterministically the 4th (and only) connect() so
+                # far -- conns[3].
+                assert c is conns[3]
                 assert (
                     elapsed < 0.8
                 ), "read acquire should not wait for long write lane when read idle"

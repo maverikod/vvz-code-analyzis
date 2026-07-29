@@ -93,8 +93,18 @@ def test_select_releases_leased_slot_when_body_raises() -> None:
     assert released["n"] == 1, "slot must be released even though the body raised"
 
 
-def _tracking_psycopg_module() -> Tuple[MagicMock, List[MagicMock]]:
-    """psycopg mock recording each connection in creation order (write lane first)."""
+def _tracking_psycopg_module(
+    *, on_connect: Any = None
+) -> Tuple[MagicMock, List[MagicMock]]:
+    """psycopg mock recording each connection in creation order.
+
+    ``on_connect``, if given, is called with each newly created connection
+    right after creation -- the pool is LAZY (bug 8e6acb34 follow-up), so
+    there is nothing to configure at construction time; a slot's connection
+    object only exists once something actually acquires it. Tests that need
+    per-connection behavior (e.g. a blocking cursor) attach it via this hook
+    instead of indexing into ``conns`` before any connection exists.
+    """
     conns: List[MagicMock] = []
     mod = MagicMock()
 
@@ -103,6 +113,8 @@ def _tracking_psycopg_module() -> Tuple[MagicMock, List[MagicMock]]:
         c.autocommit = False
         c.rollback = MagicMock()
         conns.append(c)
+        if on_connect is not None:
+            on_connect(c)
         return c
 
     mod.connect.side_effect = _connect
@@ -130,9 +142,7 @@ def _configure_select_cursor(conn: MagicMock, *, on_execute: Any = None) -> Magi
     return cursor
 
 
-def _build_saturatable_pool(
-    conns: List[MagicMock], mod: MagicMock, *, max_wait_seconds: float
-) -> Any:
+def _build_saturatable_pool(mod: MagicMock, *, max_wait_seconds: float) -> Any:
     """Construct a real 1-write/2-read pool with mocked psycopg (import-time only).
 
     ``psycopg`` is mocked ONLY for the constructor's own ``import psycopg`` /
@@ -161,29 +171,32 @@ def _build_saturatable_pool(
 
 def test_select_read_lane_exhaustion_blocks_then_succeeds() -> None:
     """(c) With read_pool_size=2, a 3rd concurrent select waits, then completes."""
-    mod, conns = _tracking_psycopg_module()
-    pool = _build_saturatable_pool(conns, mod, max_wait_seconds=5.0)
+    release_readers = threading.Event()
+    both_holding_event = threading.Event()
+    lock = threading.Lock()
+    call_count = {"n": 0}
+
+    def blocking_execute(*_a: object, **_k: object) -> None:
+        with lock:
+            call_count["n"] += 1
+            n = call_count["n"]
+        if n <= 2:
+            if n == 2:
+                both_holding_event.set()
+            release_readers.wait(timeout=5.0)
+        # 3rd+ call: release_readers is already set by the time any
+        # further select reaches here, so it falls straight through.
+
+    # Lazy pool: this test only ever acquires read=False (via d.select()), so
+    # every connection psycopg.connect() ever creates here is a read-lane
+    # slot -- attach the blocking cursor to each one as it's lazily created.
+    def configure_conn(c: MagicMock) -> None:
+        _configure_select_cursor(c, on_execute=blocking_execute)
+
+    mod, conns = _tracking_psycopg_module(on_connect=configure_conn)
+    pool = _build_saturatable_pool(mod, max_wait_seconds=5.0)
     try:
-        # Construction order: conns[0]=write, conns[1..2]=read lane.
-        assert len(conns) == 3
-        release_readers = threading.Event()
-        both_holding_event = threading.Event()
-        lock = threading.Lock()
-        call_count = {"n": 0}
-
-        def blocking_execute(*_a: object, **_k: object) -> None:
-            with lock:
-                call_count["n"] += 1
-                n = call_count["n"]
-            if n <= 2:
-                if n == 2:
-                    both_holding_event.set()
-                release_readers.wait(timeout=5.0)
-            # 3rd+ call: release_readers is already set by the time any
-            # further select reaches here, so it falls straight through.
-
-        _configure_select_cursor(conns[1], on_execute=blocking_execute)
-        _configure_select_cursor(conns[2], on_execute=blocking_execute)
+        assert len(conns) == 0, "lazy pool: nothing connected until first acquire"
 
         d = _real_pool_driver(conns, pool)
         errors: List[BaseException] = []
@@ -232,26 +245,29 @@ def test_select_read_lane_exhaustion_blocks_then_succeeds() -> None:
 
 def test_select_read_lane_timeout_raises_driver_operation_error() -> None:
     """(c) Exceeding max_wait_seconds on a saturated read lane raises DriverOperationError."""
-    mod, conns = _tracking_psycopg_module()
-    pool = _build_saturatable_pool(conns, mod, max_wait_seconds=0.12)
+    release_readers = threading.Event()
+    both_holding_event = threading.Event()
+    lock = threading.Lock()
+    call_count = {"n": 0}
+
+    def blocking_execute(*_a: object, **_k: object) -> None:
+        with lock:
+            call_count["n"] += 1
+            n = call_count["n"]
+        if n <= 2:
+            if n == 2:
+                both_holding_event.set()
+            release_readers.wait(timeout=5.0)
+
+    # Lazy pool: only read=False is ever acquired here, so every connection
+    # created is a read-lane slot -- configure each as it's lazily created.
+    def configure_conn(c: MagicMock) -> None:
+        _configure_select_cursor(c, on_execute=blocking_execute)
+
+    mod, conns = _tracking_psycopg_module(on_connect=configure_conn)
+    pool = _build_saturatable_pool(mod, max_wait_seconds=0.12)
     try:
-        assert len(conns) == 3
-        release_readers = threading.Event()
-        both_holding_event = threading.Event()
-        lock = threading.Lock()
-        call_count = {"n": 0}
-
-        def blocking_execute(*_a: object, **_k: object) -> None:
-            with lock:
-                call_count["n"] += 1
-                n = call_count["n"]
-            if n <= 2:
-                if n == 2:
-                    both_holding_event.set()
-                release_readers.wait(timeout=5.0)
-
-        _configure_select_cursor(conns[1], on_execute=blocking_execute)
-        _configure_select_cursor(conns[2], on_execute=blocking_execute)
+        assert len(conns) == 0, "lazy pool: nothing connected until first acquire"
 
         d = _real_pool_driver(conns, pool)
         errors: List[BaseException] = []

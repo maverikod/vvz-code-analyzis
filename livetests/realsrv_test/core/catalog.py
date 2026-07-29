@@ -236,17 +236,12 @@ MISSING = _Missing()
 # generic-by-property-name providers in fixture_value_for(). Needed when a
 # command's required property name doesn't hint at the right fixture value
 # (list_yaml_blocks requires "file_path" but only accepts .yaml/.yml — the
-# generic "file_path" provider defaults to the seeded .py fixture) or needs a
-# value no generic provider covers (get_file_lines' start_line/end_line pair).
+# generic "file_path" provider defaults to the seeded .py fixture).
 _PER_COMMAND_PROPERTY_OVERRIDES: Dict[
     str, Dict[str, Callable[["FixtureContext"], Any]]
 ] = {
     "list_yaml_blocks": {
         "file_path": lambda fixtures: fixtures.yaml_file_path,
-    },
-    "get_file_lines": {
-        "start_line": lambda fixtures: 1,
-        "end_line": lambda fixtures: 10,
     },
 }
 

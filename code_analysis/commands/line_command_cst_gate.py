@@ -1,9 +1,12 @@
 """
-Shared LibCST parse gate for get_file_lines / replace_file_lines.
+Shared LibCST parse gate for internal raw line-range read/write helpers.
 
-When a Python file parses successfully, line-based commands normally return
-USE_CST_COMMANDS unless config allows healthy line ops or an internal
-router (e.g. read_project_text_file → get_file_lines) sets allow_healthy_line_ops.
+When a Python file parses successfully, line-based read/write normally
+returns USE_CST_COMMANDS unless config allows healthy line ops or an internal
+router (e.g. read_project_text_file / universal_file_read routing to the
+internal raw-line-range reader that used to be the get_file_lines command,
+removed from the public surface per TODO a7091850) sets
+allow_healthy_line_ops.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

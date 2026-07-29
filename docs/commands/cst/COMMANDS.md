@@ -9,7 +9,6 @@ Each command is described in a separate file: purpose, arguments, return format,
 
 | Command | Description | Doc |
 |---------|-------------|-----|
-| get_file_lines | Raw file lines in range (no parsing) | [get_file_lines.md](get_file_lines.md) |
 | cst_load_file | Load file into CST tree | [cst_load_file.md](cst_load_file.md) |
 | cst_save_tree | Save CST tree to file (atomic) | [cst_save_tree.md](cst_save_tree.md) |
 | cst_reload_tree | Reload CST tree from file | [cst_reload_tree.md](cst_reload_tree.md) |

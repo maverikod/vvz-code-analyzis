@@ -43,16 +43,14 @@ def register_commands_part1(reg: registry) -> None:
     except ImportError:
         pass
 
-    # Read-only file content (no edit workflow): preview, search, raw line ranges.
-    try:
-        from .commands.get_file_lines_command import GetFileLinesCommand
-
-        reg.register(GetFileLinesCommand, "custom")
-        logger.info("✅ Registered get_file_lines")
-    except ImportError as e:
-        logger.warning("Failed to import get_file_lines command: %s", e)
-    except Exception as e:
-        logger.error("Failed to register get_file_lines: %s", e, exc_info=True)
+    # get_file_lines: removed from the public server surface (TODO a7091850).
+    # GetFileLinesCommand still exists as an internal (unregistered) helper --
+    # read_project_text_file / universal_file_read route Python-ecosystem line
+    # reads through it directly -- but it is intentionally never registered
+    # here, matching the project's established pattern for removed commands
+    # (see client/code_analysis_client/server_api.py LEGACY_REMOVED_COMMANDS /
+    # CST_REMOVED_COMMANDS: modules may exist in the repo but are not
+    # registered).
 
     # On-disk filesystem ops (not content editing).
     try:

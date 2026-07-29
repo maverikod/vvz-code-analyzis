@@ -230,7 +230,10 @@ def build_parser(
     gen_parser.add_argument(
         "--allow-line-commands-on-healthy-files",
         action="store_true",
-        help="Allow get_file_lines/replace_file_lines on parseable .py files (default: False)",
+        help=(
+            "Allow raw line-range read/write (internal get_file_lines routing, "
+            "replace_file_lines) on parseable .py files (default: False)"
+        ),
     )
     gen_parser.add_argument(
         "--indexing-worker-enabled",

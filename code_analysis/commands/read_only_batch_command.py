@@ -30,6 +30,11 @@ from .read_only_batch_whitelist import (
     read_only_batch_whitelist_doc,
     validate_command,
 )
+from ..core.list_pagination import (
+    build_list_page_payload,
+    paginate_sequence,
+    resolve_list_pagination,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,23 +111,47 @@ async def run_read_only_batch(
     output_dir: str,
     *,
     registry: Optional[CommandRegistry] = None,
+    pagination_requested: bool = False,
+    page_size: Optional[int] = None,
+    block_position: Optional[int] = None,
+    offset: Optional[int] = None,
+    limit: Optional[int] = None,
 ) -> dict[str, Any]:
     """Orchestrate batch execution of read-only commands.
 
     Validates every command name against the hardcoded whitelist (no dynamic
     extension). Executes each invocation in order, then either returns
-    inline results or delegates to write_oversized_batch_output and returns
-    file metadata. Never returns oversized inline payload when over threshold.
+    inline results, a paginated inline page (TODO 9c2018a3), or delegates to
+    write_oversized_batch_output and returns file metadata. Never returns
+    oversized inline payload when over threshold and pagination was not
+    requested.
 
     Args:
         invocations: List of {"command": str, "params": dict} to run.
-        max_response_bytes: Size limit in bytes; above this, output goes to file.
-        output_dir: Directory for oversized output file (used only when over limit).
+        max_response_bytes: Size limit in bytes; above this (and pagination
+            not requested), output goes to file.
+        output_dir: Directory for oversized output file (used only when over
+            limit and pagination not requested).
         registry: Command registry to resolve command instances. Defaults to
             the global MCP registry (populated at server startup).
+        pagination_requested: When True, skip the size-threshold/file-overflow
+            path entirely and return one bounded, paginated inline page over
+            ``results`` instead (same envelope/bounds convention as
+            ``list_project_files`` / ``search`` -- see
+            :mod:`code_analysis.core.list_pagination`). All invocations still
+            run every call (this command has no server-side session to
+            resume from); pagination only bounds the *response* size.
+        page_size: Paginated mode: rows per page (default 20, max 200).
+        block_position: Paginated mode: 1-based page index (default 1).
+        offset: Paginated mode: legacy row offset, ignored when
+            ``block_position`` is set.
+        limit: Paginated mode: legacy alias for ``page_size``.
 
     Returns:
         Inline mode: {"inline": True, "results": [{"command": str, "result": dict}, ...]}.
+        Paginated inline mode: {"inline": True, "paginated": True,
+            "items"/"results": [...page slice...], "count", "total", "page_size",
+            "block_position", "has_more", "offset"}.
         File mode: {"inline": False, "output_file": str, "file_size": int,
                     "results_metadata": [{"command", "size", "offset", "length"}, ...]}.
         Validation error: {"inline": False, "error": str, "error_code": str, ...}.
@@ -168,6 +197,27 @@ async def run_read_only_batch(
 
         payload = _result_to_payload(result)
         results.append(_ResultEntry(command=command_name, result=payload))
+
+    if pagination_requested:
+        page_size_r, offset_r, block_position_r = resolve_list_pagination(
+            {
+                "page_size": page_size,
+                "block_position": block_position,
+                "offset": offset,
+                "limit": limit,
+            }
+        )
+        page_items = paginate_sequence(results, offset=offset_r, page_size=page_size_r)
+        page_payload = build_list_page_payload(
+            items=page_items,
+            total=len(results),
+            page_size=page_size_r,
+            block_position=block_position_r,
+            offset=offset_r,
+            legacy_items_key="results",
+        )
+        page_payload["inline"] = True
+        return page_payload
 
     size = _serialized_size_bytes(results)
     if size <= max_response_bytes:

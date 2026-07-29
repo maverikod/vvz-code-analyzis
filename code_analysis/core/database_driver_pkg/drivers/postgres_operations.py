@@ -206,62 +206,78 @@ class PostgreSQLOperations:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        *,
+        connection: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
-        """Return select."""
-        if not self.conn:
+        """Return select.
+
+        Unlike insert/update/delete (main connection + ``self._lock``), select()
+        never touches ``self.conn`` and takes no lock: it always runs on a
+        caller-supplied ``connection`` (bug 8e6acb34 -- routing reads off the
+        single main connection under an unbounded lock was a process-wide read
+        bottleneck). ``PostgreSQLDriver.select()`` is the only production caller;
+        it leases ``connection`` from ``PostgreSQLConnectionPool``'s read lane via
+        ``pool.acquire(write=False)``, mirroring how ``run_execute`` receives an
+        already-acquired connection rather than acquiring one itself.
+
+        ``connection`` is keyword-only and required in practice -- ``None`` raises
+        ``DriverOperationError`` immediately, the same contract as the old
+        "connection not established" guard.
+        """
+        conn = connection
+        if conn is None:
             raise DriverOperationError("Database connection not established")
 
-        with self._lock:
-            try:
-                select_clause = ", ".join(columns) if columns else "*"
-                sql = f'SELECT {select_clause} FROM "{table_name}"'
+        try:
+            select_clause = ", ".join(columns) if columns else "*"
+            sql = f'SELECT {select_clause} FROM "{table_name}"'
 
-                where_values: List[Any] = []
-                if where:
-                    where_clauses, where_values = _postgres_where_clauses(where)
-                    sql += f' WHERE {" AND ".join(where_clauses)}'
+            where_values: List[Any] = []
+            if where:
+                where_clauses, where_values = _postgres_where_clauses(where)
+                sql += f' WHERE {" AND ".join(where_clauses)}'
 
-                if order_by:
-                    sql += f' ORDER BY {", ".join(order_by)}'
+            if order_by:
+                sql += f' ORDER BY {", ".join(order_by)}'
 
-                if limit is not None:
-                    sql += f" LIMIT {int(limit)}"
-                    if offset is not None:
-                        sql += f" OFFSET {int(offset)}"
-                elif offset is not None:
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
+                if offset is not None:
                     sql += f" OFFSET {int(offset)}"
+            elif offset is not None:
+                sql += f" OFFSET {int(offset)}"
 
-                cursor = self.conn.cursor()
-                try:
-                    cursor.execute(sql, tuple(where_values))
-                    cols = (
-                        [d[0] for d in cursor.description] if cursor.description else []
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql, tuple(where_values))
+                cols = (
+                    [d[0] for d in cursor.description] if cursor.description else []
+                )
+                rows = cursor.fetchall()
+                out = [dict(zip(cols, row)) for row in rows]
+            finally:
+                cursor.close()
+            # With autocommit=False, a SELECT opens an implicit transaction. If we
+            # return without commit, the session stays "idle in transaction" until
+            # the next lease of this pooled connection — long CPU/IO gaps can hit
+            # idle_in_transaction_session_timeout and kill the connection, breaking
+            # whichever caller next leases this slot. End the read-only txn here.
+            try:
+                conn.commit()
+            except Exception as commit_err:
+                msg = str(commit_err).lower()
+                if "no transaction" in msg or "cannot commit" in msg:
+                    logger.debug(
+                        "PostgreSQL select: commit skipped (%s)", commit_err
                     )
-                    rows = cursor.fetchall()
-                    out = [dict(zip(cols, row)) for row in rows]
-                finally:
-                    cursor.close()
-                # With autocommit=False, a SELECT opens an implicit transaction. If we
-                # return without commit, the session stays "idle in transaction" until
-                # the next RPC — long CPU/IO gaps (e.g. file_watcher scan) can hit
-                # idle_in_transaction_session_timeout and kill the connection, breaking
-                # unrelated commands (e.g. list_projects). End the read-only txn here.
-                try:
-                    self.conn.commit()
-                except Exception as commit_err:
-                    msg = str(commit_err).lower()
-                    if "no transaction" in msg or "cannot commit" in msg:
-                        logger.debug(
-                            "PostgreSQL select: commit skipped (%s)", commit_err
-                        )
-                    else:
-                        raise DriverOperationError(
-                            f"Failed to commit after select: {commit_err}"
-                        ) from commit_err
-                return out
-            except Exception as e:
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-                raise DriverOperationError(f"Failed to select rows: {e}") from e
+                else:
+                    raise DriverOperationError(
+                        f"Failed to commit after select: {commit_err}"
+                    ) from commit_err
+            return out
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise DriverOperationError(f"Failed to select rows: {e}") from e

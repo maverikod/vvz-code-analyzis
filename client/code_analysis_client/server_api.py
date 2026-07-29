@@ -36,6 +36,11 @@ LEGACY_REMOVED_COMMANDS: FrozenSet[str] = frozenset(
         "create_text_file",
         "replace_file_lines",
         "universal_file_search",
+        # TODO a7091850: removed from the public surface. GetFileLinesCommand
+        # still exists as an internal (unregistered) helper for
+        # read_project_text_file / universal_file_read Python-ecosystem
+        # line-range routing.
+        "get_file_lines",
     }
 )
 
@@ -107,7 +112,6 @@ REMOVED_COMMANDS: FrozenSet[str] = (
 FILE_CONTENT_READ_COMMANDS: FrozenSet[str] = frozenset(
     {
         "universal_file_preview",
-        "get_file_lines",
         "search",
         "search_get_page",
         "search_get_status",

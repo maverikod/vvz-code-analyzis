@@ -12,7 +12,6 @@ CST commands stay registered for **server development, scripts, and tests**. The
 
 | MCP Command Name   | Class                     | Source File                              |
 |--------------------|---------------------------|------------------------------------------|
-| get_file_lines     | GetFileLinesCommand        | `commands/get_file_lines_command.py`     |
 | cst_load_file      | CSTLoadFileCommand        | `commands/cst_load_file_command.py`      |
 | cst_save_tree      | CSTSaveTreeCommand        | `commands/cst_save_tree_command.py`      |
 | cst_reload_tree    | CSTReloadTreeCommand      | `commands/cst_reload_tree_command.py`    |

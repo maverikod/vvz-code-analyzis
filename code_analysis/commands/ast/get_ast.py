@@ -7,14 +7,21 @@ email: vasilyvz@gmail.com
 
 import ast
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .file_resolution import resolve_project_file_record
+from .get_ast_pagination import ALLOWED_NODE_FIELDS, flatten_ast_nodes
 from ..base_mcp_command import BaseMCPCommand
 from ...core.database_driver_pkg.domain.ast_cst import get_ast as get_ast_via_driver
 from ...core.exceptions import ValidationError
+from ...core.list_pagination import (
+    build_list_page_payload,
+    list_pagination_schema_properties,
+    paginate_sequence,
+    resolve_list_pagination,
+)
 
 
 class GetASTMCPCommand(BaseMCPCommand):
@@ -166,6 +173,7 @@ class GetASTMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Return the command input schema."""
+        pagination = list_pagination_schema_properties()
         return {
             "type": "object",
             "properties": {
@@ -182,16 +190,123 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "description": "Include full AST JSON in response",
                     "default": True,
                 },
+                **pagination,
+                "node_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Node-kind projection: only return nodes whose AST class name "
+                        "(e.g. ``FunctionDef``, ``ClassDef``, ``Import``) is in this "
+                        "list. Passing this parameter (even an empty list) switches the "
+                        "response to the bounded, paginated node-listing mode "
+                        "(``items``/``nodes``) instead of the unbounded whole-tree "
+                        "``ast`` payload -- same trigger family as ``page_size`` / "
+                        "``block_position`` / ``offset`` / ``limit`` / ``fields``."
+                    ),
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(ALLOWED_NODE_FIELDS)},
+                    "description": (
+                        "Field projection for the paginated node-listing response: "
+                        "restrict each node dict to these field names (subset of "
+                        f"{list(ALLOWED_NODE_FIELDS)}). Default: every one of them "
+                        "present on the node. Passing this parameter (even an empty "
+                        "list) also switches on the paginated node-listing mode."
+                    ),
+                },
             },
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
+
+    @staticmethod
+    def _pagination_requested(params: Dict[str, Any]) -> bool:
+        """True when any pagination or node-projection parameter was supplied.
+
+        Presence (even an empty list/zero) of any of these keys switches
+        ``get_ast`` from the unbounded whole-tree ``ast`` payload to the
+        bounded, paginated node-listing response (TODO 1b6cc124).
+        """
+        trigger_keys = (
+            "page_size",
+            "block_position",
+            "offset",
+            "limit",
+            "node_types",
+            "fields",
+        )
+        return any(params.get(key) is not None for key in trigger_keys)
+
+    def _paginated_node_listing_response(
+        self,
+        *,
+        file_record: Dict[str, Any],
+        project_root: Path,
+        normalized_file_path: str,
+        file_id: Any,
+        params: Dict[str, Any],
+    ) -> SuccessResult | ErrorResult:
+        """Bounded, paginated AST node listing (TODO 1b6cc124).
+
+        Always parses fresh from disk (never the DB-stored ``ast_json`` blob;
+        see :mod:`code_analysis.commands.ast.get_ast_pagination`) and slices
+        the flattened node list with the shared list-pagination convention
+        (:mod:`code_analysis.core.list_pagination`), same envelope shape and
+        bounds as ``list_project_files`` / ``search``.
+        """
+        fs_path = self._resolve_file_system_path(
+            file_record=file_record,
+            project_root=project_root,
+            normalized_file_path=normalized_file_path,
+        )
+        if not (fs_path.exists() and fs_path.is_file()):
+            return ErrorResult(
+                message=(
+                    "File not found on disk for paginated node listing: "
+                    f"{normalized_file_path}"
+                ),
+                code="FILE_NOT_FOUND",  # type: ignore[arg-type]
+            )
+        try:
+            source = fs_path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+        except (OSError, SyntaxError, ValueError) as e:
+            return ErrorResult(
+                message=f"Unable to parse file for paginated node listing: {e}",
+                code="GET_AST_ERROR",  # type: ignore[arg-type]
+            )
+
+        all_nodes = flatten_ast_nodes(
+            tree,
+            node_types=params.get("node_types"),
+            fields=params.get("fields"),
+        )
+        page_size, offset, block_position = resolve_list_pagination(params)
+        page_items = paginate_sequence(all_nodes, offset=offset, page_size=page_size)
+        payload = build_list_page_payload(
+            items=page_items,
+            total=len(all_nodes),
+            page_size=page_size,
+            block_position=block_position,
+            offset=offset,
+            legacy_items_key="nodes",
+        )
+        payload["file_path"] = normalized_file_path
+        payload["file_id"] = file_id
+        return SuccessResult(data=payload)
 
     async def execute(
         self,
         project_id: str,
         file_path: str,
         include_json: bool = True,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
+        node_types: Optional[List[str]] = None,
+        fields: Optional[List[str]] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """Execute the command."""
@@ -199,6 +314,12 @@ class GetASTMCPCommand(BaseMCPCommand):
             "project_id": project_id,
             "file_path": file_path,
             "include_json": include_json,
+            "page_size": page_size,
+            "block_position": block_position,
+            "offset": offset,
+            "limit": limit,
+            "node_types": node_types,
+            "fields": fields,
         }
         params.update(kwargs)
         try:
@@ -208,6 +329,7 @@ class GetASTMCPCommand(BaseMCPCommand):
         project_id = params["project_id"]
         file_path = params["file_path"]
         include_json = bool(params.get("include_json", True))
+        pagination_requested = self._pagination_requested(params)
 
         try:
             root_path = self._resolve_project_root(project_id)
@@ -241,6 +363,16 @@ class GetASTMCPCommand(BaseMCPCommand):
             ast_data = get_ast_via_driver(db, file_id)
 
             if ast_data is not None:
+                if pagination_requested:
+                    response = self._paginated_node_listing_response(
+                        file_record=file_record,
+                        project_root=root_path,
+                        normalized_file_path=normalized_file_path,
+                        file_id=file_id,
+                        params=params,
+                    )
+                    db.disconnect()
+                    return response
                 result = {
                     "success": True,
                     "file_path": normalized_file_path,
@@ -262,6 +394,16 @@ class GetASTMCPCommand(BaseMCPCommand):
                 db, project_id=project_id, file_id=file_id
             )
             if searchable_index_exists:
+                if pagination_requested:
+                    response = self._paginated_node_listing_response(
+                        file_record=file_record,
+                        project_root=root_path,
+                        normalized_file_path=normalized_file_path,
+                        file_id=file_id,
+                        params=params,
+                    )
+                    db.disconnect()
+                    return response
                 result = {
                     "success": True,
                     "file_path": normalized_file_path,
@@ -338,7 +480,19 @@ class GetASTMCPCommand(BaseMCPCommand):
                 "- AST must be stored in database (created during file analysis)\n"
                 "- AST JSON can be large for big files\n"
                 "- Set include_json=false to get metadata only\n"
-                "- Path resolution is flexible to handle versioned files"
+                "- Path resolution is flexible to handle versioned files\n\n"
+                "Paginated node listing (TODO 1b6cc124):\n"
+                "Passing any of page_size / block_position / offset / limit / "
+                "node_types / fields (even an empty list) switches the response to a "
+                "bounded, paginated node-listing mode instead of the unbounded whole-"
+                "tree ast payload -- same envelope/bounds convention as "
+                "list_project_files / search (page_size default 20, max 200; "
+                "block_position 1-based; offset legacy alternative). The file is "
+                "re-parsed from disk for this mode. node_types filters to AST class "
+                "names (e.g. FunctionDef, ClassDef); fields restricts each node dict "
+                "to a subset of lineno/col_offset/end_lineno/end_col_offset/name/id. "
+                "Response carries items (== nodes), count, total, page_size, "
+                "block_position, has_more, offset, paginated: true."
             ),
             "parameters": {
                 "project_id": {
@@ -365,11 +519,62 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "description": (
                         "If true, includes full AST JSON in response. If false, returns only "
                         "metadata (file_path, file_id as UUID string for files.id). Default is true. "
-                        "Set to false for large files to reduce response size."
+                        "Set to false for large files to reduce response size. Ignored when "
+                        "paginated node-listing mode is active (see page_size/node_types/fields)."
                     ),
                     "type": "boolean",
                     "required": False,
                     "default": True,
+                },
+                "page_size": {
+                    "description": (
+                        "Paginated node-listing mode: rows per page (default 20, max 200). "
+                        "Same convention as list_project_files / search page_size. Presence of "
+                        "this parameter switches on paginated node-listing mode."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 20,
+                },
+                "block_position": {
+                    "description": (
+                        "Paginated node-listing mode: 1-based page index (default 1). "
+                        "Increment to fetch the next page; same contract as search_get_page."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 1,
+                },
+                "offset": {
+                    "description": (
+                        "Paginated node-listing mode: legacy row offset, ignored when "
+                        "block_position is set."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "limit": {
+                    "description": "Paginated node-listing mode: legacy alias for page_size.",
+                    "type": "integer",
+                    "required": False,
+                },
+                "node_types": {
+                    "description": (
+                        "Node-kind projection: AST class names to include (e.g. FunctionDef, "
+                        "ClassDef). Presence (even []) switches on paginated node-listing mode."
+                    ),
+                    "type": "array",
+                    "required": False,
+                    "examples": [["FunctionDef", "ClassDef"]],
+                },
+                "fields": {
+                    "description": (
+                        "Field projection for paginated node-listing mode: subset of "
+                        "lineno/col_offset/end_lineno/end_col_offset/name/id to include per node."
+                    ),
+                    "type": "array",
+                    "required": False,
+                    "examples": [["lineno", "name"]],
                 },
             },
             "usage_examples": [
@@ -382,6 +587,20 @@ class GetASTMCPCommand(BaseMCPCommand):
                     },
                     "explanation": (
                         "Retrieves full AST JSON for src/main.py. Use for detailed AST analysis."
+                    ),
+                },
+                {
+                    "description": "Paginated, projected node listing for a large file",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "src/big_module.py",
+                        "node_types": ["FunctionDef", "ClassDef"],
+                        "page_size": 50,
+                        "block_position": 1,
+                    },
+                    "explanation": (
+                        "Returns page 1 (up to 50 entries) of only FunctionDef/ClassDef nodes, "
+                        "bounded response size regardless of file size."
                     ),
                 },
                 {
@@ -472,6 +691,24 @@ class GetASTMCPCommand(BaseMCPCommand):
                         "file_path": "src/main.py",
                         "file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
                     },
+                    "example_paginated_node_listing": {
+                        "success": True,
+                        "paginated": True,
+                        "file_path": "src/big_module.py",
+                        "file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+                        "items": [
+                            {"node_type": "FunctionDef", "name": "main", "lineno": 1},
+                        ],
+                        "nodes": [
+                            {"node_type": "FunctionDef", "name": "main", "lineno": 1},
+                        ],
+                        "count": 1,
+                        "total": 42,
+                        "page_size": 50,
+                        "block_position": 1,
+                        "has_more": False,
+                        "offset": 0,
+                    },
                 },
                 "error": {
                     "description": "Command failed",
@@ -481,6 +718,8 @@ class GetASTMCPCommand(BaseMCPCommand):
             },
             "best_practices": [
                 "Set include_json=false for large files to reduce response size",
+                "For large files, prefer paginated node listing (page_size/node_types/"
+                "fields) over the unbounded whole-tree ast payload",
                 "Use this command to verify AST exists before AST-dependent operations",
                 "AST JSON follows Python AST module structure for compatibility",
                 "Path resolution is flexible - use relative paths when possible",

@@ -3,9 +3,10 @@ Shared guards for read_project_text_file / write_project_text_lines.
 
 These commands target non-code plain text (docs, data-ish configs, etc.) and
 other blocked program-source suffixes. **Read:** Python paths are delegated inside
-``read_project_text_file`` to ``get_file_lines``. **Write:** ``write_project_text_lines``
-rejects Python and other blocked source suffixes; use ``replace_file_lines`` or CST
-commands for Python.
+``read_project_text_file`` to the internal raw line-range reader (formerly the
+``get_file_lines`` command, removed from the public surface per TODO a7091850).
+**Write:** ``write_project_text_lines`` rejects Python and other blocked source
+suffixes; use ``replace_file_lines`` or CST commands for Python.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -164,7 +165,8 @@ def reject_if_source_code_text_path(file_path: str) -> Optional[ErrorResult]:
     """
     Enforce the full policy: refuse Python/* and other blocked source suffixes.
 
-    ``read_project_text_file`` routes Python paths to ``get_file_lines``; this guard is
+    ``read_project_text_file`` routes Python paths to the internal raw line-range
+    reader (formerly ``get_file_lines``, removed per TODO a7091850); this guard is
     still used for callers that need the full reject-both policy. ``write_project_text_lines``
     applies this policy (no Python writes).
     """

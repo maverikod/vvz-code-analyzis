@@ -17,7 +17,6 @@ import code_analysis.hooks  # noqa: F401 — register_custom_commands_hook
 from code_analysis.commands.universal_file_preview_command import (
     UniversalFilePreviewCommand,
 )
-from code_analysis.commands.get_file_lines_command import GetFileLinesCommand
 from code_analysis_client.server_api import (
     EDITING_REMOVED_COMMANDS,
     FILE_CONTENT_READ_COMMANDS,
@@ -56,14 +55,10 @@ def test_each_removed_command_absent(name: str) -> None:
 def test_registered_read_only_universal_file_command_classes() -> None:
     """Verify test registered read only universal file command classes."""
     cls_preview = registry.get_command("universal_file_preview")
-    cls_lines = registry.get_command("get_file_lines")
 
     assert cls_preview is UniversalFilePreviewCommand
     assert cls_preview.category == "preview"
     assert cls_preview.name == "universal_file_preview"
-
-    assert cls_lines is GetFileLinesCommand
-    assert cls_lines.name == "get_file_lines"
 
 
 def test_editing_removed_subset_covers_legacy_and_edit_session() -> None:

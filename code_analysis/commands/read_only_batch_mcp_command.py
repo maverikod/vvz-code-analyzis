@@ -27,7 +27,13 @@ from ..core.constants import (
     DEFAULT_BATCH_MAX_RESPONSE_BYTES,
     DEFAULT_BATCH_OUTPUT_DIR,
 )
+from ..core.list_pagination import list_pagination_schema_properties
 from ..core.storage_paths import resolve_batch_output_dir
+
+# Presence of any of these params (even 0 / an explicit falsy value) requests
+# the paginated inline retrieval mode (TODO 9c2018a3) instead of the default
+# inline-or-file behavior.
+_PAGINATION_TRIGGER_KEYS = ("page_size", "block_position", "offset", "limit")
 
 
 class ReadOnlyBatchMCPCommand(BaseMCPCommand):
@@ -38,7 +44,9 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
     descr = (
         "Run multiple read-only commands in one request. When total response "
         "size exceeds threshold, results are written to a file and the "
-        "response contains output_file path and results_metadata."
+        "response contains output_file path and results_metadata. Pass "
+        "page_size/block_position/offset/limit for paginated inline "
+        "retrieval instead (successive result pages, no filesystem output)."
     )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
@@ -49,6 +57,14 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
     def get_schema(cls) -> Dict[str, Any]:
         """Input schema: invocations list and optional overrides."""
         whitelist = sorted(READ_ONLY_BATCH_WHITELIST)
+        pagination = list_pagination_schema_properties()
+        for prop in pagination.values():
+            prop["description"] = (
+                str(prop["description"])
+                + " Presence of this parameter switches on paginated inline "
+                "retrieval (TODO 9c2018a3): a bounded page of `results` returned "
+                "inline, never written to a file."
+            )
         return {
             "type": "object",
             "properties": {
@@ -88,9 +104,11 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                         "Optional override: max inline response size in bytes. "
                         "Above this, output is written to a file and response "
                         "contains output_file and results_metadata. "
-                        "If omitted, server config batch_max_response_bytes is used."
+                        "If omitted, server config batch_max_response_bytes is used. "
+                        "Ignored when paginated inline retrieval is active."
                     ),
                 },
+                **pagination,
             },
             "required": ["invocations"],
             "additionalProperties": False,
@@ -100,9 +118,13 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
         self,
         invocations: Sequence[Dict[str, Any]],
         max_response_bytes: Optional[int] = None,
+        page_size: Optional[int] = None,
+        block_position: Optional[int] = None,
+        offset: Optional[int] = None,
+        limit: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult:
-        """Run batch and return inline results or file metadata."""
+        """Run batch and return inline results, a paginated inline page, or file metadata."""
         config_path = BaseMCPCommand._resolve_config_path()
         config_data = BaseMCPCommand._get_raw_config()
         ca = config_data.get("code_analysis") or {}
@@ -122,10 +144,25 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
             {"command": inv.get("command", ""), "params": inv.get("params") or {}}
             for inv in (invocations or [])
         ]
+        pagination_field_values = {
+            "page_size": page_size,
+            "block_position": block_position,
+            "offset": offset,
+            "limit": limit,
+        }
+        pagination_requested = any(
+            pagination_field_values[key] is not None
+            for key in _PAGINATION_TRIGGER_KEYS
+        )
         result = await run_read_only_batch(
             cast(Sequence[_BatchInvocation], inv_list),
             max_response_bytes=max_bytes,
             output_dir=output_dir,
+            pagination_requested=pagination_requested,
+            page_size=page_size,
+            block_position=block_position,
+            offset=offset,
+            limit=limit,
         )
         return SuccessResult(data=result)
 
@@ -149,15 +186,31 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                 "1. Validates invocations list is non-empty\n"
                 "2. For each invocation, validates command name against whitelist (fail-fast on first rejection)\n"
                 "3. Resolves command instances from registry and executes in order\n"
-                "4. Serializes combined results; if size <= max_response_bytes returns inline\n"
-                "5. If over threshold, writes to file in batch_output_dir and returns output_file, file_size, results_metadata\n\n"
+                "4. If page_size/block_position/offset/limit was passed, returns one "
+                "bounded inline page over results (TODO 9c2018a3) -- see Pagination below\n"
+                "5. Otherwise: serializes combined results; if size <= max_response_bytes returns inline\n"
+                "6. If over threshold, writes to file in batch_output_dir and returns output_file, file_size, results_metadata\n\n"
                 "Threshold behavior:\n"
                 "- max_response_bytes from param or server config batch_max_response_bytes\n"
-                "- Above threshold: results written to batch_output_dir; response has inline: false, output_file, file_size, results_metadata (size/offset/length per command for byte-range extraction)\n\n"
+                "- Above threshold: results written to batch_output_dir; response has inline: false, output_file, file_size, results_metadata (size/offset/length per command for byte-range extraction)\n"
+                "- Ignored entirely when pagination is requested (see below)\n\n"
+                "Pagination (paginated inline retrieval, TODO 9c2018a3):\n"
+                "- Passing any of page_size / block_position / offset / limit switches the "
+                "response to a bounded, paginated inline page over the per-invocation "
+                "results -- same envelope/bounds convention as list_project_files / search "
+                "(page_size default 20, max 200; block_position 1-based; offset legacy "
+                "alternative)\n"
+                "- ALL invocations still run on every call (this command has no server-side "
+                "session to resume from); pagination only bounds the response size, letting "
+                "a caller page through results without ever touching the filesystem\n"
+                "- Response: inline: true, paginated: true, items/results (page slice), "
+                "count, total, page_size, block_position, has_more, offset\n"
+                "- The file-overflow mechanism above is unaffected when pagination is not requested\n\n"
                 "Use cases:\n"
                 "- Run several read-only analysis commands in one round-trip\n"
                 "- Reduce latency when client needs hierarchy + entities + dependencies\n"
-                "- Handle large combined payload via file reference and offset/length extraction\n\n"
+                "- Handle large combined payload via file reference and offset/length extraction\n"
+                "- Page through many invocation results inline without a filesystem round-trip\n\n"
                 "Important notes:\n"
                 "- Whitelist is hardcoded; no dynamic extension from client or config\n"
                 "- First non-whitelisted command aborts the batch with error_code BATCH_COMMAND_NOT_WHITELISTED\n"
@@ -194,8 +247,40 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                     "description": (
                         "Optional override for max inline response size in bytes. "
                         "Above this, output is written to file; response contains output_file and results_metadata. "
-                        "If omitted, server config batch_max_response_bytes is used."
+                        "If omitted, server config batch_max_response_bytes is used. "
+                        "Ignored when paginated inline retrieval is active."
                     ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "page_size": {
+                    "description": (
+                        "Paginated inline retrieval: rows per page (default 20, max 200). "
+                        "Presence of this parameter switches on pagination."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 20,
+                },
+                "block_position": {
+                    "description": (
+                        "Paginated inline retrieval: 1-based page index (default 1). "
+                        "Increment for the next page."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 1,
+                },
+                "offset": {
+                    "description": (
+                        "Paginated inline retrieval: legacy row offset, ignored when "
+                        "block_position is set."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "limit": {
+                    "description": "Paginated inline retrieval: legacy alias for page_size.",
                     "type": "integer",
                     "required": False,
                 },
@@ -258,6 +343,35 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                     },
                     "explanation": "With max_response_bytes=0 (or very small), response will be file reference and results_metadata.",
                 },
+                {
+                    "description": "Paginated inline retrieval over many invocations",
+                    "command": {
+                        "invocations": [
+                            {
+                                "command": "get_class_hierarchy",
+                                "params": {"project_id": "proj-uuid"},
+                            },
+                            {
+                                "command": "list_code_entities",
+                                "params": {"project_id": "proj-uuid"},
+                            },
+                            {
+                                "command": "get_ast",
+                                "params": {
+                                    "project_id": "proj-uuid",
+                                    "file_path": "src/main.py",
+                                },
+                            },
+                        ],
+                        "page_size": 1,
+                        "block_position": 1,
+                    },
+                    "explanation": (
+                        "Returns page 1 (the first invocation's result only) inline; "
+                        "increment block_position for the next result, never touching "
+                        "the filesystem even if the full batch would overflow to file."
+                    ),
+                },
             ],
             "error_cases": {
                 "BATCH_COMMAND_NOT_WHITELISTED": {
@@ -281,7 +395,15 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                     "description": "Batch completed; payload is either inline or file reference.",
                     "data": {
                         "inline": "True if results are in response; False if output was written to file.",
-                        "results": "When inline true: array of { command: str, result: { success, data | error, error_code } }.",
+                        "results": "When inline true (non-paginated): array of { command: str, result: { success, data | error, error_code } }. When paginated: alias of items (page slice only).",
+                        "paginated": "True only when pagination was requested; omitted otherwise.",
+                        "items": "When paginated: page slice, same shape as results entries.",
+                        "count": "When paginated: number of entries in this page.",
+                        "total": "When paginated: total invocation results before pagination.",
+                        "page_size": "When paginated: resolved rows-per-page (default 20, max 200).",
+                        "block_position": "When paginated: resolved 1-based page index.",
+                        "has_more": "When paginated: True if a further page exists.",
+                        "offset": "When paginated: resolved row offset for this page.",
                         "output_file": "When inline false (oversize): absolute path to .jsonl file.",
                         "file_size": "When inline false: total file size in bytes.",
                         "results_metadata": "When inline false: list of { command, size, offset, length } for byte-range extraction.",
@@ -328,6 +450,34 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                         "command": "cst_save_tree",
                         "message": "Command is not in the read-only batch whitelist.",
                     },
+                    "example_paginated_inline": {
+                        "inline": True,
+                        "paginated": True,
+                        "items": [
+                            {
+                                "command": "get_class_hierarchy",
+                                "result": {
+                                    "success": True,
+                                    "data": {"hierarchy": {}, "count": 0},
+                                },
+                            },
+                        ],
+                        "results": [
+                            {
+                                "command": "get_class_hierarchy",
+                                "result": {
+                                    "success": True,
+                                    "data": {"hierarchy": {}, "count": 0},
+                                },
+                            },
+                        ],
+                        "count": 1,
+                        "total": 3,
+                        "page_size": 1,
+                        "block_position": 1,
+                        "has_more": True,
+                        "offset": 0,
+                    },
                 },
                 "error": {
                     "description": "Command failed (e.g. invalid schema, server error)",
@@ -340,5 +490,8 @@ class ReadOnlyBatchMCPCommand(BaseMCPCommand):
                 "Set max_response_bytes when you expect large combined output and want file reference.",
                 "Use results_metadata offset/length to read per-command fragments from output_file without loading whole file.",
                 "Keep batch size reasonable to avoid timeouts; threshold only limits response size, not execution time.",
+                "Prefer page_size/block_position over max_response_bytes when you want to page through "
+                "results inline without ever writing/reading a file; every page re-runs all invocations "
+                "(no server-side session), so it only bounds response size, not execution cost.",
             ],
         }

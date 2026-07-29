@@ -28,6 +28,7 @@ from code_analysis.commands.read_only_batch_whitelist import (
     ERROR_CODE_NOT_WHITELISTED,
     READ_ONLY_BATCH_WHITELIST,
 )
+from code_analysis.core.list_pagination import MAX_LIST_PAGE_SIZE
 
 
 class _FakeRegistry:
@@ -318,6 +319,144 @@ async def test_file_output_with_nested_uuid_payload(tmp_path: Any) -> None:
     first_item = parsed["result"]["data"]["items"][0]
     assert first_item["id"] == str(entity_id)
     assert isinstance(first_item["id"], str)
+
+
+def _paged_registry(count: int) -> _FakeRegistry:
+    """Build a registry with ``count`` distinct whitelisted commands, each cheap to run."""
+    commands = [
+        "get_class_hierarchy",
+        "list_code_entities",
+        "get_code_entity_info",
+        "find_dependencies",
+        "find_usages",
+    ]
+    responses = {commands[i % len(commands)]: {"n": i} for i in range(count)}
+    return _make_mock_registry(command_responses=responses)
+
+
+@pytest.mark.asyncio
+async def test_paginated_inline_retrieval_pages_without_touching_filesystem(
+    tmp_path: Any,
+) -> None:
+    """TODO 9c2018a3: page_size/block_position return successive inline pages."""
+    invocations = [
+        {"command": "get_class_hierarchy", "params": {}},
+        {"command": "list_code_entities", "params": {}},
+        {"command": "get_code_entity_info", "params": {}},
+    ]
+    registry = _make_mock_registry(
+        command_responses={
+            "get_class_hierarchy": {"n": 1},
+            "list_code_entities": {"n": 2},
+            "get_code_entity_info": {"n": 3},
+        }
+    )
+
+    seen_commands = []
+    for block_position in (1, 2, 3):
+        page = await run_read_only_batch(
+            cast(Sequence[_Invocation], invocations),
+            max_response_bytes=1,  # would force file-overflow if pagination did not win
+            output_dir=str(tmp_path),
+            registry=registry,  # type: ignore[arg-type]
+            pagination_requested=True,
+            page_size=1,
+            block_position=block_position,
+        )
+        assert page.get("inline") is True
+        assert page.get("paginated") is True
+        assert page.get("page_size") == 1
+        assert page.get("block_position") == block_position
+        assert page.get("total") == 3
+        assert page.get("count") == 1
+        assert "output_file" not in page
+        items = page.get("items") or []
+        assert len(items) == 1
+        seen_commands.append(items[0]["command"])
+        expect_more = block_position < 3
+        assert page.get("has_more") is expect_more
+
+    assert seen_commands == [inv["command"] for inv in invocations]
+
+
+@pytest.mark.asyncio
+async def test_paginated_inline_retrieval_page_size_clamped_to_max(
+    tmp_path: Any,
+) -> None:
+    """page_size above MAX_LIST_PAGE_SIZE is clamped, not rejected."""
+    registry = _paged_registry(3)
+    invocations = [
+        {"command": "get_class_hierarchy", "params": {}},
+        {"command": "list_code_entities", "params": {}},
+        {"command": "get_code_entity_info", "params": {}},
+    ]
+    page = await run_read_only_batch(
+        cast(Sequence[_Invocation], invocations),
+        max_response_bytes=100_000,
+        output_dir=str(tmp_path),
+        registry=registry,  # type: ignore[arg-type]
+        pagination_requested=True,
+        page_size=MAX_LIST_PAGE_SIZE + 1000,
+        block_position=1,
+    )
+    assert page.get("page_size") == MAX_LIST_PAGE_SIZE
+    assert page.get("count") == 3  # only 3 invocations exist, well under the clamp
+
+
+@pytest.mark.asyncio
+async def test_paginated_inline_retrieval_out_of_range_page_is_empty(
+    tmp_path: Any,
+) -> None:
+    """A block_position past the last page returns an empty, non-error page."""
+    invocations = [{"command": "get_class_hierarchy", "params": {}}]
+    registry = _make_mock_registry(
+        command_responses={"get_class_hierarchy": {"n": 1}}
+    )
+    page = await run_read_only_batch(
+        cast(Sequence[_Invocation], invocations),
+        max_response_bytes=100_000,
+        output_dir=str(tmp_path),
+        registry=registry,  # type: ignore[arg-type]
+        pagination_requested=True,
+        page_size=10,
+        block_position=5,
+    )
+    assert page.get("inline") is True
+    assert page.get("paginated") is True
+    assert page.get("items") == []
+    assert page.get("count") == 0
+    assert page.get("total") == 1
+    assert page.get("has_more") is False
+
+
+@pytest.mark.asyncio
+async def test_pagination_not_requested_keeps_legacy_inline_and_file_behavior(
+    tmp_path: Any,
+) -> None:
+    """Default (no pagination params) behavior is byte-for-byte unchanged."""
+    registry = _make_mock_registry(
+        command_responses={"get_class_hierarchy": {"hierarchy": [], "project_id": "p1"}}
+    )
+    invocations = [{"command": "get_class_hierarchy", "params": {"project_id": "p1"}}]
+    result = await run_read_only_batch(
+        cast(Sequence[_Invocation], invocations),
+        max_response_bytes=100_000,
+        output_dir=str(tmp_path),
+        registry=registry,  # type: ignore[arg-type]
+    )
+    assert result == {
+        "inline": True,
+        "results": [
+            {
+                "command": "get_class_hierarchy",
+                "result": {
+                    "success": True,
+                    "data": {"hierarchy": [], "project_id": "p1"},
+                    "message": None,
+                },
+            }
+        ],
+    }
 
 
 def test_whitelist_contains_expected_read_only_commands() -> None:

@@ -171,7 +171,12 @@ _CHECKS: tuple[PipelineCheck, ...] = (
     ),
     PipelineCheck(
         name="get-file-lines",
-        description="Verify get_file_lines keeps INVALID_RANGE behavior in isolated contexts without config.json.",
+        description=(
+            "Verify the internal raw line-range reader (formerly the get_file_lines "
+            "command, removed from the public surface per TODO a7091850; still used "
+            "by read_project_text_file/universal_file_read routing) keeps "
+            "INVALID_RANGE behavior in isolated contexts without config.json."
+        ),
         pytest_targets=("tests/test_get_file_lines_validate.py",),
     ),
     PipelineCheck(

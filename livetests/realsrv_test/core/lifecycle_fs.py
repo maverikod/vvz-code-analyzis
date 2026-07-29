@@ -8,7 +8,7 @@ original name) for every other command in the sweep that references
 lifecycle's outcome table (targeting the throwaway moved copy) precisely so
 the generic alphabetical Bucket A sweep never runs it against the primary
 seeded file with the generic ``file_path`` provider — ``fs_remove`` sorts
-alphabetically before many commands (``get_ast``, ``get_file_lines``,
+alphabetically before many commands (``get_ast``, ``get_code_entity_info``,
 ``lint_code``, ...) that still need the primary fixture file to exist.
 
 ``change_project_id`` gets a real UUID4 and, on success, mutates

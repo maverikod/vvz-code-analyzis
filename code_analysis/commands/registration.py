@@ -8,8 +8,8 @@ structured content editing here.
 
 **Content editing is not registered on this server** (``universal_file_open``,
 CST/JSON tree modify/save, ``format_code``, legacy line writers). Read-only
-content surface: ``universal_file_preview``, ``get_file_lines``, paginated
-``search`` / ``search_*``. Filesystem ops
+content surface: ``universal_file_preview``, paginated ``search`` / ``search_*``
+(``get_file_lines`` removed per TODO a7091850). Filesystem ops
 (``fs_copy`` / ``fs_move`` / ``fs_remove``) are a separate category.
 
 Author: Vasiliy Zdanovskiy

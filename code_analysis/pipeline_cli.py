@@ -60,13 +60,23 @@ def _resolve_live_verifier_ssl_paths() -> dict[str, str]:
     return paths
 
 
-def _live_verifier_command() -> list[str]:
+def _live_verifier_command(suite: str | None = None) -> list[str]:
+    """Build the live-verifier subprocess argv.
+
+    ``suite``, if given, is appended as a trailing positional argument. The
+    shim (``scripts/verify_client_all_commands_live.py``) delegates to
+    ``realsrv_test._cli.main_sync()``, whose parser accepts ``suites:
+    nargs="*"`` positionals -- passing exactly one name runs only that suite
+    instead of the full sweep (see ``realsrv_test._cli._async_main``:
+    ``runners = collect_runners(requested or None)``, ``full_sweep=not
+    requested``).
+    """
     env = os.environ
     ssl_paths = _resolve_live_verifier_ssl_paths()
     host = env.get("PIPELINE_LIVE_HOST", "192.168.254.26")
     port = env.get("PIPELINE_LIVE_PORT", "15010")
     project_prefix = env.get("PIPELINE_LIVE_PROJECT_PREFIX", "pipeline_live")
-    return [
+    command = [
         sys.executable,
         "scripts/verify_client_all_commands_live.py",
         "--host",
@@ -82,15 +92,46 @@ def _live_verifier_command() -> list[str]:
         "--project-prefix",
         project_prefix,
     ]
+    if suite:
+        command.append(suite)
+    return command
 
 
-def _run_live_deployed_server() -> int:
+def _run_live_verifier(suite: str | None) -> int:
+    """Run the live verifier (optionally scoped to one suite); exit code passthrough.
+
+    Missing mTLS preconditions print the reason and return 2 (same contract
+    as an unknown check name) -- this is the single-check invocation path;
+    ``run_all()`` uses ``_attempt_live_deployed_server`` instead, which
+    classifies this same condition as an explicit SKIP rather than a bare
+    exit code.
+    """
     try:
-        command = _live_verifier_command()
+        command = _live_verifier_command(suite=suite)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     return _run_command(command)
+
+
+def _run_live_deployed_server() -> int:
+    return _run_live_verifier(None)
+
+
+def _run_live_nonpy() -> int:
+    return _run_live_verifier("nonpy")
+
+
+def _run_live_throughput() -> int:
+    return _run_live_verifier("throughput")
+
+
+def _run_live_indexer() -> int:
+    return _run_live_verifier("indexer")
+
+
+def _run_live_apisurface() -> int:
+    return _run_live_verifier("apisurface")
 
 
 _CHECKS: tuple[PipelineCheck, ...] = (
@@ -383,6 +424,45 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         description="Run the mTLS all-commands verifier against the deployed CAS server.",
         runner=_run_live_deployed_server,
     ),
+    # The four checks below each run exactly ONE realsrv-test suite -- a
+    # strict SUBSET of live-deployed-server's full sweep. They exist for
+    # targeted post-deploy verification of one bug fix (e.g. "did suite
+    # throughput go green after this deploy") without paying for the whole
+    # ~7 minute sweep. Deliberately EXCLUDED from run_all() (see its
+    # docstring) for exactly that reason: each would just re-run work
+    # live-deployed-server already covers.
+    PipelineCheck(
+        name="live-nonpy",
+        description=(
+            "Run only the 'nonpy' realsrv-test suite against the deployed CAS "
+            "server -- a subset of live-deployed-server."
+        ),
+        runner=_run_live_nonpy,
+    ),
+    PipelineCheck(
+        name="live-throughput",
+        description=(
+            "Run only the 'throughput' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server."
+        ),
+        runner=_run_live_throughput,
+    ),
+    PipelineCheck(
+        name="live-indexer",
+        description=(
+            "Run only the 'indexer' realsrv-test suite against the deployed CAS "
+            "server -- a subset of live-deployed-server."
+        ),
+        runner=_run_live_indexer,
+    ),
+    PipelineCheck(
+        name="live-apisurface",
+        description=(
+            "Run only the 'apisurface' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server."
+        ),
+        runner=_run_live_apisurface,
+    ),
 )
 
 _CHECKS_BY_NAME = {check.name: check for check in _CHECKS}
@@ -414,9 +494,88 @@ def run_check(check_name: str) -> int:
     return _run_pytest(check.pytest_targets)
 
 
+@dataclass(frozen=True)
+class RunAllResult:
+    """Outcome of one component of a `run_all()` invocation.
+
+    ``status`` is one of ``"passed"``, ``"failed"``, ``"skipped"``. A
+    ``"skipped"`` component (its PRECONDITIONS were absent, e.g. no mTLS
+    files on a dev machine) never fails the overall run by itself; a
+    ``"failed"`` component (it DID run and came back nonzero) always does.
+    """
+
+    name: str
+    status: str
+    detail: str = ""
+
+
+def _attempt_full_pytest_suite() -> RunAllResult:
+    """Run every test in ``tests/`` for `run_all()`."""
+    code = _run_pytest(_FULL_SUITE_TARGETS)
+    if code == 0:
+        return RunAllResult("full-pytest-suite", "passed")
+    return RunAllResult("full-pytest-suite", "failed", f"pytest exit code {code}")
+
+
+def _attempt_live_deployed_server() -> RunAllResult:
+    """Run the full live sweep (``live-deployed-server``) for `run_all()`.
+
+    Distinguishes a missing PRECONDITION (no mTLS files -- ``ValueError``
+    from ``_resolve_live_verifier_ssl_paths``) as an explicit SKIP from a
+    genuine FAIL (the verifier ran and returned nonzero). This mirrors
+    ``_run_live_deployed_server`` (used by direct ``pipeline
+    live-deployed-server`` invocations) but reports the distinction instead
+    of collapsing both to the same bare exit code.
+    """
+    try:
+        command = _live_verifier_command()
+    except ValueError as exc:
+        return RunAllResult("live-deployed-server", "skipped", str(exc))
+    code = _run_command(command)
+    if code == 0:
+        return RunAllResult("live-deployed-server", "passed")
+    return RunAllResult("live-deployed-server", "failed", f"verifier exit code {code}")
+
+
+_STATUS_MARKERS = {"passed": "PASS", "failed": "FAIL", "skipped": "SKIP"}
+
+
+def _print_run_all_summary(results: Sequence[RunAllResult]) -> None:
+    """Print a per-component PASS/FAIL/SKIP summary for a `run_all()` invocation."""
+    print()
+    print("=== pipeline run-all summary ===")
+    for result in results:
+        marker = _STATUS_MARKERS[result.status]
+        line = f"[{marker}] {result.name}"
+        if result.detail:
+            line += f" -- {result.detail}"
+        print(line)
+
+
 def run_all() -> int:
-    """Run the full repository test suite."""
-    return _run_pytest(_FULL_SUITE_TARGETS)
+    """Run every test AND every check, per the pipeline contract.
+
+    Concretely: the full pytest suite (``tests/``) PLUS the runner-based
+    ``live-deployed-server`` check (the full live sweep). The four per-suite
+    live checks (``live-nonpy``, ``live-throughput``, ``live-indexer``,
+    ``live-apisurface``) are deliberately EXCLUDED here -- each is a strict
+    subset of ``live-deployed-server``'s full sweep, so re-running them in a
+    no-arg invocation would duplicate ~7 minutes of live work for no added
+    coverage; use them individually for targeted post-deploy verification of
+    one suite instead.
+
+    A component whose PRECONDITIONS are absent (currently only
+    ``live-deployed-server`` without readable mTLS files) is reported as an
+    explicit SKIP and does NOT by itself fail the run. A component that DID
+    run and failed always fails the run. Exit codes are aggregated: any
+    "failed" component makes the overall run fail (exit 1); an all-SKIP or
+    all-PASS run (with no failures) succeeds (exit 0).
+    """
+    results = [_attempt_full_pytest_suite(), _attempt_live_deployed_server()]
+    _print_run_all_summary(results)
+    if any(r.status == "failed" for r in results):
+        return 1
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

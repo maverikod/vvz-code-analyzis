@@ -14,8 +14,12 @@ dependencies = [
     "code-analysis-client>=1.0.26",
 ]
 
-[project.scripts]
-realsrv-test = "realsrv_test._cli:main_sync"
+# No [project.scripts] here: the standing contract mandates exactly ONE
+# verification runner (`pipeline`, code_analysis/pipeline_cli.py). This
+# package stays installable as a library only -- the pipeline's
+# scripts/verify_client_all_commands_live.py shim imports `realsrv_test`
+# directly. A second console script here would be a competing runner; a
+# missing check belongs in pipeline_cli.py as a new named check instead.
 
 [tool.setuptools.packages.find]
 where = ["."]

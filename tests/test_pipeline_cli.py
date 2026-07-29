@@ -63,6 +63,10 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "search-close-pagination",
         "trash-list-name-parse",
         "live-deployed-server",
+        "live-nonpy",
+        "live-throughput",
+        "live-indexer",
+        "live-apisurface",
     ]
 
 
@@ -120,6 +124,10 @@ def test_main_list_prints_catalog(capsys) -> None:
     assert "search-close-pagination" in captured.out
     assert "trash-list-name-parse" in captured.out
     assert "live-deployed-server" in captured.out
+    assert "live-nonpy" in captured.out
+    assert "live-throughput" in captured.out
+    assert "live-indexer" in captured.out
+    assert "live-apisurface" in captured.out
 
 
 def test_run_check_executes_expected_pytest_targets(monkeypatch) -> None:
@@ -149,24 +157,147 @@ def test_run_check_executes_expected_pytest_targets(monkeypatch) -> None:
     assert recorded["check"] is False
 
 
-def test_main_without_args_runs_full_suite(monkeypatch) -> None:
-    """Verify bare `pipeline` runs the full pytest suite."""
-    recorded: dict[str, object] = {}
+def test_main_without_args_runs_full_suite_and_live_sweep_when_mtls_present(
+    monkeypatch,
+) -> None:
+    """Bare `pipeline` runs pytest AND the full live sweep (not the 4 per-suite checks)."""
+    calls: list[list[str]] = []
 
     def fake_run(cmd, cwd, check):
-        recorded["cmd"] = cmd
-        recorded["cwd"] = cwd
-        recorded["check"] = check
+        calls.append(list(cmd))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(pipeline_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pipeline_cli,
+        "_resolve_live_verifier_ssl_paths",
+        lambda: {"cert": "c", "key": "k", "ca": "a"},
+    )
 
     exit_code = pipeline_cli.main([])
 
     assert exit_code == 0
-    assert recorded["cmd"] == [pipeline_cli.sys.executable, "-m", "pytest", "tests"]
-    assert recorded["cwd"] == Path(__file__).resolve().parents[1]
-    assert recorded["check"] is False
+    assert len(calls) == 2
+    assert calls[0] == [pipeline_cli.sys.executable, "-m", "pytest", "tests"]
+    assert calls[1][1] == "scripts/verify_client_all_commands_live.py"
+    # No suite name appended -- this is the full sweep, not a per-suite check.
+    assert "nonpy" not in calls[1]
+    assert "throughput" not in calls[1]
+    assert "indexer" not in calls[1]
+    assert "apisurface" not in calls[1]
+
+
+def test_main_without_args_skips_live_sweep_without_mtls_preconditions(
+    monkeypatch, capsys
+) -> None:
+    """A missing-precondition live sweep is an explicit SKIP, not a FAIL, and does not fail the run."""
+
+    def fake_run(cmd, cwd, check):
+        return SimpleNamespace(returncode=0)
+
+    def _raise_missing_mtls() -> dict[str, str]:
+        raise ValueError("no mtls files on this machine")
+
+    monkeypatch.setattr(pipeline_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pipeline_cli, "_resolve_live_verifier_ssl_paths", _raise_missing_mtls
+    )
+
+    exit_code = pipeline_cli.main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "[PASS] full-pytest-suite" in captured.out
+    assert "[SKIP] live-deployed-server" in captured.out
+    assert "no mtls files on this machine" in captured.out
+
+
+def test_main_without_args_fails_when_pytest_fails_even_if_live_skipped(
+    monkeypatch, capsys
+) -> None:
+    """A genuine pytest failure fails the run regardless of the live sweep's SKIP status."""
+
+    def fake_run(cmd, cwd, check):
+        return SimpleNamespace(returncode=1)
+
+    def _raise_missing_mtls() -> dict[str, str]:
+        raise ValueError("no mtls files on this machine")
+
+    monkeypatch.setattr(pipeline_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pipeline_cli, "_resolve_live_verifier_ssl_paths", _raise_missing_mtls
+    )
+
+    exit_code = pipeline_cli.main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "[FAIL] full-pytest-suite" in captured.out
+    assert "[SKIP] live-deployed-server" in captured.out
+
+
+def test_main_without_args_fails_when_live_sweep_fails(monkeypatch, capsys) -> None:
+    """A live sweep that RAN and failed fails the run (distinct from a SKIP)."""
+
+    def fake_run(cmd, cwd, check):
+        if "scripts/verify_client_all_commands_live.py" in cmd:
+            return SimpleNamespace(returncode=1)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(pipeline_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pipeline_cli,
+        "_resolve_live_verifier_ssl_paths",
+        lambda: {"cert": "c", "key": "k", "ca": "a"},
+    )
+
+    exit_code = pipeline_cli.main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "[PASS] full-pytest-suite" in captured.out
+    assert "[FAIL] live-deployed-server" in captured.out
+
+
+def test_run_check_live_suite_forwards_suite_name(monkeypatch) -> None:
+    """Verify `pipeline live-nonpy` forwards the suite name to the live verifier."""
+    recorded: dict[str, object] = {}
+
+    def fake_run(cmd, cwd, check):
+        recorded["cmd"] = cmd
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(pipeline_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pipeline_cli,
+        "_resolve_live_verifier_ssl_paths",
+        lambda: {"cert": "c", "key": "k", "ca": "a"},
+    )
+
+    exit_code = pipeline_cli.main(["live-nonpy"])
+
+    assert exit_code == 0
+    assert recorded["cmd"][1] == "scripts/verify_client_all_commands_live.py"
+    assert recorded["cmd"][-1] == "nonpy"
+
+
+def test_run_check_live_deployed_server_missing_mtls_returns_2(
+    monkeypatch, capsys
+) -> None:
+    """A direct (non-run_all) invocation with missing mTLS preconditions still returns 2."""
+
+    def _raise_missing_mtls() -> dict[str, str]:
+        raise ValueError("no mtls files on this machine")
+
+    monkeypatch.setattr(
+        pipeline_cli, "_resolve_live_verifier_ssl_paths", _raise_missing_mtls
+    )
+
+    exit_code = pipeline_cli.main(["live-deployed-server"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "no mtls files on this machine" in captured.err
 
 
 def test_main_unknown_check_returns_error(capsys) -> None:

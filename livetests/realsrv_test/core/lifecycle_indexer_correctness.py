@@ -14,7 +14,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
-import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -434,10 +433,18 @@ async def _stage_content_via_git_pull(
     except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
         return f"overwrite on {branch} failed: {exc!r}"
 
+    # Scoped to this ONE file (never all=True): the s12 suite's other checks
+    # (A/B) create their own fixture files in this SAME shared project/git
+    # working tree via file_sessions.upload_new, sibling in time to this
+    # check's own git activity. all=True would stage and, via the branch
+    # checkout/revert below, PHYSICALLY TOUCH those files too - untouched by
+    # git, an untracked file is left alone by checkout, so scoping the add to
+    # relative_path keeps this check's git choreography fully isolated from
+    # whatever else the suite has written to disk.
     outcome, _data = await call_step_with_data(
         client,
         "git_add",
-        {"project_id": project_id, "all": True},
+        {"project_id": project_id, "paths": [relative_path]},
         ok_reason="revision content staged",
     )
     if outcome.status is not Status.EXECUTED_OK:
@@ -469,6 +476,18 @@ async def _stage_content_via_git_pull(
     )
     if outcome.status is not Status.EXECUTED_OK:
         return f"git_remote_add({remote}) failed: {outcome.reason}"
+
+    # One bounded, one-time wait (not a retry/poll loop): the storage backing
+    # the project root has been observed to expose ~1-second mtime
+    # granularity, which can collide with update_indexes' tight
+    # FILE_MODIFICATION_TOLERANCE=0.1s (core/constants.py) when the whole
+    # staging round-trip above completes within the same whole second as the
+    # PREVIOUS update_indexes call's own mtime record - making the guard
+    # falsely treat this cycle's fresh checkout as "unchanged" and skip. This
+    # sleep guarantees the checkout below lands in a distinct whole-second
+    # bucket, so the mtime-refresh technique this check depends on is
+    # deterministic rather than occasionally racing the guard.
+    await asyncio.sleep(1.1)
 
     try:
         pull_outcome, _pull_data = await call_step_with_data(
@@ -505,46 +524,157 @@ async def run_update_indexes_usages_idempotent(
     ``update_indexes`` calls this uses :func:`_stage_content_via_git_pull`
     twice to give the file a genuine new on-disk mtime (via a real git
     checkout, bypassing the DB-aware write pipeline) without touching the
-    three call sites - each revision only appends a trailing comment line
-    carrying a unique marker token after them, so the target/type/line shape
-    of the three usages stays identical across revisions.
+    three call sites - each revision only appends a trailing revision-number
+    comment line after them, so the target/type/line shape of the three
+    usages stays identical across revisions.
 
-    Each stage+reindex cycle is independently confirmed to have actually
-    re-run ``analyze_file`` (not silently skipped by its mtime-unchanged
-    guard) via the SAME ``content_stale`` roundtrip signal
-    ``realsrv_test.core.lifecycle_content_stale`` proves for bug 56c23bd9:
-    ``git_pull_safe``'s own per-file mark sets ``content_stale=True`` without
-    reindexing; a real ``analyze_file`` run (via ``sync_file_to_db_atomic``
-    -> ``build_file_data_atomic_batches``) unconditionally clears it back to
-    ``False`` as part of the same write. Searching the cycle's own marker
-    token and checking ``content_stale`` before/after each
-    ``update_indexes`` call rules out a false GREEN from a run that never
-    actually reprocessed the file.
+    GENUINE-REPROCESSING IS A HARD PRECONDITION of the verdict, not an
+    incidental observation: an EARLIER version of this check used a
+    ``content_stale`` roundtrip via the fulltext ``search`` command as its
+    reprocessing-confirmation signal and reproduced RED once, but the
+    fulltext index showed propagation lag on later runs (an occasional false
+    "not stale yet" / "no hit" reading immediately after a write), which is
+    not trustworthy enough to gate a verdict people act on. This version
+    instead reads the confirmation straight off ``update_indexes``' OWN
+    response for the exact call being checked: ``code_mapper_mcp_command.py``
+    reports ``files_processed``/``files_skipped`` as plain integers, zero
+    extra round trips, zero propagation lag. Since this check runs in its
+    own isolated single-file project (see below), "genuinely reprocessed"
+    for one call is exactly ``files_processed == 1 and files_skipped == 0``
+    for THAT call; anything else (the file was skipped by the
+    mtime-unchanged guard) makes this function report :attr:`Status.FAILED`
+    naming that cause instead of reporting :attr:`Status.EXECUTED_OK` for a
+    pass that never exercised the defect - a check that can go green for a
+    reason unrelated to the fix would be worse than no check at all.
+
+    ISOLATED PROJECT (own throwaway project, not ``fixtures.project_id``):
+    ``update_indexes`` scans and processes every file in a project, not just
+    this check's own fixture file. In the SHARED fixture project, sibling
+    checks A/B write their own ``.py`` fixture files into the SAME project
+    concurrently with this check's timeline; a live-repro session there
+    produced an inconsistent usage count even with an earlier,
+    entity-row-id-based reprocessing signal confirmed on both passes, while
+    a minimal, single-file, fully isolated project reproduced the defect (3
+    -> 6) cleanly and repeatably. Rather than leave that interaction
+    unexplained, this check creates and tears down its own disposable
+    project so its two ``update_indexes`` calls only ever have this one
+    fixture file to process (which also makes the ``files_processed``/
+    ``files_skipped`` reprocessing signal above unambiguous - "1 file" is
+    always THIS file).
+
+    TIMING MARGIN: :func:`_stage_content_via_git_pull` sleeps ~1.1s before
+    its mtime-refreshing checkout - storage backing the project root has
+    shown roughly 1-second mtime granularity, which can collide with
+    ``update_indexes``' tight ``FILE_MODIFICATION_TOLERANCE=0.1s``
+    (``core/constants.py``) when a stage+reindex round trip completes within
+    the same whole second as the previous ``update_indexes`` call's own
+    mtime record.
 
     Args:
         client: Connected async client.
-        fixtures: The disposable project/session fixture for this run.
+        fixtures: The disposable project/session fixture for this run (only
+            ``fixtures.session_id`` is used - the client session is not
+            project-scoped; a fresh throwaway project is created below).
 
     Returns:
         ``{CHECK_NAME_USAGES_IDEMPOTENT: outcome}`` -
-        :attr:`Status.EXECUTED_OK` only when both ``update_indexes`` runs are
-        confirmed (via ``content_stale`` clearing) to have really
-        reprocessed the file, and the usage count after the second run
-        equals the count after the first - both equal to the expected 3
-        call sites (a 0-vs-0 "pass" would hide a broken fixture/check, not
-        prove idempotence).
+        :attr:`Status.EXECUTED_OK` only when both ``update_indexes`` calls'
+        own responses confirm (``files_processed == 1``, ``files_skipped ==
+        0``) that they really reprocessed the file, and the usage count
+        after the second run equals the count after the first - both equal
+        to the expected 3 call sites (a 0-vs-0 "pass" would hide a broken
+        fixture/check, not prove idempotence).
     """
     if not fixtures.session_id:
         return _no_session_skip(CHECK_NAME_USAGES_IDEMPOTENT)
 
-    project_id = fixtures.project_id
+    watch_dir_status, watch_dir_data = await call_step_with_data(
+        client,
+        "list_watch_dirs",
+        {},
+        ok_reason="watch directories listed",
+    )
+    watch_dirs = (watch_dir_data or {}).get("watch_dirs") or []
+    if watch_dir_status.status is not Status.EXECUTED_OK or not watch_dirs:
+        return _outcome(
+            CHECK_NAME_USAGES_IDEMPOTENT,
+            Status.FAILED,
+            f"could not list a watch_dir for the isolated project ({watch_dir_status.reason})",
+        )
+    watch_dir_id = str(watch_dirs[0]["id"])
+
+    project_suffix = uuid.uuid4().hex[:8]
+    create_status, create_data = await call_step_with_data(
+        client,
+        "create_project",
+        {
+            "watch_dir_id": watch_dir_id,
+            "project_name": f"verify_indexer_usage_idem_{project_suffix}",
+            "description": "isolated disposable project for the usages-idempotence check",
+            "create_venv": False,
+            "apply_template": False,
+        },
+        ok_reason="isolated throwaway project created",
+    )
+    if create_status.status is not Status.EXECUTED_OK:
+        return _outcome(
+            CHECK_NAME_USAGES_IDEMPOTENT,
+            Status.FAILED,
+            f"could not create the isolated project ({create_status.reason})",
+        )
+    isolated_project_id = str((create_data or {}).get("project_id") or "")
+    isolated_project_root = str((create_data or {}).get("project_root") or "")
+    if not isolated_project_id or not isolated_project_root:
+        return _outcome(
+            CHECK_NAME_USAGES_IDEMPOTENT,
+            Status.FAILED,
+            f"create_project response missing project_id/project_root: {create_data!r}",
+        )
+
+    try:
+        return await _run_usages_idempotent_check(
+            client,
+            project_id=isolated_project_id,
+            project_root=isolated_project_root,
+            session_id=fixtures.session_id,
+        )
+    finally:
+        try:
+            await client.call_validated(
+                "delete_project",
+                {"project_id": isolated_project_id, "delete_from_disk": True},
+            )
+        except Exception:  # noqa: BLE001 - best-effort cleanup only
+            pass
+
+
+async def _run_usages_idempotent_check(
+    client: CodeAnalysisAsyncClient,
+    *,
+    project_id: str,
+    project_root: str,
+    session_id: str,
+) -> Dict[str, CommandOutcome]:
+    """Do the actual seed/stage/reindex/assert work for the isolated project above.
+
+    Split out of :func:`run_update_indexes_usages_idempotent` so that
+    function's docstring stays the single source of truth for the check's
+    rationale; this one just runs it against the given project.
+
+    Args:
+        client: Connected async client.
+        project_id: The isolated throwaway project's UUID.
+        project_root: The isolated throwaway project's server-side root path.
+        session_id: Open file-session id (not project-scoped).
+
+    Returns:
+        ``{CHECK_NAME_USAGES_IDEMPOTENT: outcome}``.
+    """
     suffix = uuid.uuid4().hex[:8]
     target_name = f"idem_usage_target_{suffix}"
     caller_name = f"idem_usage_caller_{suffix}"
     relative_path = f"verify_usage_idem_{suffix}.py"
     expected_call_sites = 3
-    marker1 = f"idxrevmarkerone{suffix}"
-    marker2 = f"idxrevmarkertwo{suffix}"
 
     body = (
         '"""Fixture module for the update_indexes usages idempotence check."""\n'
@@ -568,94 +698,50 @@ async def run_update_indexes_usages_idempotent(
         f"    return {target_name}()\n"
     )
     v1_content = (body + "\n# revision: 1\n").encode("utf-8")
-    v2_content = (body + f"\n# revision: 2 {marker1}\n").encode("utf-8")
-    v3_content = (body + f"\n# revision: 3 {marker2}\n").encode("utf-8")
+    v2_content = (body + "\n# revision: 2\n").encode("utf-8")
+    v3_content = (body + "\n# revision: 3\n").encode("utf-8")
 
-    async def _content_stale_for_marker_once(
-        token: str,
-    ) -> Tuple[Status, Optional[bool], str]:
-        """Run one search for a revision marker token; return the hit's content_stale flag.
+    def _reprocessing_evidence_from_update_indexes(
+        data: Optional[Dict[str, Any]], pass_label: str
+    ) -> Optional[Dict[str, CommandOutcome]]:
+        """Confirm THIS update_indexes response shows a real (non-skipped) pass.
 
-        Args:
-            token: Unique marker token embedded as a trailing comment in the
-                revision this call expects to find.
-
-        Returns:
-            ``(Status.EXECUTED_OK, True|False, "")`` when the fixture file is
-            found in the search results, ``(Status.EXECUTED_OK, None,
-            reason)`` when the search succeeded but found no hit for it
-            (cannot assert), or ``(other_status, None, reason)`` when the
-            search call itself failed.
-        """
-        outcome, data = await call_step_with_data(
-            client,
-            "search",
-            {
-                "project_id": project_id,
-                "query": token,
-                "enable_semantic": False,
-                "enable_grep": False,
-            },
-            ok_reason="content_stale probe search executed",
-        )
-        if outcome.status is not Status.EXECUTED_OK:
-            return outcome.status, None, outcome.reason
-        items = (data or {}).get("items")
-        if not isinstance(items, list):
-            items = []
-        wanted_suffix = "/" + relative_path
-        for row in items:
-            if not isinstance(row, dict):
-                continue
-            candidate = str(
-                row.get("file_path") or row.get("path") or ""
-            ).replace("\\", "/")
-            if candidate == relative_path or candidate.endswith(wanted_suffix):
-                return Status.EXECUTED_OK, bool(row.get("content_stale")), ""
-        return (
-            Status.EXECUTED_OK,
-            None,
-            f"no search hit for marker {token!r} among {len(items)} result(s)",
-        )
-
-    async def _content_stale_for_marker(
-        token: str,
-        *,
-        expected: bool,
-        timeout: float = 6.0,
-        interval: float = 1.0,
-    ) -> Tuple[Status, Optional[bool], str]:
-        """Bounded-poll :func:`_content_stale_for_marker_once` until it matches ``expected``.
-
-        The fulltext ``search`` index (the only client-reachable source of
-        ``content_stale``) has shown brief propagation lag immediately after
-        a write in back-to-back staging cycles - a transient result here must
-        not be mistaken for the real defect this check exists to prove. Polls
-        a short, fixed number of times (never an unbounded/infinite retry)
-        and returns the LAST observed result either once it matches
-        ``expected`` or once the deadline passes.
+        The ``update_indexes`` response itself (``code_mapper_mcp_command.py``)
+        reports ``files_processed``/``files_skipped`` as plain integers for
+        the exact call just made - the most direct, zero-latency,
+        zero-extra-round-trip evidence available (no follow-up read that
+        could itself race anything). Because this check runs in its own
+        ISOLATED, single-file project (see the public function's docstring),
+        "genuinely reprocessed my one fixture file" is exactly
+        ``files_processed == 1 and files_skipped == 0`` for that call.
 
         Args:
-            token: Unique marker token to search for.
-            expected: The ``content_stale`` value this call is waiting to see.
-            timeout: Maximum seconds to poll before giving up.
-            interval: Seconds to sleep between polls.
+            data: The ``update_indexes`` response ``data`` dict for the call
+                being checked.
+            pass_label: ``"first"`` or ``"second"``, for the failure message.
 
         Returns:
-            Same shape as :func:`_content_stale_for_marker_once`.
+            ``None`` when the response confirms a genuine pass, or a
+            ready-to-return FAILED outcome naming the cause otherwise.
         """
-        deadline = time.monotonic() + timeout
-        status, stale, reason = await _content_stale_for_marker_once(token)
-        while status is not Status.EXECUTED_OK or stale is not expected:
-            if time.monotonic() >= deadline:
-                return status, stale, reason
-            await asyncio.sleep(interval)
-            status, stale, reason = await _content_stale_for_marker_once(token)
-        return status, stale, reason
+        files_processed = (data or {}).get("files_processed")
+        files_skipped = (data or {}).get("files_skipped")
+        if files_processed == 1 and files_skipped == 0:
+            return None
+        return _outcome(
+            CHECK_NAME_USAGES_IDEMPOTENT,
+            Status.FAILED,
+            f"the {pass_label} update_indexes call did not genuinely "
+            f"reprocess the fixture file (files_processed={files_processed!r}, "
+            f"files_skipped={files_skipped!r} in its own response) - it was "
+            "likely SKIPPED by the mtime-unchanged guard rather than "
+            "genuinely reprocessed, so idempotence was not exercised on "
+            "this pass",
+        )
 
     try:
         file_id = await client.file_sessions.upload_new(
-            fixtures.session_id,
+            session_id,
             v1_content,
             project_id,
             relative_path,
@@ -684,8 +770,12 @@ async def run_update_indexes_usages_idempotent(
             "git identity configured for the disposable project",
         ),
         (
+            # Scoped to this ONE file, never all=True - see
+            # _stage_content_via_git_pull's own git_add for why: this
+            # project/git working tree is shared with the suite's other
+            # checks, which write their own untracked fixture files here.
             "git_add",
-            {"project_id": project_id, "all": True},
+            {"project_id": project_id, "paths": [relative_path]},
             "baseline file staged",
         ),
         (
@@ -739,8 +829,8 @@ async def run_update_indexes_usages_idempotent(
     stage_err = await _stage_content_via_git_pull(
         client,
         project_id=project_id,
-        project_root=str(fixtures.project_root),
-        session_id=fixtures.session_id,
+        project_root=project_root,
+        session_id=session_id,
         file_id=file_id,
         relative_path=relative_path,
         default_branch=default_branch,
@@ -754,20 +844,7 @@ async def run_update_indexes_usages_idempotent(
             f"stage cycle 1 (v1 -> v2) failed: {stage_err}",
         )
 
-    pre1_status, pre1_stale, pre1_reason = await _content_stale_for_marker(
-        marker1, expected=True
-    )
-    if pre1_status is not Status.EXECUTED_OK or pre1_stale is not True:
-        return _outcome(
-            CHECK_NAME_USAGES_IDEMPOTENT,
-            Status.FAILED,
-            "stage cycle 1 did not leave the file content_stale=True before "
-            f"the first update_indexes (status={pre1_status}, "
-            f"stale={pre1_stale!r}, {pre1_reason}) - cannot trust the "
-            "upcoming reindex-confirmation signal",
-        )
-
-    first_reindex, _data = await call_step_with_data(
+    first_reindex, first_data = await call_step_with_data(
         client,
         "update_indexes",
         {"project_id": project_id},
@@ -780,19 +857,9 @@ async def run_update_indexes_usages_idempotent(
             f"first update_indexes did not succeed: {first_reindex.reason}",
         )
 
-    post1_status, post1_stale, post1_reason = await _content_stale_for_marker(
-        marker1, expected=False
-    )
-    if post1_status is not Status.EXECUTED_OK or post1_stale is not False:
-        return _outcome(
-            CHECK_NAME_USAGES_IDEMPOTENT,
-            Status.FAILED,
-            "first update_indexes did not clear content_stale for the "
-            f"fixture file (status={post1_status}, stale={post1_stale!r}, "
-            f"{post1_reason}) - it was likely SKIPPED by the mtime-unchanged "
-            "guard rather than really reprocessed, so the usage count below "
-            "cannot be trusted as a real first pass",
-        )
+    fail_outcome = _reprocessing_evidence_from_update_indexes(first_data, "first")
+    if fail_outcome is not None:
+        return fail_outcome
 
     status1, count1, reason1 = await _usage_count()
     if status1 is not Status.EXECUTED_OK:
@@ -805,8 +872,8 @@ async def run_update_indexes_usages_idempotent(
     stage_err = await _stage_content_via_git_pull(
         client,
         project_id=project_id,
-        project_root=str(fixtures.project_root),
-        session_id=fixtures.session_id,
+        project_root=project_root,
+        session_id=session_id,
         file_id=file_id,
         relative_path=relative_path,
         default_branch=default_branch,
@@ -820,20 +887,7 @@ async def run_update_indexes_usages_idempotent(
             f"stage cycle 2 (v2 -> v3) failed: {stage_err}",
         )
 
-    pre2_status, pre2_stale, pre2_reason = await _content_stale_for_marker(
-        marker2, expected=True
-    )
-    if pre2_status is not Status.EXECUTED_OK or pre2_stale is not True:
-        return _outcome(
-            CHECK_NAME_USAGES_IDEMPOTENT,
-            Status.FAILED,
-            "stage cycle 2 did not leave the file content_stale=True before "
-            f"the second update_indexes (status={pre2_status}, "
-            f"stale={pre2_stale!r}, {pre2_reason}) - cannot trust the "
-            "upcoming reindex-confirmation signal",
-        )
-
-    second_reindex, _data = await call_step_with_data(
+    second_reindex, second_data = await call_step_with_data(
         client,
         "update_indexes",
         {"project_id": project_id},
@@ -846,19 +900,9 @@ async def run_update_indexes_usages_idempotent(
             f"second update_indexes did not succeed: {second_reindex.reason}",
         )
 
-    post2_status, post2_stale, post2_reason = await _content_stale_for_marker(
-        marker2, expected=False
-    )
-    if post2_status is not Status.EXECUTED_OK or post2_stale is not False:
-        return _outcome(
-            CHECK_NAME_USAGES_IDEMPOTENT,
-            Status.FAILED,
-            "second update_indexes did not clear content_stale for the "
-            f"fixture file (status={post2_status}, stale={post2_stale!r}, "
-            f"{post2_reason}) - it was likely SKIPPED by the mtime-unchanged "
-            "guard rather than really reprocessed, so the usage count below "
-            "cannot be trusted as a real second pass",
-        )
+    fail_outcome = _reprocessing_evidence_from_update_indexes(second_data, "second")
+    if fail_outcome is not None:
+        return fail_outcome
 
     status2, count2, reason2 = await _usage_count()
     if status2 is not Status.EXECUTED_OK:
@@ -873,7 +917,7 @@ async def run_update_indexes_usages_idempotent(
             CHECK_NAME_USAGES_IDEMPOTENT,
             Status.FAILED,
             f"{relative_path}: expected {expected_call_sites} usage row(s) for "
-            f"{target_name} after the FIRST (content_stale-confirmed real) "
+            f"{target_name} after the FIRST (response-confirmed real) "
             f"update_indexes run, got {count1} (fixture/check design issue "
             "if 0 - cannot assert idempotence without real rows to begin "
             "with)",
@@ -884,9 +928,10 @@ async def run_update_indexes_usages_idempotent(
             Status.FAILED,
             f"{relative_path}: usage count for {target_name} grew from "
             f"{count1} to {count2} across two update_indexes runs, each "
-            "confirmed (via content_stale clearing) to be a genuine "
-            "reprocessing pass with the same 3 call sites (bug a586efdb: "
-            "update_indexes never clears old usages before re-adding them)",
+            "confirmed (via that call's own files_processed/files_skipped "
+            "response fields) to be a genuine reprocessing pass with the "
+            "same 3 call sites (bug a586efdb: update_indexes never clears "
+            "old usages before re-adding them)",
         )
     if count2 != expected_call_sites:
         return _outcome(
@@ -900,5 +945,7 @@ async def run_update_indexes_usages_idempotent(
         CHECK_NAME_USAGES_IDEMPOTENT,
         Status.EXECUTED_OK,
         f"{relative_path}: usage count for {target_name} stayed at {count1} "
-        "across two update_indexes runs",
+        "across two update_indexes runs, each independently confirmed "
+        "(files_processed=1, files_skipped=0 in that call's own response) "
+        "to have genuinely reprocessed the file",
     )

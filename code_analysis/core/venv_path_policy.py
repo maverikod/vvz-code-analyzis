@@ -487,6 +487,63 @@ def iter_project_python_files_excluding_venv(
     return files
 
 
+def iter_project_text_index_files_excluding_venv(
+    project_root: Path, *, show_hidden: bool = False
+) -> List[Path]:
+    """
+    Walk project tree for whitelisted non-Python text files (bug 688d2d01 /
+    13945588 / 597ea8c5 / fe1cf739), excluding hidden dirs and venv/data/logs.
+
+    Same directory pruning as :func:`iter_project_python_files_excluding_venv`
+    (no ``.venv``/``venv`` traversal, no ``ignore_exceptions`` merge -- that
+    integration is left out of scope for this feature, see
+    :func:`collect_text_index_files_for_indexing`). Per-file eligibility is
+    :func:`code_analysis.core.text_index_whitelist.is_text_index_eligible`
+    (extension whitelist plus the ``.gitignore`` extensionless dotfile);
+    ``.py`` files are never matched (routed through the Python walk instead).
+
+    Args:
+        project_root: Project root to walk.
+        show_hidden: ``ls -a``-style dot-dir/cache-dir inclusion (see
+            :func:`iter_project_python_files_excluding_venv`).
+
+    Returns:
+        Sorted list of absolute paths to whitelisted text files.
+    """
+    from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
+    from .text_index_whitelist import is_text_index_eligible
+
+    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {
+        DATA_DIR_NAME,
+        LOGS_DIR_NAME,
+    }
+    root_path = project_root.resolve()
+    files: List[Path] = []
+    for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
+        _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
+        for f in walk_files:
+            if is_text_index_eligible(f):
+                files.append(Path(walk_root) / f)
+    return sorted(files)
+
+
+def collect_text_index_files_for_indexing(project_root: Path) -> List[Path]:
+    """
+    Project-relative whitelisted non-Python text files for ``update_indexes``.
+
+    Deliberately narrower than :func:`collect_python_files_for_indexing`: no
+    venv allowlist (site-packages text files are never indexed) and no
+    ``ignore_exceptions`` merge -- both are Python-specific extension points
+    this feature does not replicate (left out of scope; revisit if a real
+    need for either surfaces for non-Python text files).
+
+    Returns:
+        Sorted list of absolute paths (see
+        :func:`iter_project_text_index_files_excluding_venv`).
+    """
+    return iter_project_text_index_files_excluding_venv(project_root)
+
+
 def iter_project_files_excluding_venv(
     project_root: Path, *, show_hidden: bool = False, scope_root: Optional[Path] = None
 ) -> List[Path]:

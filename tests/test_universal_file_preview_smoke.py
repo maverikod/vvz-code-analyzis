@@ -224,6 +224,9 @@ def test_handler_dispatcher_known_and_unknown_extensions() -> None:
     assert isinstance(yaml_h, YamlFileHandler)
     jsonl_h = d.dispatch("data.jsonl")
     assert isinstance(jsonl_h, JsonLinesFileHandler)
+    # bug a51769dc: pyproject.toml had no registered handler (UNKNOWN_EXTENSION).
+    toml_h = d.dispatch("pyproject.toml")
+    assert isinstance(toml_h, TextFileHandler)
 
     bad = d.dispatch("x.xml")
     assert isinstance(bad, PreviewError)
@@ -324,6 +327,17 @@ def test_text_handler_open_root_lines_kind(tmp_path) -> None:
     path = tmp_path / "t.md"
     path.write_text("single line\n", encoding="utf-8")
     result = TextFileHandler().open_root(str(path), None)
+    assert not isinstance(result, PreviewError)
+    assert result.node_kind == NodeKind.LINES
+
+
+def test_toml_preview_via_dispatcher_succeeds(tmp_path) -> None:
+    """bug a51769dc: universal_file_preview must not UNKNOWN_EXTENSION on .toml."""
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.verify]\nname = "x"\n', encoding="utf-8")
+    handler = HandlerDispatcher().dispatch(str(path))
+    assert not isinstance(handler, PreviewError)
+    result = handler.open_root(str(path), None)
     assert not isinstance(result, PreviewError)
     assert result.node_kind == NodeKind.LINES
 

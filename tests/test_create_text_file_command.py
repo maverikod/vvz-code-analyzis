@@ -362,10 +362,15 @@ class TestCreateTextFileCommand:
         assert result.code == "CODE_FILE_FORBIDDEN"
 
     async def test_unsupported_suffix_before_database(self, tmp_path: Path) -> None:
-        """Verify test unsupported suffix before database."""
+        """Verify test unsupported suffix before database.
+
+        ``.toml`` used to be the example unsupported extension here; it is now
+        routed to the plain-text handler (bug 688d2d01), so ``.xml`` -- still
+        off the registry's suffix map -- takes its place.
+        """
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             cmd = CreateTextFileMCPCommand()
-            result = await cmd.execute(project_id=_PID, file_path="x.toml")
+            result = await cmd.execute(project_id=_PID, file_path="x.xml")
 
         odb.assert_not_called()
         assert isinstance(result, ErrorResult)

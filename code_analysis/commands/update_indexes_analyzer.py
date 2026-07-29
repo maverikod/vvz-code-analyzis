@@ -30,6 +30,12 @@ from ..core.database_driver_pkg.domain.files import (
 from ..core.docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
 from ..core.docs_indexing_eligibility import is_docs_markdown_eligible
 from ..core.docstring_chunker_pkg.docstring_chunker import DocstringChunker
+from ..core.text_index_whitelist import (
+    TEXT_INDEX_BINARY_SNIFF_BYTES,
+    TEXT_INDEX_MAX_BYTES,
+    is_text_index_eligible,
+    looks_binary,
+)
 from ..core.vectorization_helper import get_svo_client_manager
 from .update_indexes_entities import _extract_docstring
 
@@ -90,13 +96,20 @@ def _file_has_code_content(database: Any, file_id: Any) -> bool:
     return bool(rows)
 
 
-def _mirror_markdown_into_code_content_fulltext(
+def _mirror_text_file_into_code_content_fulltext(
     database: Any,
     file_id: Any,
     relative_path: str,
     file_body: str,
 ) -> None:
-    """Mirror documentation file body into ``code_content`` / FTS (md/json/yaml)."""
+    """Mirror a whole-file text body into ``code_content`` / FTS.
+
+    Shared by the docs_indexing pipeline (md/json/yaml under its config-gated
+    scope) and the general non-Python text whitelist (bug fe1cf739 -- see
+    :mod:`code_analysis.core.text_index_whitelist`): both need the same
+    "one code_content row for the whole file, indexed for fulltext" shape,
+    neither needs Python CST/AST/entity extraction.
+    """
     driver = getattr(database, "_driver_type", None)
     if driver != "postgres":
         try:
@@ -240,10 +253,14 @@ def analyze_file(
     *,
     skip_file_edit_lock: bool = False,
 ) -> Dict[str, Any]:
-    """Analyze a single Python file and add/update entries in the database.
+    """Analyze a single file and add/update entries in the database.
 
-    Uses O(n) classification for functions vs methods (precomputed set of
-    method node ids from class bodies). Emits progress_callback(phase) for
+    Python files get the full AST/CST/entity-extraction pipeline (O(n)
+    classification for functions vs methods via a precomputed set of method
+    node ids from class bodies). Non-Python files on the text whitelist (see
+    :mod:`code_analysis.core.text_index_whitelist`) get a lighter path: a
+    ``files`` row (lockable ``file_id``) and ``code_content`` for fulltext
+    search, never CST/AST/entities. Emits progress_callback(phase) for
     heartbeat during long per-file phases.
 
     Args:
@@ -326,6 +343,51 @@ def analyze_file(
                     "disk_mtime": file_mtime,
                 }
 
+        # Path-only classification (no content needed yet): docs_suffix drives the
+        # pre-existing, config-gated docs_indexing feature; the general text
+        # whitelist (bug 688d2d01 / 13945588 / 597ea8c5 / fe1cf739) is the
+        # fallback for everything docs_indexing does not claim -- see
+        # docs_pipeline_eligible / use_lightweight_text_pipeline below and
+        # code_analysis.core.text_index_whitelist's module docstring for the
+        # full precedence rule.
+        docs_suffix = _relative_path_docs_suffix(rel_path)
+        is_docs_index_file = docs_suffix is not None
+        text_whitelist_candidate = (not is_docs_index_file) and is_text_index_eligible(
+            rel_path
+        )
+
+        # Size bound / binary skip (fe1cf739 hardening): applied only to the
+        # brand-new, always-non-docs whitelist members (.toml/.sh/.gitignore/
+        # .cfg/.ini/.txt/...). Deliberately NOT applied to the docs_suffix
+        # formats (.md/.json/.yaml/.yml): that read path is the pre-existing
+        # docs_indexing feature (or its lightweight fallback below), already
+        # unguarded today, and changing it is out of scope for this fix.
+        if text_whitelist_candidate:
+            if file_stat.st_size > TEXT_INDEX_MAX_BYTES:
+                return {
+                    "file": rel_path,
+                    "status": "skipped",
+                    "reason": "text_index_too_large",
+                    "size_bytes": file_stat.st_size,
+                    "max_bytes": TEXT_INDEX_MAX_BYTES,
+                }
+            try:
+                with open(file_path, "rb") as fh:
+                    sample = fh.read(TEXT_INDEX_BINARY_SNIFF_BYTES)
+            except OSError as e:
+                return {
+                    "file": rel_path,
+                    "status": "error",
+                    "error": f"Cannot read file: {e}",
+                    "error_type": type(e).__name__,
+                }
+            if looks_binary(sample):
+                return {
+                    "file": rel_path,
+                    "status": "skipped",
+                    "reason": "text_index_binary_content",
+                }
+
         _heartbeat(PHASE_READ)
         try:
             file_content = file_path.read_text(encoding="utf-8")
@@ -353,19 +415,8 @@ def analyze_file(
             except SyntaxError:
                 return False
 
-        docs_suffix = _relative_path_docs_suffix(rel_path)
-        is_docs_index_file = docs_suffix is not None
-        if is_docs_index_file:
-            if docs_indexing is None:
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": (
-                        "Documentation indexing requires docs_indexing (pass from indexing worker RPC); "
-                        "CLI callers must supply code_analysis.docs_indexing when enabled"
-                    ),
-                    "error_type": "ConfigurationError",
-                }
+        docs_pipeline_eligible = False
+        if is_docs_index_file and docs_indexing is not None:
             verdict = is_docs_markdown_eligible(
                 docs_indexing=docs_indexing,
                 relative_path=rel_path,
@@ -382,6 +433,18 @@ def analyze_file(
                     ),
                     "error_type": "DocsMarkdownNotEligible",
                 }
+            docs_pipeline_eligible = True
+
+        # Lightweight text-whitelist fallback (bug fe1cf739 + siblings): fires
+        # for the always-non-docs whitelist members, AND for docs_suffix files
+        # that docs_indexing never claimed (no docs_indexing snapshot supplied
+        # at all -- true for `update_indexes` today -- or docs_pipeline_eligible
+        # is False because the feature is disabled/out of scope for this path).
+        # An EXPLICIT docs-eligibility rejection above (docs_indexing supplied,
+        # verdict ineligible) already returned an error and never reaches here.
+        use_lightweight_text_pipeline = (
+            not docs_pipeline_eligible
+        ) and is_text_index_eligible(rel_path)
 
         has_doc_flag = True if is_docs_index_file else _compute_has_docstring_python()
 
@@ -415,7 +478,7 @@ def analyze_file(
                     "error_type": "DatabaseError",
                 }
 
-        if is_docs_index_file:
+        if docs_pipeline_eligible:
             _heartbeat(PHASE_PARSE)
             _heartbeat(PHASE_AST)
             _heartbeat(PHASE_CST)
@@ -455,7 +518,7 @@ def analyze_file(
                 }
 
             try:
-                _mirror_markdown_into_code_content_fulltext(
+                _mirror_text_file_into_code_content_fulltext(
                     database=database,
                     file_id=file_id,
                     relative_path=rel_path,
@@ -486,6 +549,49 @@ def analyze_file(
                 "usages": 0,
                 "markdown_indexed": True,
                 "docs_indexed": True,
+            }
+
+        if use_lightweight_text_pipeline:
+            # Non-Python text whitelist (bug 688d2d01 / 13945588 / 597ea8c5 /
+            # fe1cf739): give the file a real files row (already done above via
+            # add_file, so it is lockable/has a file_id) and code_content (so
+            # fulltext search sees it) -- NEVER enters the Python CST/AST/
+            # entity pipeline below (create_tree_from_code assumes valid Python
+            # source; a shell script or TOML file would only ever fail there).
+            _heartbeat(PHASE_PARSE)
+            _heartbeat(PHASE_AST)
+            _heartbeat(PHASE_CST)
+            _heartbeat(PHASE_ENTITIES)
+            try:
+                _mirror_text_file_into_code_content_fulltext(
+                    database=database,
+                    file_id=file_id,
+                    relative_path=rel_path,
+                    file_body=file_content,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Text-index code_content FTS mirror failed for %s: %s",
+                    rel_path,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "file": rel_path,
+                    "status": "error",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+            return {
+                "file": rel_path,
+                "status": "success",
+                "classes": 0,
+                "functions": 0,
+                "methods": 0,
+                "imports": 0,
+                "entities_updated": 0,
+                "usages": 0,
+                "text_indexed": True,
             }
 
         _heartbeat(PHASE_PARSE)

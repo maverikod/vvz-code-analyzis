@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List
 
+from ..text_index_whitelist import TEXT_INDEX_DOTFILE_BASENAMES
+
 HANDLER_TEXT = "text"
 HANDLER_JSON = "json"
 HANDLER_YAML = "yaml"
@@ -20,6 +22,16 @@ HANDLER_IDS = (HANDLER_TEXT, HANDLER_JSON, HANDLER_YAML, HANDLER_PYTHON)
 OPERATIONS = frozenset({"read", "save", "replace", "delete"})
 
 # Default mapping (centralized; swap for config-driven dict merge later).
+# .toml/.sh/.cfg/.ini and the extensionless ".gitignore" dotfile (bugs
+# 688d2d01 / 13945588 / 597ea8c5) were added alongside the read-side
+# universal_file_preview / update_indexes whitelist fix -- this registry is
+# the WRITE-side gate (project_file_transfer_upload_save / universal_file_*),
+# a separate choke point discovered empirically: AI Editor could not create
+# or save these files at all ("No handler for suffix"), independent of the
+# files-row/file_id/lock fix. ``.gitignore`` maps via its literal basename --
+# see ``_suffix()`` below, which returns the whole basename (not the pathlib
+# suffix, empty for a leading-dot-only name) for whitelisted extensionless
+# dotfiles.
 _DEFAULT_SUFFIX_MAP: Dict[str, str] = {
     ".md": HANDLER_TEXT,
     ".txt": HANDLER_TEXT,
@@ -27,6 +39,11 @@ _DEFAULT_SUFFIX_MAP: Dict[str, str] = {
     ".adoc": HANDLER_TEXT,
     ".jsonl": HANDLER_TEXT,
     ".ndjson": HANDLER_TEXT,
+    ".toml": HANDLER_TEXT,
+    ".sh": HANDLER_TEXT,
+    ".cfg": HANDLER_TEXT,
+    ".ini": HANDLER_TEXT,
+    ".gitignore": HANDLER_TEXT,
     ".json": HANDLER_JSON,
     ".yaml": HANDLER_YAML,
     ".yml": HANDLER_YAML,
@@ -54,8 +71,21 @@ class RegistryError(Exception):
 
 
 def _suffix(file_path: str) -> str:
-    """Return suffix."""
-    return Path(file_path).suffix.lower()
+    """Return the lowercase suffix used as the ``_DEFAULT_SUFFIX_MAP`` key.
+
+    For a whitelisted extensionless dotfile (currently only ``.gitignore`` --
+    see :data:`TEXT_INDEX_DOTFILE_BASENAMES`) this returns the whole lowercase
+    basename instead of ``Path.suffix`` (which is empty for a leading-dot-only
+    name): the map is keyed on that basename for those entries.
+    """
+    p = Path(file_path)
+    suf = p.suffix.lower()
+    if suf:
+        return suf
+    name = p.name.lower()
+    if name in TEXT_INDEX_DOTFILE_BASENAMES:
+        return name
+    return ""
 
 
 def resolve_handler(file_path: str, operation: str) -> str:

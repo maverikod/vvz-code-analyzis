@@ -34,13 +34,18 @@ def _assert_universal_save_ok_fields(d: dict) -> None:
 class TestUniversalFileSaveRouting:
     """Represent TestUniversalFileSaveRouting."""
 
-    async def test_toml_unsupported_before_db(self) -> None:
-        """Verify test toml unsupported before db."""
+    async def test_xml_unsupported_before_db(self) -> None:
+        """Verify test xml unsupported before db.
+
+        ``.toml`` used to be the example unsupported extension here; it is now
+        routed to the plain-text handler (bug 688d2d01), so ``.xml`` -- still
+        off the registry's suffix map -- takes its place.
+        """
         cmd = UniversalFileSaveCommand()
         with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
             result = await cmd.execute(
                 project_id=_PID,
-                file_path="cfg/app.toml",
+                file_path="cfg/app.xml",
                 content="x",
             )
         odb.assert_not_called()

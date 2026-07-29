@@ -49,14 +49,31 @@ def test_resolve_handler_matches_list_handler_mappings(row: Dict[str, str]) -> N
 
 
 def test_handler_suffix_groups_match_product_contract() -> None:
-    """Public mapping groups match the supported text/json/yaml/python suffix sets."""
+    """Public mapping groups match the supported text/json/yaml/python suffix sets.
+
+    .toml/.sh/.cfg/.ini and the extensionless ".gitignore" dotfile were added
+    to HANDLER_TEXT alongside bugs 688d2d01 / 13945588 / 597ea8c5 (AI Editor
+    could not create or save these files at all -- "No handler for suffix").
+    """
     groups: Dict[str, set[str]] = defaultdict(set)
     for r in list_handler_mappings():
         groups[r["handler_id"]].add(r["suffix"])
     by_id = {k: frozenset(v) for k, v in groups.items()}
 
     assert by_id[HANDLER_TEXT] == frozenset(
-        {".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"}
+        {
+            ".md",
+            ".txt",
+            ".rst",
+            ".adoc",
+            ".jsonl",
+            ".ndjson",
+            ".toml",
+            ".sh",
+            ".cfg",
+            ".ini",
+            ".gitignore",
+        }
     )
     assert by_id[HANDLER_JSON] == frozenset({".json"})
     assert by_id[HANDLER_YAML] == frozenset({".yaml", ".yml"})
@@ -73,17 +90,20 @@ def test_unknown_suffix_fails_closed() -> None:
     assert err.details["suffix"] == ".unknown"
 
 
-def test_pyproject_toml_unsupported_extension() -> None:
-    """Verify test pyproject toml unsupported extension."""
-    with pytest.raises(RegistryError) as exc:
-        resolve_handler("pyproject.toml", "read")
-    err = exc.value
-    assert err.code == "UNSUPPORTED_FILE_EXTENSION"
-    assert err.details["suffix"] == ".toml"
+def test_pyproject_toml_resolves_to_text_handler() -> None:
+    """Bug 688d2d01: pyproject.toml must route to the plain-text handler, not reject."""
+    assert resolve_handler("pyproject.toml", "read") == HANDLER_TEXT
+    assert resolve_handler("pyproject.toml", "save") == HANDLER_TEXT
+
+
+def test_gitignore_extensionless_dotfile_resolves_to_text_handler() -> None:
+    """Bug 597ea8c5: .gitignore (no pathlib suffix) must route to the text handler."""
+    assert resolve_handler(".gitignore", "read") == HANDLER_TEXT
+    assert resolve_handler("sub/.gitignore", "save") == HANDLER_TEXT
 
 
 def test_missing_suffix_fails_before_handler_resolution() -> None:
-    """Verify test missing suffix fails before handler resolution."""
+    """A genuinely unrecognized extensionless path (not the .gitignore whitelist) still fails closed."""
     with pytest.raises(RegistryError) as exc:
         validate_supported("README", "read")
     assert exc.value.code == "UNSUPPORTED_FILE_EXTENSION"
@@ -108,6 +128,6 @@ def test_get_handler_schema_text_read() -> None:
 
 
 def test_unsupported_suffix_not_listed_in_discovery() -> None:
-    """Verify test unsupported suffix not listed in discovery."""
+    """A genuinely unsupported suffix (not on the text/json/yaml/python whitelists) is absent."""
     known = {r["suffix"] for r in list_handler_mappings()}
-    assert ".toml" not in known
+    assert ".xml" not in known

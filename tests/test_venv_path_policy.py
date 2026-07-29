@@ -15,6 +15,7 @@ from unittest.mock import patch
 from code_analysis.core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     collect_python_files_for_indexing,
+    collect_text_index_files_for_indexing,
     expand_ignore_exception_all_files,
     expand_ignore_exception_py_files,
     format_project_venv_write_forbidden_message,
@@ -82,6 +83,30 @@ def test_collect_python_files_for_indexing_merges(tmp_path: Path) -> None:
     merged = collect_python_files_for_indexing(root, ["dep"])
     assert (root / "src" / "app.py") in merged
     assert (pkg_dir / "x.py").resolve() in merged
+
+
+def test_collect_text_index_files_for_indexing_whitelist(tmp_path: Path) -> None:
+    """Bug 688d2d01 / 13945588 / 597ea8c5: whitelist walk finds toml/sh/gitignore,
+    excludes .py and non-whitelisted extensions and the project's own venv."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[tool.x]\n", encoding="utf-8")
+    (root / "script.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (root / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    (root / "module.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "image.png").write_bytes(b"\x89PNG")
+    vtoml = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "pyproject.toml"
+    vtoml.parent.mkdir(parents=True)
+    vtoml.write_text("[tool.y]\n", encoding="utf-8")
+
+    found = collect_text_index_files_for_indexing(root)
+
+    assert (root / "pyproject.toml").resolve() in found
+    assert (root / "script.sh").resolve() in found
+    assert (root / ".gitignore").resolve() in found
+    assert (root / "module.py").resolve() not in found
+    assert (root / "image.png").resolve() not in found
+    assert vtoml.resolve() not in found
 
 
 def test_expand_ignore_exception_py_files_under_venv(tmp_path: Path) -> None:

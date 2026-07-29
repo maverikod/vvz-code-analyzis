@@ -17,6 +17,7 @@ from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.database_driver_pkg.domain.projects import get_project
 from ..core.venv_path_policy import (
     collect_python_files_for_indexing,
+    collect_text_index_files_for_indexing,
     load_venv_site_packages_index_allowlist_from_config,
     project_root_listing_error,
 )
@@ -203,20 +204,31 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
                 allowlist = load_venv_site_packages_index_allowlist_from_config()
                 python_files = collect_python_files_for_indexing(root_path, allowlist)
+                # Non-Python text whitelist (bug 688d2d01 / 13945588 / 597ea8c5 /
+                # fe1cf739): pyproject.toml, shell scripts, .gitignore, etc. get a
+                # lockable files row + fulltext-visible code_content, never Python
+                # CST/entity analysis -- see analyze_file's
+                # use_lightweight_text_pipeline branch. Disjoint from python_files
+                # by construction (is_text_index_eligible never matches ``.py``).
+                text_index_files = collect_text_index_files_for_indexing(root_path)
+                all_files = python_files + text_index_files
 
-                files_total = len(python_files)
+                files_total = len(all_files)
                 trigger = kwargs.get("trigger") or "manual"
                 # Log update_indexes start for correlation with status snapshots (see docs/WORKER_AND_DB_STATUS_ANALYSIS.md)
                 logger.info(
-                    "[update_indexes START] project_id=%s files_total=%s root_path=%s trigger=%s",
+                    "[update_indexes START] project_id=%s files_total=%s "
+                    "(python=%s text=%s) root_path=%s trigger=%s",
                     project_id,
                     files_total,
+                    len(python_files),
+                    len(text_index_files),
                     str(root_path),
                     trigger,
                 )
                 if progress_tracker:
                     progress_tracker.set_description(
-                        f"Processing {files_total} Python file(s) for indexing..."
+                        f"Processing {files_total} file(s) for indexing..."
                     )
                     progress_tracker.set_progress(0)
 
@@ -224,7 +236,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     if progress_tracker:
                         progress_tracker.set_progress(100)
                         progress_tracker.set_description(
-                            "No Python files found; nothing to index"
+                            "No indexable files found; nothing to index"
                         )
                         progress_tracker.set_status("completed")
                     return SuccessResult(
@@ -242,7 +254,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                             "imports": 0,
                             "db_repaired": False,
                             "db_backup_paths": [],
-                            "message": "No Python files found",
+                            "message": "No indexable files found",
                         }
                     )
 
@@ -257,7 +269,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     last_percent = -1
                     batch_t0 = time.perf_counter()
 
-                    for idx, file_path in enumerate(python_files):
+                    for idx, file_path in enumerate(all_files):
 
                         def make_heartbeat_cb(
                             i: int, total: int

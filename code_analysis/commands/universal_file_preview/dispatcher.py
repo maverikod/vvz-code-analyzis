@@ -55,6 +55,13 @@ class HandlerDispatcher:
             ".ndjson": JsonLinesFileHandler(),
             ".yaml": YamlFileHandler(),
             ".yml": YamlFileHandler(),
+            # TOML (bug a51769dc): no dedicated parsed-tree infra exists in this
+            # codebase (unlike core.yaml_tree for YAML), and the bug report is
+            # "preview fails outright" (UNKNOWN_EXTENSION), not "preview lacks
+            # structured node addressing" -- TextFileHandler (already used for
+            # .txt/.rst/.adoc) resolves the reported symptom with proportionate
+            # effort, same tier as those formats.
+            ".toml": TextFileHandler(),
         }
 
     def dispatch(self, file_path: str) -> FileHandler | PreviewError:

@@ -17,6 +17,7 @@ from code_analysis.core.database_driver_pkg.domain.files import (
     update_file,
 )
 from code_analysis.core.database_driver_pkg.exceptions import TransactionError
+from code_analysis.core.text_index_whitelist import TEXT_INDEX_DOTFILE_BASENAMES
 
 from .base import (
     VALIDATION_FAILED,
@@ -36,21 +37,37 @@ from .text_ranges import (
     validate_range_against_length,
 )
 
-TEXT_SUFFIXES = frozenset({".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson"})
+# .toml/.sh/.cfg/.ini added alongside registry.py's _DEFAULT_SUFFIX_MAP (bugs
+# 688d2d01 / 13945588): this module's own gate (ensure_text_suffix) must stay
+# in sync with the registry or a save/replace/delete/read still 500s after
+# resolve_handler() routes here. The extensionless ".gitignore" dotfile (bug
+# 597ea8c5) is handled separately below (TEXT_SUFFIXES is suffix-only, like
+# Path.suffix -- empty for a leading-dot-only name).
+TEXT_SUFFIXES = frozenset(
+    {".md", ".txt", ".rst", ".adoc", ".jsonl", ".ndjson", ".toml", ".sh", ".cfg", ".ini"}
+)
 
-logger = logging.getLogger(__name__)
+
+def _is_whitelisted_extensionless_dotfile(file_path: str) -> bool:
+    """True if ``file_path`` has no suffix but its basename is whitelisted (e.g. .gitignore)."""
+    p = Path(file_path)
+    return not p.suffix and p.name.lower() in TEXT_INDEX_DOTFILE_BASENAMES
 
 
 def ensure_text_suffix(file_path: str) -> None:
     """Return ensure text suffix."""
     suf = Path(file_path).suffix.lower()
-    if suf not in TEXT_SUFFIXES:
-        raise ValueError(f"Not a configured plain-text suffix: {suf}")
+    if suf in TEXT_SUFFIXES:
+        return
+    if _is_whitelisted_extensionless_dotfile(file_path):
+        return
+    raise ValueError(f"Not a configured plain-text suffix: {suf}")
 
 
 def is_registered_plain_text_suffix(file_path: str) -> bool:
     """True when ``file_path`` uses a plain-text suffix handled by this module."""
-    return Path(file_path).suffix.lower() in TEXT_SUFFIXES
+    suf = Path(file_path).suffix.lower()
+    return suf in TEXT_SUFFIXES or _is_whitelisted_extensionless_dotfile(file_path)
 
 
 def read_lines_range_ok(

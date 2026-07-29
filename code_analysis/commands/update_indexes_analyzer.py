@@ -18,12 +18,12 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, Optional
 
 from ..core.constants import FILE_MODIFICATION_TOLERANCE
+from ..core.database.entities import replace_usages_for_file
 from ..core.database.file_tree_sync import sync_file_to_db_atomic
 from ..core.database.files.helpers import _last_modified_to_unix
 from ..core.database_driver_pkg.domain.files import (
     add_code_content,
     add_file,
-    add_usage,
     get_file_by_path,
     mark_file_needs_chunking,
 )
@@ -631,32 +631,18 @@ def analyze_file(
             tree = ast.parse(file_content, filename=str(file_path))
             from ..core.usage_tracker import UsageTracker
 
-            def add_usage_callback(usage_record: Dict[str, Any]) -> None:
-                """Return add usage callback."""
-                nonlocal usages_added
-                try:
-                    add_usage(
-                        database,
-                        file_id=file_id,
-                        line=usage_record["line"],
-                        usage_type=usage_record["usage_type"],
-                        target_type=usage_record["target_type"],
-                        target_name=usage_record["target_name"],
-                        target_class=usage_record.get("target_class"),
-                        context=usage_record.get("context"),
-                    )
-                    usages_added += 1
-                except Exception as e:
-                    logger.debug(
-                        "Failed to add usage for %s at line %s: %s",
-                        usage_record.get("target_name"),
-                        usage_record.get("line"),
-                        e,
-                        exc_info=True,
-                    )
-
-            usage_tracker = UsageTracker(add_usage_callback)
+            usage_tracker = UsageTracker()
             usage_tracker.visit(tree)
+            usage_rows = usage_tracker.get_usages()
+
+            # Replace (delete-then-insert), never append: re-running update_indexes
+            # on an unchanged file must not accumulate duplicate/stale usage rows
+            # (bug a586efdb). replace_usages_for_file deletes every existing
+            # usages row for file_id in the same call, including the case where
+            # this run finds zero usages (a file that stopped calling anything
+            # must end up with zero usage rows, not its previous, now-stale set).
+            replace_usages_for_file(database, file_id, usage_rows)
+            usages_added = len(usage_rows)
             logger.debug("Tracked %s usages in %s", usages_added, rel_path)
         except Exception as e:
             logger.warning(

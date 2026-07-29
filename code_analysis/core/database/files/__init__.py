@@ -1,14 +1,21 @@
 """
-Database file operations: CRUD, update, trash, versions, atomic.
+Database file operations: CRUD, update, trash, versions.
 
-All functions are attached to CodeDatabase by database/__init__.py.
 Split into submodules to keep file size under limit.
+
+``atomic.py`` (``update_file_data_atomic``, the legacy in-transaction
+``CodeDatabase``-bound updater) was removed as dead code (bug 3e7177d6
+inventory): ``CodeDatabase`` itself no longer exists post the SQLite/DB-layer
+collapse, and grep confirmed zero callers anywhere in the repo besides this
+re-export. The live file-data write path is
+``code_analysis.core.database_client.file_data_batch.update_file_data_atomic_batch``
+(driver-direct), reached via ``sync_file_to_db_atomic`` /
+``compose_cst_writer.apply_changes`` / ``restore_backup_file``.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from .atomic import update_file_data_atomic
 from .crud import (
     _clear_file_vectors,
     add_file,
@@ -69,6 +76,5 @@ __all__ = [
     "update_and_vectorize_file",
     "update_file_data",
     "update_file_data_via_driver",
-    "update_file_data_atomic",
     "vectorize_file_immediately",
 ]

@@ -196,6 +196,7 @@ def build_file_data_atomic_batches(
                 file_id=fid_entity,
                 name=node.name,
                 line=node.lineno,
+                end_line=getattr(node, "end_lineno", None),
                 docstring=docstring,
                 bases=bases,
             )
@@ -223,6 +224,7 @@ def build_file_data_atomic_batches(
                         class_id=0,
                         name=item.name,
                         line=item.lineno,
+                        end_line=getattr(item, "end_lineno", None),
                         docstring=method_docstring,
                         args=method_args,
                     )
@@ -261,6 +263,7 @@ def build_file_data_atomic_batches(
                 file_id=fid_entity,
                 name=node.name,
                 line=node.lineno,
+                end_line=getattr(node, "end_lineno", None),
                 docstring=docstring,
                 args=args,
             )
@@ -473,6 +476,15 @@ def update_file_data_atomic_batch(
         )
 
     if transaction_id is not None and skip_file_edit_lock:
+        # Caller-owned transaction (compose_cst_writer.apply_changes /
+        # restore_backup_file): this function only runs the batch SQL here and
+        # returns BEFORE the caller's own ``database.commit_transaction``. Do
+        # NOT rebuild entity_cross_ref in this branch - the classes/functions/
+        # methods rows this file just wrote are not durably visible to a plain
+        # (non-transactional) ``db.execute`` read until that outer commit
+        # happens. Each such caller calls
+        # ``core.entity_cross_ref_builder.rebuild_entity_cross_ref_for_file``
+        # itself, right after its own commit succeeds (bug 3e7177d6).
         err = execute_all_batches_in_transaction(
             database,
             batches,
@@ -522,5 +534,20 @@ def update_file_data_atomic_batch(
                     file_id,
                     exc_info=True,
                 )
+
+    # Standalone write (no caller-owned transaction): the batch above already
+    # committed (submit_logical_write_or_fallback runs one atomic logical-write
+    # RPC, or a sequential execute_batch fallback), so the entity rows are
+    # durably visible now. Rebuild entity_cross_ref the same way
+    # sync_file_to_db_atomic (the update_indexes path) does - bug 3e7177d6.
+    from ..entity_cross_ref_builder import rebuild_entity_cross_ref_for_file
+
+    rebuild_entity_cross_ref_for_file(
+        database,
+        file_id,
+        project_id,
+        source_code,
+        context=f"update_file_data_atomic_batch path={file_path}",
+    )
 
     return {**meta, "success": True}

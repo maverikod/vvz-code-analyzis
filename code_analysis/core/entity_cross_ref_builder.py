@@ -10,6 +10,9 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from .database.entity_cross_ref import add_entity_cross_ref as _add_entity_cross_ref
+from .database.entity_cross_ref import (
+    delete_entity_cross_ref_for_file as _delete_entity_cross_ref_for_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -516,3 +519,74 @@ def build_entity_cross_ref_for_file(
             exc_info=True,
         )
     return added
+
+
+def rebuild_entity_cross_ref_for_file(
+    db: Any,
+    file_id: Any,
+    project_id: str,
+    source_code: str,
+    *,
+    context: str = "",
+) -> int:
+    """
+    Delete and rebuild entity_cross_ref rows for one file; never raises.
+
+    Single shared entry point for "a file's classes/functions/methods rows
+    were just committed - now (re)build its dependency/inheritance edges".
+    Every write path that persists entities for a file (bug 3e7177d6: the
+    CST-write/batch path - ``update_file_data_atomic_batch`` and its callers
+    ``compose_cst_writer.apply_changes`` / ``restore_backup_file`` - used to
+    skip this step entirely, unlike ``sync_file_to_db_atomic``, the
+    ``update_indexes`` path) MUST call this exact function instead of
+    re-implementing the delete-then-build sequence, so the two paths can
+    never drift again.
+
+    Must be called only after the entity rows it reads (classes/functions/
+    methods) are durably committed and visible to a plain ``db.execute``
+    call - i.e. after any wrapping transaction has committed, not from
+    inside one (this function has no ``transaction_id`` of its own and
+    :func:`build_entity_cross_ref_for_file` reads via the DB's default
+    connection/pool, so calling it before the caller's own commit could
+    silently see a stale, pre-write snapshot).
+
+    Args:
+        db: DB instance exposing the portable ``execute()`` (CodeDatabase or
+            DatabaseClient - see :func:`_fetchall`).
+        file_id: File id whose cross-ref rows are rebuilt.
+        project_id: Project id used for callee/base-class resolution.
+        source_code: Current source of the file; forwarded to
+            :func:`build_entity_cross_ref_for_file` (currently unused there,
+            kept for API symmetry with that function and for future use).
+        context: Short label identifying the calling write path, included in
+            the debug/warning log lines (e.g. ``"sync_file_to_db_atomic"``,
+            ``"update_file_data_atomic_batch"``).
+
+    Returns:
+        Number of entity_cross_ref rows added. Returns 0 (not raised) when
+        the rebuild itself fails - a failure here must never fail the
+        caller's file write, mirroring every existing call site's own
+        "do not fail the whole file update" contract.
+    """
+    label = context or "rebuild_entity_cross_ref_for_file"
+    try:
+        _delete_entity_cross_ref_for_file(db, file_id)
+        added = build_entity_cross_ref_for_file(db, file_id, project_id, source_code)
+        logger.debug(
+            "%s: built %s entity cross-ref row(s) for project_id=%s file_id=%s",
+            label,
+            added,
+            project_id,
+            file_id,
+        )
+        return added
+    except Exception as e:
+        logger.warning(
+            "%s: failed to rebuild entity_cross_ref for project_id=%s file_id=%s: %s",
+            label,
+            project_id,
+            file_id,
+            e,
+            exc_info=True,
+        )
+        return 0

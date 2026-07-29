@@ -22,7 +22,12 @@ class Method(BaseObject):
         id: Method identifier
         class_id: Class identifier
         name: Method name
-        line: Line number where method is defined
+        line: Line number where method is defined (its ``def`` line)
+        end_line: Line number where the method body ends (its last physical
+            line, e.g. AST ``end_lineno``); ``None`` for rows indexed before
+            end_line population existed (bug d4cd9525) or when unavailable -
+            span-consuming code (e.g. ``resolve_caller``) must treat ``None``
+            as "single-line entity", never as zero-length or an error.
         args: Method arguments as list of strings
         docstring: Method docstring
         is_abstract: Whether method is abstract
@@ -35,6 +40,7 @@ class Method(BaseObject):
     class_id: int = 0
     name: str = ""
     line: int = 0
+    end_line: Optional[int] = None
     args: Optional[List[str]] = None
     docstring: Optional[str] = None
     is_abstract: bool = False
@@ -98,6 +104,7 @@ class Method(BaseObject):
             class_id=data["class_id"],
             name=data["name"],
             line=data["line"],
+            end_line=data.get("end_line"),
             args=args,
             docstring=data.get("docstring"),
             is_abstract=bool(data.get("is_abstract", False)),
@@ -147,6 +154,8 @@ class Method(BaseObject):
         }
         if self.id is not None:
             result["id"] = self.id
+        if self.end_line is not None:
+            result["end_line"] = self.end_line
         if self.args:
             result["args"] = self._to_json_field(self.args)
         if self.docstring is not None:

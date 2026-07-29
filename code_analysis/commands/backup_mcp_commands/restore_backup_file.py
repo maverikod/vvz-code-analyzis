@@ -219,6 +219,25 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
                         database, file_id, transaction_id=transaction_id
                     )
                     database.commit_transaction(transaction_id)
+
+                    # Rebuild entity_cross_ref now that the transaction above
+                    # committed the restored file's classes/functions/methods
+                    # rows (bug 3e7177d6: update_file_data_atomic_batch's
+                    # caller-owned-transaction branch never rebuilds cross-ref
+                    # itself - see that function's docstring). Must run AFTER
+                    # commit_transaction so the rows it reads are durably
+                    # visible to a plain (non-transactional) db.execute read.
+                    from ...core.entity_cross_ref_builder import (
+                        rebuild_entity_cross_ref_for_file,
+                    )
+
+                    rebuild_entity_cross_ref_for_file(
+                        database,
+                        file_id,
+                        project_id,
+                        source_code,
+                        context=f"restore_backup_file path={absolute_path}",
+                    )
                 except Exception:
                     try:
                         database.rollback_transaction(transaction_id)

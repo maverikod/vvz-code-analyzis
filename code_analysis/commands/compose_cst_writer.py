@@ -356,6 +356,29 @@ def apply_changes(
         )
         t_prev = _t
 
+        # Rebuild entity_cross_ref now that the transaction above committed
+        # the file's classes/functions/methods rows (bug 3e7177d6: this write
+        # path - update_file_data_atomic_batch's caller-owned-transaction
+        # branch - never rebuilt cross-ref at all, unlike sync_file_to_db_atomic
+        # / update_indexes). Must run AFTER commit_transaction, not inside
+        # update_file_data_atomic_batch itself - see that function's docstring
+        # note on its caller-owned-transaction branch.
+        from ..core.entity_cross_ref_builder import rebuild_entity_cross_ref_for_file
+
+        rebuild_entity_cross_ref_for_file(
+            database,
+            file_id,
+            project_id,
+            source_code,
+            context=f"compose_cst_writer.apply_changes path={target_path}",
+        )
+        _t = time.perf_counter()
+        logger.info(
+            "[PROFILE] _apply_changes rebuild_entity_cross_ref elapsed=%.3fs",
+            _t - t_prev,
+        )
+        t_prev = _t
+
         _t = time.perf_counter()
         logger.info(
             "[PROFILE] _apply_changes post_commit_transaction elapsed=%.3fs (total_apply=%.3fs)",

@@ -22,7 +22,12 @@ class Class(BaseObject):
         id: Class identifier
         file_id: File identifier
         name: Class name
-        line: Line number where class is defined
+        line: Line number where class is defined (its ``def``/``class`` line)
+        end_line: Line number where the class body ends (its last physical
+            line, e.g. AST ``end_lineno``); ``None`` for rows indexed before
+            end_line population existed (bug d4cd9525) or when unavailable -
+            span-consuming code (e.g. ``resolve_caller``) must treat ``None``
+            as "single-line entity", never as zero-length or an error.
         docstring: Class docstring
         bases: Base classes as list of strings
         created_at: Creation timestamp
@@ -32,6 +37,7 @@ class Class(BaseObject):
     file_id: int = 0
     name: str = ""
     line: int = 0
+    end_line: Optional[int] = None
     docstring: Optional[str] = None
     bases: Optional[List[str]] = None
     created_at: Optional[datetime] = None
@@ -92,6 +98,7 @@ class Class(BaseObject):
             file_id=data["file_id"],
             name=data["name"],
             line=data["line"],
+            end_line=data.get("end_line"),
             docstring=data.get("docstring"),
             bases=bases,
             created_at=cls._parse_timestamp(data.get("created_at")),
@@ -125,6 +132,8 @@ class Class(BaseObject):
         }
         if self.id is not None:
             result["id"] = self.id
+        if self.end_line is not None:
+            result["end_line"] = self.end_line
         if self.docstring is not None:
             result["docstring"] = self.docstring
         if self.bases:
@@ -144,7 +153,12 @@ class Function(BaseObject):
         id: Function identifier
         file_id: File identifier
         name: Function name
-        line: Line number where function is defined
+        line: Line number where function is defined (its ``def`` line)
+        end_line: Line number where the function body ends (its last physical
+            line, e.g. AST ``end_lineno``); ``None`` for rows indexed before
+            end_line population existed (bug d4cd9525) or when unavailable -
+            span-consuming code (e.g. ``resolve_caller``) must treat ``None``
+            as "single-line entity", never as zero-length or an error.
         args: Function arguments as list of strings
         docstring: Function docstring
         created_at: Creation timestamp
@@ -154,6 +168,7 @@ class Function(BaseObject):
     file_id: int = 0
     name: str = ""
     line: int = 0
+    end_line: Optional[int] = None
     args: Optional[List[str]] = None
     docstring: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -214,6 +229,7 @@ class Function(BaseObject):
             file_id=data["file_id"],
             name=data["name"],
             line=data["line"],
+            end_line=data.get("end_line"),
             args=args,
             docstring=data.get("docstring"),
             created_at=cls._parse_timestamp(data.get("created_at")),
@@ -247,6 +263,8 @@ class Function(BaseObject):
         }
         if self.id is not None:
             result["id"] = self.id
+        if self.end_line is not None:
+            result["end_line"] = self.end_line
         if self.args:
             result["args"] = self._to_json_field(self.args)
         if self.docstring is not None:

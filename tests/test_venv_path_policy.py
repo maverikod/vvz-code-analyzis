@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from code_analysis.core.file_watcher_pkg.scanner import should_ignore_path
 from unittest.mock import patch
 
 from code_analysis.core.venv_path_policy import (
+    LIST_PROJECT_SKIP_FILE_SUFFIXES,
     build_allowlisted_site_packages_py_files,
     collect_python_files_for_indexing,
     collect_text_index_files_for_indexing,
@@ -226,6 +228,85 @@ def test_iter_project_files_excluding_venv_show_hidden_descends_mypy_and_dot_dir
     found_hidden = iter_project_files_excluding_venv(root, show_hidden=True)
     assert marker.resolve() in [p.resolve() for p in found_hidden]
     assert wf.resolve() in [p.resolve() for p in found_hidden]
+
+
+def test_list_project_skip_file_suffixes_includes_tree_sidecars() -> None:
+    """Bug 8e6acb34 component A: ``*.tree`` CST sidecars are declared 'generated,
+    never indexed' in ``constants.DEFAULT_IGNORE_PATTERNS`` but were never actually
+    enforced during enumeration (only directory basenames were pruned). The
+    per-file suffix skip set must include ``.tree`` -- derived from the single
+    declared source, not a second hardcoded literal.
+    """
+    assert ".tree" in LIST_PROJECT_SKIP_FILE_SUFFIXES
+    # Still carries the original binary/bytecode suffixes (union, not replacement).
+    assert ".pyc" in LIST_PROJECT_SKIP_FILE_SUFFIXES
+    assert ".so" in LIST_PROJECT_SKIP_FILE_SUFFIXES
+
+
+def test_iter_project_files_excluding_venv_skips_tree_sidecars(
+    tmp_path: Path,
+) -> None:
+    """A ``*.tree`` CST sidecar file never survives the default enumeration."""
+    root = tmp_path / "proj"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "pkg" / "mod.py.tree").write_text("{}", encoding="utf-8")
+
+    found = iter_project_files_excluding_venv(root)
+    assert (root / "pkg" / "mod.py") in found
+    assert not any(p.suffix == ".tree" for p in found)
+
+
+def test_default_project_walk_never_descends_into_ignored_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Traversal-time pruning: ``os.walk`` must never yield a walk-root inside a
+    directory the default project walk would prune (``.mypy_cache``, ``data``,
+    ``__pycache__``, ...) -- proof that the ignore set is applied DURING the
+    walk (``dirnames[:]`` mutation), not only filtered out of the result
+    afterward. A regression here would silently reintroduce the exact
+    walk-then-discard cost pattern bug 8e6acb34 measured.
+    """
+    import os as os_module
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    # Plant many files inside directories the walk must prune.
+    mypy_dir = root / ".mypy_cache" / "3.12" / "pkg"
+    mypy_dir.mkdir(parents=True)
+    for i in range(25):
+        (mypy_dir / f"f{i}.json").write_text("{}", encoding="utf-8")
+
+    data_dir = root / "data" / "search_sessions" / "some-uuid"
+    data_dir.mkdir(parents=True)
+    for i in range(25):
+        (data_dir / f"block{i}.bin").write_bytes(b"\0")
+
+    yielded_roots = []
+    real_walk = os_module.walk
+
+    def _spying_walk(top, *args, **kwargs):
+        for walk_root, dirs, files in real_walk(top, *args, **kwargs):
+            yielded_roots.append(walk_root)
+            yield walk_root, dirs, files
+
+    monkeypatch.setattr(
+        "code_analysis.core.venv_path_policy.os.walk", _spying_walk
+    )
+
+    found = iter_project_files_excluding_venv(root)
+
+    assert (root / "src" / "app.py") in found
+    assert not any("mypy_cache" in p.as_posix() for p in found)
+    assert not any("search_sessions" in p.as_posix() for p in found)
+
+    # The decisive assertion: os.walk itself never stepped INTO the pruned
+    # directories -- not merely that their files were filtered from the result.
+    assert not any(".mypy_cache" in r for r in yielded_roots)
+    assert not any(f"{os_module.sep}data" in r or r.endswith(f"{os_module.sep}data") for r in yielded_roots)
 
 
 def test_expand_ignore_exception_all_files_includes_non_py(tmp_path: Path) -> None:

@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import AbstractSet, Collection, FrozenSet, List, Optional, Sequence, Set
 
+from .constants import default_ignore_file_suffixes
 from .fs_permissions import log_walk_error
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,14 @@ def build_allowlisted_site_packages_py_files(
     return frozenset(out)
 
 
-# Suffixes skipped when listing ordinary project files (binaries / bytecode / native libs).
+# Suffixes skipped when listing ordinary project files: binaries / bytecode / native
+# libs (hardcoded below) UNIONED with every bare-suffix ``*.ext`` glob already
+# declared in ``constants.DEFAULT_IGNORE_PATTERNS`` (e.g. ``.tree`` CST sidecars,
+# ``.log``, ``.lock`` -- see :func:`code_analysis.core.constants.
+# default_ignore_file_suffixes`; bug 8e6acb34 component A: those patterns were
+# declared but never enforced during enumeration). Single source of truth for the
+# `constants` half; do not add a second hardcoded suffix list elsewhere for the
+# same intent -- extend ``DEFAULT_IGNORE_PATTERNS`` instead.
 # Public: reused by project_fs_enumerate.path_survives_default_project_listing_filter
 # (list_project_files exact-path fast path) so the rule lives in exactly one place.
 LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
@@ -372,6 +380,7 @@ LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
         ".class",
         ".wasm",
     }
+    | default_ignore_file_suffixes()
 )
 
 

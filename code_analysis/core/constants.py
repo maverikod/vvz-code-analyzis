@@ -70,6 +70,31 @@ DEFAULT_IGNORE_PATTERNS: Set[str] = {
     "cli/cst_compose_*",
 } | set(DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES)
 
+
+def default_ignore_file_suffixes() -> Set[str]:
+    """Bare file suffixes (e.g. ``.tree``) for every simple ``*.ext`` glob declared
+    in :data:`DEFAULT_IGNORE_PATTERNS`.
+
+    Single source of truth for per-file suffix skips during project enumeration
+    (bug 8e6acb34 component A): ``DEFAULT_IGNORE_PATTERNS`` already declares
+    ``"*.tree"`` (CST node-ID sidecars, "generated, never indexed") alongside
+    ``"*.pyc"``/``"*.pyo"``/``"*.log"``/``"*.lock"``, but nothing previously
+    applied that declaration as a per-file filter during enumeration -- only
+    directory basenames were pruned from the walk, so every ``*.tree`` file
+    (measured: 2,641 of 6,119 enumerated paths in this checkout, 43%) survived
+    all the way to the returned listing/grep target set. Only patterns shaped
+    as a single leading ``*`` plus a literal suffix (no other wildcard, no path
+    separator) are extracted here -- directory basenames, ``path/**`` globs, and
+    ``prefix_*`` globs are out of scope for a per-file suffix check and remain
+    handled by directory-walk pruning / the post-walk path-shape filter.
+    """
+    out: Set[str] = set()
+    for pat in DEFAULT_IGNORE_PATTERNS:
+        if pat.startswith("*.") and "/" not in pat and pat.count("*") == 1:
+            out.add(pat[1:])
+    return out
+
+
 # Git ignore patterns (additional patterns for .gitignore)
 GIT_IGNORE_PATTERNS: Set[str] = {
     "__pycache__/",

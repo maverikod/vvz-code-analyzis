@@ -256,6 +256,30 @@ def _build_mixed_extension_siblings_fixture(root: Path, *, count: int) -> None:
         (ast_dir / f"{stem}.py.tree").write_text(f"# cst cache {i}\n")
 
 
+def _build_mixed_extension_siblings_fixture_non_ignored(
+    root: Path, *, count: int
+) -> None:
+    """Same shape as :func:`_build_mixed_extension_siblings_fixture`, but the
+    non-``.py`` sibling is ``.txt`` instead of ``.py.tree``.
+
+    Bug 8e6acb34 component A: ``*.tree`` CST sidecars are now excluded during
+    enumeration itself (``LIST_PROJECT_SKIP_FILE_SUFFIXES``), so they can no
+    longer stand in for "a real, listable non-``.py`` sibling" -- a
+    ``python_only=False`` listing of the ``.py.tree`` shape now returns the
+    SAME count as ``python_only=True`` (the sidecars never survive either
+    walk), which would silently defeat this test's actual purpose: proving
+    the scoped walk does not truncate a directory whose all-files listing is
+    genuinely larger than its python-only listing.
+    """
+    root.mkdir()
+    ast_dir = root / "pkg" / "ast"
+    ast_dir.mkdir(parents=True)
+    for i in range(count):
+        stem = f"module_{i:02d}"
+        (ast_dir / f"{stem}.py").write_text(f"# source {i}\n")
+        (ast_dir / f"{stem}.txt").write_text(f"# notes {i}\n")
+
+
 @pytest.mark.parametrize("python_only", [False, True])
 def test_scoped_matches_forced_full_walk_for_dir_prefix_with_many_non_python_siblings(
     tmp_path: Path, python_only: bool
@@ -266,10 +290,14 @@ def test_scoped_matches_forced_full_walk_for_dir_prefix_with_many_non_python_sib
     the live check's undersized, python_only-mismatched page budget truncate
     real results. Both ``python_only`` settings must still see scoped ==
     full for every one of the (deliberately > 20, so a naive small
-    ``page_size`` assumption would have truncated it) generated files.
+    ``page_size`` assumption would have truncated it) generated files. Uses
+    ``.txt`` siblings, not ``.py.tree`` (see
+    :func:`_build_mixed_extension_siblings_fixture_non_ignored`): bug
+    8e6acb34 made ``.tree`` sidecars never survive enumeration, so they no
+    longer produce the "double count" shape this test needs.
     """
     root = tmp_path / "proj"
-    _build_mixed_extension_siblings_fixture(root, count=19)
+    _build_mixed_extension_siblings_fixture_non_ignored(root, count=19)
     pattern = "pkg/ast"
 
     scoped = _matched_relative_paths(
@@ -287,7 +315,7 @@ def test_scoped_matches_forced_full_walk_for_dir_prefix_with_many_non_python_sib
     # size, proving there is no hidden truncation in the scoped walk itself.
     assert "pkg/ast/module_18.py" in scoped
     if not python_only:
-        assert "pkg/ast/module_18.py.tree" in scoped
+        assert "pkg/ast/module_18.txt" in scoped
 
 
 @pytest.mark.parametrize("python_only", [False, True])

@@ -1,36 +1,49 @@
 """
-Concurrent read throughput check for the whole-project-lock-gate select() path
-(bug 8e6acb34).
+Concurrent read throughput check for project-scoped read commands (bug 8e6acb34).
 
 Registered in ``realsrv_test.suites.s11_read_throughput`` (SUITE_NAME
 "throughput").
 
-Root cause under test: every command carrying a literal ``project_id``
-runs ``get_project_exclusive_lock()`` (the whole-project-lock gate) on its
-offload worker thread BEFORE its body -- see
-``commands/base_mcp_command.py`` ``_gated_run()``. That gate calls
-``database.select()``, which (pre-fix) ran on the driver's single main
-PostgreSQL connection under an unbounded ``threading.Lock``, serializing
-EVERY concurrent project-scoped command process-wide regardless of how cheap
-each command's own body is. Fulltext ``search`` already avoided the main
-connection for its own query (it uses ``execute()``, routed to the pool's
-read lane), so a throughput check built on ``search`` would be confounded by
-the read lane's own separate sizing (bug 8e6acb34's second, independent
-bottleneck) -- see ``lifecycle_loop_liveness.py`` (suite "loop") for that
-control-latency-style check instead. This check isolates bottleneck (1) by
-using ``list_project_files`` with ``page_size=1``: a body cheap enough that
-the wall-clock is dominated by the lock-gate ``select()`` call ahead of it,
-not by the command's own work.
+Root cause under test -- CORRECTED (this module's docstring previously claimed
+``list_project_files(page_size=1)`` has "a body cheap enough that the wall-clock
+is dominated by the lock-gate select()"; that premise was wrong by roughly
+800x and is replaced below with what was actually measured):
+
+Every command carrying a literal ``project_id`` runs
+``get_project_exclusive_lock()`` (the whole-project-lock gate) on its offload
+worker thread BEFORE its body -- see ``commands/base_mcp_command.py``
+``_gated_run()``. That gate's own ``database.select()`` cost was bottleneck
+(1) (pre-fix: an unbounded ``threading.Lock`` around the driver's single main
+PostgreSQL connection, serializing every concurrent project-scoped command
+regardless of body cost) and has already been fixed (route through a properly
+sized pooled read lane). Bottleneck (2), fixed alongside this check's
+documentation, was in the command BODY itself: ``list_project_files`` (chosen
+here specifically because ``page_size=1`` makes its RESPONSE cheap, not its
+body) walks the project tree and re-validates ``config.json`` on every call.
+Measured on this checkout before the fix: ~0.79s of GIL-bound CPU per call --
+~59% re-parsing + re-validating ``config.json`` (including 8 RSA
+``load_pem_private_key`` calls inside the TLS-material validator) on every
+single call, ~41% enumerating the project tree. Both are now fixed: config
+validation is cached per process (path + mtime + size), and the already-
+declared ``*.tree``/``.log``/``.lock`` file-suffix ignore patterns are now
+actually applied during enumeration instead of only pruning directory
+basenames. A command body with ~0.8s of GIL-bound CPU work serializes
+concurrent calls almost as badly as an unbounded lock would, regardless of
+page_size -- this check exercises the REAL end-to-end command path (network +
+offload-worker GIL contention together), not the lock gate in isolation, so it
+remains a valid regression guard for either bottleneck reappearing.
 
 Methodology: fire ``_N`` concurrent calls and time the batch wall-clock, then
 run the SAME ``_N`` calls strictly sequentially (one at a time, awaited in
-turn) and time that too. If the lock-gate select() path is serialized
-process-wide, concurrent wall-clock will be roughly equal to (or, accounting
-for offload-pool scheduling overhead, not much better than) sequential
-wall-clock -- speedup ~1x. Once select() is routed off the single main
-connection through a properly sized pooled read lane, concurrent calls should
-overlap substantially and the speedup should be large. This check asserts
-speedup >= ``_MIN_SPEEDUP_FACTOR``.
+turn) and time that too. If either bottleneck reappears (lock-gate
+serialization, or the command body itself burning GIL-bound CPU on every
+call), concurrent wall-clock will be roughly equal to (or, accounting for
+offload-pool scheduling overhead, not much better than -- see this check's own
+history of measuring speedups below 1.0x) sequential wall-clock. With both
+fixed, concurrent calls should overlap substantially and the speedup should be
+large. This check asserts speedup >= ``_MIN_SPEEDUP_FACTOR`` (unchanged by
+this correction: threshold stays 4.0x -- only the diagnosis above is
+corrected, not the bar a fix must clear).
 
 One warm-up call runs first (excluded from both measurements) to absorb
 cold-start skew, mirroring ``lifecycle_loop_liveness.py``.

@@ -31,18 +31,24 @@ basenames.
 
 AMBIENT-LOAD GATING (bug 2aaac911): both metrics below share a single
 pre-measurement probe (``realsrv_test.core.ambient_load.probe_ambient_load``)
-run before any timed calls. If the server already looks busy from work this
-check does not control, both metrics report :attr:`Status.INCONCLUSIVE`
-naming the observed numbers INSTEAD of measuring noise and presenting it as
-a verdict -- this is what stops a neighbouring suite's load (e.g.
-``lifecycle_loop_liveness.py``'s K=32 storm, confirmed on the real deployed
-server to push this check's own latency measurement to 0.646s/call vs a
-clean 0.009-0.010s/call standalone) from silently reading as a code
-regression. Likewise, hitting this check's own hard timeout is reported as
-INCONCLUSIVE, not FAILED -- a check that time-boxes itself out because the
-server was busy proved nothing about the code under test either way. See
-``realsrv_test.core.ambient_load`` for the probe mechanism and the numeric
-justification of its ceiling.
+run AFTER the existing warm-up call and BEFORE any regression-relevant timed
+calls. The probe runs after warm-up, never before it: live-verified while
+building this gate, a probe taken on a cold connection/process absorbs that
+one-off cold-start cost (a single ~0.4-0.6s first touch of this project) into
+its own average and misreads a genuinely idle server as ambient load -- the
+same cold-start skew every other check in this package already warms up
+once to avoid (see ``lifecycle_loop_liveness.py``'s identical rationale). If
+the server still looks busy on an already-warm connection, both metrics
+report :attr:`Status.INCONCLUSIVE` naming the observed numbers INSTEAD of
+measuring noise and presenting it as a verdict -- this is what stops a
+neighbouring suite's load (e.g. ``lifecycle_loop_liveness.py``'s K=32 storm,
+confirmed on the real deployed server to push this check's own latency
+measurement to 0.646s/call vs a clean 0.009-0.010s/call standalone) from
+silently reading as a code regression. Likewise, hitting this check's own
+hard timeout is reported as INCONCLUSIVE, not FAILED -- a check that
+time-boxes itself out because the server was busy proved nothing about the
+code under test either way. See ``realsrv_test.core.ambient_load`` for the
+probe mechanism and the numeric justification of its ceiling.
 
 This module reports TWO INDEPENDENT metrics from the SAME measurement round,
 because they track two different facts that must not be conflated:
@@ -234,6 +240,21 @@ async def _run_check(
     Returns:
         ((latency_status, latency_reason), (concurrency_status, concurrency_reason)).
     """
+    # Warm-up runs BEFORE the ambient-load probe, not after: every other
+    # check in this package already treats a fresh connection/process's
+    # first touch of a project as a one-off cold-start cost to absorb, never
+    # a measurement (see lifecycle_loop_liveness.py's identical rationale).
+    # Live-verified while building this gate: the probe itself, if run
+    # first, absorbs that exact cold-start cost into its own average and
+    # misreads it as ambient load (a single ~0.4-0.6s first call dragged a
+    # 3-sample average to ~0.13-0.18s, comfortably past the 0.03s ceiling,
+    # on an otherwise genuinely idle server -- confirmed by re-querying the
+    # same project on an already-warm connection immediately afterward:
+    # 0.008-0.014s/call, matching the documented idle baseline).
+    warmup_t0 = time.monotonic()
+    _, warmup_ok, _, warmup_err = await _run_cheap_read(client, -1)
+    warmup_elapsed = time.monotonic() - warmup_t0
+
     probe_degraded, probe_avg, probe_detail = await probe_ambient_load(
         client, _PROJECT_ID
     )
@@ -242,13 +263,11 @@ async def _run_check(
             Status.INCONCLUSIVE,
             f"ambient load detected before measurement started -- skipping "
             f"the timed round rather than reporting noise as a verdict "
-            f"(bug 2aaac911): last_probe_avg_s={probe_avg:.4f} {probe_detail}",
+            f"(bug 2aaac911): warmup_ok={warmup_ok} warmup_elapsed_s="
+            f"{warmup_elapsed:.4f} last_probe_avg_s={probe_avg:.4f} "
+            f"{probe_detail}",
         )
         return inconclusive, inconclusive
-
-    warmup_t0 = time.monotonic()
-    _, warmup_ok, _, warmup_err = await _run_cheap_read(client, -1)
-    warmup_elapsed = time.monotonic() - warmup_t0
 
     seq_wall, seq_results = await _run_sequential_batch(client)
     conc_wall, conc_results = await _run_concurrent_batch(client)

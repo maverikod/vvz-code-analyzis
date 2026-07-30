@@ -76,7 +76,10 @@ async def test_degraded_probe_short_circuits_both_metrics_to_inconclusive(
     assert "ambient load detected" in latency.reason
     assert "ambient load detected" in concurrency.reason
     assert "0.5000" in latency.reason
-    assert not client.calls, "a degraded probe must skip every timed measurement call"
+    # Exactly 1 call: the warm-up (runs BEFORE the probe, absorbing cold-
+    # start skew like every other check) -- a degraded probe must still
+    # skip the real sequential/concurrent measurement traffic (16 + 16).
+    assert len(client.calls) == 1, "a degraded probe must skip the timed measurement batches"
 
 
 @pytest.mark.asyncio

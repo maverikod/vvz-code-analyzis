@@ -8,12 +8,13 @@ email: vasilyvz@gmail.com
 import json
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Final, Optional
 
 from mcp_proxy_adapter.commands.base import Command
-from mcp_proxy_adapter.commands.result import ErrorResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.database.watch_dirs_query import (
     resolve_watch_dir_id_for_project_root,
@@ -103,6 +104,25 @@ class BaseMCPCommand(Command):
         {"emergency_unlock_project"}
     )
 
+    # Internal, undocumented opt-in flag (bug 8e6acb34, Fix 2): when a caller
+    # sets this to a truthy value, run() attaches the measured server-side
+    # wall-clock cost of this call (lock-gate check + offload dispatch +
+    # command body, i.e. everything this method times) to the SUCCESS
+    # result's ``data`` dict under ``SERVER_TIMING_RESULT_KEY``. Popped out of
+    # kwargs BEFORE the parent framework's own ``run()`` validates params
+    # against the command's declared schema, so it never reaches (and is
+    # never rejected by) any command's ``additionalProperties: false``
+    # schema, and ordinary callers who never set it see byte-identical
+    # responses to before this change -- this is intentionally NOT part of
+    # any command's public schema. Used by
+    # ``realsrv_test.core.lifecycle_read_throughput`` (suite s16 / the
+    # ``read_latency_per_call_regression`` and ``read_concurrency_speedup``
+    # metrics) to measure actual server processing time instead of grading
+    # client-side wall clock, which bug 8e6acb34's own measurement showed is
+    # dominated by client overhead, not server cost.
+    SERVER_TIMING_REQUEST_KEY: Final[str] = "_measure_server_time_ms"
+    SERVER_TIMING_RESULT_KEY: Final[str] = "_server_processing_ms"
+
     @classmethod
     async def run(cls, **kwargs: Any) -> Any:
         """Run the command off the main event loop to keep the server responsive.
@@ -137,10 +157,22 @@ class BaseMCPCommand(Command):
         (and the heartbeat) for seconds. The gate is therefore folded into
         ``_gated_run`` below and dispatched through the SAME offload call as
         the command body, so neither piece ever runs on the main loop.
+
+        Bug 8e6acb34, Fix 2: when the caller sets
+        ``SERVER_TIMING_REQUEST_KEY`` truthy, the wall-clock cost of
+        everything this method does (lock gate + offload dispatch + command
+        body) is measured with ``time.perf_counter()`` and attached to a
+        successful result's ``data`` dict under ``SERVER_TIMING_RESULT_KEY``.
+        The flag is popped out of ``kwargs`` here, before ``parent_run``
+        (the framework's schema validation) ever sees it, so it is invisible
+        to every command's own schema and changes nothing for callers that
+        never set it.
         """
         from ..core.command_offload import offload_command_run, offload_enabled
 
         parent_run = super().run  # zero-arg super: safe here, top of run()
+
+        measure_server_time = bool(kwargs.pop(cls.SERVER_TIMING_REQUEST_KEY, False))
 
         project_id = kwargs.get("project_id")
         lock_gate_active = bool(project_id) and getattr(cls, "name", None) not in (
@@ -176,9 +208,20 @@ class BaseMCPCommand(Command):
                     )
             return await parent_run(**inner_kwargs)
 
+        if not measure_server_time:
+            if getattr(cls, "use_queue", False) or not offload_enabled():
+                return await _gated_run(**kwargs)
+            return await offload_command_run(_gated_run, kwargs)
+
+        t0 = time.perf_counter()
         if getattr(cls, "use_queue", False) or not offload_enabled():
-            return await _gated_run(**kwargs)
-        return await offload_command_run(_gated_run, kwargs)
+            result = await _gated_run(**kwargs)
+        else:
+            result = await offload_command_run(_gated_run, kwargs)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        if isinstance(result, SuccessResult):
+            result.data[cls.SERVER_TIMING_RESULT_KEY] = elapsed_ms
+        return result
 
     @staticmethod
     def _open_database_from_config(auto_analyze: bool = False) -> DatabaseClient:

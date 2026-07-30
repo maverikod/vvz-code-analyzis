@@ -41,15 +41,23 @@ from realsrv_test.core.catalog import Status  # noqa: E402
 
 
 class _StubClient:
-    """Records every ``call_validated`` call; always reports success fast."""
+    """Records every ``call`` invocation; always reports success fast.
+
+    Fix 2 (bug 8e6acb34) switched ``_run_cheap_read`` from
+    ``call_validated`` to plain ``call`` (the server-timing opt-in flag is
+    not part of any command's public schema, so client-side schema
+    validation would reject it), and every response now needs
+    ``_server_processing_ms`` in ``data`` for the check to classify a call
+    as measured rather than a "missing timing field" failure.
+    """
 
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
 
-    async def call_validated(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def call(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         assert command == "list_project_files"
         self.calls.append(dict(params))
-        return {"success": True, "data": {"items": []}}
+        return {"success": True, "data": {"items": [], "_server_processing_ms": 5.0}}
 
 
 async def _degraded_probe_stub(client, project_id):

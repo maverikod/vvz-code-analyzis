@@ -11,6 +11,7 @@ from code_analysis.core.config_json import load_config_json
 from code_analysis.core.docs_indexing_defaults import default_docs_indexing_dict
 from code_analysis.core.search_session.policy import (
     SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+    SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT,
     SEARCH_SESSION_TTL_SECONDS_DEFAULT,
 )
 
@@ -56,6 +57,7 @@ def test_packaging_template_production_shape() -> None:
     assert ca["search_session"] == {
         "ttl_seconds": SEARCH_SESSION_TTL_SECONDS_DEFAULT,
         "max_block_size_bytes": SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+        "poll_interval": SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT,
     }
 
 

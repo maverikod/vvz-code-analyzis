@@ -10,21 +10,51 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-SEARCH_SESSION_TTL_SECONDS_DEFAULT = 1800
+from code_analysis.core.constants import (
+    DEFAULT_SEARCH_SESSION_SWEEP_INTERVAL_SECONDS,
+    DEFAULT_SEARCH_SESSION_TTL_SECONDS,
+    SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MAX,
+    SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MIN,
+)
+
+# Re-exported under the historical names used across config_generator.py,
+# config_validator/, and their tests -- the constants themselves now live in
+# core/constants.py next to the project's other timeout/interval defaults
+# (single source of truth); these names stay stable so existing imports keep
+# working.
+SEARCH_SESSION_TTL_SECONDS_DEFAULT = DEFAULT_SEARCH_SESSION_TTL_SECONDS
 SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT = 4_096
+SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT = (
+    DEFAULT_SEARCH_SESSION_SWEEP_INTERVAL_SECONDS
+)
 
 TTL_SECONDS_MIN = 60
 TTL_SECONDS_MAX = 604_800
 MAX_BLOCK_SIZE_BYTES_MIN = 1024
 MAX_BLOCK_SIZE_BYTES_MAX = 16_777_216
+SWEEP_INTERVAL_SECONDS_MIN = SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MIN
+SWEEP_INTERVAL_SECONDS_MAX = SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MAX
 
 
 @dataclass(frozen=True)
 class SessionTTLPolicy:
-    """Validated search session TTL and result block size limits."""
+    """Validated search session TTL, result block size, and sweep cadence.
+
+    Attributes:
+        ttl_seconds: How long an idle (last-access), terminal-state session
+            directory is retained before it becomes eligible for cleanup.
+            Config: code_analysis.search_session.ttl_seconds. Constant
+            default: DEFAULT_SEARCH_SESSION_TTL_SECONDS.
+        max_block_size_bytes: Max bytes per published result block.
+        sweep_interval_seconds: Cadence of the periodic background sweep
+            that removes expired session directories. Config:
+            code_analysis.search_session.poll_interval. Constant default:
+            DEFAULT_SEARCH_SESSION_SWEEP_INTERVAL_SECONDS.
+    """
 
     ttl_seconds: int
     max_block_size_bytes: int
+    sweep_interval_seconds: int = SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT
 
 
 def load_session_ttl_policy(config_data: dict[str, Any]) -> SessionTTLPolicy:
@@ -38,14 +68,19 @@ def load_session_ttl_policy(config_data: dict[str, Any]) -> SessionTTLPolicy:
         "max_block_size_bytes",
         SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
     )
+    sweep_raw = search_session.get(
+        "poll_interval",
+        SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT,
+    )
     return SessionTTLPolicy(
         ttl_seconds=int(ttl_raw),
         max_block_size_bytes=int(block_raw),
+        sweep_interval_seconds=int(sweep_raw),
     )
 
 
 def validate_session_ttl_policy(policy: SessionTTLPolicy) -> None:
-    """Raise ValueError when TTL or block size is invalid or out of range."""
+    """Raise ValueError when TTL, block size, or sweep interval is invalid or out of range."""
     _validate_positive_int(
         policy.ttl_seconds,
         name="ttl_seconds",
@@ -57,6 +92,12 @@ def validate_session_ttl_policy(policy: SessionTTLPolicy) -> None:
         name="max_block_size_bytes",
         minimum=MAX_BLOCK_SIZE_BYTES_MIN,
         maximum=MAX_BLOCK_SIZE_BYTES_MAX,
+    )
+    _validate_positive_int(
+        policy.sweep_interval_seconds,
+        name="poll_interval",
+        minimum=SWEEP_INTERVAL_SECONDS_MIN,
+        maximum=SWEEP_INTERVAL_SECONDS_MAX,
     )
 
 

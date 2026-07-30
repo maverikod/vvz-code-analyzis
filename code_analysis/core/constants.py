@@ -269,6 +269,29 @@ DEFAULT_RPC_WORKER_POOL_SIZE: int = 10
 # Default shutdown grace timeout in seconds
 DEFAULT_SHUTDOWN_GRACE_TIMEOUT: float = 30.0
 
+# Default search session retention (TTL) in seconds. A paginated search
+# session directory under data/search_sessions (see storage_paths.
+# resolve_search_sessions_root) becomes eligible for background cleanup once
+# it has been idle (no client read) longer than this. Config override:
+# code_analysis.search_session.ttl_seconds (see core/search_session/policy.py
+# SessionTTLPolicy / load_session_ttl_policy).
+DEFAULT_SEARCH_SESSION_TTL_SECONDS: int = 1800
+
+# Default periodic sweep interval in seconds for the search-session cleanup
+# loop (registered at app startup; see core/search_session/cleaner.py
+# register_search_session_cleanup). Config override:
+# code_analysis.search_session.poll_interval.
+DEFAULT_SEARCH_SESSION_SWEEP_INTERVAL_SECONDS: int = 300
+
+# Minimum accepted search-session sweep interval in seconds -- "cleanup must
+# be able to run down to a 1-minute cadence" product requirement; also the
+# safety floor a misconfigured value is clamped to.
+SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MIN: int = 60
+
+# Maximum accepted search-session sweep interval in seconds (1 hour); also
+# the safety ceiling a misconfigured value is clamped to.
+SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MAX: int = 3600
+
 
 # ============================================================================
 # Analysis Patterns

@@ -215,7 +215,8 @@
     },
     "search_session": {
       "ttl_seconds": 1800,
-      "max_block_size_bytes": 4096
+      "max_block_size_bytes": 4096,
+      "poll_interval": 300
     }
   }
 }

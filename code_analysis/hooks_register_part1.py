@@ -138,12 +138,16 @@ def register_commands_part1(reg: registry) -> None:
         from .commands.search_get_status_command import SearchGetStatusCommand
         from .commands.search_cancel_command import SearchCancelCommand
         from .commands.search_close_command import SearchCloseCommand
+        from .commands.search_sessions_purge_command import (
+            SearchSessionsPurgeCommand,
+        )
 
         reg.register(SearchMCPCommand, "custom")
         reg.register(SearchGetPageCommand, "custom")
         reg.register(SearchGetStatusCommand, "custom")
         reg.register(SearchCancelCommand, "custom")
         reg.register(SearchCloseCommand, "custom")
+        reg.register(SearchSessionsPurgeCommand, "custom")
         logger.info("✅ Registered search (paginated cross) commands")
     except ImportError as e:
         logger.warning("Failed to import search commands: %s", e)

@@ -134,6 +134,10 @@ def _run_live_apisurface() -> int:
     return _run_live_verifier("apisurface")
 
 
+def _run_live_sessions() -> int:
+    return _run_live_verifier("sessions")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -424,13 +428,13 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         description="Run the mTLS all-commands verifier against the deployed CAS server.",
         runner=_run_live_deployed_server,
     ),
-    # The four checks below each run exactly ONE realsrv-test suite -- a
-    # strict SUBSET of live-deployed-server's full sweep. They exist for
-    # targeted post-deploy verification of one bug fix (e.g. "did suite
-    # throughput go green after this deploy") without paying for the whole
-    # ~7 minute sweep. Deliberately EXCLUDED from run_all() (see its
-    # docstring) for exactly that reason: each would just re-run work
-    # live-deployed-server already covers.
+    # The checks below each run exactly ONE realsrv-test suite -- a strict
+    # SUBSET of live-deployed-server's full sweep. They exist for targeted
+    # post-deploy verification of one bug fix (e.g. "did suite throughput go
+    # green after this deploy") without paying for the whole ~7 minute
+    # sweep. Deliberately EXCLUDED from run_all() (see its docstring) for
+    # exactly that reason: each would just re-run work live-deployed-server
+    # already covers.
     PipelineCheck(
         name="live-nonpy",
         description=(
@@ -462,6 +466,17 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "CAS server -- a subset of live-deployed-server."
         ),
         runner=_run_live_apisurface,
+    ),
+    PipelineCheck(
+        name="live-sessions",
+        description=(
+            "Run only the 'sessions' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server. Proves an idle, "
+            "closed search session actually gets swept (bug: data/search_sessions "
+            "accumulated unbounded, measured 69 sessions / 56,505 files / 1.6GB "
+            "locally with no expiry)."
+        ),
+        runner=_run_live_sessions,
     ),
 )
 
@@ -556,13 +571,13 @@ def run_all() -> int:
     """Run every test AND every check, per the pipeline contract.
 
     Concretely: the full pytest suite (``tests/``) PLUS the runner-based
-    ``live-deployed-server`` check (the full live sweep). The four per-suite
-    live checks (``live-nonpy``, ``live-throughput``, ``live-indexer``,
-    ``live-apisurface``) are deliberately EXCLUDED here -- each is a strict
-    subset of ``live-deployed-server``'s full sweep, so re-running them in a
-    no-arg invocation would duplicate ~7 minutes of live work for no added
-    coverage; use them individually for targeted post-deploy verification of
-    one suite instead.
+    ``live-deployed-server`` check (the full live sweep). The per-suite live
+    checks (``live-nonpy``, ``live-throughput``, ``live-indexer``,
+    ``live-apisurface``, ``live-sessions``) are deliberately EXCLUDED here --
+    each is a strict subset of ``live-deployed-server``'s full sweep, so
+    re-running them in a no-arg invocation would duplicate ~7 minutes of live
+    work for no added coverage; use them individually for targeted
+    post-deploy verification of one suite instead.
 
     A component whose PRECONDITIONS are absent (currently only
     ``live-deployed-server`` without readable mTLS files) is reported as an

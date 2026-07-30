@@ -11,6 +11,7 @@ from code_analysis.core.config_generator import CodeAnalysisConfigGenerator
 from code_analysis.core.constants import DEFAULT_SERVER_PORT
 from code_analysis.core.search_session.policy import (
     SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+    SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT,
     SEARCH_SESSION_TTL_SECONDS_DEFAULT,
 )
 
@@ -34,6 +35,7 @@ def test_generate_default_port_and_code_analysis_sections(
     assert data["code_analysis"]["search_session"] == {
         "ttl_seconds": SEARCH_SESSION_TTL_SECONDS_DEFAULT,
         "max_block_size_bytes": SEARCH_MAX_BLOCK_SIZE_BYTES_DEFAULT,
+        "poll_interval": SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_DEFAULT,
     }
     assert data["code_analysis"]["docs_indexing"]["enabled"] is False
     assert data["client"]["protocol"] == "https"

@@ -56,12 +56,28 @@ class Status(str, Enum):
         VERIFY_ONLY: Classified without ever invoking the command (safety list,
             adapter-infra, removed-command cross-check, or a failed safety gate).
         FAILED: A tooling problem — network error, exception, unexpected shape.
+        INCONCLUSIVE: The measurement itself could not be trusted under the
+            conditions it ran in (e.g. a performance/timing check that shares
+            the server with concurrent, unrelated load it cannot control for
+            — bug 2aaac911). This is NEVER a success: a check that lands here
+            proved nothing, one way or the other. It is deliberately kept
+            OUT of ``print_summary``'s FAILED count (see that function and
+            ``realsrv_test.core.pipeline.run_pipeline``) so it can never by
+            itself flip the process exit code — the exit code answers "did
+            anything demonstrably break?", and an unmeasurable check
+            demonstrates nothing. It still gets its own counted line in the
+            run summary (the summary counts every distinct ``Status.value``
+            it sees) so it can never be mistaken for a passing result either.
+            A check that reports this status MUST name the reason and the
+            observed numbers in its outcome's ``reason`` field — never a bare
+            "inconclusive".
     """
 
     EXECUTED_OK = "executed-ok"
     EXPECTED_ERROR = "expected-error"
     VERIFY_ONLY = "verify-only"
     FAILED = "FAILED"
+    INCONCLUSIVE = "inconclusive"
 
 
 @dataclass

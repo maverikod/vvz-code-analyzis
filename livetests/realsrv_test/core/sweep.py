@@ -248,13 +248,22 @@ async def run_sweep(
 def print_summary(outcomes: List[CommandOutcome]) -> int:
     """Print status counts and a full sorted outcome table.
 
+    Every distinct :class:`Status` value present in ``outcomes`` gets its own
+    counted line (the ``counts`` dict below is keyed by ``status.value``, not
+    a fixed allowlist) — this is what gives :attr:`Status.INCONCLUSIVE` (bug
+    2aaac911) its own visible line next to executed-ok / expected-error /
+    verify-only / FAILED without any extra code here: it is simply one more
+    status value this loop already knows how to count and print.
+
     Args:
         outcomes: All outcomes collected by :func:`run_sweep`.
 
     Returns:
         Count of commands with :attr:`Status.FAILED` (used by the caller to
-        decide the process exit code; expected-error and verify-only never
-        affect it).
+        decide the process exit code; expected-error, verify-only, and
+        INCONCLUSIVE never affect it — see :attr:`Status.INCONCLUSIVE` for
+        why an inconclusive measurement must never flip the exit code by
+        itself).
     """
     counts: Dict[str, int] = {}
     for outcome in outcomes:

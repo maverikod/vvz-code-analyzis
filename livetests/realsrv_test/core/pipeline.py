@@ -58,8 +58,14 @@ async def run_pipeline(
 
     Returns:
         0 if no outcome landed in ``Status.FAILED`` and teardown completed
-        cleanly; 1 otherwise.  The initial mTLS health check and fixture setup
-        are hard gates — both fail fast with a clear message.
+        cleanly; 1 otherwise.  ``Status.INCONCLUSIVE`` outcomes (bug
+        2aaac911 — a measurement that could not be trusted under the
+        conditions it ran in) are counted and printed by
+        ``realsrv_test.core.sweep.print_summary`` but never contribute to
+        this exit code, by construction: ``print_summary`` returns only the
+        FAILED count, and INCONCLUSIVE is a distinct ``Status`` value. The
+        initial mTLS health check and fixture setup are hard gates — both
+        fail fast with a clear message.
     """
     async with CodeAnalysisAsyncClient.from_adapter_settings(
         settings, check_hostname=False, timeout=_REQUEST_TIMEOUT_SECONDS

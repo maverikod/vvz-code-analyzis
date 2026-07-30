@@ -138,6 +138,10 @@ def _run_live_sessions() -> int:
     return _run_live_verifier("sessions")
 
 
+def _run_live_stability() -> int:
+    return _run_live_verifier("stability")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -477,6 +481,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "locally with no expiry)."
         ),
         runner=_run_live_sessions,
+    ),
+    PipelineCheck(
+        name="live-stability",
+        description=(
+            "Run only the 'stability' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server. Bounded, "
+            "self-contained reproduction of bug 2aaac911 (the live pipeline's "
+            "release gate gives verdicts that depend on what else ran): "
+            "measures a cheap listing call's latency quiet, then under a "
+            "small self-generated concurrent load, and asserts the "
+            "divergence stays within a stated factor."
+        ),
+        runner=_run_live_stability,
     ),
 )
 

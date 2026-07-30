@@ -423,6 +423,15 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     )
                 ]
 
+            # Bug 8e6acb34: `total` stays `len(fs_paths)` -- no separate DB
+            # COUNT query. `enumerate_project_paths` now caches the walk
+            # itself (short TTL, single-flight, disk-accurate; see its
+            # module-level design-decision comment in project_fs_enumerate.py
+            # for why the DB `files` index was evaluated and rejected as the
+            # source of truth here), so on a cache hit this `len()` is a
+            # cheap read of an already-materialized list rather than the
+            # cost of a fresh full-project walk -- a page_size=1 call no
+            # longer pays for enumerating the whole project on every call.
             total = len(fs_paths)
             page_size, offset, block_position = resolve_list_pagination(
                 {

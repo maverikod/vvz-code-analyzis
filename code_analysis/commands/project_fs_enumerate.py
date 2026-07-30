@@ -9,8 +9,11 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
-from typing import Collection, List, Optional
+from typing import Collection, Dict, List, Optional, Tuple
 
 from ..core.project_ignore_policy import (
     filter_paths_for_default_project_listing,
@@ -141,6 +144,107 @@ def _select_ignore_exceptions_relevant_to_request(
     return selected
 
 
+# --- bug 8e6acb34: bounded, disk-accurate, single-flight enumeration cache ---
+#
+# DESIGN DECISION (bug 8e6acb34, steps 3-5). ``list_project_files``/``fs_grep``
+# pay for a full ``os.walk`` of the project tree on EVERY call regardless of
+# ``page_size`` -- measured concurrency speedup for ``page_size=1`` was 0.80x
+# on the deployed server (should overlap, does not), with the walk's Python-
+# level per-path filtering/sorting holding the GIL for ~0.39s/call (36.6x the
+# exact-file fast path's cost).
+#
+# THE OBVIOUS ALTERNATIVE -- make the ``files`` DB table (already maintained
+# by the watcher) the source of truth instead of walking disk -- was
+# EVALUATED AND REJECTED after measurement, not assumed away:
+#   * The watcher only inserts rows whose suffix is in ``CODE_FILE_EXTENSIONS``
+#     (``core/constants.py`` -- currently exactly ``{".py"}``, comment: "Only
+#     .py is indexed (AST/CST); other extensions were causing index errors")
+#     plus opt-in docs-eligible ``.md``/``.json``/``.yaml``/``.yml``.
+#   * A DEFAULT listing (``python_only=False``) -- the EXACT mode this bug's
+#     own regression check (``lifecycle_read_throughput.py``, ``page_size=1``,
+#     no ``file_pattern``) exercises -- would silently drop every ordinary
+#     project file that is not ``.py`` or docs-eligible: ``.txt``, ``.cfg``,
+#     ``.ini``, ``.toml``, ``.sh``, ``.sql``, ``Dockerfile``, ``LICENSE``, ...
+#     i.e. most of a typical project. That is not a staleness trade-off, it
+#     is MISSING DATA in the common case -- a fast, wrong answer, which this
+#     bug's own remediation brief rules out ("a correct 0.39s listing beats a
+#     wrong 0.01s one").
+#   * The watcher's own freshness bound is also weaker than it first looks:
+#     default ``scan_interval`` is 60s, backing off to up to 3600s when idle
+#     (``file_watcher_pkg/scan_interval_backoff.py``), and the watcher can be
+#     disabled entirely in config with nothing in the read path gating on its
+#     liveness.
+#
+# INSTEAD: cache the WALK RESULT itself (still disk-truth, still covers every
+# extension, still applies every existing filter unchanged) for a short TTL,
+# single-flight per cache key, so repeat calls with IDENTICAL parameters --
+# the exact shape both this bug's own concurrency check and ordinary agent
+# "list, then list again" traffic produce -- pay for one walk instead of N.
+# A cache MISS runs the unmodified pre-existing code path (byte-identical
+# result, same ordering, same envelope). A cache HIT is bounded to
+# ``_ENUMERATION_CACHE_TTL_SECONDS`` staleness -- far tighter than the
+# watcher's own 60s-3600s window -- and only ever serves the SAME (root,
+# filters, pattern) tuple a caller already asked for, never a different data
+# source. This also naturally covers ``fs_grep``, which calls
+# :func:`enumerate_project_paths` directly with the same signature.
+_ENUMERATION_CACHE_TTL_SECONDS = 2.0
+_ENUMERATION_CACHE_MAX_ENTRIES = 256
+
+# (resolved root, show_venv, python_only, include_venv_ignore_exceptions,
+# show_hidden, request_pattern)
+_EnumerationCacheKey = Tuple[str, bool, bool, bool, bool, Optional[str]]
+
+_enumeration_cache: "OrderedDict[_EnumerationCacheKey, Tuple[float, List[Path]]]" = (
+    OrderedDict()
+)
+_enumeration_cache_guard = threading.Lock()
+_enumeration_key_locks: Dict[_EnumerationCacheKey, threading.Lock] = {}
+
+
+def clear_enumeration_cache() -> None:
+    """Drop every cached enumeration result.
+
+    Test-isolation hook (a fresh ``tmp_path`` per test already gives a
+    distinct cache key, but callers that reuse a root across cases, or that
+    need to assert a cache MISS deterministically, can call this first) and
+    an explicit invalidation point for any future caller that needs to force
+    a fresh walk instead of waiting out the TTL.
+    """
+    with _enumeration_cache_guard:
+        _enumeration_cache.clear()
+        _enumeration_key_locks.clear()
+
+
+def _enumeration_cache_get(key: _EnumerationCacheKey) -> Optional[List[Path]]:
+    """Return a fresh-enough cached result for ``key``, else ``None``."""
+    now = time.monotonic()
+    with _enumeration_cache_guard:
+        entry = _enumeration_cache.get(key)
+        if entry is not None and (now - entry[0]) < _ENUMERATION_CACHE_TTL_SECONDS:
+            _enumeration_cache.move_to_end(key)
+            return list(entry[1])
+    return None
+
+
+def _enumeration_cache_put(key: _EnumerationCacheKey, paths: List[Path]) -> None:
+    """Store ``paths`` for ``key``, evicting the oldest entry over capacity."""
+    with _enumeration_cache_guard:
+        _enumeration_cache[key] = (time.monotonic(), list(paths))
+        _enumeration_cache.move_to_end(key)
+        while len(_enumeration_cache) > _ENUMERATION_CACHE_MAX_ENTRIES:
+            _enumeration_cache.popitem(last=False)
+
+
+def _enumeration_key_lock(key: _EnumerationCacheKey) -> threading.Lock:
+    """Return the single-flight lock for ``key``, creating it if needed."""
+    with _enumeration_cache_guard:
+        lock = _enumeration_key_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _enumeration_key_locks[key] = lock
+        return lock
+
+
 def enumerate_project_paths(
     project_root: Path,
     show_venv: bool,
@@ -154,6 +258,12 @@ def enumerate_project_paths(
 
     Same rules as legacy ``list_project_files`` walk: skip venv by default, optional
     allowlisted site-packages ``.py``, ignore_exceptions expansion, cache/hidden policy.
+
+    A short-TTL, single-flight, disk-accurate cache sits in front of the walk
+    (bug 8e6acb34) -- see the module-level comment above this function for
+    why the walk itself, not the DB index, remains the source of truth, and
+    :data:`_ENUMERATION_CACHE_TTL_SECONDS` for the staleness bound. Call
+    :func:`clear_enumeration_cache` to force a fresh walk.
 
     Args:
         project_root: Project root directory.
@@ -173,6 +283,48 @@ def enumerate_project_paths(
             ``None`` (default) reproduces the pre-25c8d9dd full-root-walk,
             expand-everything behavior exactly.
     """
+    root = project_root.resolve()
+    cache_key: _EnumerationCacheKey = (
+        str(root),
+        bool(show_venv),
+        bool(python_only),
+        bool(include_venv_ignore_exceptions),
+        bool(show_hidden),
+        request_pattern,
+    )
+    cached = _enumeration_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    lock = _enumeration_key_lock(cache_key)
+    with lock:
+        # Re-check: another thread may have just filled this key while this
+        # one was waiting on the lock (single-flight -- only one walk runs
+        # per key per TTL window even under concurrent callers).
+        cached = _enumeration_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        result = _enumerate_project_paths_uncached(
+            root,
+            show_venv,
+            python_only=python_only,
+            include_venv_ignore_exceptions=include_venv_ignore_exceptions,
+            show_hidden=show_hidden,
+            request_pattern=request_pattern,
+        )
+        _enumeration_cache_put(cache_key, result)
+        return list(result)
+
+
+def _enumerate_project_paths_uncached(
+    project_root: Path,
+    show_venv: bool,
+    *,
+    python_only: bool,
+    include_venv_ignore_exceptions: bool = False,
+    show_hidden: bool = False,
+    request_pattern: Optional[str] = None,
+) -> List[Path]:
+    """Unmodified pre-8e6acb34-fix walk. See :func:`enumerate_project_paths`."""
     root = project_root.resolve()
     request_static_prefix = (
         static_prefix_of_listing_pattern(request_pattern) if request_pattern else None

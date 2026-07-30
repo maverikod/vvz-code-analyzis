@@ -32,6 +32,11 @@ from code_analysis_client.queue_wait import (
     wait_for_job,
 )
 from code_analysis_client.universal_file import UniversalFileClient
+from code_analysis_client.schema_disk_cache import (
+    clear_cached_schemas,
+    load_cached_schema,
+    store_cached_schema,
+)
 from code_analysis_client.server_schema import fetch_command_schema_from_server
 from code_analysis_client.validation import (
     prepare_params_for_schema,
@@ -127,8 +132,15 @@ class CodeAnalysisAsyncClient:
         return self._commands_proxy
 
     def clear_command_schema_cache(self) -> None:
-        """Drop cached command schemas (after ``reload`` or when server definitions change)."""
+        """Drop cached command schemas (after ``reload`` or when server definitions change).
+
+        Clears both the in-memory cache and this server's on-disk schema
+        cache (:mod:`code_analysis_client.schema_disk_cache`, bug 8e6acb34) —
+        otherwise the very next call would just repopulate the in-memory
+        cache from a now-stale disk entry, defeating the point of clearing it.
+        """
         self._command_schema_cache.clear()
+        clear_cached_schemas(self._rpc.base_url)
 
     @property
     def file_sessions(self) -> FileSessionClient:
@@ -143,11 +155,28 @@ class CodeAnalysisAsyncClient:
     async def get_command_schema(
         self, command: str, *, refresh: bool = False
     ) -> Dict[str, Any]:
-        """Fetch input JSON schema for ``command`` using server ``help`` (with in-memory cache)."""
+        """Fetch input JSON schema for ``command`` using server ``help``.
+
+        Checked in order (bug 8e6acb34, Fix 1): the in-memory per-instance
+        cache, then a bounded-TTL on-disk cache shared across process
+        invocations against the same server
+        (:mod:`code_analysis_client.schema_disk_cache`) — this is what
+        removes the ~2.7ms ``help`` round trip that a fresh client instance
+        would otherwise pay on every first use of a given command, since most
+        real callers are short-lived processes that never benefit from an
+        in-memory-only cache. ``refresh=True`` skips both caches and always
+        re-fetches from the server, repopulating them afterward.
+        """
         if not refresh and command in self._command_schema_cache:
             return self._command_schema_cache[command]
+        if not refresh:
+            cached = load_cached_schema(self._rpc.base_url, command)
+            if cached is not None:
+                self._command_schema_cache[command] = cached
+                return cached
         schema = await fetch_command_schema_from_server(self._rpc, command)
         self._command_schema_cache[command] = schema
+        store_cached_schema(self._rpc.base_url, command, schema)
         return schema
 
     async def _execute(

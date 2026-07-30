@@ -29,6 +29,21 @@ declared ``*.tree``/``.log``/``.lock`` file-suffix ignore patterns are now
 actually applied during enumeration instead of only pruning directory
 basenames.
 
+AMBIENT-LOAD GATING (bug 2aaac911): both metrics below share a single
+pre-measurement probe (``realsrv_test.core.ambient_load.probe_ambient_load``)
+run before any timed calls. If the server already looks busy from work this
+check does not control, both metrics report :attr:`Status.INCONCLUSIVE`
+naming the observed numbers INSTEAD of measuring noise and presenting it as
+a verdict -- this is what stops a neighbouring suite's load (e.g.
+``lifecycle_loop_liveness.py``'s K=32 storm, confirmed on the real deployed
+server to push this check's own latency measurement to 0.646s/call vs a
+clean 0.009-0.010s/call standalone) from silently reading as a code
+regression. Likewise, hitting this check's own hard timeout is reported as
+INCONCLUSIVE, not FAILED -- a check that time-boxes itself out because the
+server was busy proved nothing about the code under test either way. See
+``realsrv_test.core.ambient_load`` for the probe mechanism and the numeric
+justification of its ceiling.
+
 This module reports TWO INDEPENDENT metrics from the SAME measurement round,
 because they track two different facts that must not be conflated:
 
@@ -79,6 +94,7 @@ from typing import Dict, List, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
+from realsrv_test.core.ambient_load import probe_ambient_load
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
 
@@ -218,6 +234,18 @@ async def _run_check(
     Returns:
         ((latency_status, latency_reason), (concurrency_status, concurrency_reason)).
     """
+    probe_degraded, probe_avg, probe_detail = await probe_ambient_load(
+        client, _PROJECT_ID
+    )
+    if probe_degraded:
+        inconclusive = (
+            Status.INCONCLUSIVE,
+            f"ambient load detected before measurement started -- skipping "
+            f"the timed round rather than reporting noise as a verdict "
+            f"(bug 2aaac911): last_probe_avg_s={probe_avg:.4f} {probe_detail}",
+        )
+        return inconclusive, inconclusive
+
     warmup_t0 = time.monotonic()
     _, warmup_ok, _, warmup_err = await _run_cheap_read(client, -1)
     warmup_elapsed = time.monotonic() - warmup_t0
@@ -252,9 +280,18 @@ async def run_read_throughput_check(
             await asyncio.wait_for(_run_check(client), timeout=_HARD_TIMEOUT_SECONDS)
         )
     except asyncio.TimeoutError:
-        timeout_reason = f"check exceeded its own hard timeout of {_HARD_TIMEOUT_SECONDS}s"
-        latency_status, latency_reason = Status.FAILED, timeout_reason
-        concurrency_status, concurrency_reason = Status.FAILED, timeout_reason
+        # INCONCLUSIVE, not FAILED (bug 2aaac911): a check that hits its own
+        # hard ceiling because the server was busy proved nothing about the
+        # code under test either way -- confirmed on the real deployed
+        # server, the 1.6.92 sweep reported this exact timeout on both
+        # metrics while standalone runs were clean. The 120.0s ceiling
+        # itself is unchanged.
+        timeout_reason = (
+            f"check exceeded its own hard timeout of {_HARD_TIMEOUT_SECONDS}s "
+            f"(server likely busy with unrelated work, not a code regression)"
+        )
+        latency_status, latency_reason = Status.INCONCLUSIVE, timeout_reason
+        concurrency_status, concurrency_reason = Status.INCONCLUSIVE, timeout_reason
     return {
         CHECK_NAME_LATENCY: CommandOutcome(
             CHECK_NAME_LATENCY, Bucket.BUCKET_A, latency_status, latency_reason

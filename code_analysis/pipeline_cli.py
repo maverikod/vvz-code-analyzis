@@ -142,6 +142,10 @@ def _run_live_stability() -> int:
     return _run_live_verifier("stability")
 
 
+def _run_live_client_overhead() -> int:
+    return _run_live_verifier("client_overhead")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -495,6 +499,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
         runner=_run_live_stability,
     ),
+    PipelineCheck(
+        name="live-client-overhead",
+        description=(
+            "Run only the 'client_overhead' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Guards "
+            "bug 8e6acb34 Fix 1: asserts code_analysis_client's per-call "
+            "overhead over a warm, connection-reused raw-httpx floor (the "
+            "realistic fresh-process-per-call pattern) stays within a "
+            "stated budget, so the on-disk schema cache regression does not "
+            "silently come back."
+        ),
+        runner=_run_live_client_overhead,
+    ),
 )
 
 _CHECKS_BY_NAME = {check.name: check for check in _CHECKS}
@@ -590,7 +607,7 @@ def run_all() -> int:
     Concretely: the full pytest suite (``tests/``) PLUS the runner-based
     ``live-deployed-server`` check (the full live sweep). The per-suite live
     checks (``live-nonpy``, ``live-throughput``, ``live-indexer``,
-    ``live-apisurface``, ``live-sessions``) are deliberately EXCLUDED here --
+    ``live-apisurface``, ``live-sessions``, ``live-client-overhead``) are deliberately EXCLUDED here --
     each is a strict subset of ``live-deployed-server``'s full sweep, so
     re-running them in a no-arg invocation would duplicate ~7 minutes of live
     work for no added coverage; use them individually for targeted

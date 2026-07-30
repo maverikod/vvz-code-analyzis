@@ -12,6 +12,11 @@ authors = [
 ]
 dependencies = [
     "code-analysis-client>=1.0.26",
+    # Direct dependency (bug 8e6acb34, suite s16): lifecycle_client_overhead
+    # builds its own reference httpx.AsyncClient. Already present
+    # transitively via code-analysis-client -> mcp-proxy-adapter, declared
+    # explicitly here since this package now imports it directly.
+    "httpx>=0.28",
 ]
 
 # No [project.scripts] here: the standing contract mandates exactly ONE

@@ -69,6 +69,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-apisurface",
         "live-sessions",
         "live-stability",
+        "live-client-overhead",
     ]
 
 

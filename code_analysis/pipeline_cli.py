@@ -486,12 +486,12 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         name="live-stability",
         description=(
             "Run only the 'stability' realsrv-test suite against the deployed "
-            "CAS server -- a subset of live-deployed-server. Bounded, "
-            "self-contained reproduction of bug 2aaac911 (the live pipeline's "
-            "release gate gives verdicts that depend on what else ran): "
-            "measures a cheap listing call's latency quiet, then under a "
-            "small self-generated concurrent load, and asserts the "
-            "divergence stays within a stated factor."
+            "CAS server -- a subset of live-deployed-server. Guards bug "
+            "2aaac911's fix (the live pipeline's release gate must not give "
+            "verdicts that depend on what else ran): asserts the "
+            "ambient-load probe that gates the throughput suite's timing "
+            "metrics correctly flags self-generated concurrent interference "
+            "as degraded, quiet nothing else in flight."
         ),
         runner=_run_live_stability,
     ),

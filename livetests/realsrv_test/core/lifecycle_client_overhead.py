@@ -88,6 +88,7 @@ import httpx
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
+from realsrv_test.core.ambient_load import probe_ambient_load
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
 
@@ -200,13 +201,37 @@ async def run_client_overhead_check(
     Args:
         client: Connected async client (its resolved connection settings are
             reused to build both the reference and the client-under-test
-            connections; fixtures are unused -- this check targets no
-            project data, only the ``health`` control call).
-        fixtures: Unused.
+            connections).
+        fixtures: Only ``fixtures.project_id`` is used, to run the shared
+            ambient-load pre-measurement probe (see below) -- this check
+            otherwise targets no project data, only the ``health`` control
+            call.
 
     Returns:
         One-entry map keyed by :data:`CHECK_NAME`.
     """
+    # Ambient-load gate (bug 2aaac911), same mechanism s11/s15 already use:
+    # this check's own full-sweep run exposed real interference from a
+    # neighbouring suite's residual concurrent load (s15's own deliberate
+    # 8-way concurrent probe, immediately before s16 in suite-discovery
+    # order) inflating overhead_median_ms just past budget on an otherwise
+    # healthy build. Skip the timed round entirely rather than report that
+    # noise as a verdict.
+    probe_degraded, probe_avg, probe_detail = await probe_ambient_load(
+        client, fixtures.project_id
+    )
+    if probe_degraded:
+        reason = (
+            f"ambient load detected before measurement started -- skipping "
+            f"the timed round rather than reporting noise as a verdict "
+            f"(bug 2aaac911): last_probe_avg_s={probe_avg:.4f} {probe_detail}"
+        )
+        return {
+            CHECK_NAME: CommandOutcome(
+                CHECK_NAME, Bucket.BUCKET_A, Status.INCONCLUSIVE, reason
+            )
+        }
+
     try:
         samples = await _run_interleaved_measurement(client)
     except Exception as exc:  # noqa: BLE001 - recorded as data, not raised

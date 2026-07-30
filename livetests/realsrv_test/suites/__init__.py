@@ -6,12 +6,34 @@ A suite module is any Python module in this package that defines:
     LIFECYCLE_RUNNERS: tuple — one or more async ``(client, fixtures) ->
                                Dict[str, CommandOutcome]`` lifecycle callables
 
+A suite module MAY also define:
+    SUITE_CATEGORY: str — ``"load_generator"`` marks a suite that
+                           deliberately fires heavy concurrent load against a
+                           shared project (currently only
+                           ``s09_loop_liveness``, K=32 concurrent search).
+                           Omitted (the default) means "ordinary" for
+                           ordering purposes.
+
 Modules are discovered via ``pkgutil.iter_modules`` over this package and
-loaded in sorted order of their module names, which defines the stable
-execution order (hence the ``sNN_`` filename prefix convention).  The runner
-list the pipeline executes is built ONLY from this discovery — there is no
-other registry.  Adding a new suite = dropping a new module in this
-directory, zero changes elsewhere.
+sorted primarily by category — ``load_generator`` suites always sort AFTER
+every ordinary suite — and secondarily by module name, which is what
+previously defined the whole stable execution order (hence the ``sNN_``
+filename prefix convention; still the tie-breaker within a category).  This
+ordering exists to fix bug 2aaac911's suite-interference case: a timing-
+sensitive suite (e.g. ``s11_read_throughput``, ``s15_measurement_stability``)
+must not run in the immediate wake of a load-generator suite's storm against
+the same shared project, or its verdict reflects that neighbouring load
+instead of the code under test — confirmed on the real deployed server (see
+``realsrv_test.core.lifecycle_read_throughput`` module docstring). Pushing
+load generators to run last in the full sweep, rather than adding a cooldown
+sleep, is the least intrusive fix: it costs no extra wall-clock time and
+every suite still runs exactly once, in a stable order.  A suite selected by
+explicit name (``pipeline_live_verifier <suite> ...``) is unaffected — this
+ordering only decides RELATIVE position, never whether a suite runs.
+
+The runner list the pipeline executes is built ONLY from this discovery —
+there is no other registry.  Adding a new suite = dropping a new module in
+this directory, zero changes elsewhere.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -26,12 +48,31 @@ from typing import Any, List, Sequence, Tuple
 
 from realsrv_test.core.sweep import LifecycleRunner
 
+# The only recognized non-default category. Anything else (including the
+# absent attribute) sorts as "ordinary" — see module docstring.
+_LOAD_GENERATOR_CATEGORY = "load_generator"
 
-def _discover_suites() -> List[Any]:
-    """Return every suite module in stable sorted order.
+
+def _category_rank(mod: Any) -> int:
+    """Return the sort rank for a suite module's ``SUITE_CATEGORY``.
+
+    Args:
+        mod: An imported suite module.
 
     Returns:
-        List of imported suite modules, sorted by module name.
+        1 if the module declares ``SUITE_CATEGORY = "load_generator"``
+        (sorts last); 0 otherwise (ordinary, sorts first).
+    """
+    return 1 if getattr(mod, "SUITE_CATEGORY", "") == _LOAD_GENERATOR_CATEGORY else 0
+
+
+def _discover_suites() -> List[Any]:
+    """Return every suite module in stable (category, name) sorted order.
+
+    Returns:
+        List of imported suite modules: ordinary suites first (sorted by
+        module name), then ``load_generator`` suites (also sorted by module
+        name among themselves) — see module docstring for why.
     """
     pkg_path = str(Path(__file__).parent)
     modules = []
@@ -40,7 +81,7 @@ def _discover_suites() -> List[Any]:
         mod = importlib.import_module(full_name)
         if hasattr(mod, "SUITE_NAME") and hasattr(mod, "LIFECYCLE_RUNNERS"):
             modules.append(mod)
-    modules.sort(key=lambda m: m.__name__)
+    modules.sort(key=lambda m: (_category_rank(m), m.__name__))
     return modules
 
 

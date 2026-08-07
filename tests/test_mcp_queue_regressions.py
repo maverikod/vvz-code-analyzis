@@ -157,7 +157,13 @@ async def test_command_execution_inner_failure_retained_and_not_successful() -> 
         job_type="command_execution",
         job_id=job_id,
         params={
-            "command": "delete_file",
+            # fs_remove, not the legacy delete_file: delete_file's module still
+            # exists but is never registered (same pattern as get_file_lines,
+            # TODO a7091850), so the queue rejected the job at registry lookup
+            # and never produced the inner-command failure this test is about.
+            # fs_remove is registered, and a missing path makes it fail on
+            # input without unlinking anything.
+            "command": "fs_remove",
             "params": {"project_id": PROJECT_ID, "file_path": missing_rel_path},
         },
     )

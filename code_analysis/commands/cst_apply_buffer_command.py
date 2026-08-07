@@ -17,7 +17,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
-import gzip
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -26,6 +25,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .compose_cst_ops_flow import run_ops_mode
+from ..core.transfer_buffer_text import read_transfer_buffer_text
 
 logger = logging.getLogger(__name__)
 
@@ -391,12 +391,9 @@ class CSTApplyBufferCommand(BaseMCPCommand):
         try:
             session_info = store.get_completed_transfer(transfer_id)
             compression = str(session_info.get("compression", "identity"))
-            buffer_path = Path(local_path)
-            if compression == "gzip":
-                with gzip.open(buffer_path, "rt", encoding="utf-8") as f:
-                    new_code = f.read()
-            else:
-                new_code = buffer_path.read_text(encoding="utf-8")
+            # Verbatim read (bug 44724d35): a default text-mode read would
+            # collapse every CRLF and lone CR to LF before the buffer is applied.
+            new_code = read_transfer_buffer_text(Path(local_path), compression)
         except Exception as e:
             return ErrorResult(
                 message=f"Failed to read transfer buffer: {e}",

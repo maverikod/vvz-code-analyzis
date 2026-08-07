@@ -146,6 +146,10 @@ def _run_live_client_overhead() -> int:
     return _run_live_verifier("client_overhead")
 
 
+def _run_live_byte_fidelity() -> int:
+    return _run_live_verifier("bytes")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -419,6 +423,14 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
     ),
     PipelineCheck(
+        name="byte-verbatim-io",
+        description=(
+            "Verify the transfer-buffer reader and the text save path store "
+            "content byte-verbatim (bug 44724d35: CRLF was rewritten to LF)."
+        ),
+        pytest_targets=("tests/test_transfer_buffer_text_io.py",),
+    ),
+    PipelineCheck(
         name="trash-list-name-parse",
         description="Verify list_trashed_projects preserves original_name when unique-suffix trash folders are created.",
         pytest_targets=("tests/test_trash_list_name_parsing.py",),
@@ -511,6 +523,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "silently come back."
         ),
         runner=_run_live_client_overhead,
+    ),
+    PipelineCheck(
+        name="live-byte-fidelity",
+        description=(
+            "Run only the 'bytes' realsrv-test suite against the deployed CAS "
+            "server -- a subset of live-deployed-server. Guards bug 44724d35: "
+            "project_file_transfer_upload_save rewrote the line endings of the "
+            "bytes it was given (20 bytes of CRLF stored as 17 bytes of LF, "
+            "reported as success, with no opt-out). Asserts the create path, "
+            "the file_id update path, and the gzip transfer branch all store "
+            "the uploaded bytes verbatim."
+        ),
+        runner=_run_live_byte_fidelity,
     ),
 )
 
@@ -607,7 +632,8 @@ def run_all() -> int:
     Concretely: the full pytest suite (``tests/``) PLUS the runner-based
     ``live-deployed-server`` check (the full live sweep). The per-suite live
     checks (``live-nonpy``, ``live-throughput``, ``live-indexer``,
-    ``live-apisurface``, ``live-sessions``, ``live-client-overhead``) are deliberately EXCLUDED here --
+    ``live-apisurface``, ``live-sessions``, ``live-stability``,
+    ``live-client-overhead``, ``live-byte-fidelity``) are deliberately EXCLUDED here --
     each is a strict subset of ``live-deployed-server``'s full sweep, so
     re-running them in a no-arg invocation would duplicate ~7 minutes of live
     work for no added coverage; use them individually for targeted

@@ -16,6 +16,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.exceptions import ValidationError
+from code_analysis.core.transfer_buffer_text import write_text_verbatim
 from code_analysis.commands.universal_file_edit.errors import (
     PARSE_ERROR,
     SESSION_NOT_FOUND,
@@ -277,24 +278,24 @@ class UniversalFileOpenCommand(BaseMCPCommand):
                 )
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             suffix = abs_path.suffix.lower()
+            # Verbatim writes (bug 44724d35): create stores the caller's
+            # initial_content as given; line endings are never translated.
             if suffix == ".py":
-                abs_path.write_text(initial_content, encoding="utf-8")
+                write_text_verbatim(abs_path, initial_content)
             elif suffix == ".json":
-                abs_path.write_text(
-                    initial_content if initial_content else "{}\n",
-                    encoding="utf-8",
+                write_text_verbatim(
+                    abs_path, initial_content if initial_content else "{}\n"
                 )
             elif suffix in (".yaml", ".yml"):
-                abs_path.write_text(
+                write_text_verbatim(
+                    abs_path,
                     _fix_yaml_string_values(
                         initial_content if initial_content else "{}\n"
                     ),
-                    encoding="utf-8",
                 )
             else:
-                abs_path.write_text(
-                    initial_content if initial_content else "",
-                    encoding="utf-8",
+                write_text_verbatim(
+                    abs_path, initial_content if initial_content else ""
                 )
             created = True
 

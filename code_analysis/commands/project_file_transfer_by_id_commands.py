@@ -11,7 +11,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import gzip
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type, Union, cast
@@ -64,6 +63,7 @@ from ..core.runtime_lock_sessions import (
     register_runtime_session,
     runtime_session_exists,
 )
+from ..core.transfer_buffer_text import read_transfer_buffer_text
 from ..core.transfer_lock_registry import (
     TransferLockEntry,
     install_transfer_lock_hooks,
@@ -248,12 +248,9 @@ def _read_completed_upload_text(
     try:
         session_info = store.get_completed_transfer(tid)
         compression = str(session_info.get("compression", "identity"))
-        buffer_path = Path(local_path)
-        if compression == "gzip":
-            with gzip.open(buffer_path, "rt", encoding="utf-8") as f:
-                text = f.read()
-        else:
-            text = buffer_path.read_text(encoding="utf-8")
+        # Verbatim read (bug 44724d35): a default text-mode read would collapse
+        # every CRLF and lone CR to LF before the bytes reach the file handler.
+        text = read_transfer_buffer_text(Path(local_path), compression)
     except Exception as e:
         return ErrorResult(
             message=f"Failed to read transfer buffer: {e}",

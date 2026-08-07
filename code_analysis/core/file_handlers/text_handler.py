@@ -18,6 +18,10 @@ from code_analysis.core.database_driver_pkg.domain.files import (
 )
 from code_analysis.core.database_driver_pkg.exceptions import TransactionError
 from code_analysis.core.text_index_whitelist import TEXT_INDEX_DOTFILE_BASENAMES
+from code_analysis.core.transfer_buffer_text import (
+    read_text_verbatim,
+    write_text_verbatim,
+)
 
 from .base import (
     VALIDATION_FAILED,
@@ -486,7 +490,11 @@ class TextFileHandler(BaseFileHandler):
         label = Path(request.file_path).name
         before_text = ""
         if abs_path.exists():
-            before_text = abs_path.read_text(encoding="utf-8", errors="replace")
+            # Verbatim read (bug 44724d35): `changed` and the diff compare the
+            # incoming content against what is actually on disk, line endings
+            # included -- a translating read would call a CRLF-to-LF rewrite
+            # "unchanged".
+            before_text = read_text_verbatim(abs_path, errors="replace")
 
         ctx = diff_context_lines_from_extra(request.extra)
         lbl_a = f"a/{label}"
@@ -527,7 +535,10 @@ class TextFileHandler(BaseFileHandler):
                 request=request,
             )
 
-        abs_path.write_text(content, encoding="utf-8")
+        # Verbatim write (bug 44724d35): a full-file save stores exactly the
+        # string it was given. Default text-mode writing translates every "\n"
+        # to os.linesep, so a caller's line endings would depend on the host.
+        write_text_verbatim(abs_path, content)
         out_data: Dict[str, Any] = (
             dict(diff_payload)
             if request.diff

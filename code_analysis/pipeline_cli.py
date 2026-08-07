@@ -150,6 +150,10 @@ def _run_live_byte_fidelity() -> int:
     return _run_live_verifier("bytes")
 
 
+def _run_live_file_mode() -> int:
+    return _run_live_verifier("filemode")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -536,6 +540,18 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "the uploaded bytes verbatim."
         ),
         runner=_run_live_byte_fidelity,
+    ),
+    PipelineCheck(
+        name="live-file-mode",
+        description=(
+            "Run only the 'filemode' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server. Guards bug "
+            "92e6d693: overwriting an already-indexed .py file left it mode "
+            "0600 (created files are 0644), because the CST write path stages "
+            "content in a mkstemp file and os.replace keeps the source's "
+            "permission bits. Asserts an overwrite preserves the file's mode."
+        ),
+        runner=_run_live_file_mode,
     ),
 )
 

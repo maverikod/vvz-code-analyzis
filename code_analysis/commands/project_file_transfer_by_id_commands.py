@@ -12,6 +12,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import stat
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Type, Union, cast
 
@@ -215,6 +216,22 @@ def _release_client_file_lock(
         project_id=project_id,
         file_id=fid,
     )
+
+
+def _file_mode_octal(path: Path) -> Optional[str]:
+    """Return a file's permission bits as an octal string (bug 92e6d693).
+
+    Args:
+        path: File to stat.
+
+    Returns:
+        The permission bits (``stat.S_IMODE``) formatted as octal, e.g.
+        ``"644"``, or None when the file cannot be stat'ed.
+    """
+    try:
+        return format(stat.S_IMODE(path.stat().st_mode), "o")
+    except OSError:
+        return None
 
 
 def _read_completed_upload_text(
@@ -849,6 +866,14 @@ class ProjectFileTransferDownloadBeginCommand(BaseMCPCommand):
             "file_path": rel_posix,
             "lock_mode": lock_mode,
             "lock_session_id": lock_session_id,
+            # The file's POSIX permission bits, as a 3- or 4-digit octal string
+            # (bug 92e6d693). Nothing else on the API surface exposed them, so a
+            # save path that silently changed a file's mode -- making it
+            # unreadable to every user but the server -- could not be observed
+            # by any caller, nor asserted by the acceptance pipeline. Reported
+            # as None only if the file disappears between the resolve above and
+            # this stat.
+            "mode": _file_mode_octal(abs_path),
         }
         if session_id:
             merged["session_id"] = str(session_id).strip()

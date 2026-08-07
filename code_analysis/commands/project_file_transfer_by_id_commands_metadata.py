@@ -122,8 +122,8 @@ def get_project_file_transfer_download_begin_metadata(
                     "(e.g. ``transfer_id``, ``filename``, ``size_bytes``, ``checksum_algorithm``, "
                     "``checksum_value``, ``compression``, ``chunk_size``, ``offset``, "
                     "``status``, ``plaintext_size_bytes``, ``expires_at``) plus "
-                    "``transport``, ``file_id``, ``project_id``, ``file_path``, and optionally "
-                    "``backup_history``."
+                    "``transport``, ``file_id``, ``project_id``, ``file_path``, ``mode``, and "
+                    "optionally ``backup_history``."
                 ),
                 "data": {
                     "success": "Omitted in data dict; outer SuccessResult indicates success.",
@@ -142,6 +142,11 @@ def get_project_file_transfer_download_begin_metadata(
                     "file_path": "Project-relative POSIX path resolved from the ``files`` row.",
                     "lock_mode": "Requested lock mode.",
                     "lock_session_id": "Runtime lock session that owns a non-none transfer lock.",
+                    "mode": (
+                        "The file's POSIX permission bits as an octal string (e.g. \"644\"); "
+                        "null only when the file cannot be stat'ed. Lets a caller verify that a "
+                        "save preserved the file's permissions (bug 92e6d693)."
+                    ),
                     "backup_history": (
                         "List of dicts (uuid, timestamp, size_bytes, size_lines, command, "
                         "comment, related_files) when include_backup_history is true; else omitted."
@@ -169,6 +174,7 @@ def get_project_file_transfer_download_begin_metadata(
                     "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
                     "project_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                     "file_path": "src/app.py",
+                    "mode": "644",
                     "backup_history": [
                         {
                             "uuid": "b2c3d4e5-f6a7-4890-bcde-f12345678901",

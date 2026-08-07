@@ -72,6 +72,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-stability",
         "live-client-overhead",
         "live-byte-fidelity",
+        "live-file-mode",
     ]
 
 
@@ -135,6 +136,7 @@ def test_main_list_prints_catalog(capsys) -> None:
     assert "live-indexer" in captured.out
     assert "live-apisurface" in captured.out
     assert "live-byte-fidelity" in captured.out
+    assert "live-file-mode" in captured.out
 
 
 def test_run_check_executes_expected_pytest_targets(monkeypatch) -> None:

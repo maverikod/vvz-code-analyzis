@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
+from ..atomic_replace import replace_preserving_mode
 from ..backup_manager import BackupManager
 from ..database_driver_pkg.domain.files import create_file, update_file
 from ..file_lock import file_lock
@@ -63,7 +64,8 @@ def save_tree_to_file(
        next to the source holds node ids.)
     4. Write to temporary file
     5. Validate temporary file (compile, linter, type checker)
-    6. Atomically replace file via os.replace()
+    6. Atomically replace the file, carrying its existing permission bits over
+       to the replacement (``replace_preserving_mode``, bug 92e6d693)
     7. Ensure file record exists (create or update in files table)
     8. Sync file to DB via shared file-level pipeline (sync_file_to_db_atomic)
     9. Git commit (if commit_message provided)
@@ -283,7 +285,10 @@ def save_tree_to_file(
 
             # Step 6: Atomically replace file
             t0 = time.perf_counter()
-            os.replace(str(temp_file), str(target_path))
+            # Bug 92e6d693: os.replace gives the target the staging file's
+            # permission bits, so a save must carry the target's own mode over
+            # or it silently resets what the file was set to (0755, 0640, ...).
+            replace_preserving_mode(temp_file, target_path)
             temp_file = None  # File was moved, don't delete it
             timings["replace"] = time.perf_counter() - t0
 

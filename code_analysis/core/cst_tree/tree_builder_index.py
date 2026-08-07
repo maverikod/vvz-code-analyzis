@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
+from ..atomic_replace import replace_preserving_mode
 from .models import CSTTree, TreeNodeMetadata
 from .node_id_markers import (
     PersistedNodeIds,
@@ -74,7 +75,10 @@ def _strip_legacy_trailer_from_disk(py_path: Path, logical_source: str) -> None:
     try:
         tmp_path = py_path.with_suffix(".py.tmp")
         tmp_path.write_text(logical_source, encoding="utf-8")
-        os.replace(str(tmp_path), str(py_path))
+        # Bug 92e6d693: os.replace hands the target the staging file's
+        # permission bits, so a rewrite here would reset the source file's
+        # mode to whatever the umask produced.
+        replace_preserving_mode(tmp_path, py_path)
         logger.info("Stripped legacy cst-node-ids trailer from %s", py_path)
     except OSError as exc:
         logger.warning("Could not strip legacy trailer from %s: %s", py_path, exc)

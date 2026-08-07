@@ -427,6 +427,14 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
     ),
     PipelineCheck(
+        name="file-mode-preserved",
+        description=(
+            "Verify a staged file renamed over a project file keeps the "
+            "target's permissions (bug 92e6d693: an edited .py became 0600)."
+        ),
+        pytest_targets=("tests/test_atomic_replace_preserves_mode.py",),
+    ),
+    PipelineCheck(
         name="byte-verbatim-io",
         description=(
             "Verify the transfer-buffer reader and the text save path store "

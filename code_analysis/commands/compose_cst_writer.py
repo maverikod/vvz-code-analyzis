@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.atomic_replace import replace_preserving_mode
 from ..core.backup_manager import BackupManager
 from ..core.database.file_edit_lock import release_file_edit_lock
 from ..core.database_client.file_data_batch import update_file_data_atomic_batch
@@ -330,7 +331,10 @@ def apply_changes(
                 f"Failed to update file data: {update_result.get('error')}"
             )
 
-        os.replace(str(temp_file), str(target_path))
+        # Bug 92e6d693: temp_file comes from tempfile.mkstemp and is therefore
+        # 0600. A bare os.replace would hand those bits to the target, so an
+        # edited file became unreadable to everyone but the server.
+        replace_preserving_mode(temp_file, target_path)
         _t = time.perf_counter()
         logger.info("[PROFILE] _apply_changes os_replace elapsed=%.3fs", _t - t_prev)
         t_prev = _t

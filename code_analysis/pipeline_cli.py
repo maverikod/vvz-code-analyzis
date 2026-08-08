@@ -431,6 +431,14 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
     ),
     PipelineCheck(
+        name="project-root-rename-resync",
+        description=(
+            "Verify a project whose directory was renamed out of band still "
+            "resolves, and that the stale DB row heals (bug 5da73265)."
+        ),
+        pytest_targets=("tests/test_project_root_rename_resync.py",),
+    ),
+    PipelineCheck(
         name="suite-hermeticity",
         description=(
             "Verify the unit suite does not depend on untracked machine-local "

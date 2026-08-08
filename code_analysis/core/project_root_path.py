@@ -171,6 +171,105 @@ def _projectid_matches(project_root: Path, project_id: str) -> bool:
         return False
 
 
+def find_project_root_by_projectid(database: Any, project_id: str) -> str:
+    """Locate a project's directory by reading ``projectid`` files under the watch dirs.
+
+    This is the identity-based lookup ``list_projects`` already performs on disk,
+    made available to the DB-backed resolver (bug 5da73265). Every other strategy
+    in :func:`resolve_project_root_absolute_str` derives candidate FOLDER NAMES
+    from the stored ``root_path``/``name``, so an out-of-band ``mv`` of the
+    directory leaves them all matching nothing while the folder sits in plain
+    sight one level down, carrying the right id.
+
+    Args:
+        database: Database handle used to enumerate watch directories.
+        project_id: Project UUID to look for.
+
+    Returns:
+        The absolute path of the single directory whose ``projectid`` names this
+        project, or ``""`` when there is no match or the match is ambiguous.
+    """
+    pid = (project_id or "").strip()
+    if not pid:
+        return ""
+
+    matches: List[str] = []
+    for _wid, watch in fetch_all_watch_dir_absolute_paths(database):
+        watch_root = Path(watch)
+        try:
+            children = sorted(watch_root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            try:
+                if not child.is_dir() or not (child / "projectid").is_file():
+                    continue
+            except OSError:
+                continue
+            if _projectid_matches(child, pid):
+                try:
+                    matches.append(normalize_path_simple(str(child.resolve())))
+                except OSError:
+                    continue
+
+    unique = list(dict.fromkeys(m for m in matches if m))
+    if len(unique) == 1:
+        return unique[0]
+    if unique:
+        logger.warning(
+            "find_project_root_by_projectid: ambiguous roots for project_id=%s: %s",
+            pid,
+            unique,
+        )
+    return ""
+
+
+def resync_project_root_path_row(
+    database: Any, project_id: str, absolute_root: str
+) -> bool:
+    """Point a project's DB row at the directory it actually occupies now.
+
+    Called only when the stored location failed to resolve and the directory was
+    found by its ``projectid`` instead (bug 5da73265): without this the row keeps
+    naming the pre-rename folder, every later call pays the watch-dir scan again,
+    and error payloads keep reporting a path that no longer exists.
+
+    Args:
+        database: Database handle.
+        project_id: Project UUID whose row is stale.
+        absolute_root: The directory the project actually lives in.
+
+    Returns:
+        True when the row was updated; False when it could not be (the caller
+        continues with the resolved path either way -- a failed resync must never
+        turn a working command into an error).
+    """
+    folder = Path(absolute_root).name
+    if not folder:
+        return False
+    try:
+        database.execute(
+            "UPDATE projects SET root_path = ?, name = ? WHERE id = ?",
+            (folder, folder, project_id),
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail the caller on bookkeeping
+        logger.warning(
+            "resync_project_root_path_row: could not update projects row for "
+            "project_id=%s to %r: %s",
+            project_id,
+            folder,
+            exc,
+        )
+        return False
+    logger.info(
+        "resync_project_root_path_row: project_id=%s root_path/name -> %r "
+        "(directory was renamed out of band)",
+        project_id,
+        folder,
+    )
+    return True
+
+
 def resolve_projects_root_path_row_to_absolute_str(
     *,
     root_path_stored: Optional[str],
@@ -199,6 +298,31 @@ def resolve_projects_root_path_row_to_absolute_str(
         )
         return normalize_path_simple(raw) if Path(raw).is_absolute() else ""
     return normalize_path_simple(Path(watch) / raw)
+
+
+def _resolve_by_identity_and_resync(
+    database: Any, project_id: Optional[str], *, require_exists: bool
+) -> str:
+    """Last-resort resolution: find the directory by its ``projectid``, then heal the row.
+
+    Args:
+        database: Database handle.
+        project_id: Project UUID, or None/empty when the caller has no identity
+            to search by (then there is nothing to do).
+        require_exists: Identity search reads directories, so it only makes sense
+            when the caller demands an existing path; create/save-new flows pass
+            False and must not be handed some other existing folder.
+
+    Returns:
+        The absolute root discovered by identity, or ``""``.
+    """
+    if not require_exists or not (project_id or "").strip():
+        return ""
+    discovered = find_project_root_by_projectid(database, str(project_id))
+    if not discovered:
+        return ""
+    resync_project_root_path_row(database, str(project_id), discovered)
+    return discovered
 
 
 def resolve_project_root_absolute_str(
@@ -250,7 +374,9 @@ def resolve_project_root_absolute_str(
 
     folders = _folder_name_candidates(raw, project_name)
     if not folders:
-        return ""
+        return _resolve_by_identity_and_resync(
+            database, project_id, require_exists=require_exists
+        )
 
     matches: List[str] = []
     for _wid, watch in fetch_all_watch_dir_absolute_paths(database):
@@ -271,7 +397,12 @@ def resolve_project_root_absolute_str(
             matches.append(candidate)
 
     if not matches:
-        return ""
+        # Every strategy above matched on the folder NAME recorded in the DB. An
+        # out-of-band rename invalidates all of them at once, so fall back to the
+        # project's own identity (bug 5da73265).
+        return _resolve_by_identity_and_resync(
+            database, project_id, require_exists=require_exists
+        )
 
     unique = list(dict.fromkeys(matches))
     if len(unique) == 1:

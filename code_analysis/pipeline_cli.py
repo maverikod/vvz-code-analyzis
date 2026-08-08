@@ -431,6 +431,15 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
     ),
     PipelineCheck(
+        name="github-auth-sources",
+        description=(
+            "Verify GitHub auth accepts the provisioned CODE_ANALYSIS_GITHUB_TOKEN "
+            "environment token and names precisely which source failed "
+            "(bug d23e819a)."
+        ),
+        pytest_targets=("tests/test_github_auth_sources.py",),
+    ),
+    PipelineCheck(
         name="project-root-rename-resync",
         description=(
             "Verify a project whose directory was renamed out of band still "

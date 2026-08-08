@@ -164,3 +164,57 @@ async def test_probe_ambient_load_single_attempt_when_first_round_clears() -> No
     assert degraded is False
     assert len(client.calls) == 3
     assert "attempt2_avg_s=" not in detail
+
+
+@pytest.mark.asyncio
+async def test_baseline_tightens_the_ceiling_on_a_fast_server() -> None:
+    """A fast run's own baseline lowers the bar below the absolute default.
+
+    Bug 2aaac911 guard: the absolute ceiling was derived from a slower server
+    and stopped separating idle from loaded once the server got faster. With a
+    baseline supplied, a load that is 3x the run's own idle counts as degraded
+    even though it sits under the absolute default.
+    """
+    client = _StubClient(elapsed_per_call=[0.018])
+
+    degraded, avg, failures = await probe_once(
+        client, "proj-1", samples=3, baseline_seconds=0.005
+    )
+
+    assert degraded is True, f"avg {avg} should exceed 3x the 0.005 baseline"
+    assert failures == 0
+
+
+@pytest.mark.asyncio
+async def test_a_slow_quiet_baseline_cannot_loosen_the_ceiling() -> None:
+    """A contaminated "quiet" phase must not raise the bar.
+
+    Observed live: a quiet probe reading 0.0134s/call (vs the usual 0.0073)
+    pushed the derived ceiling to 0.0403 and hid a loaded phase of 0.0328. The
+    baseline is therefore clamped to known-idle before it is used, so it can
+    only ever tighten the ceiling.
+    """
+    client = _StubClient(elapsed_per_call=[0.033])
+
+    degraded, avg, failures = await probe_once(
+        client, "proj-1", samples=3, baseline_seconds=0.0134
+    )
+
+    assert degraded is True, (
+        f"avg {avg} was hidden by an inflated ceiling derived from a slow "
+        "quiet baseline"
+    )
+    assert failures == 0
+
+
+@pytest.mark.asyncio
+async def test_derived_ceiling_never_drops_below_its_floor() -> None:
+    """An extremely fast baseline must not make the probe hypersensitive."""
+    client = _StubClient(elapsed_per_call=[0.010])
+
+    degraded, _avg, failures = await probe_once(
+        client, "proj-1", samples=3, baseline_seconds=0.0001
+    )
+
+    assert degraded is False, "10ms/call is within the derived-ceiling floor"
+    assert failures == 0

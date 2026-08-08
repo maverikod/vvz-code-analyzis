@@ -68,11 +68,19 @@ async def _clean_ambient_load(client, project_id):
     return False, 0.005, "attempt1_avg_s=0.0050(failures=0)"
 
 
-async def _clean_probe_once(client, project_id):
+async def _clean_probe_once(client, project_id, *, baseline_seconds=None):
+    """Stub: the loaded probe sees nothing (detection missed the interference).
+
+    Accepts ``baseline_seconds`` because the check now judges the loaded phase
+    against the baseline it measured in the same run rather than a constant
+    (bug 2aaac911 guard); a stub that omits it would only prove the stub's own
+    signature is stale.
+    """
     return False, 0.005, 0
 
 
-async def _degraded_probe_once(client, project_id):
+async def _degraded_probe_once(client, project_id, *, baseline_seconds=None):
+    """Stub: the loaded probe correctly flags the interference."""
     return True, 0.09, 0
 
 

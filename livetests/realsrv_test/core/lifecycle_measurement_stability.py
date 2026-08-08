@@ -70,7 +70,30 @@ from typing import Dict, List, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
-from realsrv_test.core.ambient_load import probe_ambient_load, probe_once
+from realsrv_test.core.ambient_load import (
+    _AMBIENT_LOAD_DEGRADED_RATIO,
+    _AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS,
+    _KNOWN_IDLE_CEILING_SECONDS,
+    probe_ambient_load,
+    probe_once,
+)
+
+
+def _derived_ceiling(baseline_seconds: float) -> float:
+    """Mirror probe_once's derived ceiling, for the diagnostic message only.
+
+    Args:
+        baseline_seconds: This run's measured quiet average.
+
+    Returns:
+        The ceiling probe_once applies for that baseline, including the clamp
+        that stops a slow "quiet" phase from loosening the bar.
+    """
+    return max(
+        _AMBIENT_LOAD_DEGRADED_RATIO
+        * min(baseline_seconds, _KNOWN_IDLE_CEILING_SECONDS),
+        _AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS,
+    )
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
 
@@ -167,8 +190,14 @@ async def _run_check(
     # the second attempt. probe_once takes one deterministic snapshot while
     # the background batch is actually in flight.
     load_task = asyncio.create_task(_fire_background_load(client, fixtures))
+    # Judge against the baseline THIS run just measured, not against a constant
+    # remembered from an older, slower server. The property under test is "load
+    # makes the server measurably slower than its own idle speed, and the probe
+    # notices" -- on 1.6.99+ the same 8-way batch that once averaged 0.0469s/call
+    # averages ~0.029s, so an absolute 0.03 ceiling silently stopped separating
+    # the two states and this check went RED with nothing actually broken.
     loaded_degraded, loaded_avg, loaded_failures = await probe_once(
-        client, fixtures.project_id
+        client, fixtures.project_id, baseline_seconds=quiet_avg
     )
     load_results = await load_task
     background_failures = [r for r in load_results if not r[1]]
@@ -178,6 +207,9 @@ async def _run_check(
         f"avg_s={quiet_avg:.4f} ({quiet_detail}); loaded_probe "
         f"(concurrent background_load={_LOAD_CONCURRENCY}): "
         f"degraded={loaded_degraded} avg_s={loaded_avg:.4f} "
+        f"vs derived_ceiling_s={_derived_ceiling(quiet_avg):.4f} "
+        f"(={_AMBIENT_LOAD_DEGRADED_RATIO}x this run's quiet baseline, floor "
+        f"{_AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS}); "
         f"failures={loaded_failures}; background_load_failures="
         f"{len(background_failures)}"
     )

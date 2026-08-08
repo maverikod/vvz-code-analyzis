@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
@@ -78,7 +78,30 @@ _KNOWN_IDLE_CEILING_SECONDS = 0.010
 #     (lifecycle_read_throughput.py module docstring) -- both cross this
 #     ceiling with room to spare (~1.5x and ~21x respectively), so a probe
 #     taken while either condition is in flight reliably reports degraded.
-_AMBIENT_LOAD_PROBE_CEILING_SECONDS = 0.03
+#
+# RE-DERIVED 2026-08-08 (0.03 -> 0.02). The numbers above were taken on 1.6.93;
+# the server has since got faster and the constant stopped sitting between the
+# two states it must separate. Measured on deployed 1.6.99-1.6.101: quiet
+# 0.0066-0.0075s/call, and the SAME 8-way self-generated batch that used to
+# average 0.0469s/call now averages 0.0271-0.0292s/call -- under the old 0.03
+# ceiling, so the probe stopped flagging interference it was built to catch and
+# the self-check for this very bug went RED. 0.02 is ~3x today's measured idle
+# and still ~1.5x below the loaded case.
+#
+# An absolute constant anchored to a remembered server speed will drift again
+# every time the server gets faster. Prefer `baseline_seconds` below, which asks
+# the question this probe actually means -- "is the server slower than it is
+# when idle?" -- against a baseline measured in the same run. The constant
+# remains the fallback for callers that have no baseline to offer.
+_AMBIENT_LOAD_PROBE_CEILING_SECONDS = 0.02
+
+# Multiple of a run's own measured idle baseline above which the server counts
+# as busy, used when a caller supplies `baseline_seconds`.
+_AMBIENT_LOAD_DEGRADED_RATIO = 3.0
+
+# Floor for the derived ceiling: on a very fast server 3x idle can land within
+# ordinary sub-millisecond jitter, which would report degraded constantly.
+_AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS = 0.015
 
 # Small and cheap on purpose: the probe itself must not become a new source
 # of the exact interference this bug is about. 3 sequential samples average
@@ -99,6 +122,7 @@ async def probe_once(
     page_size: int = 1,
     samples: int = _PROBE_SAMPLES,
     ceiling_seconds: float = _AMBIENT_LOAD_PROBE_CEILING_SECONDS,
+    baseline_seconds: Optional[float] = None,
 ) -> Tuple[bool, float, int]:
     """Run one deterministic probe round: ``samples`` sequential cheap calls.
 
@@ -113,12 +137,31 @@ async def probe_once(
             about to take).
         page_size: Kept at 1 -- the cheap-response shape every caller uses.
         samples: Sequential calls this round.
-        ceiling_seconds: Degraded-baseline ceiling in seconds/call.
+        ceiling_seconds: Absolute degraded ceiling in seconds/call, used when
+            no ``baseline_seconds`` is supplied.
+        baseline_seconds: This run's own measured idle average. When given, the
+            ceiling becomes ``_AMBIENT_LOAD_DEGRADED_RATIO`` times it (never
+            below ``_AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS``), so the verdict
+            tracks how fast the server actually is today instead of how fast it
+            was when the constant was written -- see the note on
+            ``_AMBIENT_LOAD_PROBE_CEILING_SECONDS``.
 
     Returns:
         Tuple of (degraded, avg_elapsed_s, failures). ``degraded`` is True
-        when any call failed or the average exceeded ``ceiling_seconds``.
+        when any call failed or the average exceeded the effective ceiling.
     """
+    if baseline_seconds is not None and baseline_seconds > 0:
+        # A supplied baseline may only TIGHTEN the bar, never loosen it: a
+        # "quiet" phase that measures slower than known-idle was not actually
+        # quiet, and letting that inflate the ceiling would make the probe blind
+        # exactly when the server is already contended. Observed live: a quiet
+        # phase reading 0.0134s/call (vs the usual 0.0073-0.0095) pushed the
+        # derived ceiling to 0.0403 and hid a loaded phase of 0.0328.
+        effective_baseline = min(baseline_seconds, _KNOWN_IDLE_CEILING_SECONDS)
+        ceiling_seconds = max(
+            _AMBIENT_LOAD_DEGRADED_RATIO * effective_baseline,
+            _AMBIENT_LOAD_MIN_DERIVED_CEILING_SECONDS,
+        )
     params: Dict[str, Any] = {"project_id": project_id, "page_size": page_size}
     failures = 0
     elapsed_total = 0.0

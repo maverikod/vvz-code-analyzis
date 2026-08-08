@@ -27,6 +27,7 @@ from typing import Any, Dict
 from uuid import uuid4
 
 from code_analysis_client import CodeAnalysisAsyncClient
+from code_analysis_client.exceptions import JobFailedError
 
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
@@ -42,18 +43,48 @@ _SELF_REMOTE = "."
 _SELF_REMOTE_NAME = "selfremote"
 
 
+async def _call(
+    client: CodeAnalysisAsyncClient, name: str, params: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Call a command and always return a response dict, never raise.
+
+    Queued and non-queued commands report a rejection differently, and the
+    difference is invisible at the call site: a command with ``use_queue=False``
+    returns ``{"success": False, "error": {...}}``, while a queued one raises
+    ``JobFailedError`` carrying that same payload. Every command in this group
+    is queued except track, so a suite that only handled the dict form crashed
+    on the first negative case instead of asserting on it. Normalising here
+    means each check reads one shape.
+    """
+    try:
+        response = await client.call_validated(name, params)
+    except JobFailedError as exc:
+        error = exc.error if isinstance(exc.error, dict) else {"message": str(exc)}
+        return {"success": False, "error": error}
+    except Exception as exc:  # noqa: BLE001 - transport failures are results too
+        return {"success": False, "error": {"message": truncate(repr(exc))}}
+    if isinstance(response, dict):
+        return response
+    return {
+        "success": bool(getattr(response, "success", False)),
+        "data": getattr(response, "data", None),
+    }
+
+
+async def _quiet(
+    client: CodeAnalysisAsyncClient, name: str, params: Dict[str, Any]
+) -> None:
+    """Best-effort cleanup call whose failure must never mask the real result."""
+    await _call(client, name, params)
+
+
 def _outcome(name: str, status: Status, reason: str) -> Dict[str, CommandOutcome]:
     """Wrap one classification as a single-entry outcome map."""
     return {name: CommandOutcome(name, Bucket.BUCKET_A, status, reason)}
 
 
 def _succeeded(response: Any) -> bool:
-    """Whether a client response reports success.
-
-    ``call_validated`` returns ``{"success": False, "error": {...}}`` for a
-    command-level rejection instead of raising, so the absence of an exception
-    says nothing.
-    """
+    """Whether a normalised response (see :func:`_call`) reports success."""
     if isinstance(response, dict):
         return response.get("success") is True
     return bool(getattr(response, "success", False))
@@ -81,6 +112,51 @@ def _error_of(response: Any) -> Dict[str, Any]:
     return {}
 
 
+async def _ensure_a_commit(
+    client: CodeAnalysisAsyncClient, fixtures: FixtureContext
+) -> bool:
+    """Give the disposable project at least one commit, and say whether it has one.
+
+    The sweep's fixture project is a git repository with NO commits -- its
+    git_commit step is one of the known expected-errors. An empty repository has
+    no refs, so ls-remote correctly returns nothing and there is nothing to
+    publish: every check here would report a defect that is really just an empty
+    fixture. So the suite makes its own commit, and reports INCONCLUSIVE rather
+    than FAILED if it cannot.
+
+    Args:
+        client: Connected async client.
+        fixtures: The disposable project fixture.
+
+    Returns:
+        True when the repository has at least one branch with a commit.
+    """
+    await _quiet(
+        client,
+        "git_identity_set",
+        {
+            "project_id": fixtures.project_id,
+            "name": "realsrv-test",
+            "email": "realsrv-test@example.invalid",
+        },
+    )
+    await _quiet(client, "git_add", {"project_id": fixtures.project_id, "all": True})
+    await _quiet(
+        client,
+        "git_commit",
+        {
+            "project_id": fixtures.project_id,
+            "message": "realsrv-test: seed a commit for remote-branch checks",
+        },
+    )
+    listed = await _call(
+        client, "git_branch_list", {"project_id": fixtures.project_id, "scope": "local"}
+    )
+    if not _succeeded(listed):
+        return False
+    return bool(_data_of(listed).get("branches"))
+
+
 async def run_remote_branch_list(
     client: CodeAnalysisAsyncClient, fixtures: FixtureContext
 ) -> Dict[str, CommandOutcome]:
@@ -94,8 +170,10 @@ async def run_remote_branch_list(
         Outcomes for the positive listing and the option-like-remote refusal.
     """
     outcomes: Dict[str, CommandOutcome] = {}
+    has_commit = await _ensure_a_commit(client, fixtures)
 
-    response = await client.call_validated(
+    response = await _call(
+        client,
         "git_remote_branch_list",
         {"project_id": fixtures.project_id, "remote": _SELF_REMOTE},
     )
@@ -130,10 +208,17 @@ async def run_remote_branch_list(
             outcomes.update(
                 _outcome(
                     CHECK_NAME_LIST_LIVE,
-                    Status.FAILED,
+                    Status.FAILED if has_commit else Status.INCONCLUSIVE,
                     (
-                        "the project's own repository reported zero branches; "
-                        "ls-remote output is not being parsed"
+                        (
+                            "the project's own repository reported zero branches; "
+                            "ls-remote output is not being parsed"
+                        )
+                        if has_commit
+                        else (
+                            "the fixture repository has no commits, so it has no refs "
+                            "to list -- an empty answer proves nothing here"
+                        )
                     ),
                 )
             )
@@ -166,7 +251,8 @@ async def run_remote_branch_list(
 
     # Negative direction: a remote starting with '-' would be read by git as an
     # option, so it must be refused before any subprocess runs.
-    rejected = await client.call_validated(
+    rejected = await _call(
+        client,
         "git_remote_branch_list",
         {"project_id": fixtures.project_id, "remote": "--upload-pack=evil"},
     )
@@ -215,7 +301,13 @@ async def run_remote_branch_prune(
     Returns:
         ``{CHECK_NAME_PRUNE_LIVE: CommandOutcome(...)}``.
     """
-    added = await client.call_validated(
+    await _quiet(
+        client,
+        "git_remote_remove",
+        {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},
+    )
+    added = await _call(
+        client,
         "git_remote_add",
         {
             "project_id": fixtures.project_id,
@@ -234,7 +326,8 @@ async def run_remote_branch_prune(
         )
 
     try:
-        response = await client.call_validated(
+        response = await _call(
+            client,
             "git_remote_branch_prune",
             {
                 "project_id": fixtures.project_id,
@@ -284,7 +377,8 @@ async def run_remote_branch_prune(
             ),
         )
     finally:
-        await client.call_validated(
+        await _call(
+            client,
             "git_remote_remove",
             {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},
         )
@@ -308,12 +402,25 @@ async def run_remote_branch_write_cycle(
     Returns:
         ``{CHECK_NAME_WRITE_CYCLE: CommandOutcome(...)}``.
     """
+    if not await _ensure_a_commit(client, fixtures):
+        return _outcome(
+            CHECK_NAME_WRITE_CYCLE,
+            Status.INCONCLUSIVE,
+            "the fixture repository has no commits, so there is nothing to publish",
+        )
+
     suffix = uuid4().hex[:8]
     published = f"review/{suffix}"
     local_copy = f"track_{suffix}"
     steps: list[str] = []
 
-    added = await client.call_validated(
+    await _quiet(
+        client,
+        "git_remote_remove",
+        {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},
+    )
+    added = await _call(
+        client,
         "git_remote_add",
         {
             "project_id": fixtures.project_id,
@@ -332,7 +439,8 @@ async def run_remote_branch_write_cycle(
         )
 
     try:
-        created = await client.call_validated(
+        created = await _call(
+            client,
             "git_remote_branch_create",
             {
                 "project_id": fixtures.project_id,
@@ -359,7 +467,8 @@ async def run_remote_branch_write_cycle(
         steps.append(f"created {published} via refspec {create_data.get('refspec')}")
 
         # The tracking ref has to exist on disk before track/compare can use it.
-        fetched = await client.call_validated(
+        fetched = await _call(
+            client,
             "git_fetch",
             {"project_id": fixtures.project_id, "remote": _SELF_REMOTE_NAME},
         )
@@ -373,7 +482,8 @@ async def run_remote_branch_write_cycle(
                 ),
             )
 
-        tracked = await client.call_validated(
+        tracked = await _call(
+            client,
             "git_remote_branch_track",
             {
                 "project_id": fixtures.project_id,
@@ -406,7 +516,8 @@ async def run_remote_branch_write_cycle(
             )
         steps.append(f"tracked as {local_copy} (action=created, tree untouched)")
 
-        compared = await client.call_validated(
+        compared = await _call(
+            client,
             "git_remote_branch_compare",
             {
                 "project_id": fixtures.project_id,
@@ -443,7 +554,8 @@ async def run_remote_branch_write_cycle(
             )
         steps.append("compared: fetched=True, ahead=0, behind=0")
 
-        refused = await client.call_validated(
+        refused = await _call(
+            client,
             "git_remote_branch_delete",
             {
                 "project_id": fixtures.project_id,
@@ -460,7 +572,8 @@ async def run_remote_branch_write_cycle(
             )
         steps.append("delete without force_confirm refused")
 
-        deleted = await client.call_validated(
+        deleted = await _call(
+            client,
             "git_remote_branch_delete",
             {
                 "project_id": fixtures.project_id,
@@ -477,7 +590,8 @@ async def run_remote_branch_write_cycle(
             )
 
         # Prove the delete rather than trusting the exit code.
-        remaining = await client.call_validated(
+        remaining = await _call(
+            client,
             "git_remote_branch_list",
             {"project_id": fixtures.project_id, "remote": _SELF_REMOTE_NAME},
         )
@@ -500,7 +614,8 @@ async def run_remote_branch_write_cycle(
 
         return _outcome(CHECK_NAME_WRITE_CYCLE, Status.EXECUTED_OK, "; ".join(steps))
     finally:
-        await client.call_validated(
+        await _call(
+            client,
             "git_branch_delete",
             {
                 "project_id": fixtures.project_id,
@@ -508,7 +623,8 @@ async def run_remote_branch_write_cycle(
                 "force": True,
             },
         )
-        await client.call_validated(
+        await _call(
+            client,
             "git_remote_remove",
             {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},
         )

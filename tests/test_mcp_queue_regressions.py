@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -18,6 +19,10 @@ from mcp_proxy_adapter.integrations.queuemgr_integration import (
 import code_analysis.hooks  # noqa: F401
 
 PROJECT_ID = "900fe94a-1d93-41be-bba1-0ebddbd1e5d1"
+
+# Opt-in switch for the one test here whose inner command opens the shared
+# database (bug dc4a2c1f); same convention as the other live-PostgreSQL tests.
+_PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
 
 
 def _skip_if_queue_env_unavailable(exc: Exception) -> None:
@@ -147,9 +152,27 @@ async def test_command_execution_health_completed_diagnostics() -> None:
     assert final.get("completed_with_error") is False
 
 
+@pytest.mark.postgres
+@pytest.mark.skipif(
+    not os.environ.get(_PG_ENV),
+    reason=(
+        f"needs a live PostgreSQL; set {_PG_ENV} to opt in. The inner command "
+        "opens the shared database, so without one the job dies before it ever "
+        "executes and this test cannot observe inner-failure retention at all."
+    ),
+)
 @pytest.mark.asyncio
 async def test_command_execution_inner_failure_retained_and_not_successful() -> None:
-    """Verify test command execution inner failure retained and not successful."""
+    """Verify test command execution inner failure retained and not successful.
+
+    Bug dc4a2c1f: this used to depend on the developer's untracked root
+    ``config.json`` happening to point at a live PostgreSQL with credentials.
+    It passed in the main checkout and, in a fresh worktree, failed with
+    ``command_execution=False`` because the queued command could not open the
+    database ("no password supplied") -- a different failure than the inner
+    command failure under test. The requirement is now declared instead of
+    inherited, so the result is the same in every checkout.
+    """
     job_id = _job_id("delete_missing")
     missing_rel_path = f"notes/queue_missing_{int(time.time())}.txt"
     added = await _run_command(

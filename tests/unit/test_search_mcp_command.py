@@ -73,7 +73,13 @@ async def test_search_runs_background_in_dedicated_thread(tmp_path) -> None:
         )
 
     assert isinstance(result, SuccessResult)
-    assert thread_started.is_set()
+    # Synchronise, do not assume (bug dc4a2c1f): execute() is allowed to return
+    # as soon as it has its first block, which can happen before the background
+    # thread reaches the stub. A bare is_set() therefore turned the scheduler's
+    # whim into a verdict and made this test flap between identical runs.
+    # Waiting still fails -- after the timeout -- if the thread never runs at
+    # all, which is the property under test.
+    assert thread_started.wait(timeout=30), "background search thread never started"
 
 
 @pytest.mark.asyncio

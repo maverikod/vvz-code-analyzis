@@ -61,6 +61,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "verify-lifecycle-content-stale-save",
         "watcher-project-metadata",
         "search-close-pagination",
+        "suite-hermeticity",
         "file-mode-preserved",
         "upload-staging-isolation",
         "byte-verbatim-io",
@@ -134,6 +135,7 @@ def test_main_list_prints_catalog(capsys) -> None:
     assert "trash-list-name-parse" in captured.out
     assert "byte-verbatim-io" in captured.out
     assert "file-mode-preserved" in captured.out
+    assert "suite-hermeticity" in captured.out
     assert "live-deployed-server" in captured.out
     assert "live-nonpy" in captured.out
     assert "live-throughput" in captured.out

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -90,10 +92,17 @@ def test_debian_staging_installs_config_and_runtime_template(
             import shutil
 
             shutil.rmtree(staging_root, ignore_errors=True)
+        # Declare the interpreter instead of inheriting one (bug dc4a2c1f): the
+        # script otherwise needs a .venv sitting in the tree to find
+        # commentjson, which is untracked machine-local state, so this test
+        # passed in the main checkout and failed in every fresh git worktree.
+        # The interpreter running pytest is by definition equipped.
+        env = {**os.environ, "CASMGR_PY": sys.executable}
         subprocess.run(
             ["bash", str(INSTALL_SCRIPT), str(REPO_ROOT)],
             check=True,
             cwd=REPO_ROOT,
+            env=env,
         )
         staged = staging_root / staging_rel
         assert staged.is_file(), staging_rel

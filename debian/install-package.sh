@@ -69,16 +69,27 @@ install -d "${ST}/etc/casmgr"
 # this file and crash-loops the daemon on a JSONC config. Emit strict JSON from
 # the (documented, JSONC) source template at stage time; reuse it for the runtime
 # template that postinst copies from when config.json is absent.
-_casmgr_py="python3"
-[[ -x "${CURDIR}/.venv/bin/python" ]] && _casmgr_py="${CURDIR}/.venv/bin/python"
+# Interpreter choice, in order: an explicit CASMGR_PY, this tree's .venv, then
+# python3. Bug dc4a2c1f: without the CASMGR_PY door, the only way to reach an
+# interpreter carrying commentjson was to have a .venv sitting in the tree --
+# untracked, machine-local state -- so this script (and the test that runs it)
+# succeeded in the developer's main checkout and failed in every fresh git
+# worktree. A caller that knows which interpreter is equipped can now say so.
+_casmgr_py="${CASMGR_PY:-}"
+if [[ -z "$_casmgr_py" ]]; then
+    _casmgr_py="python3"
+    [[ -x "${CURDIR}/.venv/bin/python" ]] && _casmgr_py="${CURDIR}/.venv/bin/python"
+fi
 "${_casmgr_py}" -c "import commentjson" 2>/dev/null || {
-    echo "ERROR: commentjson required to emit strict-JSON /etc/casmgr/config.json (pip install commentjson)" >&2
+    echo "ERROR: commentjson required to emit strict-JSON /etc/casmgr/config.json;" >&2
+    echo "       tried ${_casmgr_py}. Install it there, or point CASMGR_PY at an" >&2
+    echo "       interpreter that has it (pip install commentjson)." >&2
     exit 1
 }
 _casmgr_cfg_strict="$(mktemp)"
 "${_casmgr_py}" -c "import commentjson, json, sys; json.dump(commentjson.load(open(sys.argv[1])), open(sys.argv[2], 'w'), indent=2, ensure_ascii=False)" \
     "${CURDIR}/packaging/config.json.template" "${_casmgr_cfg_strict}"
-python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${_casmgr_cfg_strict}" \
+"${_casmgr_py}" -c "import json,sys; json.load(open(sys.argv[1]))" "${_casmgr_cfg_strict}" \
     || { echo "ERROR: emitted /etc/casmgr/config.json is not strict JSON" >&2; exit 1; }
 install -m 640 "${_casmgr_cfg_strict}" \
     "${ST}/etc/casmgr/config.json"

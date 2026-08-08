@@ -101,10 +101,18 @@ def _repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent.parent
 
 
+# Fixed id for the tests that preview a file from this repository with a MOCKED
+# database (bug dc4a2c1f). The value is arbitrary: the mock returns the project
+# row regardless, so nothing here depends on which project this checkout happens
+# to be registered as. Reading the repo root's untracked ``projectid`` file
+# instead made these tests pass in the main checkout and fail with
+# FileNotFoundError in every fresh git worktree.
+_REPO_MOCK_PID = "00000000-0000-4000-8000-00000000c0de"
+
+
 def _repo_project_id() -> str:
-    """Return repo project id."""
-    raw = (_repo_root() / "projectid").read_text(encoding="utf-8")
-    return str(json.loads(raw)["id"])
+    """Return the project id used for mock-DB previews of this repository."""
+    return _REPO_MOCK_PID
 
 
 def _mock_db_for_root(root: pathlib.Path, project_id: str) -> MagicMock:

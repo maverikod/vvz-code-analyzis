@@ -431,6 +431,15 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         ),
     ),
     PipelineCheck(
+        name="suite-hermeticity",
+        description=(
+            "Verify the unit suite does not depend on untracked machine-local "
+            "state (bug dc4a2c1f: 4 tests passed in the main checkout and "
+            "failed in every fresh git worktree)."
+        ),
+        pytest_targets=("tests/test_suite_hermeticity.py",),
+    ),
+    PipelineCheck(
         name="file-mode-preserved",
         description=(
             "Verify a staged file renamed over a project file keeps the "

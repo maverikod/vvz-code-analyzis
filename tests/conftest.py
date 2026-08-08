@@ -98,6 +98,33 @@ def _isolate_git_xdg_config(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_root))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_search_sessions_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Point paginated search-session storage at a temp dir for every test.
+
+    Bug dc4a2c1f. ``BaseMCPCommand._get_search_sessions_root`` derives the
+    directory from the ACTIVE config: with the developer's untracked root
+    ``config.json`` present it lands in this checkout's own ``data/``, and
+    without one it falls back to the packaged default ``/var/casmgr/data/
+    search_sessions`` -- which the test user cannot write. So the same test
+    passed in the main checkout and failed with PermissionError in every fresh
+    git worktree, and every parallel agent works in a worktree.
+
+    Redirecting it here removes the ambient dependence for the whole session
+    rather than test by test: no unit test has any business writing into real
+    server storage, whichever config happens to be lying around.
+    """
+
+    sessions_root = Path(tmp_path_factory.mktemp("search-sessions"))
+    monkeypatch.setattr(
+        "code_analysis.commands.base_mcp_command.BaseMCPCommand."
+        "_get_search_sessions_root",
+        staticmethod(lambda: sessions_root),
+    )
+
+
 def pytest_configure(config) -> None:
     """Register custom marks."""
     config.addinivalue_line(

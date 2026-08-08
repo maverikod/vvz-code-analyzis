@@ -97,7 +97,17 @@ _AMBIENT_LOAD_PROBE_CEILING_SECONDS = 0.02
 
 # Multiple of a run's own measured idle baseline above which the server counts
 # as busy, used when a caller supplies `baseline_seconds`.
-_AMBIENT_LOAD_DEGRADED_RATIO = 3.0
+#
+# 2.0, not 3.0. Measured across six live runs on 1.6.101/1.6.102, the ratio
+# between the quiet baseline and the SAME 8-way self-generated batch was:
+#   0.0073 -> 0.0345 (4.7x)   0.0095 -> 0.0348 (3.7x)   0.0134 -> 0.0328 (2.4x)
+#   0.0160 -> 0.0659 (4.1x)   0.0135 -> 0.0324 (2.4x)   0.0121 -> 0.0434 (3.6x)
+# The spread is 2.4x-4.7x: a 3.0 threshold cuts straight through it, so the same
+# real interference was flagged or missed depending on how noisy the quiet phase
+# happened to be. 2.0 sits below the worst observed case with room to spare and
+# still demands the server be twice its own idle cost before anything is called
+# degraded.
+_AMBIENT_LOAD_DEGRADED_RATIO = 2.0
 
 # Floor for the derived ceiling: on a very fast server 3x idle can land within
 # ordinary sub-millisecond jitter, which would report degraded constantly.

@@ -38,7 +38,13 @@ CHECK_NAME_PRUNE_LIVE = "remote_branch_prune_reports_what_it_pruned"
 CHECK_NAME_WRITE_CYCLE = "remote_branch_create_track_compare_delete"
 
 #: A repository is a valid remote for itself, which is how these checks get a
-#: reachable remote without any infrastructure.
+#: reachable remote without any infrastructure. Deliberately "." and not
+#: ``fixtures.project_root``: other checks in a full sweep rename and relocate
+#: the disposable project, so a path captured at fixture-creation time is stale
+#: by the time this suite runs -- which showed up as
+#: ``fatal: '/var/casmgr/watch_catalog/55...' does not appear to be a git
+#: repository``. A dot is resolved against the repository at use time and cannot
+#: go stale.
 _SELF_REMOTE = "."
 _SELF_REMOTE_NAME = "selfremote"
 
@@ -312,7 +318,7 @@ async def run_remote_branch_prune(
         {
             "project_id": fixtures.project_id,
             "name": _SELF_REMOTE_NAME,
-            "url": str(fixtures.project_root),
+            "url": _SELF_REMOTE,
         },
     )
     if not _succeeded(added):
@@ -425,7 +431,7 @@ async def run_remote_branch_write_cycle(
         {
             "project_id": fixtures.project_id,
             "name": _SELF_REMOTE_NAME,
-            "url": str(fixtures.project_root),
+            "url": _SELF_REMOTE,
         },
     )
     if not _succeeded(added):

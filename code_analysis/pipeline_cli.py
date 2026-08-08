@@ -162,6 +162,10 @@ def _run_live_session_liveness() -> int:
     return _run_live_verifier("sessionliveness")
 
 
+def _run_live_remote_branch() -> int:
+    return _run_live_verifier("remotebranch")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -222,6 +226,20 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         name="docstring-batch-persist",
         description="Verify docstring chunk batch persistence does not hang on sync DB batch helpers.",
         pytest_targets=("tests/test_docstring_chunker_batch_persist.py",),
+    ),
+    PipelineCheck(
+        name="remote-branch-commands",
+        description=(
+            "Verify the remote-branch inspection commands. Closes TODO "
+            "487773a8: git_branch_list(scope='remote') only reads the "
+            "refs/remotes cache left by the last fetch, so there was no way to "
+            "ask what a remote has right now, and no way at all before the "
+            "first fetch. Asserts git_remote_branch_list queries the remote, "
+            "annotates each branch with whether it is tracked locally, works "
+            "on a repository with no commits, and that "
+            "git_remote_branch_prune reports exactly the refs it removed."
+        ),
+        pytest_targets=("tests/test_git_remote_branch_commands.py",),
     ),
     PipelineCheck(
         name="session-lock-liveness",
@@ -657,6 +675,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "session frees the file for a new one."
         ),
         runner=_run_live_session_liveness,
+    ),
+    PipelineCheck(
+        name="live-remote-branch",
+        description=(
+            "Run only the 'remotebranch' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Closes "
+            "TODO 487773a8: git_remote_branch_list must read the remote itself "
+            "rather than the refs/remotes cache, and git_remote_branch_prune "
+            "must report exactly the refs it removed. Uses the project's own "
+            "repository as the remote, so both exercise the success branch "
+            "instead of only the unreachable-remote error."
+        ),
+        runner=_run_live_remote_branch,
     ),
 )
 

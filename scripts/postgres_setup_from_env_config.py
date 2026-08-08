@@ -22,8 +22,11 @@ Subcommands
 
 4. ``run-postgres-docker`` — create or start the container **without** pulling the
    image (run ``pull-postgres-docker-image`` first, or ``pull-and-run-postgres-docker``).
-   Container name = ``driver.config.host`` (Docker name, not an IP). Binds
-   ``<repo>/data/postgres``, publishes ``driver.config.port`` → container 5432,
+   Container name = ``driver.config.host`` (Docker name, not an IP). Binds the
+   host data directory resolved by ``postgres_host_data_dir`` — configurable via
+   ``code_analysis.storage.postgres_data_dir`` or ``CODE_ANALYSIS_POSTGRES_DATA_DIR``,
+   and by default outside the source checkout (bug de794aa3) — publishes
+   ``driver.config.port`` → container 5432,
    ``--restart=always``. By default uses ``--user 1000:1000`` (development layout).
    Production installs use ``/usr/lib/casmgr/bin/casmgr-postgres-container`` instead,
    which runs the official postgres image without ``--user`` and chowns host data to
@@ -121,6 +124,37 @@ def _config_from_argv(argv: list[str]) -> str | None:
 def _repo_root() -> Path:
     """Return repo root."""
     return Path(__file__).resolve().parent.parent
+
+
+def postgres_host_data_dir(config_path: Path) -> Path:
+    """
+    Resolve the host directory bind-mounted as the cluster's data directory.
+
+    This used to be ``_repo_root() / "data" / "postgres"`` -- hard-coded, so a
+    13 GB PostgreSQL cluster lived inside the git working tree with no way to
+    put it anywhere else (bug de794aa3). It now follows the shared runtime state
+    root: ``code_analysis.storage.postgres_data_dir``, then
+    ``CODE_ANALYSIS_POSTGRES_DATA_DIR``, then an existing in-tree cluster (kept
+    where it is -- re-pointing a bind mount away from real data is not something
+    a bootstrap script may decide), then the state root.
+
+    Args:
+        config_path: Path to the config file driving this run.
+
+    Returns:
+        Absolute host path to bind-mount at ``/var/lib/postgresql/data``.
+    """
+    from code_analysis.core.runtime_state_root import postgres_host_data_dir_report
+
+    try:
+        cfg: Mapping[str, Any] | None = load_config_json(config_path)
+    except Exception:
+        cfg = None
+    path, source = postgres_host_data_dir_report(
+        config_data=cfg, config_path=Path(config_path)
+    )
+    print(f"PostgreSQL host data directory: {path} (source: {source})")
+    return path
 
 
 def _resolve_config_path(explicit: str | None) -> Path:
@@ -552,7 +586,7 @@ def cmd_run_postgres_docker(
         "database name", str(dc.get("dbname") or "postgres")
     )
 
-    data_dir = _repo_root() / "data" / "postgres"
+    data_dir = postgres_host_data_dir(config_path)
     data_dir.mkdir(parents=True, exist_ok=True)
 
     _ensure_docker_network(_SMART_ASSISTANT_DOCKER_NETWORK)

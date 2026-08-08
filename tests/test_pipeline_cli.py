@@ -24,6 +24,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "cst-save-tree",
         "restore-watch-dirs",
         "docstring-batch-persist",
+        "runtime-state-location",
         "invalid-open-preview",
         "file-session-client",
         "file-watcher-config",

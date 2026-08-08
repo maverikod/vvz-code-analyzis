@@ -134,6 +134,8 @@ def resolve_storage_paths(
         Use get_file_trash_dir(paths.trash_dir, project_id) for file trash.
     """
 
+    from code_analysis.core.runtime_state_root import resolve_runtime_state_root
+
     config_dir = Path(config_path).resolve().parent
     code_analysis_cfg = config_data.get("code_analysis") or {}
     if not isinstance(code_analysis_cfg, Mapping):
@@ -143,10 +145,19 @@ def resolve_storage_paths(
     if not isinstance(storage_cfg, Mapping):
         storage_cfg = {}
 
+    # Base for every DEFAULT below. Configured values are untouched, so the
+    # production layout (absolute paths under /var/casmgr) and any existing
+    # in-tree development install resolve exactly as they always did; only a
+    # fresh checkout gets a root outside the working tree (bug de794aa3).
+    runtime_root = resolve_runtime_state_root(
+        config_data=config_data, config_path=config_path
+    ).path
+
     db_path_val = storage_cfg.get("db_path") or code_analysis_cfg.get("db_path")
-    if not isinstance(db_path_val, str) or not db_path_val.strip():
-        db_path_val = "data/code_analysis.db"
-    db_path = _resolve_path(config_dir, db_path_val)
+    if isinstance(db_path_val, str) and db_path_val.strip():
+        db_path = _resolve_path(config_dir, db_path_val)
+    else:
+        db_path = runtime_root / "code_analysis.db"
 
     faiss_dir_val = storage_cfg.get("faiss_dir")
     if isinstance(faiss_dir_val, str) and faiss_dir_val.strip():
@@ -156,13 +167,13 @@ def resolve_storage_paths(
         if isinstance(legacy_faiss, str) and legacy_faiss.strip():
             faiss_dir = _resolve_path(config_dir, legacy_faiss).parent
         else:
-            faiss_dir = _resolve_path(config_dir, "data/faiss")
+            faiss_dir = runtime_root / "faiss"
 
     locks_dir_val = storage_cfg.get("locks_dir")
     if isinstance(locks_dir_val, str) and locks_dir_val.strip():
         locks_dir = _resolve_path(config_dir, locks_dir_val)
     else:
-        locks_dir = _resolve_path(config_dir, "data/locks")
+        locks_dir = runtime_root / "locks"
 
     queue_dir_val = storage_cfg.get("queue_dir")
     queue_dir: Optional[Path] = None
@@ -174,19 +185,22 @@ def resolve_storage_paths(
     if isinstance(backup_dir_val, str) and backup_dir_val.strip():
         backup_dir = _resolve_path(config_dir, backup_dir_val)
     else:
-        # Default: {project_root}/backups
+        # Default: a sibling of the classic `data` directory, so /var/casmgr/data
+        # keeps its backups at /var/casmgr/backups. When the state root is not a
+        # `data` directory at all (a fresh checkout parks it under the user state
+        # home) the backups belong inside that root, not next to the config file
+        # -- the config file is in the working tree we are trying to keep clean.
         if db_path.parent.name == "data":
-            project_root = db_path.parent.parent
+            backup_dir = db_path.parent.parent / "backups"
         else:
-            project_root = config_dir
-        backup_dir = project_root / "backups"
+            backup_dir = runtime_root / "backups"
 
     # Resolve trash directory (project recycle bin)
     trash_dir_val = storage_cfg.get("trash_dir")
     if isinstance(trash_dir_val, str) and trash_dir_val.strip():
         trash_dir = _resolve_path(config_dir, trash_dir_val)
     else:
-        trash_dir = _resolve_path(config_dir, "data/trash")
+        trash_dir = runtime_root / "trash"
 
     log_dir = resolve_service_log_dir(config_data=config_data, config_path=config_path)
 
@@ -299,21 +313,32 @@ def _is_forbidden_batch_output_path(path: Path) -> bool:
     return False
 
 
-def resolve_batch_output_dir(*, config_path: Path, dir_str: str) -> Path:
+def resolve_batch_output_dir(
+    *,
+    config_path: Path,
+    dir_str: str,
+    config_data: Mapping[str, Any] | None = None,
+) -> Path:
     """
     Resolve batch output directory (absolute or relative to config file directory).
 
     Relative values must not be resolved against process cwd (daemon WorkingDirectory
     may be /usr/lib/casmgr-server).
-    """
-    from code_analysis.core.constants import DEFAULT_BATCH_OUTPUT_DIR
 
-    value = (
-        dir_str.strip()
-        if isinstance(dir_str, str) and dir_str.strip()
-        else DEFAULT_BATCH_OUTPUT_DIR
+    With no configured value the directory follows the runtime state root rather
+    than the config file, so a fresh checkout does not accumulate batch output in
+    the working tree (bug de794aa3). An existing in-tree install keeps the same
+    path it always had, because its state root IS ``<config_dir>/data``.
+    """
+    from code_analysis.core.runtime_state_root import resolve_runtime_state_root
+
+    if isinstance(dir_str, str) and dir_str.strip():
+        return _resolve_path(Path(config_path).resolve().parent, dir_str.strip())
+
+    root = resolve_runtime_state_root(
+        config_data=config_data, config_path=Path(config_path)
     )
-    return _resolve_path(Path(config_path).resolve().parent, value)
+    return (root.path / "batch_output").resolve()
 
 
 def apply_resolved_batch_output_dir(
@@ -321,12 +346,10 @@ def apply_resolved_batch_output_dir(
     config_path: Path,
 ) -> dict[str, Any]:
     """Return a copy with ``batch_output_dir`` resolved for ``ServerConfig`` validation."""
-    from code_analysis.core.constants import DEFAULT_BATCH_OUTPUT_DIR
-
     out = dict(server_config_dict)
-    raw = out.get("batch_output_dir", DEFAULT_BATCH_OUTPUT_DIR)
+    raw = out.get("batch_output_dir", "")
     if not isinstance(raw, str):
-        raw = DEFAULT_BATCH_OUTPUT_DIR
+        raw = ""
     resolved = resolve_batch_output_dir(config_path=config_path, dir_str=raw)
     if _is_forbidden_batch_output_path(resolved):
         config_data = load_raw_config(config_path)

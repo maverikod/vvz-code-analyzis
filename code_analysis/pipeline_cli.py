@@ -220,6 +220,20 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         pytest_targets=("tests/test_docstring_chunker_batch_persist.py",),
     ),
     PipelineCheck(
+        name="runtime-state-location",
+        description=(
+            "Verify server runtime state resolves outside the source checkout. "
+            "Guards bug de794aa3: 15 GB of runtime state lived under data/ in "
+            "the git working tree, including a 13 GB PostgreSQL cluster whose "
+            "bind mount was hard-coded to the repo root with no way to "
+            "configure it. Asserts the defaults land in a state directory "
+            "outside the tree, that an existing in-tree install is never "
+            "silently abandoned, and that the production absolute layout "
+            "resolves exactly as before."
+        ),
+        pytest_targets=("tests/test_runtime_state_location.py",),
+    ),
+    PipelineCheck(
         name="invalid-open-preview",
         description="Verify universal_file_open works in isolated invalid-file preview flows without config.json.",
         pytest_targets=("tests/test_edit_on_invalid_files.py",),

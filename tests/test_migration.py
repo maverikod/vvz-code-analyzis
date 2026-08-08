@@ -23,8 +23,9 @@ from code_analysis.core.exceptions import (
 from code_analysis.core.project_resolution import load_project_info
 
 
-# Get test data directory
-TEST_DATA_DIR = Path(__file__).parent.parent / "test_data"
+# No module-level test_data/ constant on purpose (bug dc4a2c1f): that directory
+# is gitignored, so anything reading it inspects machine-local leftovers and
+# behaves differently in a fresh worktree. Tests here build the trees they need.
 
 
 class TestProjectIdMigration:
@@ -156,26 +157,47 @@ class TestProjectIdMigration:
             # File should still exist (not deleted)
             assert projectid_file.exists()
 
-    def test_migrate_all_projectid_files_in_test_data(self):
-        """Test migrating all projectid files in test_data/."""
-        if not TEST_DATA_DIR.exists():
-            pytest.skip("test_data/ directory not found")
+    def test_dry_run_reports_counts_and_changes_nothing(self):
+        """A dry run counts old-format and already-JSON files without writing.
 
-        # Find all projectid files
-        projectid_files = find_all_projectid_files(TEST_DATA_DIR)
+        Bug dc4a2c1f: this used to scan the repo's ``test_data/`` directory,
+        which is gitignored. It therefore inspected whatever leftovers the
+        developer's machine happened to hold -- running in the main checkout,
+        skipping in every fresh worktree -- and asserted only ``migrated >= 0``
+        and ``already_json >= 0``, which no outcome can violate. It now builds
+        the tree it needs, like its neighbours in this class, and asserts the
+        actual counts.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
 
-        if not projectid_files:
-            pytest.skip("No projectid files found in test_data/")
+            old_format = []
+            for i in range(2):
+                project_root = root / f"legacy_{i}"
+                project_root.mkdir()
+                projectid_file = project_root / "projectid"
+                projectid_file.write_text(str(uuid.uuid4()))
+                old_format.append(projectid_file)
 
-        # Dry run first
-        migrated, already_json, errors = migrate_all_projectid_files(
-            [TEST_DATA_DIR], description="Migrated from test", dry_run=True
-        )
+            new_format_root = root / "already_json"
+            new_format_root.mkdir()
+            new_format_file = new_format_root / "projectid"
+            new_format_file.write_text(
+                json.dumps({"id": str(uuid.uuid4()), "description": "done"})
+            )
 
-        # Should report what would be migrated
-        assert migrated >= 0
-        assert already_json >= 0
-        assert errors == 0  # Dry run should not have errors
+            before = {p: p.read_text() for p in [*old_format, new_format_file]}
+            assert len(find_all_projectid_files(root)) == 3
+
+            migrated, already_json, errors = migrate_all_projectid_files(
+                [root], description="Migrated from test", dry_run=True
+            )
+
+            assert migrated == 2
+            assert already_json == 1
+            assert errors == 0
+            for path, content in before.items():
+                assert path.read_text() == content, f"dry run wrote to {path}"
 
     def test_migrate_all_projectid_files_data_integrity(self):
         """Test data integrity after migration."""

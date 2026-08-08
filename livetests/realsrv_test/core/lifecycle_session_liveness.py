@@ -27,6 +27,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any, Dict, Optional
 
 from code_analysis_client import CodeAnalysisAsyncClient
@@ -42,6 +43,8 @@ CHECK_NAME_CONFLICT_NAMES_HOLDER = "file_locked_error_names_the_holder"
 #: idle time exceeds the threshold we pass.
 _IDLE_SECONDS = 3.0
 _REAP_TTL_SECONDS = 1
+
+_SEED_CONTENT = b'"""A file this suite locks and nothing else touches."""\n'
 
 
 def _outcome(name: str, status: Status, reason: str) -> Dict[str, CommandOutcome]:
@@ -127,11 +130,30 @@ async def run_dead_session_lock_release(
     Returns:
         Outcomes for the lock-release check and the conflict-payload check.
     """
-    file_id = fixtures.py_file_id
-    if not file_id:
+    # Seed a file of our own rather than reusing fixtures.py_file_id. The shared
+    # seeded file is locked and unlocked by the session lifecycle suite, so
+    # borrowing it made this suite's first step race that one: in a full sweep
+    # the initial lock came back FILE_LOCKED and both checks went inconclusive,
+    # proving nothing. A private file cannot be contended by anything else.
+    if not fixtures.session_id:
+        return _skip_both(
+            Status.INCONCLUSIVE, "skipped: no fixture session_id available to seed with"
+        )
+    try:
+        file_id = await client.file_sessions.upload_new(
+            str(fixtures.session_id),
+            _SEED_CONTENT,
+            fixtures.project_id,
+            f"session_liveness_{uuid.uuid4().hex[:8]}/locked_target.py",
+        )
+    except Exception as exc:  # noqa: BLE001 - without a target nothing can be proven
         return _skip_both(
             Status.INCONCLUSIVE,
-            "skipped: no seeded file_id available to lock",
+            f"could not seed a private file to lock: {truncate(repr(exc))}",
+        )
+    if not file_id:
+        return _skip_both(
+            Status.INCONCLUSIVE, "upload_new returned no file_id for the seeded file"
         )
 
     abandoned = ""

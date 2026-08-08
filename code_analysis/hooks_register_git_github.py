@@ -89,8 +89,12 @@ def register_commands_git_github(reg: Any) -> None:
         from .commands.git_pull_command import GitPullCommand
         from .commands.git_push_command import GitPushCommand
         from .commands.git_remote_branch_commands import (
+            GitRemoteBranchCompareCommand,
+            GitRemoteBranchCreateCommand,
+            GitRemoteBranchDeleteCommand,
             GitRemoteBranchListCommand,
             GitRemoteBranchPruneCommand,
+            GitRemoteBranchTrackCommand,
         )
         from .commands.git_remote_config_commands import (
             GitRemoteAddCommand,
@@ -144,6 +148,10 @@ def register_commands_git_github(reg: Any) -> None:
         reg.register(GitCloneCommand, "custom")
         reg.register(GitInitCommand, "custom")
         reg.register(GitRemoteBranchListCommand, "custom")
+        reg.register(GitRemoteBranchCreateCommand, "custom")
+        reg.register(GitRemoteBranchDeleteCommand, "custom")
+        reg.register(GitRemoteBranchTrackCommand, "custom")
+        reg.register(GitRemoteBranchCompareCommand, "custom")
         reg.register(GitRemoteBranchPruneCommand, "custom")
         reg.register(GitRemoteAddCommand, "custom")
         reg.register(GitRemoteSetUrlCommand, "custom")

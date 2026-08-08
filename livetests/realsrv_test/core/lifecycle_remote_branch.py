@@ -24,6 +24,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from typing import Any, Dict
+from uuid import uuid4
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
@@ -33,6 +34,7 @@ from realsrv_test.core.fixtures import FixtureContext
 CHECK_NAME_LIST_LIVE = "remote_branch_list_reads_the_remote"
 CHECK_NAME_LIST_REJECTS_OPTION = "remote_branch_list_rejects_option_like_remote"
 CHECK_NAME_PRUNE_LIVE = "remote_branch_prune_reports_what_it_pruned"
+CHECK_NAME_WRITE_CYCLE = "remote_branch_create_track_compare_delete"
 
 #: A repository is a valid remote for itself, which is how these checks get a
 #: reachable remote without any infrastructure.
@@ -282,6 +284,230 @@ async def run_remote_branch_prune(
             ),
         )
     finally:
+        await client.call_validated(
+            "git_remote_remove",
+            {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},
+        )
+
+
+async def run_remote_branch_write_cycle(
+    client: CodeAnalysisAsyncClient, fixtures: FixtureContext
+) -> Dict[str, CommandOutcome]:
+    """TODO 487773a8: publish, track, compare and delete a branch on a remote.
+
+    One ordered chain rather than four independent checks, because each step is
+    the only realistic way to set up the next: you cannot track a remote branch
+    that was never published, and deleting one proves nothing unless it was
+    there. A break anywhere is reported against this single check with the step
+    that failed named.
+
+    Args:
+        client: Connected async client.
+        fixtures: The disposable project/session fixture for this run.
+
+    Returns:
+        ``{CHECK_NAME_WRITE_CYCLE: CommandOutcome(...)}``.
+    """
+    suffix = uuid4().hex[:8]
+    published = f"review/{suffix}"
+    local_copy = f"track_{suffix}"
+    steps: list[str] = []
+
+    added = await client.call_validated(
+        "git_remote_add",
+        {
+            "project_id": fixtures.project_id,
+            "name": _SELF_REMOTE_NAME,
+            "url": str(fixtures.project_root),
+        },
+    )
+    if not _succeeded(added):
+        return _outcome(
+            CHECK_NAME_WRITE_CYCLE,
+            Status.INCONCLUSIVE,
+            (
+                "could not configure a reachable remote, so nothing downstream "
+                f"proves anything: {truncate(repr(_error_of(added)))}"
+            ),
+        )
+
+    try:
+        created = await client.call_validated(
+            "git_remote_branch_create",
+            {
+                "project_id": fixtures.project_id,
+                "remote": _SELF_REMOTE_NAME,
+                "remote_branch": published,
+            },
+        )
+        if not _succeeded(created):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                f"create failed: {truncate(repr(_error_of(created)))}",
+            )
+        create_data = _data_of(created)
+        if create_data.get("remote_branch") != published:
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                (
+                    "create did not publish under the requested name: "
+                    f"{truncate(repr(create_data))}"
+                ),
+            )
+        steps.append(f"created {published} via refspec {create_data.get('refspec')}")
+
+        # The tracking ref has to exist on disk before track/compare can use it.
+        fetched = await client.call_validated(
+            "git_fetch",
+            {"project_id": fixtures.project_id, "remote": _SELF_REMOTE_NAME},
+        )
+        if not _succeeded(fetched):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.INCONCLUSIVE,
+                (
+                    "published, but the remote could not be fetched, so track and "
+                    f"compare had no ref to use: {truncate(repr(_error_of(fetched)))}"
+                ),
+            )
+
+        tracked = await client.call_validated(
+            "git_remote_branch_track",
+            {
+                "project_id": fixtures.project_id,
+                "remote": _SELF_REMOTE_NAME,
+                "remote_branch": published,
+                "local_branch": local_copy,
+            },
+        )
+        if not _succeeded(tracked):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                f"track failed: {truncate(repr(_error_of(tracked)))}",
+            )
+        track_data = _data_of(tracked)
+        if track_data.get("action") != "created":
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                (
+                    "track of a branch that does not exist locally should report "
+                    f"action='created', got {truncate(repr(track_data))}"
+                ),
+            )
+        if track_data.get("checked_out") is not False:
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                "track moved the working tree without being asked to",
+            )
+        steps.append(f"tracked as {local_copy} (action=created, tree untouched)")
+
+        compared = await client.call_validated(
+            "git_remote_branch_compare",
+            {
+                "project_id": fixtures.project_id,
+                "branch": local_copy,
+                "remote": _SELF_REMOTE_NAME,
+                "remote_branch": published,
+            },
+        )
+        if not _succeeded(compared):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                f"compare failed: {truncate(repr(_error_of(compared)))}",
+            )
+        compare_data = _data_of(compared)
+        if compare_data.get("fetched") is not True:
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                (
+                    "compare reported fetched=false by default, so its counts "
+                    "came from a cache that may be stale (defect d05492ef)"
+                ),
+            )
+        if not compare_data.get("in_sync"):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                (
+                    "a branch created from the remote one should be in sync, got "
+                    f"ahead={compare_data.get('ahead')} "
+                    f"behind={compare_data.get('behind')}"
+                ),
+            )
+        steps.append("compared: fetched=True, ahead=0, behind=0")
+
+        refused = await client.call_validated(
+            "git_remote_branch_delete",
+            {
+                "project_id": fixtures.project_id,
+                "remote": _SELF_REMOTE_NAME,
+                "remote_branch": published,
+                "force_confirm": False,
+            },
+        )
+        if _succeeded(refused):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                "delete without force_confirm removed the branch anyway",
+            )
+        steps.append("delete without force_confirm refused")
+
+        deleted = await client.call_validated(
+            "git_remote_branch_delete",
+            {
+                "project_id": fixtures.project_id,
+                "remote": _SELF_REMOTE_NAME,
+                "remote_branch": published,
+                "force_confirm": True,
+            },
+        )
+        if not _succeeded(deleted):
+            return _outcome(
+                CHECK_NAME_WRITE_CYCLE,
+                Status.FAILED,
+                f"delete failed: {truncate(repr(_error_of(deleted)))}",
+            )
+
+        # Prove the delete rather than trusting the exit code.
+        remaining = await client.call_validated(
+            "git_remote_branch_list",
+            {"project_id": fixtures.project_id, "remote": _SELF_REMOTE_NAME},
+        )
+        if _succeeded(remaining):
+            names = [
+                b.get("name")
+                for b in (_data_of(remaining).get("branches") or [])
+                if isinstance(b, dict)
+            ]
+            if published in names:
+                return _outcome(
+                    CHECK_NAME_WRITE_CYCLE,
+                    Status.FAILED,
+                    (
+                        f"delete reported success but {published} is still on the "
+                        "remote"
+                    ),
+                )
+            steps.append(f"deleted, and {published} is gone from ls-remote")
+
+        return _outcome(CHECK_NAME_WRITE_CYCLE, Status.EXECUTED_OK, "; ".join(steps))
+    finally:
+        await client.call_validated(
+            "git_branch_delete",
+            {
+                "project_id": fixtures.project_id,
+                "name": local_copy,
+                "force": True,
+            },
+        )
         await client.call_validated(
             "git_remote_remove",
             {"project_id": fixtures.project_id, "name": _SELF_REMOTE_NAME},

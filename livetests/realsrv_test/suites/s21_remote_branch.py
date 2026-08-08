@@ -14,7 +14,12 @@ from __future__ import annotations
 from realsrv_test.core.lifecycle_remote_branch import (
     run_remote_branch_list,
     run_remote_branch_prune,
+    run_remote_branch_write_cycle,
 )
 
 SUITE_NAME = "remotebranch"
-LIFECYCLE_RUNNERS = (run_remote_branch_list, run_remote_branch_prune)
+LIFECYCLE_RUNNERS = (
+    run_remote_branch_list,
+    run_remote_branch_write_cycle,
+    run_remote_branch_prune,
+)

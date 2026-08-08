@@ -27,7 +27,7 @@ dependencies = [
     "embed-client>=4.0.1",
     "aiohttp>=3.8.0",
     "httpx>=0.24.0",
-    "mcp-proxy-adapter>=8.10.19",
+    "mcp-proxy-adapter>=8.10.21",
     "numpy>=1.26,<3",
     "faiss-cpu>=1.7",
     "queuemgr>=1.0.20",
@@ -62,7 +62,7 @@ dev = [
 ]
 
 [tool.code-analysis.dependency-versions]
-mcp-proxy-adapter = "8.10.19"
+mcp-proxy-adapter = "8.10.21"
 queuemgr = "1.0.20"
 
 [project.scripts]

@@ -158,6 +158,10 @@ def _run_live_cwd_safety() -> int:
     return _run_live_verifier("cwdsafety")
 
 
+def _run_live_session_liveness() -> int:
+    return _run_live_verifier("sessionliveness")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -218,6 +222,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         name="docstring-batch-persist",
         description="Verify docstring chunk batch persistence does not hang on sync DB batch helpers.",
         pytest_targets=("tests/test_docstring_chunker_batch_persist.py",),
+    ),
+    PipelineCheck(
+        name="session-lock-liveness",
+        description=(
+            "Verify locks do not outlive the session that took them. Guards "
+            "TODO d75d5e9a: a client crash orphaned its session and its "
+            "exclusive file lock survived indefinitely, unopenable by anyone "
+            "and releasable only by a manual session_delete. Asserts the sweep "
+            "releases sessions idle past the TTL, leaves live ones alone, "
+            "survives one wedged row, and that the FILE_LOCKED payload names "
+            "the holder and whether it has already expired."
+        ),
+        pytest_targets=("tests/test_session_lock_liveness.py",),
     ),
     PipelineCheck(
         name="runtime-state-location",
@@ -626,6 +643,20 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "upload untouched."
         ),
         runner=_run_live_cwd_safety,
+    ),
+    PipelineCheck(
+        name="live-session-liveness",
+        description=(
+            "Run only the 'sessionliveness' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Guards "
+            "TODO d75d5e9a: a session took an exclusive file lock and its "
+            "client died, and the lock survived indefinitely -- no client "
+            "could identify the holder or release it, so only a manual "
+            "session_delete helped. Asserts the FILE_LOCKED refusal names the "
+            "holder and its idle time, and that a scoped reap of the abandoned "
+            "session frees the file for a new one."
+        ),
+        runner=_run_live_session_liveness,
     ),
 )
 

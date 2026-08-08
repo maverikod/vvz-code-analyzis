@@ -292,6 +292,35 @@ SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MIN: int = 60
 # the safety ceiling a misconfigured value is clamped to.
 SEARCH_SESSION_SWEEP_INTERVAL_SECONDS_MAX: int = 3600
 
+# Default idle time after which a CLIENT session (client_sessions.last_active_at,
+# refreshed by every session-scoped command) is treated as dead and everything it
+# holds -- file locks, subordinate links, advisory leases, disk .lock sidecars --
+# is released. See core/session_lock_reaper.py; TODO d75d5e9a. One hour is
+# deliberately generous: an idle session is not necessarily a dead one, and
+# releasing a lock out from under a live editor is worse than the stuck lock this
+# solves. Config override: code_analysis.client_session.ttl_seconds.
+DEFAULT_CLIENT_SESSION_TTL_SECONDS: int = 3600
+
+# Floor and ceiling for the client-session TTL. The floor keeps a typo from
+# reaping sessions that are merely between commands; the ceiling (7 days) keeps a
+# "disable it" value from being expressed as a TTL nobody will ever reach --
+# use code_analysis.client_session.reap_dead_sessions=false for that.
+CLIENT_SESSION_TTL_SECONDS_MIN: int = 60
+CLIENT_SESSION_TTL_SECONDS_MAX: int = 604_800
+
+# Floor for a per-call ttl_seconds passed to session_reap_dead. Lower than the
+# configured floor on purpose: the config value governs an unattended background
+# loop, where a typo would reap sessions that are merely between commands, while
+# a per-call override is somebody deliberately saying "release this now". The
+# caller's own session is still protected -- it is touched before the sweep.
+CLIENT_SESSION_MANUAL_TTL_SECONDS_MIN: int = 1
+
+# Default cadence of the background reaper sweep, and its clamps. Independent of
+# the TTL: the TTL says when a session is dead, this says how often we look.
+DEFAULT_CLIENT_SESSION_SWEEP_INTERVAL_SECONDS: int = 300
+CLIENT_SESSION_SWEEP_INTERVAL_SECONDS_MIN: int = 30
+CLIENT_SESSION_SWEEP_INTERVAL_SECONDS_MAX: int = 3600
+
 
 # ============================================================================
 # Analysis Patterns

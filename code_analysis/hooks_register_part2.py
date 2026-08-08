@@ -211,6 +211,9 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.sessions.session_list_file_locks_command import (
             SessionListFileLocksCommand,
         )
+        from .commands.sessions.session_reap_dead_command import (
+            SessionReapDeadCommand,
+        )
         from .commands.sessions.subordinate_session_commands import (
             SubordinateSessionCreateCommand,
             SubordinateSessionDeleteCommand,
@@ -227,6 +230,7 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(SessionOpenFileCommand, "custom")
         reg.register(SessionCloseFileCommand, "custom")
         reg.register(SessionListFileLocksCommand, "custom")
+        reg.register(SessionReapDeadCommand, "custom")
         reg.register(SubordinateSessionCreateCommand, "custom")
         reg.register(SubordinateSessionGetCommand, "custom")
         reg.register(SubordinateSessionUpdateCommand, "custom")

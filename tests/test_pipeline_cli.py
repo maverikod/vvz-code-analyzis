@@ -24,6 +24,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "cst-save-tree",
         "restore-watch-dirs",
         "docstring-batch-persist",
+        "session-lock-liveness",
         "runtime-state-location",
         "invalid-open-preview",
         "file-session-client",
@@ -80,6 +81,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-byte-fidelity",
         "live-file-mode",
         "live-cwd-safety",
+        "live-session-liveness",
     ]
 
 

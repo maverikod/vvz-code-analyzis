@@ -26,6 +26,10 @@ from code_analysis.core.security_policy_guard import (
     CommandForbiddenError,
     enforce_security_policy,
 )
+from code_analysis.core.session_lock_reaper import (
+    describe_lock_holder,
+    load_session_reaper_policy,
+)
 
 
 class SessionOpenFileCommand(BaseMCPCommand):
@@ -114,7 +118,17 @@ class SessionOpenFileCommand(BaseMCPCommand):
                 database, session_id=session_id, project_id=project_id, file_id=file_id
             )
         except FileLockedByOtherSessionError as exc:
-            return ErrorResult(code="FILE_LOCKED", message=str(exc))
+            # Name the holder and its idle time. A bare "file is locked" left
+            # clients with nowhere to go -- they can neither identify the holder
+            # nor release another session's lock (TODO d75d5e9a) -- so they could
+            # not tell a live peer from a session orphaned by a crashed client.
+            policy = load_session_reaper_policy(raw_config)
+            details = describe_lock_holder(
+                database, exc.holder_session_id, ttl_seconds=policy.ttl_seconds
+            )
+            details["project_id"] = project_id
+            details["file_id"] = file_id
+            return ErrorResult(code="FILE_LOCKED", message=str(exc), details=details)
 
         # Record an exclusive advisory lease so the file watcher skips this path and
         # project_file_lock_status reports it consistently with files locked at

@@ -13,8 +13,10 @@ from typing import Any
 
 from mcp_proxy_adapter.api.core.app_factory import AppFactory
 
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.search_session.cleaner import register_search_session_cleanup
 from code_analysis.core.search_session.http_routes import register_search_job_routes
+from code_analysis.core.session_lock_reaper import register_client_session_reaper
 from code_analysis.main_app_events import register_startup_shutdown_events
 from code_analysis.main_server_presentation import resolve_server_presentation
 from code_analysis.openapi_mcp_proxy_compat import (
@@ -58,6 +60,14 @@ def create_app_with_events(
         sessions_root=sessions_root,
         config_path=config_path,
         app_config=app_config,
+    )
+    # Release file locks held by client sessions whose client died (TODO
+    # d75d5e9a). The first sweep runs at startup, which is what recovers locks
+    # orphaned by a server restart -- the reported failure mode.
+    register_client_session_reaper(
+        app,
+        database_factory=BaseMCPCommand._open_database_from_config,
+        app_config=config_data,
     )
     prime_openapi_cache(app)
 

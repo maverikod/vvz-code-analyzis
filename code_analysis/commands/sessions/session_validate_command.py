@@ -77,9 +77,7 @@ class SessionValidateCommand(BaseMCPCommand):
         policy_mode: str = (raw_config.get("security") or {}).get("policy", "disabled")
 
         try:
-            row = validate_client_session(
-                database, session_id, touch=bool(touch)
-            )
+            row = validate_client_session(database, session_id, touch=bool(touch))
         except SessionNotFoundError:
             return ErrorResult(
                 code="SESSION_NOT_FOUND",

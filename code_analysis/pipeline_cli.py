@@ -154,6 +154,10 @@ def _run_live_file_mode() -> int:
     return _run_live_verifier("filemode")
 
 
+def _run_live_cwd_safety() -> int:
+    return _run_live_verifier("cwdsafety")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -435,6 +439,15 @@ _CHECKS: tuple[PipelineCheck, ...] = (
         pytest_targets=("tests/test_atomic_replace_preserves_mode.py",),
     ),
     PipelineCheck(
+        name="upload-staging-isolation",
+        description=(
+            "Verify an upload stages its payload outside the caller's working "
+            "directory (bug c3fafbd4: uploading a file named pyproject.toml "
+            "overwrote and then deleted the caller's own pyproject.toml)."
+        ),
+        pytest_targets=("tests/test_client_upload_staging_isolation.py",),
+    ),
+    PipelineCheck(
         name="byte-verbatim-io",
         description=(
             "Verify the transfer-buffer reader and the text save path store "
@@ -560,6 +573,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "permission bits. Asserts an overwrite preserves the file's mode."
         ),
         runner=_run_live_file_mode,
+    ),
+    PipelineCheck(
+        name="live-cwd-safety",
+        description=(
+            "Run only the 'cwdsafety' realsrv-test suite against the deployed "
+            "CAS server -- a subset of live-deployed-server. Guards bug "
+            "c3fafbd4: the client staged upload payloads at a path relative to "
+            "the process cwd and deleted them afterwards, so a full sweep "
+            "silently destroyed the pyproject.toml and .gitignore of whoever "
+            "ran it. Asserts a same-named file in the caller's cwd survives an "
+            "upload untouched."
+        ),
+        runner=_run_live_cwd_safety,
     ),
 )
 

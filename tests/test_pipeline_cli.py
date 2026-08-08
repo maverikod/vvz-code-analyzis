@@ -62,6 +62,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "watcher-project-metadata",
         "search-close-pagination",
         "file-mode-preserved",
+        "upload-staging-isolation",
         "byte-verbatim-io",
         "trash-list-name-parse",
         "live-deployed-server",
@@ -74,6 +75,7 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-client-overhead",
         "live-byte-fidelity",
         "live-file-mode",
+        "live-cwd-safety",
     ]
 
 
@@ -139,6 +141,8 @@ def test_main_list_prints_catalog(capsys) -> None:
     assert "live-apisurface" in captured.out
     assert "live-byte-fidelity" in captured.out
     assert "live-file-mode" in captured.out
+    assert "live-cwd-safety" in captured.out
+    assert "upload-staging-isolation" in captured.out
 
 
 def test_run_check_executes_expected_pytest_targets(monkeypatch) -> None:

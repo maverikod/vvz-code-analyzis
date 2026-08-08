@@ -25,6 +25,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
@@ -505,18 +506,29 @@ class FileSessionClient:
         filename: str,
         compression: str = "identity",
     ) -> Any:
-        """Upload raw bytes through the adapter buffer; returns upload receipt."""
-        dest = Path(filename)
-        dest.write_bytes(payload)
-        try:
+        """Upload raw bytes through the adapter buffer; returns upload receipt.
+
+        ``filename`` is a NAME reported to the server, never a path this client
+        may write to. Bug c3fafbd4: this method used to stage the payload at
+        ``Path(filename)`` -- relative, therefore inside the CALLER's working
+        directory -- and delete it in a ``finally``, so uploading a file named
+        ``pyproject.toml`` overwrote and then deleted the caller's own
+        ``pyproject.toml``. The live pipeline, which runs from the repository
+        root and seeds fixtures with exactly those names, destroyed developer
+        files on every sweep while reporting success. The payload is now staged
+        in a private temporary directory that is removed with its contents; the
+        caller's cwd is never read from or written to.
+        """
+        with tempfile.TemporaryDirectory(prefix="ca_upload_") as staging_dir:
+            # Keep the basename so the transport still sees the intended name;
+            # any directory component in `filename` is not a path to honour here.
+            dest = Path(staging_dir) / (Path(filename).name or "upload.bin")
+            dest.write_bytes(payload)
             return await self._client.rpc.upload_file(
                 str(dest),
                 filename=filename,
                 compression=compression,
             )
-        finally:
-            if dest.is_file():
-                dest.unlink(missing_ok=True)
 
     async def _commit_upload(
         self,

@@ -64,6 +64,18 @@ async def _create_session(client: CodeAnalysisAsyncClient, comment: str) -> str:
     return str((data or {}).get("session_id") or "").strip()
 
 
+def _succeeded(response: Any) -> bool:
+    """Whether a client response reports success.
+
+    ``call_validated`` does NOT raise on a command-level rejection -- it returns
+    ``{"success": False, "error": {...}}``. Treating "no exception" as "it
+    worked" is how a correct refusal gets read as a broken one.
+    """
+    if isinstance(response, dict):
+        return response.get("success") is True
+    return bool(getattr(response, "success", False))
+
+
 def _data_of(response: Any) -> Optional[Dict[str, Any]]:
     """Extract the data payload from a client response of either shape."""
     if isinstance(response, dict):
@@ -73,13 +85,22 @@ def _data_of(response: Any) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _error_details(exc: BaseException) -> Dict[str, Any]:
-    """Best-effort extraction of the structured error payload from a client error."""
-    for attribute in ("data", "details", "error_data"):
-        candidate = getattr(exc, attribute, None)
-        if isinstance(candidate, dict) and candidate:
-            return candidate
+def _error_of(response: Any) -> Dict[str, Any]:
+    """Extract the error object from a failed client response."""
+    if isinstance(response, dict):
+        error = response.get("error")
+        if isinstance(error, dict):
+            return error
+        if error is not None:
+            return {"message": str(error)}
     return {}
+
+
+def _error_details(response: Any) -> Dict[str, Any]:
+    """Extract the structured ``error.data`` payload from a failed response."""
+    error = _error_of(response)
+    data = error.get("data")
+    return data if isinstance(data, dict) else {}
 
 
 async def _delete_session(client: CodeAnalysisAsyncClient, session_id: str) -> None:
@@ -128,17 +149,25 @@ async def run_dead_session_lock_release(
             "project_id": fixtures.project_id,
             "file_id": file_id,
         }
-        await client.call_validated(
+        first_lock = await client.call_validated(
             "session_open_file", {"session_id": abandoned, **lock_params}
         )
+        if not _succeeded(first_lock):
+            return _skip_both(
+                Status.INCONCLUSIVE,
+                (
+                    "could not take the initial lock, so nothing downstream "
+                    f"proves anything: {truncate(repr(_error_of(first_lock)))}"
+                ),
+            )
 
         # Half one: the conflict must say WHO holds the lock. Before the fix the
         # response was a bare "FILE_LOCKED" with no holder and no liveness, so a
         # client could not tell a live peer from an orphan.
-        try:
-            await client.call_validated(
-                "session_open_file", {"session_id": survivor, **lock_params}
-            )
+        conflict = await client.call_validated(
+            "session_open_file", {"session_id": survivor, **lock_params}
+        )
+        if _succeeded(conflict):
             outcomes.update(
                 _outcome(
                     CHECK_NAME_CONFLICT_NAMES_HOLDER,
@@ -149,8 +178,8 @@ async def run_dead_session_lock_release(
                     ),
                 )
             )
-        except Exception as exc:  # noqa: BLE001 - the refusal is the expected path
-            details = _error_details(exc)
+        else:
+            details = _error_details(conflict)
             holder = str(details.get("holder_session_id") or "")
             if holder == abandoned and "holder_idle_seconds" in details:
                 outcomes.update(
@@ -174,8 +203,8 @@ async def run_dead_session_lock_release(
                         Status.FAILED,
                         (
                             "FILE_LOCKED carried no usable holder information; "
-                            f"expected holder {abandoned}, got details="
-                            f"{truncate(repr(details))} from {truncate(repr(exc))}"
+                            f"expected holder {abandoned}, got error="
+                            f"{truncate(repr(_error_of(conflict)))}"
                         ),
                     )
                 )
@@ -191,6 +220,18 @@ async def run_dead_session_lock_release(
                 "only_session_ids": [abandoned],
             },
         )
+        if not _succeeded(reap_response):
+            outcomes.update(
+                _outcome(
+                    CHECK_NAME_DEAD_SESSION_LOCK,
+                    Status.FAILED,
+                    (
+                        "session_reap_dead was rejected: "
+                        f"{truncate(repr(_error_of(reap_response)))}"
+                    ),
+                )
+            )
+            return outcomes
         reap_data = _data_of(reap_response) or {}
         reaped_ids = [
             str(item.get("session_id"))
@@ -211,11 +252,10 @@ async def run_dead_session_lock_release(
             )
             return outcomes
 
-        try:
-            await client.call_validated(
-                "session_open_file", {"session_id": survivor, **lock_params}
-            )
-        except Exception as exc:  # noqa: BLE001 - this is the defect's signature
+        reacquired = await client.call_validated(
+            "session_open_file", {"session_id": survivor, **lock_params}
+        )
+        if not _succeeded(reacquired):
             outcomes.update(
                 _outcome(
                     CHECK_NAME_DEAD_SESSION_LOCK,
@@ -223,7 +263,8 @@ async def run_dead_session_lock_release(
                     (
                         "the lock survived its session: after reaping "
                         f"{abandoned}, a new session still could not open the "
-                        f"file ({truncate(repr(exc))}) -- this is TODO d75d5e9a"
+                        f"file ({truncate(repr(_error_of(reacquired)))}) -- this "
+                        "is TODO d75d5e9a"
                     ),
                 )
             )

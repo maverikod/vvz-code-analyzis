@@ -12,7 +12,7 @@ authors = [
     { name = "Vasiliy Zdanovskiy", email = "vasilyvz@gmail.com" },
 ]
 dependencies = [
-    "mcp-proxy-adapter>=8.10.21",
+    "mcp-proxy-adapter>=8.10.26",
 ]
 
 [project.optional-dependencies]

@@ -6,15 +6,15 @@ pyyaml>=6.0
 click>=8.0
 mcp>=1.0.0
 pydantic>=2.1.0
-svo-client>=4.0.1.2
+svo-client>=4.0.1.4
 python-dateutil>=2.8
 markdown-it-py>=4.0
 lark>=1.1.0
 libcst>=1.1.0
-embed-client>=4.0.1
+embed-client>=4.0.16
 aiohttp>=3.8.0
 httpx>=0.24.0
-mcp-proxy-adapter>=8.10.21
+mcp-proxy-adapter>=8.10.26
 queuemgr>=1.0.20
 
 # PostgreSQL driver (основная СУБД в конфиге)

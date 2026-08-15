@@ -499,54 +499,90 @@ def _declared_pgvector_dim(conn: Any) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
-def _invalidate_stale_embedding_json_caches(conn: Any, new_dim: int) -> None:
+# Bug (memory hardening pass): the original single fetchall() pulled every
+# non-NULL embedding_vector row into memory in one shot. On a large table this
+# is a multi-GB Python-side buffer for a migration step that only needs to see
+# each row once. code_chunks.id is a UUID (btree total order), so a keyset
+# (id > last_seen) page walk is safe and does not need an intermediate commit.
+_INVALIDATE_PAGE_SIZE = 3000
+
+
+def _invalidate_stale_embedding_json_caches(
+    conn: Any, new_dim: int, *, page_size: int = _INVALIDATE_PAGE_SIZE
+) -> None:
     """Clear ``embedding_vector``/``embedding_model`` cache entries that are not
     ``new_dim``-length, and un-dead-letter the rows this invalidates.
 
-    Runs in Python (fetch + filter + batched UPDATE ... WHERE id = ANY(%s)) rather
-    than a single ``embedding_vector::jsonb`` SQL cast: verified empirically against
-    the probe DB that casting a garbage (non-JSON) ``embedding_vector`` value raises
-    ``invalid input syntax for type json`` from the cast itself, before a
-    ``jsonb_typeof`` WHERE guard ever runs -- so a single malformed row would abort
-    the whole migration. Any row whose cache cannot be positively confirmed as
-    ``new_dim``-length (malformed JSON included) is invalidated, matching the
-    reconciliation's goal: no wrong-dimension cache may survive.
+    Walks ``code_chunks`` in ``page_size``-row keyset pages (``id > last_seen ORDER
+    BY id LIMIT page_size``; ``id`` is a UUID, so btree order is total and stable)
+    instead of a single ``fetchall()`` of every non-NULL-``embedding_vector`` row, so
+    memory use stays bounded on a large table. Each page runs its own
+    fetch-filter-in-Python (rather than a single ``embedding_vector::jsonb`` SQL
+    cast: verified empirically against the probe DB that casting a garbage
+    (non-JSON) ``embedding_vector`` value raises ``invalid input syntax for type
+    json`` from the cast itself, before a ``jsonb_typeof`` WHERE guard ever runs --
+    so a single malformed row would abort the whole migration) and its own batched
+    ``UPDATE ... WHERE id = ANY(%s)`` pair. No page issues an intermediate
+    ``conn.commit()``/``conn.rollback()``: the caller wraps the whole dimension
+    retype (``ALTER TABLE`` + this invalidation) in one transaction, and that
+    atomicity is preserved here -- a failure on any page still rolls back the
+    entire migration, same as before pagination. Any row whose cache cannot be
+    positively confirmed as ``new_dim``-length (malformed JSON included) is
+    invalidated, matching the reconciliation's goal: no wrong-dimension cache may
+    survive.
     """
     from code_analysis.core.vectorization_worker_pkg.batch_processor import (
         VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE,
     )
 
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, embedding_vector FROM code_chunks "
-            "WHERE embedding_vector IS NOT NULL"
-        )
-        rows = cur.fetchall()
+    last_id: Any = None
+    while True:
+        with conn.cursor() as cur:
+            if last_id is None:
+                cur.execute(
+                    "SELECT id, embedding_vector FROM code_chunks "
+                    "WHERE embedding_vector IS NOT NULL "
+                    "ORDER BY id LIMIT %s",
+                    (page_size,),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, embedding_vector FROM code_chunks "
+                    "WHERE embedding_vector IS NOT NULL AND id > %s "
+                    "ORDER BY id LIMIT %s",
+                    (last_id, page_size),
+                )
+            page_rows = cur.fetchall()
 
-    stale_ids: List[Any] = []
-    for chunk_id, embedding_vector_json in rows:
-        try:
-            parsed = json.loads(embedding_vector_json)
-            keep = isinstance(parsed, list) and len(parsed) == new_dim
-        except (TypeError, ValueError):
-            keep = False
-        if not keep:
-            stale_ids.append(chunk_id)
+        if not page_rows:
+            break
+        last_id = page_rows[-1][0]
 
-    if not stale_ids:
-        return
+        page_stale_ids: List[Any] = []
+        for chunk_id, embedding_vector_json in page_rows:
+            try:
+                parsed = json.loads(embedding_vector_json)
+                keep = isinstance(parsed, list) and len(parsed) == new_dim
+            except (TypeError, ValueError):
+                keep = False
+            if not keep:
+                page_stale_ids.append(chunk_id)
 
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE code_chunks SET embedding_vector = NULL, embedding_model = NULL "
-            "WHERE id = ANY(%s)",
-            (stale_ids,),
-        )
-        cur.execute(
-            "UPDATE code_chunks SET vectorization_skipped = 0 "
-            "WHERE id = ANY(%s) AND vectorization_skipped = %s",
-            (stale_ids, VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE),
-        )
+        if page_stale_ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE code_chunks SET embedding_vector = NULL, "
+                    "embedding_model = NULL WHERE id = ANY(%s)",
+                    (page_stale_ids,),
+                )
+                cur.execute(
+                    "UPDATE code_chunks SET vectorization_skipped = 0 "
+                    "WHERE id = ANY(%s) AND vectorization_skipped = %s",
+                    (page_stale_ids, VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE),
+                )
+
+        if len(page_rows) < page_size:
+            break
 
 
 def _reconcile_pgvector_embedding_dimension(conn: Any, dim: int) -> None:

@@ -301,6 +301,13 @@ def validate_field_types_code_analysis_impl(
             embedding.get("timeout"),
             (int, float, type(None)),
         )
+        validate_field_type(
+            results,
+            "code_analysis",
+            "embedding.max_batch_size",
+            embedding.get("max_batch_size"),
+            int,
+        )
 
     indexing_worker = code_analysis.get("indexing_worker", {})
     if indexing_worker and isinstance(indexing_worker, dict):

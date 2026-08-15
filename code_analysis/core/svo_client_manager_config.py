@@ -117,6 +117,20 @@ def build_config(
         chunker_timeout_val if chunker_timeout_val is not None else 120.0
     )
 
+    # Hard per-request text cap enforced by the embed service itself (bug
+    # 16b1abbe): a single get_embeddings() call with more than this many
+    # texts fails outright ("Job command failed: Batch size N exceeds the
+    # maximum allowed (20)"). Not discoverable from the service; configurable
+    # via code_analysis.embedding.max_batch_size, default 20 (the service's
+    # own current default) when unset or non-positive.
+    embedding_max_batch_size_val = emb_cfg.get("max_batch_size")
+    try:
+        embedding_max_batch_size = int(embedding_max_batch_size_val)
+    except (TypeError, ValueError):
+        embedding_max_batch_size = 0
+    if embedding_max_batch_size <= 0:
+        embedding_max_batch_size = 20
+
     return {
         "_root_dir": Path(root_dir) if root_dir else None,
         "vector_dim": vector_dim,
@@ -150,5 +164,6 @@ def build_config(
         "_embedding_crl_file": emb_cfg.get("crl_file"),
         "_embedding_timeout": emb_cfg.get("timeout"),
         "_embedding_check_hostname": bool(emb_cfg.get("check_hostname", False)),
+        "_embedding_max_batch_size": embedding_max_batch_size,
         "_root_path": root_path,
     }

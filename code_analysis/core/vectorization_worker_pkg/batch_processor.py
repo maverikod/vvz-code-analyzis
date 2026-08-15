@@ -28,9 +28,69 @@ from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
 from code_analysis.core.worker_db_rpc_priority import \
     BACKGROUND_WORKER_DB_RPC_PRIORITY
 
+from .file_batch_packing import pack_files_into_packets
 from .timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
+
+# Fallback embed-service per-request text cap used only when the SVO manager
+# does not expose ``_embedding_max_batch_size`` (e.g. a minimal test double).
+# Kept in sync with svo_client_manager_config.build_config's own default.
+_DEFAULT_EMBED_MAX_BATCH_SIZE = 20
+
+
+def _embed_max_batch_size(svo_mgr: Any) -> int:
+    """Return the configured embed-service per-request text cap for ``svo_mgr``.
+
+    Args:
+        svo_mgr: SVOClientManager instance (or a test double).
+
+    Returns:
+        A positive int cap; falls back to ``_DEFAULT_EMBED_MAX_BATCH_SIZE``
+        when the attribute is missing or not a positive int.
+    """
+    cap = getattr(svo_mgr, "_embedding_max_batch_size", None)
+    if isinstance(cap, int) and cap > 0:
+        return cap
+    return _DEFAULT_EMBED_MAX_BATCH_SIZE
+
+
+def _split_chunk_objs_into_subbatches(
+    chunk_objs: List[Any], cap: int
+) -> List[List[Any]]:
+    """Split one file's chunk list into sub-batches of at most ``cap`` items.
+
+    Reuses ``pack_files_into_packets`` (bug 16b1abbe design: this dead-code
+    packer already implements exactly this — splitting one over-sized file's
+    count across multiple cap-sized packets, see its ``take=min(count,
+    batch_size)`` slicing) by feeding it a single-row "file table" of
+    ``(file_id="_", file_path="_", count=len(chunk_objs))``. Each returned
+    packet then has exactly one ``(file_id, file_path, take)`` tuple (there is
+    only one "file" in the table), so ``take`` values partition
+    ``chunk_objs`` in order into cap-sized slices.
+
+    Args:
+        chunk_objs: Ordered chunk objects for one file.
+        cap: Maximum sub-batch size (embed-service per-request text cap).
+
+    Returns:
+        List of contiguous slices of ``chunk_objs``, each of length <= cap
+        (the last one possibly shorter); a single-element list containing the
+        whole input when ``len(chunk_objs) <= cap`` or ``cap <= 0``.
+    """
+    if not chunk_objs:
+        return []
+    if cap <= 0 or len(chunk_objs) <= cap:
+        return [chunk_objs]
+
+    packets = pack_files_into_packets([("_", "_", len(chunk_objs))], cap)
+    sub_batches: List[List[Any]] = []
+    idx = 0
+    for packet in packets:
+        take = sum(t[2] for t in packet)
+        sub_batches.append(chunk_objs[idx : idx + take])
+        idx += take
+    return sub_batches
 
 
 def _sql_exclude_docs_markdown_if_gated(worker_like: Any) -> str:
@@ -250,23 +310,45 @@ async def process_chunk_only_files(
             len(chunks),
         )
 
-        # Step 3: attempt embed-client vectorization for the file snapshot.
-        try:
-            await svo_mgr.get_embeddings(chunk_objs)
-        except Exception as exc:
-            if getattr(svo_mgr, "_embedding_available", True) is False:
+        # Step 3: attempt embed-client vectorization for the file snapshot, in
+        # sub-batches capped at the embed service's per-request text limit
+        # (bug 16b1abbe: a single call for the whole file's chunks fails
+        # outright once a file has more than ~20 un-vectorized chunks, and
+        # that whole-batch exception used to bypass per-chunk retry/dead-
+        # letter accounting entirely). A sub-batch that fails just leaves its
+        # chunk_objs without ``.embedding`` set — the existing
+        # missing/neighbor-merge-recovery/dead-letter logic below already
+        # treats any chunk without a usable embedding uniformly, regardless
+        # of why it is missing, so a failed sub-batch cannot discard the
+        # embeddings a sibling sub-batch of the same file already obtained.
+        embed_cap = _embed_max_batch_size(svo_mgr)
+        sub_batches = _split_chunk_objs_into_subbatches(chunk_objs, embed_cap)
+        file_embedding_unavailable = False
+        for batch_idx, sub_batch in enumerate(sub_batches):
+            try:
+                await svo_mgr.get_embeddings(sub_batch)
+            except Exception as exc:
+                if getattr(svo_mgr, "_embedding_available", True) is False:
+                    logger.warning(
+                        "[chunk_only] file=%s: embed-client unavailable; "
+                        "skipping file",
+                        file_path,
+                    )
+                    file_embedding_unavailable = True
+                    break
                 logger.warning(
-                    "[chunk_only] file=%s: embed-client unavailable; skipping file",
+                    "[chunk_only] file=%s: embed-client failed for sub-batch "
+                    "%d/%d (%d chunk(s), cap=%d): %s",
                     file_path,
+                    batch_idx + 1,
+                    len(sub_batches),
+                    len(sub_batch),
+                    embed_cap,
+                    exc,
+                    exc_info=True,
                 )
                 continue
-            logger.warning(
-                "[chunk_only] file=%s: embed-client failed: %s",
-                file_path,
-                exc,
-                exc_info=True,
-            )
-            error_count += len(chunk_objs)
+        if file_embedding_unavailable:
             continue
 
         assignments: Dict[str, Tuple[list, str]] = {}

@@ -33,6 +33,16 @@ from ...core.vectorization_worker_pkg.batch_processor import (
 
 logger = logging.getLogger(__name__)
 
+# Historical round-trip-count target (bug 16b1abbe): grouping many per-chunk
+# embed round-trips into fewer, larger ones so a large revectorize command
+# stays comfortably under the mcp-proxy-adapter synchronous command execution
+# time budget (~20s sync-cap). Unrelated to, and previously conflated with,
+# the embed SERVICE's own hard per-request text limit (see
+# _revectorize_project's ``embed_batch_size``, sourced from
+# SVOClientManager._embedding_max_batch_size) — this constant no longer
+# bounds any embed call and is kept only as documentation/context.
+_SYNC_EXECUTION_CAP_ROUND_TRIP_HINT = 128
+
 
 class RevectorizeCommand(BaseMCPCommand):
     """
@@ -503,11 +513,20 @@ class RevectorizeCommand(BaseMCPCommand):
                 }
 
             # Revectorize chunks in BATCHES: one embed call per batch (not per
-            # chunk). Per-chunk round-trips through the queued embed path are
-            # ~seconds each and on a large project overrun the sync-cap; batching
-            # keeps the whole command well under it.
+            # chunk). embed_batch_size below is the embed SERVICE's own hard
+            # per-request text limit (bug 16b1abbe — previously conflated
+            # with the unrelated _SYNC_EXECUTION_CAP_ROUND_TRIP_HINT, see its
+            # module-level docstring/comment above). Exceeding it fails the
+            # whole call ("Job command failed: Batch size N exceeds the
+            # maximum allowed (20)").
             import json
             import numpy as np
+
+            embed_batch_size = getattr(
+                svo_client_manager, "_embedding_max_batch_size", None
+            )
+            if not isinstance(embed_batch_size, int) or embed_batch_size <= 0:
+                embed_batch_size = 20
 
             is_pg = (
                 use_pgvector and getattr(database, "_driver_type", None) == "postgres"
@@ -520,10 +539,11 @@ class RevectorizeCommand(BaseMCPCommand):
 
             revectorized_count = 0
             # Each batch = one in-process embed_execute call (see
-            # SVOClientManager.get_embeddings), so batches can be large.
-            batch_size = 128
-            for start in range(0, len(pending), batch_size):
-                batch = pending[start : start + batch_size]
+            # SVOClientManager.get_embeddings); capped at the embed service's
+            # own per-request text limit (embed_batch_size), NOT at
+            # _SYNC_EXECUTION_CAP_ROUND_TRIP_HINT — see the comment above.
+            for start in range(0, len(pending), embed_batch_size):
+                batch = pending[start : start + embed_batch_size]
                 try:
                     embedded = await svo_client_manager.get_embeddings(batch)
                 except Exception as e:

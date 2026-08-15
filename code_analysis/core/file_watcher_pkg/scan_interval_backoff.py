@@ -14,7 +14,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Any, Mapping, Tuple
 
 # Hard ceiling on the scan sleep interval — mirrors
 # vectorization_worker_pkg.processing._MAX_POLL_INTERVAL (guards int()/range()
@@ -61,3 +61,31 @@ def next_scan_interval(
     growth_cycles = min(streak, 40)
     grown = base * (2**growth_cycles)
     return min(grown, max_scan_interval), streak
+
+
+def compute_real_work_from_cycle_stats(cycle_stats: Mapping[str, Any]) -> int:
+    """
+    Total real work for one scan cycle, feeding :func:`next_scan_interval`.
+
+    Combines QUEUE-phase counters (``new_files``/``changed_files``/
+    ``deleted_files`` -- what actually got queued) with SCAN-phase
+    detected-delta counters (``detected_new_files``/``detected_changed_files``/
+    ``detected_deleted_files`` -- what the on-disk scan found, see
+    :mod:`code_analysis.core.file_watcher_pkg.multi_project_worker_scan`).
+
+    Bug 6d5ad353: counting only the QUEUE-phase totals let a cycle where the
+    scan detected real changes but the queue phase dropped them (project
+    skipped/locked, bulk-sync short-circuit, queue error, ...) keep growing
+    the no-progress backoff streak indefinitely even though real work was
+    found on disk -- see :func:`code_analysis.core.file_watcher_pkg.
+    cycle_divergence.log_cycle_divergence_if_any` for the accompanying
+    per-cycle visibility log.
+    """
+    return (
+        int(cycle_stats.get("new_files", 0))
+        + int(cycle_stats.get("changed_files", 0))
+        + int(cycle_stats.get("deleted_files", 0))
+        + int(cycle_stats.get("detected_new_files", 0))
+        + int(cycle_stats.get("detected_changed_files", 0))
+        + int(cycle_stats.get("detected_deleted_files", 0))
+    )

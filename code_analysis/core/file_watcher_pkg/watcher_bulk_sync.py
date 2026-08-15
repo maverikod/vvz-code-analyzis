@@ -123,6 +123,13 @@ def build_watcher_bulk_sync_program(
         "OR f.last_modified IS NULL "
         "OR abs(f.last_modified - d.last_modified) > 0.1"
     )
+    # Bug 6d5ad353 (resurrect): a soft-deleted row at the same path matched
+    # here regardless of change_detect_sql -- deleted is not itself a content
+    # change, so a resurrected file whose on-disk content happens to match what
+    # was last indexed (the common case: nothing changed while it sat deleted)
+    # would otherwise fall through to 'skip' and never flip deleted back to
+    # FALSE.
+    resurrect_sql = "f.deleted IS TRUE"
 
     disk_driven_sql = f"""
 SELECT
@@ -142,6 +149,7 @@ FROM (
   SELECT
     CASE
       WHEN f.id IS NULL THEN 'insert'
+      WHEN {resurrect_sql} THEN 'update'
       WHEN {change_detect_sql} THEN 'update'
       ELSE 'skip'
     END AS action,
@@ -157,13 +165,13 @@ FROM (
     f.id AS existing_file_id,
     CASE
       WHEN f.id IS NULL THEN 1
+      WHEN {resurrect_sql} THEN 1
       WHEN {change_detect_sql} THEN 1
       ELSE 0
     END AS needs_chunking
   FROM {TEMP_DISK_RAW} d
   LEFT JOIN files f
     ON f.project_id = ?::uuid
-   AND {active_f}
    AND {path_match_sql}
 ) disk_side
 """.strip()
@@ -285,6 +293,21 @@ WHERE s.action = 'update'
             include_code_content_fts=database_has_sqlite_code_content_fts(database),
         )
     )
+    # Trailing action-count SELECT (must be the LAST statement in the last
+    # batch): read back by submit_watcher_bulk_sync to report real new/changed/
+    # deleted counts instead of the always-zero placeholder. TEMP_SYNC is not
+    # touched by any of the DML/purge statements above, so this reflects
+    # exactly what was inserted/updated/deleted this sync -- including a
+    # resurrected soft-deleted file, which is classified 'update' by the same
+    # action CASE as any other on-disk change (bug 6d5ad353: counted here as
+    # changed_files, no special-casing needed).
+    batch_c.append(
+        (
+            f"SELECT action, COUNT(*) AS cnt FROM {TEMP_SYNC} "
+            "WHERE action != 'skip' GROUP BY action",
+            (),
+        )
+    )
 
     return {
         "batches": [batch_a, batch_b, batch_c],
@@ -292,6 +315,45 @@ WHERE s.action = 'update'
         "project_id": project_id,
         "lock_scope": "project_write",
     }
+
+
+def _extract_batch_c_select_rows(result: Any) -> Optional[List[Dict[str, Any]]]:
+    """
+    Best-effort extraction of the trailing action-count SELECT's rows from the
+    return value of :func:`submit_logical_write_program_or_fallback`.
+
+    Two possible shapes depending on which path ran the program:
+      - ``execute_logical_write_operation`` (real driver): a dict with
+        ``batch_results`` -> list of ``{"results": [...]}`` per batch; the last
+        batch's last statement result is a dict with ``data``.
+      - ``execute_batch`` fallback (legacy / fake databases without
+        ``execute_logical_write_operation``): the raw per-statement result list
+        for the LAST batch executed (batch_c).
+
+    Returns None (never raises) when the shape is unrecognized, so callers keep
+    the previous coarse zero-stats behavior instead of failing the sync over a
+    stats-reporting detail.
+    """
+    try:
+        if isinstance(result, dict) and "batch_results" in result:
+            batch_results = result.get("batch_results") or []
+            if not batch_results:
+                return None
+            last_batch = batch_results[-1]
+            statements = (
+                last_batch.get("results") if isinstance(last_batch, dict) else None
+            )
+            if not statements:
+                return None
+            last_stmt = statements[-1]
+        elif isinstance(result, list) and result:
+            last_stmt = result[-1]
+        else:
+            return None
+        data = last_stmt.get("data") if isinstance(last_stmt, dict) else None
+        return list(data) if isinstance(data, list) else None
+    except Exception:
+        return None
 
 
 def submit_watcher_bulk_sync(
@@ -303,29 +365,52 @@ def submit_watcher_bulk_sync(
     locked_paths: Optional[Iterable[str]] = None,
 ) -> Dict[str, int]:
     """
-    Run bulk sync for one project. Returns coarse stats (manifest size based).
+    Run bulk sync for one project. Returns real new/changed/deleted counts read
+    back from the sync program's trailing action-count SELECT (falls back to
+    zeros when the underlying database stub does not return per-statement
+    results -- see :func:`_extract_batch_c_select_rows`).
 
     ``locked_paths`` are advisory-locked project-relative POSIX paths to leave
     untouched (resolved by the caller with a live database client).
+
+    A resurrected soft-deleted file (bug 6d5ad353) is counted under
+    ``changed_files``: it goes through the same SQL ``'update'`` action as any
+    other on-disk change, so it needs no special-casing here.
     """
     program = build_watcher_bulk_sync_program(
         project_id, watch_dir_id, disk_rows, database, locked_paths=locked_paths
     )
-    submit_logical_write_program_or_fallback(database, program)
+    result = submit_logical_write_program_or_fallback(database, program)
     n_disk = len(disk_rows)
-    logger.info(
-        "[BULK SYNC] project_id=%s disk_rows=%s watch_dir_id=%s",
-        project_id,
-        n_disk,
-        watch_dir_id,
-    )
-    return {
+    stats: Dict[str, int] = {
         "new_files": 0,
         "changed_files": 0,
         "deleted_files": 0,
         "errors": 0,
         "disk_rows": n_disk,
     }
+    action_rows = _extract_batch_c_select_rows(result)
+    if action_rows is not None:
+        action_to_stat = {
+            "insert": "new_files",
+            "update": "changed_files",
+            "delete": "deleted_files",
+        }
+        for row in action_rows:
+            stat_key = action_to_stat.get(row.get("action"))
+            if stat_key is not None:
+                stats[stat_key] = int(row.get("cnt") or 0)
+    logger.info(
+        "[BULK SYNC] project_id=%s disk_rows=%s watch_dir_id=%s "
+        "new=%s changed=%s deleted=%s",
+        project_id,
+        n_disk,
+        watch_dir_id,
+        stats["new_files"],
+        stats["changed_files"],
+        stats["deleted_files"],
+    )
+    return stats
 
 
 def bulk_sync_supported(database: Any) -> bool:

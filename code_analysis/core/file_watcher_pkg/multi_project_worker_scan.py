@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Sequence, Set, Tuple
 
 from code_analysis.core.database.files.trash_standalone_support import (
     clear_file_data_via_driver,
@@ -39,11 +39,15 @@ from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..worker_project_activity import (get_project_activity,
                                        release_project_activity,
                                        try_acquire_project_activity)
+from .cycle_divergence import log_cycle_divergence_if_any
 from .lock_manager import LockManager
 from .multi_project_worker_specs import WatchDirSpec
 from .processor import FileChangeProcessor
 from .processor_delta import (compute_project_delta,
                               compute_supplemental_watch_dir_deltas)
+from .purge_gate_signature import (compute_ignore_policy_stamp,
+                                   compute_project_db_purge_signature,
+                                   purge_gate_needed)
 from .scanner import iter_watch_dir_project_scans
 from .watcher_project_metadata import (apply_project_updated_at_from_scan,
                                        load_projectid_flags_for_insert,
@@ -271,6 +275,63 @@ def _deduplicate_absolute_paths(database: Any, watch_dir: Path) -> int:
     return pairs_merged + lone_fixed
 
 
+def _run_gated_ignore_purge_for_project(
+    database: Any,
+    project_id: str,
+    merged_ignore: Sequence[str],
+    *,
+    allowed_venv_py: Optional[Set[Path]],
+    exc_files_filtered: Optional[Set[Path]],
+    exc_patterns: Optional[Sequence[str]],
+    config_path: Optional[Path],
+    docs_indexing_snap: Optional[Dict[str, Any]],
+    purge_signature_cache: Optional[Dict[str, Any]],
+) -> None:
+    """
+    Run the pre-scan ignore purge for one project, gated by a DB-side signature
+    plus the merged-ignore-policy stamp (bug 5b663fbb cost fix).
+
+    The purge's outcome (which active ``files`` rows are ignored-by-policy) can
+    only change when either the project's active file rows changed (DB
+    signature) or the merged ignore pattern set changed (policy stamp) since the
+    last purge -- gate on both via :mod:`.purge_gate_signature`, matching the
+    existing ``manifest_signature_cache`` short-circuit idiom
+    (:func:`.watcher_disk_manifest.manifest_rebuild_needed`, bug 673ba07a), but
+    keyed on the DB-side signature rather than the on-disk one (the researcher
+    for this bug proved the disk manifest signature never changes when only
+    DB-side rows drift, so gating on it would never fire).
+    """
+    from .ignore_pre_scan_purge import run_pre_scan_ignore_purge_for_project
+
+    db_signature = compute_project_db_purge_signature(database, project_id)
+    policy_stamp = compute_ignore_policy_stamp(merged_ignore)
+    if not purge_gate_needed(
+        project_id, db_signature, policy_stamp, purge_signature_cache
+    ):
+        logger.debug(
+            "[PURGE_GATE SKIP] project_id=%s db_signature=%s policy_stamp=%s "
+            "unchanged since last purge; skipping pre-scan ignore purge",
+            project_id,
+            db_signature,
+            policy_stamp,
+        )
+        return
+    run_pre_scan_ignore_purge_for_project(
+        database,
+        project_id,
+        merged_ignore,
+        allowed_venv_py_files=allowed_venv_py,
+        ignore_exception_files=exc_files_filtered,
+        ignore_exception_patterns=exc_patterns,
+        config_path=config_path,
+        docs_indexing=docs_indexing_snap,
+    )
+    if purge_signature_cache is not None:
+        # Record only after a successful purge so a failed cycle retries
+        # (mirrors manifest_signature_cache's own post-success recording).
+        purge_signature_cache[project_id] = (db_signature, policy_stamp)
+
+
 def scan_watch_dir(
     spec: WatchDirSpec,
     processor: FileChangeProcessor,
@@ -281,6 +342,7 @@ def scan_watch_dir(
     *,
     config_path: Optional[Path] = None,
     manifest_signature_cache: Optional[Dict[str, Tuple[int, float, int]]] = None,
+    purge_signature_cache: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Scan a watched directory and process all discovered projects.
@@ -300,6 +362,12 @@ def scan_watch_dir(
             disk signatures; when a project's signature is unchanged, the heavy
             manifest rebuild and bulk queue are skipped for that project
             (bug 673ba07a). None disables the short-circuit.
+        purge_signature_cache: Mutable per-worker cache of last-seen per-project
+            ``(db_signature, policy_stamp)`` pairs; when unchanged since the last
+            purge for a project, ``run_pre_scan_ignore_purge_for_project`` is
+            skipped for that project this cycle (bug 5b663fbb cost fix -- the
+            purge's outcome cannot have changed). None disables the gate (always
+            runs, prior behavior). See :mod:`.purge_gate_signature`.
 
     Returns:
         Per-watch-dir scan stats.
@@ -704,9 +772,7 @@ def scan_watch_dir(
             "config_path": config_path,
         }
 
-        from .ignore_pre_scan_purge import (
-            apply_ignore_purge_split_to_deltas,
-            run_pre_scan_ignore_purge_for_project)
+        from .ignore_pre_scan_purge import apply_ignore_purge_split_to_deltas
         from .watcher_bulk_sync import bulk_sync_supported
         from .watcher_disk_manifest import (build_project_disk_manifest,
                                             compute_project_files_signature,
@@ -734,15 +800,16 @@ def scan_watch_dir(
                 continue
 
             if bulk_sync_supported(database):
-                run_pre_scan_ignore_purge_for_project(
+                _run_gated_ignore_purge_for_project(
                     database,
                     project_id,
                     merged_ignore,
-                    allowed_venv_py_files=allowed_venv_py or None,
-                    ignore_exception_files=exc_files_filtered or None,
-                    ignore_exception_patterns=exc_patterns or None,
+                    allowed_venv_py=allowed_venv_py or None,
+                    exc_files_filtered=exc_files_filtered or None,
+                    exc_patterns=exc_patterns or None,
                     config_path=config_path,
-                    docs_indexing=docs_indexing_snap,
+                    docs_indexing_snap=docs_indexing_snap,
+                    purge_signature_cache=purge_signature_cache,
                 )
                 signature = compute_project_files_signature(project_files, project_id)
                 if not manifest_rebuild_needed(
@@ -833,15 +900,16 @@ def scan_watch_dir(
                     supp_root = project_id_to_root.get(supp_pid)
                     if supp_root is None:
                         continue
-                    run_pre_scan_ignore_purge_for_project(
+                    _run_gated_ignore_purge_for_project(
                         database,
                         supp_pid,
                         merged_ignore,
-                        allowed_venv_py_files=allowed_venv_py or None,
-                        ignore_exception_files=exc_files_filtered or None,
-                        ignore_exception_patterns=exc_patterns or None,
+                        allowed_venv_py=allowed_venv_py or None,
+                        exc_files_filtered=exc_files_filtered or None,
+                        exc_patterns=exc_patterns or None,
                         config_path=config_path,
-                        docs_indexing=docs_indexing_snap,
+                        docs_indexing_snap=docs_indexing_snap,
+                        purge_signature_cache=purge_signature_cache,
                     )
                     supp_stats = processor.queue_project_bulk_sync(
                         supp_pid,
@@ -914,6 +982,21 @@ def scan_watch_dir(
             f"deleted: {dir_stats.get('deleted_files', 0)}"
         )
 
+        # Bug 6d5ad353: name any gap between what the scan detected on disk and
+        # what the queue phase actually queued, instead of letting it stay
+        # silent (see also stats["detected_*"] below, which feeds the
+        # no-progress backoff via compute_real_work_from_cycle_stats).
+        log_cycle_divergence_if_any(
+            watch_dir,
+            total_new,
+            total_changed,
+            total_deleted,
+            int(dir_stats.get("new_files", 0)),
+            int(dir_stats.get("changed_files", 0)),
+            int(dir_stats.get("deleted_files", 0)),
+            logger_=logger,
+        )
+
         if delta:
             current_project_id = list(delta.keys())[-1] if delta else None
             if current_project_id:
@@ -951,6 +1034,13 @@ def scan_watch_dir(
         stats["changed_files"] += int(dir_stats.get("changed_files", 0))
         stats["deleted_files"] += int(dir_stats.get("deleted_files", 0))
         stats["errors"] += int(dir_stats.get("errors", 0))
+        # SCAN-phase detected delta (bug 6d5ad353): separate from the QUEUE-phase
+        # counters above so a cycle that detected changes the queue phase dropped
+        # still counts as real work for the no-progress backoff -- see
+        # compute_real_work_from_cycle_stats.
+        stats["detected_new_files"] = total_new
+        stats["detected_changed_files"] = total_changed
+        stats["detected_deleted_files"] = total_deleted
 
     except Exception as e:
         logger.error(

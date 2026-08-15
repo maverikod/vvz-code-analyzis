@@ -7,7 +7,9 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, cast
 
@@ -464,6 +466,138 @@ def _ensure_projects_root_path_migrations(conn: Any, schema_manager: Any) -> Non
         )
 
 
+_EMBEDDING_VEC_DIM_RE = re.compile(r"vector\((\d+)\)")
+
+
+def _declared_pgvector_dim(conn: Any) -> Optional[int]:
+    """Return the declared ``vector(N)`` dimension of ``code_chunks.embedding_vec``.
+
+    Returns ``None`` if the column does not exist (nothing to reconcile) or its type
+    cannot be parsed as ``vector(N)``.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT format_type(a.atttypid, a.atttypmod)
+                FROM pg_attribute a
+                WHERE a.attrelid = 'code_chunks'::regclass
+                  AND a.attname = 'embedding_vec'
+                  AND NOT a.attisdropped
+                """
+            )
+            row = cur.fetchone()
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.warning(
+            "PostgreSQL: could not read declared embedding_vec type: %s", exc
+        )
+        return None
+    if row is None or row[0] is None:
+        return None
+    match = _EMBEDDING_VEC_DIM_RE.fullmatch(row[0])
+    return int(match.group(1)) if match else None
+
+
+def _invalidate_stale_embedding_json_caches(conn: Any, new_dim: int) -> None:
+    """Clear ``embedding_vector``/``embedding_model`` cache entries that are not
+    ``new_dim``-length, and un-dead-letter the rows this invalidates.
+
+    Runs in Python (fetch + filter + batched UPDATE ... WHERE id = ANY(%s)) rather
+    than a single ``embedding_vector::jsonb`` SQL cast: verified empirically against
+    the probe DB that casting a garbage (non-JSON) ``embedding_vector`` value raises
+    ``invalid input syntax for type json`` from the cast itself, before a
+    ``jsonb_typeof`` WHERE guard ever runs -- so a single malformed row would abort
+    the whole migration. Any row whose cache cannot be positively confirmed as
+    ``new_dim``-length (malformed JSON included) is invalidated, matching the
+    reconciliation's goal: no wrong-dimension cache may survive.
+    """
+    from code_analysis.core.vectorization_worker_pkg.batch_processor import (
+        VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE,
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, embedding_vector FROM code_chunks "
+            "WHERE embedding_vector IS NOT NULL"
+        )
+        rows = cur.fetchall()
+
+    stale_ids: List[Any] = []
+    for chunk_id, embedding_vector_json in rows:
+        try:
+            parsed = json.loads(embedding_vector_json)
+            keep = isinstance(parsed, list) and len(parsed) == new_dim
+        except (TypeError, ValueError):
+            keep = False
+        if not keep:
+            stale_ids.append(chunk_id)
+
+    if not stale_ids:
+        return
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE code_chunks SET embedding_vector = NULL, embedding_model = NULL "
+            "WHERE id = ANY(%s)",
+            (stale_ids,),
+        )
+        cur.execute(
+            "UPDATE code_chunks SET vectorization_skipped = 0 "
+            "WHERE id = ANY(%s) AND vectorization_skipped = %s",
+            (stale_ids, VECTORIZATION_DEAD_LETTER_SKIPPED_VALUE),
+        )
+
+
+def _reconcile_pgvector_embedding_dimension(conn: Any, dim: int) -> None:
+    """Retype an EXISTING ``embedding_vec`` column when the configured dimension
+    changed (bug f4dd4039).
+
+    ``_ensure_missing_column`` above is purely additive -- it ADDs the column when
+    absent but returns immediately when it already exists, so a changed configured
+    ``vector_dim`` (e.g. 384 -> 1024) never reached an existing column. On the live
+    server this bricked all embedding writes with ``psycopg.errors.DataException:
+    expected 384 dimensions, not 1024`` until the DB was fixed by hand.
+
+    Idempotent fast path: if the declared dimension already matches, do nothing.
+    On a mismatch, retypes the column (``USING NULL`` -- values cannot be
+    reinterpreted across dimensions, verified empirically that a ``::vector`` cast
+    fails on mismatched data while ``USING NULL`` succeeds and the HNSW index
+    survives under its existing name), invalidates now-wrong-dimension JSON caches,
+    and un-dead-letters the rows it invalidates so they re-enter the vectorization
+    queue.
+    """
+    declared_dim = _declared_pgvector_dim(conn)
+    if declared_dim is None or declared_dim == dim:
+        return
+
+    logger.warning(
+        "PostgreSQL: code_chunks.embedding_vec dimension changed %s -> %s; "
+        "existing embeddings will be DISCARDED and re-vectorization will be "
+        "required for all affected chunks",
+        declared_dim,
+        dim,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"ALTER TABLE code_chunks ALTER COLUMN embedding_vec "
+                f"TYPE vector({dim}) USING NULL"
+            )
+        _invalidate_stale_embedding_json_caches(conn, dim)
+        conn.commit()
+    except Exception as exc:
+        _rollback_conn(conn)
+        logger.error(
+            "PostgreSQL: embedding_vec dimension retype %s -> %s FAILED, column "
+            "left at the OLD dimension: %s",
+            declared_dim,
+            dim,
+            exc,
+            exc_info=True,
+        )
+
+
 def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
     """Create pgvector extension (if permitted), ``embedding_vec``, and HNSW index."""
     try:
@@ -488,6 +622,7 @@ def _ensure_pgvector_embedding_column(conn: Any, vector_dim: int) -> None:
         column_name="embedding_vec",
         add_sql=f"ALTER TABLE code_chunks ADD COLUMN embedding_vec vector({dim})",
     )
+    _reconcile_pgvector_embedding_dimension(conn, dim)
     try:
         with conn.cursor() as cur:
             cur.execute("""

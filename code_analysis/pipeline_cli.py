@@ -178,6 +178,10 @@ def _run_live_indexing_ignore_parity() -> int:
     return _run_live_verifier("indexing_ignore_parity")
 
 
+def _run_live_worker_activity() -> int:
+    return _run_live_verifier("worker_activity")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -735,6 +739,19 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "update_indexes would have kept."
         ),
         runner=_run_live_indexing_ignore_parity,
+    ),
+    PipelineCheck(
+        name="live-worker-activity",
+        description=(
+            "Run only the 'worker_activity' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Guards "
+            "bug 827e2b05: a manually-started vectorization worker computed "
+            "svo_config=None and could chunk files but never embed them. "
+            "WARNING: this check stops and starts the process-wide "
+            "vectorization worker -- it must NEVER run in parallel with any "
+            "other live check."
+        ),
+        runner=_run_live_worker_activity,
     ),
 )
 

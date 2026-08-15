@@ -16,19 +16,40 @@ worker process started (PID present, ``start_worker`` reported success) but
 could never actually embed anything. ``tests/test_worker_start_args_parity.py``
 proves the kwargs the command computes are correct now at the unit level
 (mocking the manager call); this check is the live, end-to-end counterpart --
-it starts a REAL worker process against a REAL disposable project with one
-file pending vectorization and asserts observable progress, not just a
-successful-looking start.
+it starts a REAL worker process against a REAL disposable project with a
+small fixture file pending vectorization and asserts observable, COMPLETE
+embedding progress, not just a successful-looking start.
 
-Mechanism: create a disposable project, upload one small Python file into it
-(``file_sessions.upload_new``), run ``update_indexes`` once so the file is
-registered and (new file) marked ``needs_chunking``, then start a
-vectorization worker scoped to that project via ``start_worker``. Poll
-``check_vectors`` on the disposable project for up to ~90 seconds: a live,
+Mechanism: create an ISOLATED disposable project and upload a small fixture
+``.py`` module with a few documented functions (one un-vectorized
+``code_chunks`` row per function via the docstring chunker -- see
+``core/docstring_chunker_pkg/docstring_chunker.py``), run ``update_indexes``
+once so the file is registered and chunked, then start a vectorization
+worker scoped to that project via ``start_worker``. Poll ``check_vectors`` on
+the disposable project for up to :data:`_POLL_TIMEOUT_SECONDS`: a live,
 correctly-configured worker will pick up the pending file, chunk it, and
-embed it, driving ``total_chunks`` and eventually ``chunks_with_vector``
-above zero. A pre-fix server never gets past svo_config=None, so neither
-counter ever moves and this check goes RED.
+embed EVERY chunk, driving ``chunks_pending_vectorization`` to ``0`` and
+``chunks_with_model`` up to ``total_chunks``.
+
+IMPORTANT -- why the predicate must require ``chunks_with_model ==
+total_chunks`` and not merely ``total_chunks > 0``: chunking is driven by the
+indexer/chunker pipeline, NOT by the vectorization worker, so a project can
+accumulate chunks (``total_chunks > 0``) even when the vectorization worker
+itself is completely broken. A pre-fix server (``svo_config=None``) still
+chunks the fixture file normally -- what it can never do is EMBED a chunk, so
+``chunks_with_model`` stays at ``0`` forever while ``chunks_pending_
+vectorization`` stays stuck at ``total_chunks``. Only a predicate that
+requires the embed round-trip to actually complete (see
+``vectorization_fixture_common.poll_check_vectors_fully_vectorized``) can
+distinguish "worker chunked it" from "worker embedded it", which is the only
+thing bug 827e2b05 breaks.
+
+The isolated-project creation, fixture source generation, worker start/stop
+hardening, and ``check_vectors`` polling live in
+``realsrv_test.core.vectorization_fixture_common``, the same machinery
+``lifecycle_vectorization_batch_cap.py`` and ``lifecycle_vector_dim_parity.py``
+use, so all three vectorization-worker livetests stay in sync instead of
+drifting apart.
 
 Teardown constraint (read before scheduling a RED run): the vectorization
 worker started by ``main_workers.py`` at server boot is UNIVERSAL -- it is
@@ -42,12 +63,12 @@ process that coexists with the boot one and then goes on failing to embed
 anything for every project on the server, not just this check's disposable
 one, until a service restart reaps it. This check's own teardown only stops
 the worker IT started (never a pre-existing boot worker -- see
-``start_worker``'s "already running" message below), but on a pre-fix
-server that still leaves a duplicate, permanently-broken worker process
-behind that this check cannot clean up by itself. THE ORCHESTRATOR MUST
-SCHEDULE A DELIBERATE RED RUN OF THIS SUITE ONLY IMMEDIATELY BEFORE A
-DEPLOY THAT WILL RESTART THE SERVICE -- never against a long-lived
-pre-fix production server.
+``start_and_verify_vectorization_worker``'s ``started_fresh`` flag), but on a
+pre-fix server that still leaves a duplicate, permanently-broken worker
+process behind that this check cannot clean up by itself. THE ORCHESTRATOR
+MUST SCHEDULE A DELIBERATE RED RUN OF THIS SUITE ONLY IMMEDIATELY BEFORE A
+DEPLOY THAT WILL RESTART THE SERVICE -- never against a long-lived pre-fix
+production server.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -55,23 +76,36 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import asyncio
-import time
-import uuid
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
-from realsrv_test.core.lifecycle_common import call_step_with_data
+from realsrv_test.core.lifecycle_common import call_step
+from realsrv_test.core.vectorization_fixture_common import (
+    create_isolated_vectorization_project,
+    poll_check_vectors_fully_vectorized,
+    start_and_verify_vectorization_worker,
+    stop_vectorization_worker_if_started,
+    upload_fixture_file,
+)
 
 CHECK_NAME = "worker_activity_manual_start_vectorization_progresses"
 
-_POLL_TIMEOUT_SECONDS = 90.0
-_POLL_INTERVAL_SECONDS = 3.0
+# Small and well under the embed service's default 20-text batch cap -- this
+# check is about the worker being alive and able to embed at all (bug
+# 827e2b05), not about the batch-cap path (that's
+# lifecycle_vectorization_batch_cap.py, bug 16b1abbe).
+_TOTAL_FUNCTIONS = 5
 
-_FIXTURE_FILE_PATH = "src/needs_vectorization.py"
+_RELATIVE_PATH = "worker_activity_fixture.py"
+
+# The strict predicate (poll_check_vectors_fully_vectorized) requires the
+# full chunk -> embed round-trip to complete, not just chunking, so this
+# needs more headroom than a "chunking happened" check would.
+_POLL_TIMEOUT_SECONDS = 150.0
+_POLL_INTERVAL_SECONDS = 5.0
 
 
 def _outcome(status: Status, reason: str) -> Dict[str, CommandOutcome]:
@@ -82,247 +116,102 @@ def _outcome(status: Status, reason: str) -> Dict[str, CommandOutcome]:
 async def run_worker_activity_check(
     client: CodeAnalysisAsyncClient, fixtures: FixtureContext
 ) -> Dict[str, CommandOutcome]:
-    """Start a real vectorization worker and assert it makes observable progress.
+    """Start a real vectorization worker and assert it fully embeds a fixture file.
 
     Args:
         client: Connected async client.
-        fixtures: The disposable project/session fixture for this run --
-            only ``fixtures.session_id`` is used; this check creates and
-            tears down its OWN disposable project (never
-            ``fixtures.project_id``) so a pre-existing project's chunk state
-            cannot mask (or fake) the result.
+        fixtures: Unused -- this check creates and tears down its OWN
+            isolated disposable project (never ``fixtures.project_id``) so a
+            pre-existing project's chunk state cannot mask (or fake) the
+            result.
 
     Returns:
         ``{CHECK_NAME: outcome}``. :attr:`Status.EXECUTED_OK` only when
-        ``check_vectors`` on the disposable project shows ``total_chunks`` or
-        ``chunks_with_vector`` above zero within the poll window --
+        ``check_vectors`` on the disposable project shows every chunk fully
+        embedded (``total_chunks > 0``, ``chunks_pending_vectorization == 0``,
+        ``chunks_with_model == total_chunks``) within the poll window --
         :attr:`Status.FAILED` (RED) otherwise. See the module docstring for
-        the teardown constraint this check cannot fully self-heal on a
-        pre-fix server.
+        why the predicate must require completed embedding, not just
+        chunking, and for the teardown constraint this check cannot fully
+        self-heal on a pre-fix server.
     """
-    if not fixtures.session_id:
-        return _outcome(Status.EXPECTED_ERROR, "skipped: no fixture session_id available")
-
-    watch_dir_status, watch_dir_data = await call_step_with_data(
-        client, "list_watch_dirs", {}, ok_reason="watch directories listed"
-    )
-    watch_dirs = (watch_dir_data or {}).get("watch_dirs") or []
-    if watch_dir_status.status is not Status.EXECUTED_OK or not watch_dirs:
-        return _outcome(
-            Status.FAILED,
-            f"could not list a watch_dir for the disposable project ({watch_dir_status.reason})",
-        )
-    watch_dir_id = str(watch_dirs[0]["id"])
-
-    project_id: Optional[str] = None
-    started_fresh_worker = False
-    try:
-        project_id, seed_error = await _seed_fixture_project(
-            client, watch_dir_id=watch_dir_id, session_id=fixtures.session_id
-        )
-        if seed_error:
-            return _outcome(Status.FAILED, truncate(seed_error))
-        assert project_id is not None
-
-        # Tolerant pre-cleanup: stop any leftover vectorization worker from a
-        # previous interrupted run of this same check. Never treated as a
-        # hard failure -- "nothing to stop" is the common/expected case.
-        try:
-            await client.call_validated(
-                "stop_worker", {"worker_type": "vectorization", "timeout": 10}
-            )
-        except Exception:  # noqa: BLE001 - best-effort tolerant cleanup only
-            pass
-
-        start_outcome, start_data = await call_step_with_data(
+    project_id, _project_root, create_status, create_reason = (
+        await create_isolated_vectorization_project(
             client,
-            "start_worker",
-            {"worker_type": "vectorization", "project_id": project_id},
-            ok_reason="vectorization worker start requested for the disposable project",
+            name_prefix="verify_worker_activity",
+            description="isolated disposable project for the manual-start vectorization-worker activity check (bug 827e2b05)",
         )
-        if start_outcome.status is not Status.EXECUTED_OK:
-            return _outcome(
-                Status.FAILED,
-                f"start_worker(vectorization) did not succeed: {start_outcome.reason}",
-            )
-        start_message = str((start_data or {}).get("message") or "")
-        started_fresh_worker = "already running" not in start_message.lower()
+    )
+    if create_status is not Status.EXECUTED_OK:
+        return _outcome(Status.FAILED, create_reason)
+    assert project_id is not None
 
-        progress, poll_reason = await _poll_for_vectorization_progress(
-            client, project_id
+    started_fresh = False
+    try:
+        file_id, upload_status, upload_reason = await upload_fixture_file(
+            client,
+            project_id=project_id,
+            relative_path=_RELATIVE_PATH,
+            total_functions=_TOTAL_FUNCTIONS,
+            session_comment="worker-activity manual-start check (bug 827e2b05)",
         )
-        if progress:
+        if upload_status is not Status.EXECUTED_OK:
+            return _outcome(Status.FAILED, upload_reason)
+        assert file_id is not None
+
+        update_status = await call_step(
+            client,
+            "update_indexes",
+            {"project_id": project_id},
+            ok_reason=f"indexed the {_TOTAL_FUNCTIONS}-function fixture file",
+        )
+        if update_status.status is not Status.EXECUTED_OK:
+            return _outcome(
+                update_status.status,
+                f"update_indexes did not succeed: {update_status.reason}",
+            )
+
+        start_status, start_reason, started_fresh = (
+            await start_and_verify_vectorization_worker(client, project_id)
+        )
+        if start_status is not Status.EXECUTED_OK:
+            return _outcome(start_status, start_reason)
+
+        try:
+            poll_status, poll_reason, final_data = await poll_check_vectors_fully_vectorized(
+                client,
+                project_id,
+                timeout_seconds=_POLL_TIMEOUT_SECONDS,
+                interval_seconds=_POLL_INTERVAL_SECONDS,
+            )
+        finally:
+            # Conditional stop: only stop the worker if this call actually
+            # started a fresh one -- a concurrent suite's already-running
+            # worker must survive our teardown. See module docstring.
+            await stop_vectorization_worker_if_started(client, started_fresh)
+
+        if poll_status is Status.EXECUTED_OK:
             return _outcome(
                 Status.EXECUTED_OK,
                 f"project={project_id}: {poll_reason} (manual start_worker kwargs "
-                "are boot-parity and the worker is actually processing chunks)",
+                "are boot-parity and the worker actually embedded every chunk)",
             )
         return _outcome(
             Status.FAILED,
-            f"project={project_id}: no vectorization progress observed within "
+            f"project={project_id}: not fully vectorized within "
             f"{_POLL_TIMEOUT_SECONDS:.0f}s ({poll_reason}) -- bug 827e2b05: a "
             "pre-fix server computes svo_config=None for a manually-started "
-            "vectorization worker, so it can never embed anything",
+            "vectorization worker, so it chunks files normally but can never "
+            f"embed anything (last check_vectors data: {truncate(repr(final_data))})",
         )
     finally:
-        if started_fresh_worker:
-            try:
-                await client.call_validated(
-                    "stop_worker", {"worker_type": "vectorization", "timeout": 10}
-                )
-            except Exception:  # noqa: BLE001 - best-effort teardown only
-                pass
-        if project_id:
-            try:
-                await client.call_validated(
-                    "project_set_mark_del", {"project_id": project_id}
-                )
-            except Exception:  # noqa: BLE001 - best-effort cleanup only
-                pass
-
-
-async def _seed_fixture_project(
-    client: CodeAnalysisAsyncClient,
-    *,
-    watch_dir_id: str,
-    session_id: str,
-) -> tuple[Optional[str], Optional[str]]:
-    """Create a disposable project with one file pending vectorization.
-
-    Args:
-        client: Connected async client.
-        watch_dir_id: Watch directory to create the disposable project under.
-        session_id: Open file-session id (not project-scoped).
-
-    Returns:
-        ``(project_id, error)`` -- ``error`` is ``None`` on success.
-        ``project_id`` may be set even when ``error`` is not ``None`` (a
-        later step failed after project creation), so the caller can still
-        clean it up.
-    """
-    suffix = uuid.uuid4().hex[:8]
-    create_status, create_data = await call_step_with_data(
-        client,
-        "create_project",
-        {
-            "watch_dir_id": watch_dir_id,
-            "project_name": f"verify_worker_activity_{suffix}",
-            "description": "throwaway fixture for the manual-start vectorization-worker activity check",
-            "create_venv": False,
-            "apply_template": False,
-        },
-        ok_reason="worker-activity fixture project created",
-    )
-    if create_status.status is not Status.EXECUTED_OK:
-        return None, f"could not create the fixture project ({create_status.reason})"
-    project_id = str((create_data or {}).get("project_id") or "")
-    if not project_id:
-        return None, f"create_project response missing project_id: {create_data!r}"
-
-    token = uuid.uuid4().hex[:12]
-    content = (
-        f'"""Fixture file pending vectorization (token {token}).\n\n'
-        "Deliberately long-ish docstring so the chunker has real text to "
-        "split into at least one chunk instead of a trivial near-empty file.\n"
-        '"""\n\n'
-        "def fixture_function_for_vectorization_activity_check() -> int:\n"
-        '    """Return a constant; only exists to give the vectorization '
-        'worker something to embed."""\n'
-        "    return 1\n"
-    ).encode("utf-8")
-    try:
-        await client.file_sessions.upload_new(
-            session_id, content, project_id, _FIXTURE_FILE_PATH
-        )
-    except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
-        return project_id, f"fixture file upload failed: {exc!r}"
-
-    reindex_outcome, _reindex_data = await call_step_with_data(
-        client,
-        "update_indexes",
-        {"project_id": project_id},
-        ok_reason="update_indexes run completed (registers the fixture file, marks needs_chunking)",
-    )
-    if reindex_outcome.status is not Status.EXECUTED_OK:
-        return (
-            project_id,
-            f"update_indexes did not succeed: {reindex_outcome.reason}",
-        )
-
-    return project_id, None
-
-
-async def _poll_for_vectorization_progress(
-    client: CodeAnalysisAsyncClient, project_id: str
-) -> tuple[bool, str]:
-    """Poll ``check_vectors`` (and ``get_worker_status`` for diagnostics)
-    for up to :data:`_POLL_TIMEOUT_SECONDS`, watching for chunking/embedding
-    progress on the disposable project.
-
-    Args:
-        client: Connected async client.
-        project_id: Disposable project id with one file pending vectorization.
-
-    Returns:
-        ``(progress_observed, reason)`` -- ``reason`` always describes the
-        last observed state (for both the OK and FAILED outcome text).
-    """
-    deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
-    last_reason = "no check_vectors response observed"
-    attempt = 0
-    while True:
-        attempt += 1
         try:
-            resp = await client.call_validated(
-                "check_vectors", {"project_id": project_id}
+            await client.call_validated(
+                "delete_project",
+                {"project_id": project_id, "delete_from_disk": True},
             )
-        except Exception as exc:  # noqa: BLE001 - keep polling despite one bad poll
-            last_reason = f"check_vectors attempt {attempt} raised {exc!r}"
-        else:
-            if resp.get("success") is True:
-                data = resp.get("data") or {}
-                total_chunks = data.get("total_chunks") or 0
-                chunks_with_vector = data.get("chunks_with_vector") or 0
-                last_reason = (
-                    f"check_vectors attempt {attempt}: total_chunks={total_chunks} "
-                    f"chunks_with_vector={chunks_with_vector}"
-                )
-                if total_chunks > 0 or chunks_with_vector > 0:
-                    return True, last_reason
-            else:
-                last_reason = (
-                    f"check_vectors attempt {attempt} did not succeed: "
-                    f"{truncate(str(resp.get('error')))}"
-                )
-
-        if time.monotonic() >= deadline:
-            # One last diagnostic snapshot of the worker's own cycle stats,
-            # merged into the reason text -- never gates the pass/fail
-            # decision (get_worker_status's cycle_stats shape is best-effort
-            # diagnostics, not a stable contract this check should depend on).
-            diag = await _diagnostic_worker_status(client)
-            if diag:
-                last_reason = f"{last_reason}; {diag}"
-            return False, last_reason
-
-        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-
-
-async def _diagnostic_worker_status(client: CodeAnalysisAsyncClient) -> str:
-    """Best-effort ``get_worker_status(vectorization)`` snapshot for the
-    FAILED reason text. Never raises; returns "" on any problem."""
-    try:
-        resp = await client.call_validated(
-            "get_worker_status", {"worker_type": "vectorization"}
-        )
-    except Exception:  # noqa: BLE001 - diagnostics only
-        return ""
-    if resp.get("success") is not True:
-        return ""
-    data = resp.get("data") or {}
-    cycle_stats = data.get("cycle_stats")
-    workers = data.get("workers") or data.get("processes")
-    return f"get_worker_status diagnostics: cycle_stats={cycle_stats!r} workers={workers!r}"
+        except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure
+            pass
 
 
 # Re-exported for realsrv_test._cli --list and suite discovery.

@@ -16,11 +16,33 @@ file as a normal ``files`` row, and the very next watcher cycle's pre-scan
 ignore purge deleted it again -- a live, permanently-recurring churn (measured
 at 1496 rows/cycle on project 44a8ce88).
 
-Mechanism: create a disposable project, upload one file under ``test_data/``
-(watcher-ignored) and one control file under ``src/`` (not ignored), run
+Mechanism (post-1.6.113 design fix -- do not reintroduce upload-based
+seeding here): create a disposable *source* project and upload the two
+fixture files into it via ``file_sessions.upload_new`` -- an unavoidable
+registration in that throwaway project, which is discarded afterwards and
+never assessed. The files under test are then materialized in a second,
+disposable *target* project via ``git_clone`` (a plain local-path clone of
+the source project's own root, mirroring the self-remote idiom in
+``lifecycle_content_stale_git.py``). ``git_clone`` registers only the
+*project* row (``CreateProjectCommand`` with ``use_existing_dir=True,
+scaffold=False`` -- writes ``projectid``, inserts the ``projects`` row, does
+not walk or register individual files); the cloned working tree lands on
+disk through raw ``git clone``, so neither fixture file has a ``files`` row
+in the target project before ``update_indexes`` runs. This is required
+because ``file_sessions.upload_new`` (``project_file_transfer_upload_save``
+create mode) pre-registers ``files.id`` via
+``register_file_row_for_new_content`` synchronously on upload, with no
+ignore-policy check -- seeding the ignored file that way gives it a
+``file_id`` before ``update_indexes`` ever runs, so the "no file_id after
+update_indexes" assertion could never pass regardless of the server-side fix
+(diagnosed against deployed 1.6.113, where the eligibility-walk fix itself
+was confirmed correct; the check's own seeding was the defect).
+
+Once both fixture files exist unregistered in the target project, run
 ``update_indexes`` once (synchronous, no watcher restart), then read back via
 ``list_project_files`` (``python_only=True``, exact-path lookup) -- the
-control file must be registered, the ``test_data/`` file must NOT be.
+control file (``src/real.py``) must be registered, the ``test_data/`` file
+(``test_data/fixture.py``) must NOT be.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -29,7 +51,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
@@ -38,6 +60,9 @@ from realsrv_test.core.fixtures import FixtureContext
 from realsrv_test.core.lifecycle_common import call_step_with_data
 
 CHECK_NAME = "update_indexes_excludes_watcher_ignored_test_data"
+
+_GIT_IDENTITY_NAME = "verify-ignore-parity-bot"
+_GIT_IDENTITY_EMAIL = "verify-ignore-parity-bot@example.invalid"
 
 
 def _outcome(status: Status, reason: str) -> Dict[str, CommandOutcome]:
@@ -98,17 +123,21 @@ async def run_update_indexes_excludes_watcher_ignored_test_data(
     """Bug 5b663fbb: ``update_indexes`` must exclude what the watcher's default
     ignore policy excludes (``test_data/``, ``*.egg-info``, ``develop-eggs``, ...).
 
-    ISOLATED PROJECT (own throwaway project, not ``fixtures.project_id``):
-    mirrors ``realsrv_test.core.lifecycle_indexer_correctness``'s
-    usages-idempotence check -- a project this check owns end-to-end, so
-    ``update_indexes`` only ever processes these two fixture files and the
-    project's own bootstrap files, keeping the verdict unambiguous.
+    TWO ISOLATED PROJECTS (own throwaway projects, not ``fixtures.project_id``):
+    a *source* project the fixture files are uploaded into (registration
+    there is unavoidable and irrelevant -- it is discarded), and a *target*
+    project materialized from it via ``git_clone`` so the files land on disk
+    unregistered (see the module docstring for why upload-based seeding
+    cannot exercise this check). ``update_indexes`` only ever processes the
+    target project's two fixture files and its own bootstrap files, keeping
+    the verdict unambiguous.
 
     Args:
         client: Connected async client.
         fixtures: The disposable project/session fixture for this run (only
             ``fixtures.session_id`` is used -- the client session is not
-            project-scoped; a fresh throwaway project is created below).
+            project-scoped; the source/target throwaway projects are created
+            below).
 
     Returns:
         ``{CHECK_NAME: outcome}`` -- :attr:`Status.EXECUTED_OK` only when
@@ -133,57 +162,159 @@ async def run_update_indexes_excludes_watcher_ignored_test_data(
         )
     watch_dir_id = str(watch_dirs[0]["id"])
 
-    project_suffix = uuid.uuid4().hex[:8]
+    created_project_ids: List[str] = []
+    try:
+        return await _run_ignore_parity_check(
+            client,
+            watch_dir_id=watch_dir_id,
+            session_id=fixtures.session_id,
+            created_project_ids=created_project_ids,
+        )
+    finally:
+        for leftover_project_id in created_project_ids:
+            try:
+                await client.call_validated(
+                    "project_set_mark_del", {"project_id": leftover_project_id}
+                )
+            except Exception:  # noqa: BLE001 - best-effort cleanup only
+                pass
+
+
+async def _seed_source_project(
+    client: CodeAnalysisAsyncClient,
+    *,
+    watch_dir_id: str,
+    session_id: str,
+    ignored_path: str,
+    ignored_content: bytes,
+    control_path: str,
+    control_content: bytes,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Create and seed the throwaway project the target is ``git_clone``d from.
+
+    Uploads through ``file_sessions.upload_new`` here is fine -- this project
+    is never itself checked for ignore-policy parity, only used as a git
+    remote for the target project below, then discarded.
+
+    Args:
+        client: Connected async client.
+        watch_dir_id: Watch directory to create the source project under.
+        session_id: Open file-session id (not project-scoped).
+        ignored_path: Project-relative path of the watcher-ignored fixture file.
+        ignored_content: Bytes to upload at ``ignored_path``.
+        control_path: Project-relative path of the control fixture file.
+        control_content: Bytes to upload at ``control_path``.
+
+    Returns:
+        ``(source_project_id, source_project_root, error)`` -- ``error`` is
+        ``None`` on success. ``source_project_id`` may be set even when
+        ``error`` is not ``None`` (a later step failed after project
+        creation), so the caller can still clean it up.
+    """
+    suffix = uuid.uuid4().hex[:8]
     create_status, create_data = await call_step_with_data(
         client,
         "create_project",
         {
             "watch_dir_id": watch_dir_id,
-            "project_name": f"verify_ignore_parity_{project_suffix}",
-            "description": "isolated disposable project for the indexing/watcher ignore-parity check",
+            "project_name": f"verify_ignore_parity_src_{suffix}",
+            "description": "throwaway git_clone source for the indexing/watcher ignore-parity check",
             "create_venv": False,
             "apply_template": False,
         },
-        ok_reason="isolated throwaway project created",
+        ok_reason="seed source project created",
     )
     if create_status.status is not Status.EXECUTED_OK:
-        return _outcome(
-            Status.FAILED,
-            f"could not create the isolated project ({create_status.reason})",
+        return (
+            None,
+            None,
+            f"could not create the seed source project ({create_status.reason})",
         )
-    project_id = str((create_data or {}).get("project_id") or "")
-    if not project_id:
-        return _outcome(
-            Status.FAILED,
-            f"create_project response missing project_id: {create_data!r}",
+    source_project_id = str((create_data or {}).get("project_id") or "")
+    source_project_root = str((create_data or {}).get("project_root") or "")
+    if not source_project_id or not source_project_root:
+        return (
+            source_project_id or None,
+            None,
+            f"create_project response missing project_id/project_root: {create_data!r}",
         )
 
     try:
-        return await _run_ignore_parity_check(
-            client, project_id=project_id, session_id=fixtures.session_id
+        await client.file_sessions.upload_new(
+            session_id, ignored_content, source_project_id, ignored_path
         )
-    finally:
-        try:
-            await client.call_validated(
-                "delete_project",
-                {"project_id": project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only
-            pass
+        await client.file_sessions.upload_new(
+            session_id, control_content, source_project_id, control_path
+        )
+    except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
+        return source_project_id, None, f"source fixture seed failed: {exc!r}"
+
+    identity_outcome, _identity_data = await call_step_with_data(
+        client,
+        "git_identity_set",
+        {
+            "project_id": source_project_id,
+            "name": _GIT_IDENTITY_NAME,
+            "email": _GIT_IDENTITY_EMAIL,
+        },
+        ok_reason="git identity configured for the seed source project",
+    )
+    if identity_outcome.status is not Status.EXECUTED_OK:
+        return (
+            source_project_id,
+            None,
+            f"git_identity_set on the seed source project did not succeed: {identity_outcome.reason}",
+        )
+
+    add_outcome, _add_data = await call_step_with_data(
+        client,
+        "git_add",
+        {"project_id": source_project_id, "all": True},
+        ok_reason="source fixture files staged",
+    )
+    if add_outcome.status is not Status.EXECUTED_OK:
+        return (
+            source_project_id,
+            None,
+            f"git_add on the seed source project did not succeed: {add_outcome.reason}",
+        )
+
+    commit_outcome, _commit_data = await call_step_with_data(
+        client,
+        "git_commit",
+        {
+            "project_id": source_project_id,
+            "message": "ignore-parity check: seed fixture files",
+        },
+        ok_reason="source fixture commit created",
+    )
+    if commit_outcome.status is not Status.EXECUTED_OK:
+        return (
+            source_project_id,
+            None,
+            f"git_commit on the seed source project did not succeed: {commit_outcome.reason}",
+        )
+
+    return source_project_id, source_project_root, None
 
 
 async def _run_ignore_parity_check(
     client: CodeAnalysisAsyncClient,
     *,
-    project_id: str,
+    watch_dir_id: str,
     session_id: str,
+    created_project_ids: List[str],
 ) -> Dict[str, CommandOutcome]:
-    """Seed the two fixture files, run ``update_indexes`` once, and assert.
+    """Seed a source project, ``git_clone`` it into an unregistered target,
+    run ``update_indexes`` once, and assert.
 
     Args:
         client: Connected async client.
-        project_id: The isolated throwaway project's UUID.
+        watch_dir_id: Watch directory both throwaway projects are created under.
         session_id: Open file-session id (not project-scoped).
+        created_project_ids: Appended with every project_id this check
+            creates (source and target), so the caller can best-effort clean
+            up all of them regardless of where a failure happens.
 
     Returns:
         ``{CHECK_NAME: outcome}``.
@@ -194,32 +325,54 @@ async def _run_ignore_parity_check(
     ignored_content = (
         f'"""Fixture file under test_data/ -- watcher-ignored (token {token})."""\n'
         "x = 1\n"
-    )
+    ).encode("utf-8")
     control_content = (
         f'"""Fixture control file under src/ -- must be indexed (token {token})."""\n'
         "y = 2\n"
+    ).encode("utf-8")
+
+    source_project_id, source_project_root, seed_error = await _seed_source_project(
+        client,
+        watch_dir_id=watch_dir_id,
+        session_id=session_id,
+        ignored_path=ignored_path,
+        ignored_content=ignored_content,
+        control_path=control_path,
+        control_content=control_content,
     )
+    if source_project_id:
+        created_project_ids.append(source_project_id)
+    if seed_error:
+        return _outcome(Status.FAILED, truncate(seed_error))
 
-    try:
-        await client.file_sessions.upload_new(
-            session_id,
-            ignored_content.encode("utf-8"),
-            project_id,
-            ignored_path,
+    clone_suffix = uuid.uuid4().hex[:8]
+    clone_outcome, clone_data = await call_step_with_data(
+        client,
+        "git_clone",
+        {
+            "url": source_project_root,
+            "watch_dir_id": watch_dir_id,
+            "target_name": f"verify_ignore_parity_{clone_suffix}",
+        },
+        ok_reason="target project materialized via git_clone (files unregistered)",
+    )
+    if clone_outcome.status is not Status.EXECUTED_OK:
+        return _outcome(
+            clone_outcome.status,
+            f"git_clone of the seed source did not succeed: {clone_outcome.reason}",
         )
-        await client.file_sessions.upload_new(
-            session_id,
-            control_content.encode("utf-8"),
-            project_id,
-            control_path,
+    target_project_id = str((clone_data or {}).get("project_id") or "")
+    if not target_project_id:
+        return _outcome(
+            Status.FAILED,
+            f"git_clone response missing project_id: {clone_data!r}",
         )
-    except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
-        return _outcome(Status.FAILED, truncate(f"fixture seed failed: {exc!r}"))
+    created_project_ids.append(target_project_id)
 
-    reindex_outcome, reindex_data = await call_step_with_data(
+    reindex_outcome, _reindex_data = await call_step_with_data(
         client,
         "update_indexes",
-        {"project_id": project_id},
+        {"project_id": target_project_id},
         ok_reason="update_indexes run completed",
     )
     if reindex_outcome.status is not Status.EXECUTED_OK:
@@ -229,14 +382,14 @@ async def _run_ignore_parity_check(
         )
 
     try:
-        control_file_id = await _lookup_file_id(client, project_id, control_path)
+        control_file_id = await _lookup_file_id(client, target_project_id, control_path)
     except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
         return _outcome(
             Status.FAILED,
             truncate(f"list_project_files lookup for {control_path} failed: {exc!r}"),
         )
     try:
-        ignored_file_id = await _lookup_file_id(client, project_id, ignored_path)
+        ignored_file_id = await _lookup_file_id(client, target_project_id, ignored_path)
     except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
         return _outcome(
             Status.FAILED,

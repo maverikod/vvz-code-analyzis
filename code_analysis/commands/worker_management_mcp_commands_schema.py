@@ -26,21 +26,37 @@ def get_start_worker_metadata(
         "email": email,
         "detailed_description": (
             "The start_worker command starts a background worker process in a separate process. "
-            "Supported worker types are 'file_watcher' and 'vectorization'. "
+            "Supported worker types are 'file_watcher', 'vectorization', and 'indexing'. "
             "The worker is registered in WorkerManager and runs as a daemon process.\n\n"
+            "Start kwargs are resolved through the same boot-parity resolvers the server "
+            "itself uses at startup (code_analysis.core.worker_start_args): only "
+            "parameters you explicitly pass override server config; everything else "
+            "(batch_size, poll_interval, vector_dim, log path, enabled kill-switch) "
+            "comes from code_analysis.worker / code_analysis.indexing_worker / "
+            "code_analysis.file_watcher in server config, exactly like a worker "
+            "started automatically at server boot. A worker whose config section "
+            "disables it (e.g. indexing_worker.enabled=false) will not start; the "
+            "command returns WORKER_START_SKIPPED with the reason.\n\n"
             "Operation flow:\n"
-            "1. Validates root_dir exists and is a directory\n"
-            "2. Loads config.json to get storage paths\n"
-            "3. Opens database connection\n"
-            "4. For file_watcher:\n"
+            "1. Resolves project_id to the project root (file_watcher's default "
+            "watch_dirs only; vectorization and indexing are universal workers that "
+            "process all projects from the database regardless of project_id)\n"
+            "2. Loads config.json and resolves storage paths (database, FAISS "
+            "directory, log directory)\n"
+            "3. For file_watcher:\n"
             "   - Projects are discovered automatically in watch_dirs\n"
-            "   - Resolves watch_dirs (defaults to [root_dir] if not provided)\n"
+            "   - Resolves watch_dirs (defaults to a single directory at the "
+            "project root resolved from project_id, if not provided)\n"
             "   - Starts file watcher worker process\n"
             "   - Registers worker in WorkerManager\n"
-            "5. For vectorization:\n"
+            "4. For vectorization:\n"
             "   - Gets base FAISS directory (project-scoped indexes: {faiss_dir}/{project_id}.bin)\n"
             "   - Loads SVO config for embedding service\n"
             "   - Starts universal vectorization worker process\n"
+            "   - Registers worker in WorkerManager\n"
+            "5. For indexing:\n"
+            "   - Processes files with needs_chunking=1 across all projects\n"
+            "   - Starts indexing worker process\n"
             "   - Registers worker in WorkerManager\n"
             "6. Returns worker start result with PID\n\n"
             "File Watcher Worker:\n"
@@ -59,43 +75,56 @@ def get_start_worker_metadata(
             "   - Uses project-scoped FAISS index ({faiss_dir}/{project_id}.bin)\n"
             "   - Automatically discovers all projects from database\n"
             "   - Processes projects sequentially, sorted by pending count\n\n"
+            "Indexing Worker:\n"
+            "- Processes files with needs_chunking=1 via driver index_file RPC\n"
+            "- Universal - processes all projects from database automatically\n"
+            "- Polls database at specified poll_interval, batch_size files per project per cycle\n\n"
             "Use cases:\n"
             "- Start file watcher to monitor project changes\n"
             "- Start vectorization worker to process code chunks\n"
+            "- Start indexing worker to register/refresh files pending indexing\n"
             "- Run workers in background for continuous processing\n\n"
             "Important notes:\n"
             "- Workers run as daemon processes\n"
             "- Workers are registered in WorkerManager\n"
             "- File watcher discovers projects automatically\n"
-            "- Vectorization worker is universal - processes all projects from database automatically\n"
+            "- Vectorization and indexing workers are universal - they process all "
+            "projects from database automatically; project_id does not scope them\n"
             "- Vectorization worker uses project-scoped FAISS indexes (no dataset concept)\n"
-            "- Workers write logs to specified log path\n"
+            "- Workers write logs to the resolved log path (config-driven by default, "
+            "same location the server would use at boot)\n"
             "- Use stop_worker to stop workers gracefully"
         ),
         "parameters": {
             "worker_type": {
                 "description": (
-                    "Type of worker to start. Options: 'file_watcher', 'vectorization'. "
-                    "file_watcher monitors directories for file changes. "
-                    "vectorization processes code chunks for embedding."
+                    "Type of worker to start. Options: 'file_watcher', 'vectorization', "
+                    "'indexing'. file_watcher monitors directories for file changes. "
+                    "vectorization processes code chunks for embedding. indexing "
+                    "registers/refreshes files pending indexing."
                 ),
                 "type": "string",
                 "required": True,
                 "enum": ["file_watcher", "vectorization", "indexing"],
             },
-            "root_dir": {
+            "project_id": {
                 "description": (
-                    "Project root directory path. Can be absolute or relative. "
-                    "Must contain data/code_analysis.db file and config.json. "
-                    "Used to resolve storage paths (database, FAISS directory) for vectorization worker."
+                    "Project UUID. Used to resolve the project root and storage paths "
+                    "(database, FAISS directory, log directory). For file_watcher this "
+                    "also supplies the default watch_dirs (the project root) when "
+                    "watch_dirs is omitted. vectorization and indexing are universal "
+                    "workers that process every project in the database once started; "
+                    "project_id does not scope which projects they process."
                 ),
                 "type": "string",
                 "required": True,
             },
             "watch_dirs": {
                 "description": (
-                    "Directories to watch (file_watcher only). Defaults to [root_dir] if not provided. "
-                    "Projects are discovered automatically by finding projectid files in these directories."
+                    "Directories to watch (file_watcher only). Defaults to a single "
+                    "directory at the project root resolved from project_id, if not "
+                    "provided. Projects are discovered automatically by finding "
+                    "projectid files in these directories."
                 ),
                 "type": "array",
                 "required": False,
@@ -103,44 +132,50 @@ def get_start_worker_metadata(
             },
             "scan_interval": {
                 "description": (
-                    "Scan interval in seconds (file_watcher only). Default is 60. "
-                    "How often the worker scans directories for changes."
+                    "Scan interval in seconds (file_watcher only). Omit to use "
+                    "code_analysis.file_watcher.scan_interval from server config "
+                    "(defaults to 60 there). How often the worker scans directories "
+                    "for changes."
                 ),
                 "type": "integer",
                 "required": False,
-                "default": 60,
             },
             "poll_interval": {
                 "description": (
-                    "Poll interval in seconds (vectorization only). Default is 30. "
-                    "How often the worker polls database for new chunks to process."
+                    "Poll interval in seconds (vectorization only; ignored for "
+                    "indexing, which has its own worker loop). Omit to use "
+                    "code_analysis.worker.poll_interval from server config. How often "
+                    "the worker polls database for new chunks to process."
                 ),
                 "type": "integer",
                 "required": False,
-                "default": 30,
             },
             "batch_size": {
                 "description": (
-                    "Batch size (vectorization only). Default is 10. "
-                    "Number of chunks to process in each batch."
+                    "Batch size (vectorization or indexing; ignored for file_watcher). "
+                    "Omit to use the configured value for the given worker_type "
+                    "(code_analysis.worker.batch_size for vectorization, "
+                    "code_analysis.indexing_worker.batch_size for indexing). Number of "
+                    "chunks/files to process in each batch/cycle."
                 ),
                 "type": "integer",
                 "required": False,
-                "default": 10,
             },
             "vector_dim": {
                 "description": (
-                    "Vector dimension (vectorization only). Default is 384. "
-                    "Must match embedding service vector dimension."
+                    "Vector dimension (vectorization only). Omit to use "
+                    "code_analysis.vector_dim from server config. Must match "
+                    "embedding service vector dimension."
                 ),
                 "type": "integer",
                 "required": False,
-                "default": 384,
             },
             "worker_log_path": {
                 "description": (
-                    "Optional log path for worker process. "
-                    "Defaults to logs/file_watcher.log or logs/vectorization_worker.log."
+                    "Optional log path for worker process. Omit to use the "
+                    "server-configured log path for the given worker_type, falling "
+                    "back to server.log_dir when unset -- the same location the "
+                    "server itself would use for this worker type at boot."
                 ),
                 "type": "string",
                 "required": False,
@@ -151,32 +186,34 @@ def get_start_worker_metadata(
                 "description": "Start file watcher worker",
                 "command": {
                     "worker_type": "file_watcher",
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "scan_interval": 60,
                 },
                 "explanation": (
-                    "Starts file watcher worker that monitors root_dir for file changes. "
-                    "Projects are discovered automatically."
+                    "Starts file watcher worker; without watch_dirs it defaults to "
+                    "the project root resolved from project_id. Projects are "
+                    "discovered automatically."
                 ),
             },
             {
                 "description": "Start vectorization worker",
                 "command": {
                     "worker_type": "vectorization",
-                    "root_dir": "/home/user/projects/my_project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "poll_interval": 30,
-                    "batch_size": 10,
+                    "batch_size": 5,
                 },
                 "explanation": (
                     "Starts universal vectorization worker that processes code chunks for embedding. "
-                    "Worker automatically discovers all projects from database and processes them sequentially."
+                    "Worker automatically discovers all projects from database and processes them "
+                    "sequentially; project_id is only used to resolve storage paths."
                 ),
             },
             {
                 "description": "Start file watcher with custom watch directories",
                 "command": {
                     "worker_type": "file_watcher",
-                    "root_dir": "/home/user/projects",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "watch_dirs": [
                         "/home/user/projects/proj1",
                         "/home/user/projects/proj2",
@@ -196,6 +233,22 @@ def get_start_worker_metadata(
                     "Check database integrity, verify config.json exists, "
                     "ensure embedding service is configured (for vectorization), "
                     "check file permissions."
+                ),
+            },
+            "WORKER_START_SKIPPED": {
+                "description": (
+                    "The resolved server config disables this worker type or is "
+                    "missing required config (e.g. worker.enabled=false, "
+                    "indexing_worker.enabled=false, file_watcher.enabled=false, or "
+                    "no chunker configured for vectorization). The worker process "
+                    "was not started; details.reason (via the error message) "
+                    "explains why."
+                ),
+                "example": "indexing worker disabled in config",
+                "solution": (
+                    "Update the relevant code_analysis.* section in server config "
+                    "to enable the worker type, or configure the missing section "
+                    "(e.g. code_analysis.chunker for vectorization), then retry."
                 ),
             },
         },
@@ -223,9 +276,13 @@ def get_start_worker_metadata(
         },
         "best_practices": [
             "Use stop_worker to stop workers gracefully before restarting",
-            "File watcher discovers projects automatically - no need to specify project_id",
-            "Vectorization requires embedding service to be configured",
-            "Adjust scan_interval and poll_interval based on workload",
+            "project_id is required for all worker types (resolves storage paths; "
+            "also supplies file_watcher's default watch_dirs) -- file watcher "
+            "still discovers individual projects automatically within watch_dirs",
+            "Vectorization requires a chunker to be configured in server config",
+            "Omit scan_interval/poll_interval/batch_size/vector_dim/worker_log_path "
+            "to inherit the same values the server would use starting this worker "
+            "at boot; pass them only to override server config for this one start",
             "Monitor worker logs to ensure proper operation",
             "Workers run as daemon processes - they stop when parent process stops",
         ],

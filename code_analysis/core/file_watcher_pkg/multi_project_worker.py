@@ -31,7 +31,8 @@ from .multi_project_worker_cycle import run_scan_cycle
 from .multi_project_worker_init import initialize_watch_dirs
 from .multi_project_worker_specs import WatchDirSpec, build_watch_dir_specs
 from .processor import FileChangeProcessor
-from .scan_interval_backoff import next_scan_interval
+from .scan_interval_backoff import (compute_real_work_from_cycle_stats,
+                                    next_scan_interval)
 from .scanner import scan_directory
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,9 @@ class MultiProjectFileWatcherWorker:
         # Last-seen per-project disk signature (file_count, max_mtime, total_size)
         # for the manifest-rebuild short-circuit (bug 673ba07a Defect 1).
         self._manifest_signature_cache: Dict[str, Tuple[int, float, int]] = {}
+        # Last-seen per-project (db_signature, policy_stamp) for the pre-scan
+        # ignore-purge gate (bug 5b663fbb cost fix); see purge_gate_signature.py.
+        self._purge_signature_cache: Dict[str, Any] = {}
 
     def stop(self) -> None:
         """Stop the worker."""
@@ -294,11 +298,7 @@ class MultiProjectFileWatcherWorker:
                     f"errors: {cycle_stats.get('errors', 0)}"
                 )
 
-                real_work = (
-                    cycle_stats.get("new_files", 0)
-                    + cycle_stats.get("changed_files", 0)
-                    + cycle_stats.get("deleted_files", 0)
-                )
+                real_work = compute_real_work_from_cycle_stats(cycle_stats)
                 effective_interval, no_progress_streak = next_scan_interval(
                     scan_interval=self.scan_interval,
                     real_work=real_work,

@@ -67,6 +67,11 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         "deleted_files": 0,
         "errors": 0,
         "files_scanned": 0,
+        # SCAN-phase detected delta (bug 6d5ad353) -- see
+        # compute_real_work_from_cycle_stats and multi_project_worker_scan.
+        "detected_new_files": 0,
+        "detected_changed_files": 0,
+        "detected_deleted_files": 0,
     }
 
     processor = FileChangeProcessor(
@@ -100,6 +105,7 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
             worker._pid,
             config_path=scan_config_path,
             manifest_signature_cache=getattr(worker, "_manifest_signature_cache", None),
+            purge_signature_cache=getattr(worker, "_purge_signature_cache", None),
         )
         watch_dir_duration = time.time() - watch_dir_start
 
@@ -109,6 +115,15 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         cycle_stats["deleted_files"] += watch_dir_stats.get("deleted_files", 0)
         cycle_stats["errors"] += watch_dir_stats.get("errors", 0)
         cycle_stats["files_scanned"] += watch_dir_stats.get("files_scanned", 0)
+        cycle_stats["detected_new_files"] += watch_dir_stats.get(
+            "detected_new_files", 0
+        )
+        cycle_stats["detected_changed_files"] += watch_dir_stats.get(
+            "detected_changed_files", 0
+        )
+        cycle_stats["detected_deleted_files"] += watch_dir_stats.get(
+            "detected_deleted_files", 0
+        )
         if cycle_stats.get("files_scanned", 0):
             processed = (
                 cycle_stats["new_files"]

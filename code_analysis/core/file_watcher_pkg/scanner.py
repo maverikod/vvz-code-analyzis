@@ -43,8 +43,10 @@ from ..project_ignore_policy import (
     TEST_DATA_DIR_BASENAME,
     VERSIONS_DIR_BASENAME,
     filter_ignore_exception_py_paths_for_watcher,
+    matches_any_glob_ignore_pattern as _matches_any_glob,
     path_is_under_project_local_venv,
     path_matches_traversal_skip_shape_rules,
+    path_pattern_candidates_for_glob_match as _path_pattern_candidates,
 )
 
 from ..docs_indexing_defaults import DOCS_INDEX_FILE_SUFFIXES
@@ -103,76 +105,6 @@ def _ignore_filter_path_parts(
             return ()
         return Path(rel).parts
     return path.parts
-
-
-def _path_pattern_candidates(path: Path, project_root: Optional[Path]) -> Set[str]:
-    """POSIX-style candidates for glob matching.
-
-    When ``project_root`` is set and ``path`` lies under it, only **project-relative**
-    strings are returned. Watch-directory ignore patterns (``**/data/**``, etc.) are
-    defined relative to the project root; including absolute paths would false-match
-    when the watch dir itself contains a segment such as ``data``
-    (e.g. ``/var/casmgr/data/...``).
-
-    Args:
-        path: Filesystem path to generate candidates for.
-        project_root: Optional project root used to compute relative candidates.
-
-    Returns:
-        Set of candidate strings for glob matching.
-    """
-    out: Set[str] = set()
-    try:
-        resolved = path.resolve()
-    except OSError:
-        resolved = path
-
-    if project_root is not None:
-        try:
-            root_resolved = project_root.resolve()
-        except OSError:
-            root_resolved = project_root
-        try:
-            rel = resolved.relative_to(root_resolved).as_posix()
-            out.add(rel)
-            out.add("/" + rel.lstrip("/"))
-            return out
-        except ValueError:
-            pass
-
-    abs_posix = resolved.as_posix()
-    out.add(abs_posix)
-    out.add(abs_posix.lstrip("/"))
-    out.add("/" + abs_posix.lstrip("/"))
-    return out
-
-
-def _matches_any_glob(
-    path: Path, patterns: Optional[List[str]], *, project_root: Optional[Path]
-) -> bool:
-    """Return True when any pattern matches path candidates/subpaths.
-
-    Args:
-        path: Filesystem path to match against patterns.
-        patterns: List of glob patterns to test.
-        project_root: Optional root for relative path candidate generation.
-
-    Returns:
-        True if any pattern matches any candidate derived from path.
-    """
-    if not patterns:
-        return False
-    candidates = _path_pattern_candidates(path, project_root)
-    for pattern in patterns:
-        for candidate in candidates:
-            if fnmatch.fnmatch(candidate, pattern):
-                return True
-            parts = [p for p in candidate.split("/") if p]
-            for i in range(len(parts)):
-                sub = "/".join(parts[i:])
-                if fnmatch.fnmatch(sub, pattern) or fnmatch.fnmatch("/" + sub, pattern):
-                    return True
-    return False
 
 
 def _pattern_parts_without_globs(pattern: str) -> tuple[str, ...]:

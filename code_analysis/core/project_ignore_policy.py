@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import fnmatch
 from pathlib import Path
-from typing import AbstractSet, Collection, FrozenSet, Optional
+from typing import AbstractSet, Collection, FrozenSet, Optional, Sequence, Set
 
 # Well-known directory / path segment names (single source for watcher + listing).
 DATA_DIR_BASENAME: str = "data"
@@ -314,3 +314,113 @@ def filter_ignore_exception_py_paths_for_watcher(
             continue
         out.add(rp)
     return out
+
+
+def path_pattern_candidates_for_glob_match(
+    path: Path, project_root: Optional[Path]
+) -> Set[str]:
+    """POSIX-style candidates for glob matching against watcher-style ignore patterns.
+
+    Single source of truth shared by :func:`code_analysis.core.file_watcher_pkg.
+    scanner.should_ignore_path` (files/dirs during a watch-dir scan) and
+    :func:`directory_matches_glob_ignore_patterns` (the ``update_indexes``
+    eligibility walk, bug 5b663fbb) -- moved here from ``scanner.py`` so both
+    walks apply exactly the same glob semantics instead of two copies that can
+    drift apart.
+
+    When ``project_root`` is set and ``path`` lies under it, only
+    **project-relative** strings are returned. Watch-directory ignore patterns
+    (``**/data/**``, etc.) are defined relative to the project root; including
+    absolute paths would false-match when the watch dir itself contains a
+    segment such as ``data`` (e.g. ``/var/casmgr/data/...``).
+    """
+    out: Set[str] = set()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+
+    if project_root is not None:
+        try:
+            root_resolved = project_root.resolve()
+        except OSError:
+            root_resolved = project_root
+        try:
+            rel = resolved.relative_to(root_resolved).as_posix()
+            out.add(rel)
+            out.add("/" + rel.lstrip("/"))
+            return out
+        except ValueError:
+            pass
+
+    abs_posix = resolved.as_posix()
+    out.add(abs_posix)
+    out.add(abs_posix.lstrip("/"))
+    out.add("/" + abs_posix.lstrip("/"))
+    return out
+
+
+def matches_any_glob_ignore_pattern(
+    path: Path, patterns: Optional[Sequence[str]], *, project_root: Optional[Path]
+) -> bool:
+    """True when any of ``patterns`` matches ``path`` (or one of its subpaths).
+
+    Moved here from ``scanner.py`` (formerly ``_matches_any_glob``) as the shared
+    glob-matching primitive; see :func:`path_pattern_candidates_for_glob_match`.
+    """
+    if not patterns:
+        return False
+    candidates = path_pattern_candidates_for_glob_match(path, project_root)
+    for pattern in patterns:
+        for candidate in candidates:
+            if fnmatch.fnmatch(candidate, pattern):
+                return True
+            parts = [p for p in candidate.split("/") if p]
+            for i in range(len(parts)):
+                sub = "/".join(parts[i:])
+                if fnmatch.fnmatch(sub, pattern) or fnmatch.fnmatch("/" + sub, pattern):
+                    return True
+    return False
+
+
+def directory_matches_glob_ignore_patterns(
+    dir_path: Path, project_root: Path, patterns: Sequence[str]
+) -> bool:
+    """
+    True when directory ``dir_path`` matches any watcher-style glob ignore pattern
+    (e.g. ``**/test_data/**``, ``**/*.egg-info/**``, ``**/develop-eggs/**``),
+    evaluated relative to ``project_root``.
+
+    Directory-shaped patterns require a path separator on *both* sides of the
+    matched segment (``**/X/**``). A bare directory path such as ``test_data`` or
+    ``pkg.egg-info`` has no *trailing* separator of its own -- a file one level
+    inside already gains a leading ``/`` from
+    :func:`path_pattern_candidates_for_glob_match` and matches, but the directory
+    itself would not. This adds a trailing ``/`` to the directory's own
+    relative-path candidates before delegating to the same glob semantics as
+    :func:`matches_any_glob_ignore_pattern`, so directory-level pruning (no
+    descent at all, not just a post-hoc file filter) also recognizes these
+    patterns. Used to unify ``update_indexes``' eligibility walk with the
+    watcher's directory-pruning ignore policy (bug 5b663fbb) via
+    :func:`code_analysis.core.venv_path_policy.collect_python_files_for_indexing`
+    / ``collect_text_index_files_for_indexing``.
+    """
+    if not patterns:
+        return False
+    base_candidates = path_pattern_candidates_for_glob_match(dir_path, project_root)
+    candidates: Set[str] = set(base_candidates)
+    for c in base_candidates:
+        candidates.add(c if c.endswith("/") else c + "/")
+    for pattern in patterns:
+        for candidate in candidates:
+            if fnmatch.fnmatch(candidate, pattern):
+                return True
+            parts = [p for p in candidate.split("/") if p]
+            for i in range(len(parts)):
+                sub = "/".join(parts[i:])
+                for sub_variant in (sub, sub + "/"):
+                    if fnmatch.fnmatch(sub_variant, pattern) or fnmatch.fnmatch(
+                        "/" + sub_variant, pattern
+                    ):
+                        return True
+    return False

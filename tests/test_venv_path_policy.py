@@ -309,6 +309,65 @@ def test_default_project_walk_never_descends_into_ignored_directories(
     assert not any(f"{os_module.sep}data" in r or r.endswith(f"{os_module.sep}data") for r in yielded_roots)
 
 
+def test_collect_python_files_for_indexing_excludes_watcher_ignored_dirs(
+    tmp_path: Path,
+) -> None:
+    """Bug 5b663fbb: ``update_indexes``' eligibility walk (``collect_python_files_
+    for_indexing``) must exclude directories the watcher's ignore policy already
+    excludes (``DEFAULT_WATCH_DIR_IGNORE_PATTERNS``): a bare ``test_data`` dir, a
+    nested one, an ``*.egg-info`` dir, and ``develop-eggs`` -- vs. a control file
+    that must stay included. Before the fix, ``collect_python_files_for_indexing``
+    only pruned :data:`code_analysis.core.constants.DEFAULT_IGNORE_PATTERNS`
+    (basenames), which does not cover any of these four watcher-ignored shapes, so
+    the watcher purges (``ignore_pre_scan_purge``) what ``update_indexes`` just
+    re-registered every cycle (the 1496-row purge recurrence).
+    """
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+
+    (root / "test_data").mkdir()
+    (root / "test_data" / "fixture.py").write_text("x = 1\n", encoding="utf-8")
+
+    (root / "nested" / "test_data").mkdir(parents=True)
+    (root / "nested" / "test_data" / "deep.py").write_text("x = 1\n", encoding="utf-8")
+
+    (root / "pkg.egg-info").mkdir()
+    (root / "pkg.egg-info" / "PKG-INFO.py").write_text("x = 1\n", encoding="utf-8")
+
+    (root / "develop-eggs").mkdir()
+    (root / "develop-eggs" / "e.py").write_text("x = 1\n", encoding="utf-8")
+
+    found = collect_python_files_for_indexing(root, [])
+    found_posix = {p.as_posix() for p in found}
+
+    assert (root / "src" / "real.py").resolve().as_posix() in found_posix
+    assert not any("/test_data/" in p for p in found_posix)
+    assert not any("/pkg.egg-info/" in p for p in found_posix)
+    assert not any("/develop-eggs/" in p for p in found_posix)
+
+
+def test_collect_text_index_files_for_indexing_excludes_watcher_ignored_dirs(
+    tmp_path: Path,
+) -> None:
+    """Same as above for the non-Python text-index walk (bug 5b663fbb)."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "real.txt").write_text("keep\n", encoding="utf-8")
+
+    (root / "test_data").mkdir()
+    (root / "test_data" / "fixture.txt").write_text("drop\n", encoding="utf-8")
+
+    (root / "pkg.egg-info").mkdir()
+    (root / "pkg.egg-info" / "note.txt").write_text("drop\n", encoding="utf-8")
+
+    found = collect_text_index_files_for_indexing(root)
+    found_posix = {p.as_posix() for p in found}
+
+    assert not any("/test_data/" in p for p in found_posix)
+    assert not any("/pkg.egg-info/" in p for p in found_posix)
+
+
 def test_expand_ignore_exception_all_files_includes_non_py(tmp_path: Path) -> None:
     """Verify test expand ignore exception all files includes non py."""
     root = tmp_path / "proj"

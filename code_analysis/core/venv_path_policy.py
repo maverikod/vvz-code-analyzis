@@ -16,7 +16,8 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import AbstractSet, Collection, FrozenSet, List, Optional, Sequence, Set
+from typing import (AbstractSet, Collection, FrozenSet, List, Optional,
+                    Sequence, Set, Tuple)
 
 from .constants import default_ignore_file_suffixes
 from .fs_permissions import log_walk_error
@@ -204,6 +205,74 @@ def ignore_exception_files_for_watch_dir(watch_dir: Path) -> Set[Path]:
         return set()
     roots = [p.root_path for p in discovered]
     return build_ignore_exception_files_for_projects(roots, patterns)
+
+
+def _load_global_watch_dir_ignore_patterns_from_config_path(
+    config_path: Path,
+) -> List[str]:
+    """Read the global ``file_watcher.ignore_patterns`` from provided config path."""
+    from .storage_paths import load_raw_config
+
+    raw = load_raw_config(config_path)
+    fw = raw.get("file_watcher") or {}
+    val = fw.get("ignore_patterns")
+    if val is None:
+        return []
+    if not isinstance(val, list):
+        logger.warning("file_watcher.ignore_patterns must be a list; ignoring")
+        return []
+    out: List[str] = []
+    for item in val:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def load_indexing_ignore_glob_patterns_from_config_path(
+    config_path: Path,
+) -> Tuple[str, ...]:
+    """
+    Merged glob ignore patterns ``update_indexes``' eligibility walk applies, so it
+    excludes what the watcher's default ignore policy already excludes (bug
+    5b663fbb): default watch-dir patterns
+    (:data:`code_analysis.core.watch_dir_settings.DEFAULT_WATCH_DIR_IGNORE_PATTERNS`)
+    merged with the same global ``file_watcher.ignore_patterns`` union the watcher
+    applies (:func:`code_analysis.core.watch_dir_settings.merge_watch_ignore_patterns`).
+
+    Deliberately does NOT consult a specific watch directory's per-directory
+    ``settings.json`` override: ``update_indexes`` runs by ``project_id`` alone,
+    with no established watch-dir context to resolve one settings.json from (a
+    project could even be indexed outside any configured watch dir). The default
+    watch-dir pattern set plus the global config union already covers the
+    divergence the watcher purge actually exploits (``test_data``, ``*.egg-info``,
+    ``develop-eggs``, ...); a project-specific override would only narrow that
+    further, which is out of scope here.
+    """
+    from .watch_dir_settings import (
+        DEFAULT_WATCH_DIR_IGNORE_PATTERNS, merge_watch_ignore_patterns)
+
+    try:
+        resolved = Path(config_path).expanduser().resolve()
+        global_patterns = _load_global_watch_dir_ignore_patterns_from_config_path(
+            resolved
+        )
+    except Exception as e:
+        logger.debug(
+            "Could not load file_watcher.ignore_patterns from %s: %s", config_path, e
+        )
+        global_patterns = []
+    return merge_watch_ignore_patterns(
+        DEFAULT_WATCH_DIR_IGNORE_PATTERNS, global_patterns
+    )
+
+
+def load_indexing_ignore_glob_patterns_from_config() -> Tuple[str, ...]:
+    """
+    Same as :func:`load_indexing_ignore_glob_patterns_from_config_path`, resolving
+    the active server config path automatically (mirrors
+    :func:`load_ignore_exceptions_from_config`).
+    """
+    return load_indexing_ignore_glob_patterns_from_config_path(_resolve_config_path())
 
 
 def load_venv_site_packages_index_allowlist_from_config() -> List[str]:
@@ -441,19 +510,48 @@ def _iter_project_walk_prune_dirs(
     ignore_dirs: Set[str],
     *,
     show_hidden: bool = False,
+    walk_root: Optional[Path] = None,
+    glob_ignore_patterns: Optional[Sequence[str]] = None,
+    glob_project_root: Optional[Path] = None,
 ) -> None:
-    """In-place prune for ``os.walk`` (shared by Python-only and all-files walkers)."""
-    dirs[:] = [
-        d
-        for d in dirs
-        if not directory_basename_pruned_from_default_project_walk(
+    """In-place prune for ``os.walk`` (shared by Python-only and all-files walkers).
+
+    When ``glob_ignore_patterns`` is given together with ``walk_root`` and
+    ``glob_project_root``, directories are ALSO pruned when their
+    project-relative path matches one of the patterns (bug 5b663fbb: unify this
+    walk's exclusions with the watcher's ``DEFAULT_WATCH_DIR_IGNORE_PATTERNS`` /
+    per-watch-dir ignore policy), in addition to the basename-only pruning below
+    -- see :func:`code_analysis.core.project_ignore_policy.
+    directory_matches_glob_ignore_patterns`.
+    """
+    kept: List[str] = []
+    for d in dirs:
+        if directory_basename_pruned_from_default_project_walk(
             d, ignore_dirs, show_hidden=show_hidden
-        )
-    ]
+        ):
+            continue
+        if (
+            glob_ignore_patterns
+            and walk_root is not None
+            and glob_project_root is not None
+        ):
+            from .project_ignore_policy import \
+                directory_matches_glob_ignore_patterns
+
+            if directory_matches_glob_ignore_patterns(
+                walk_root / d, glob_project_root, glob_ignore_patterns
+            ):
+                continue
+        kept.append(d)
+    dirs[:] = kept
 
 
 def iter_project_python_files_excluding_venv(
-    project_root: Path, *, show_hidden: bool = False, scope_root: Optional[Path] = None
+    project_root: Path,
+    *,
+    show_hidden: bool = False,
+    scope_root: Optional[Path] = None,
+    extra_ignore_glob_patterns: Optional[Sequence[str]] = None,
 ) -> List[Path]:
     """
     Walk project tree for ``.py`` files, excluding hidden dirs and venv/data/logs.
@@ -479,6 +577,11 @@ def iter_project_python_files_excluding_venv(
             entries it discovers in ``dirs``, so pointing it directly at an
             otherwise-ignored directory would silently surface paths a full
             walk from ``project_root`` would never reach.
+        extra_ignore_glob_patterns: Optional watcher-style glob patterns (e.g.
+            ``**/test_data/**``) additionally pruned during the walk (bug
+            5b663fbb); ``None`` (every pre-existing caller) preserves the
+            previous basename-only behavior exactly. See
+            :func:`collect_python_files_for_indexing`.
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
@@ -489,7 +592,14 @@ def iter_project_python_files_excluding_venv(
     root_path = (scope_root if scope_root is not None else project_root).resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
-        _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
+        _iter_project_walk_prune_dirs(
+            dirs,
+            ignore_dirs,
+            show_hidden=show_hidden,
+            walk_root=Path(walk_root),
+            glob_ignore_patterns=extra_ignore_glob_patterns,
+            glob_project_root=root_path,
+        )
         for f in walk_files:
             if f.endswith(".py"):
                 files.append(Path(walk_root) / f)
@@ -497,7 +607,10 @@ def iter_project_python_files_excluding_venv(
 
 
 def iter_project_text_index_files_excluding_venv(
-    project_root: Path, *, show_hidden: bool = False
+    project_root: Path,
+    *,
+    show_hidden: bool = False,
+    extra_ignore_glob_patterns: Optional[Sequence[str]] = None,
 ) -> List[Path]:
     """
     Walk project tree for whitelisted non-Python text files (bug 688d2d01 /
@@ -515,6 +628,9 @@ def iter_project_text_index_files_excluding_venv(
         project_root: Project root to walk.
         show_hidden: ``ls -a``-style dot-dir/cache-dir inclusion (see
             :func:`iter_project_python_files_excluding_venv`).
+        extra_ignore_glob_patterns: Same as
+            :func:`iter_project_python_files_excluding_venv` (bug 5b663fbb);
+            ``None`` (every pre-existing caller) preserves prior behavior.
 
     Returns:
         Sorted list of absolute paths to whitelisted text files.
@@ -529,7 +645,14 @@ def iter_project_text_index_files_excluding_venv(
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path, onerror=log_walk_error):
-        _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
+        _iter_project_walk_prune_dirs(
+            dirs,
+            ignore_dirs,
+            show_hidden=show_hidden,
+            walk_root=Path(walk_root),
+            glob_ignore_patterns=extra_ignore_glob_patterns,
+            glob_project_root=root_path,
+        )
         for f in walk_files:
             if is_text_index_eligible(f):
                 files.append(Path(walk_root) / f)
@@ -546,11 +669,18 @@ def collect_text_index_files_for_indexing(project_root: Path) -> List[Path]:
     this feature does not replicate (left out of scope; revisit if a real
     need for either surfaces for non-Python text files).
 
+    Applies the same watcher-ignore-policy glob pruning as
+    :func:`collect_python_files_for_indexing` (bug 5b663fbb) --
+    see :func:`load_indexing_ignore_glob_patterns_from_config`.
+
     Returns:
         Sorted list of absolute paths (see
         :func:`iter_project_text_index_files_excluding_venv`).
     """
-    return iter_project_text_index_files_excluding_venv(project_root)
+    glob_patterns = load_indexing_ignore_glob_patterns_from_config()
+    return iter_project_text_index_files_excluding_venv(
+        project_root, extra_ignore_glob_patterns=glob_patterns or None
+    )
 
 
 def iter_project_files_excluding_venv(
@@ -661,11 +791,18 @@ def collect_python_files_for_indexing(
     Also merges ``.py`` paths matching ``code_analysis.ignore_exceptions`` (glob,
     project-relative), except under ``.venv``/``venv`` unless allowlisted via RECORD.
 
+    Also prunes directories the watcher's default ignore policy would prune
+    (bug 5b663fbb: ``test_data``, ``*.egg-info``, ``develop-eggs``, ...) -- see
+    :func:`load_indexing_ignore_glob_patterns_from_config`.
+
     Ordering: sorted merged set.
     """
     from .project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 
-    base = iter_project_python_files_excluding_venv(project_root)
+    glob_patterns = load_indexing_ignore_glob_patterns_from_config()
+    base = iter_project_python_files_excluding_venv(
+        project_root, extra_ignore_glob_patterns=glob_patterns or None
+    )
     extra = build_allowlisted_site_packages_py_files(
         project_root, distribution_allowlist
     )

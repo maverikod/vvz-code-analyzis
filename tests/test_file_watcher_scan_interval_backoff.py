@@ -200,3 +200,59 @@ def test_log_cycle_divergence_silent_when_totals_match(caplog) -> None:
         )
     assert logged is False
     assert not any("[CYCLE DIVERGENCE]" in rec.message for rec in caplog.records)
+
+
+def test_log_cycle_divergence_silent_when_gap_is_all_expected_unsynced(caplog) -> None:
+    """Bug DIVERGENCE netting: a chronic manifest-skip-only cycle must NOT warn.
+
+    detected=3, queued=0, but all 3 are files build_project_disk_manifest skips
+    every cycle for an already-understood reason (unsupported tree format /
+    non-UTF-8 content). Netting expected_unsynced against the detected side
+    must silence the warning; pre-fix (no netting) this cycle warned every
+    single scan for a condition that will never resolve itself.
+    """
+    test_logger = logging.getLogger("test.cycle_divergence")
+    with caplog.at_level(logging.WARNING, logger="test.cycle_divergence"):
+        logged = log_cycle_divergence_if_any(
+            "/watch/dir",
+            3,
+            0,
+            0,
+            0,
+            0,
+            0,
+            expected_unsynced=3,
+            logger_=test_logger,
+        )
+    assert logged is False
+    assert not any("[CYCLE DIVERGENCE]" in rec.message for rec in caplog.records)
+
+
+def test_log_cycle_divergence_still_fires_on_real_drop_with_expected_unsynced(
+    caplog,
+) -> None:
+    """A genuine drop must still warn even when some skips are chronic/expected.
+
+    detected=5 (3 chronic-expected + 2 unexplained), queued=0. Netting only
+    removes the 3 expected ones, so 2 real, unexplained missing files must
+    still trip the warning.
+    """
+    test_logger = logging.getLogger("test.cycle_divergence")
+    with caplog.at_level(logging.WARNING, logger="test.cycle_divergence"):
+        logged = log_cycle_divergence_if_any(
+            "/watch/dir",
+            5,
+            0,
+            0,
+            0,
+            0,
+            0,
+            expected_unsynced=3,
+            logger_=test_logger,
+        )
+    assert logged is True
+    assert any("[CYCLE DIVERGENCE]" in rec.message for rec in caplog.records)
+    # Raw detected total is preserved in the log line even though netting
+    # decided whether to warn -- operators must see the full accounting.
+    assert any("detected=5" in rec.message for rec in caplog.records)
+    assert any("expected_unsynced=3" in rec.message for rec in caplog.records)

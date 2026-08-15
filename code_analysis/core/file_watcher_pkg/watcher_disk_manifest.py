@@ -36,11 +36,31 @@ def build_project_disk_manifest(
     project_files: Dict[str, Dict[str, Any]],
     project_id: str,
     project_root: Path,
-) -> List[WatcherDiskFileRow]:
+) -> Tuple[List[WatcherDiskFileRow], Dict[str, int]]:
     """
     Build insert-ready disk manifest for one project scan result.
 
     Reads metadata and tree checksum from disk (same work legacy queue did per file).
+
+    Returns:
+        ``(rows, skip_counts)``. ``skip_counts`` splits the files this call
+        excluded from ``rows`` into two buckets so callers can tell a chronic,
+        already-understood condition from a transient one (bug: DIVERGENCE
+        netting):
+
+        - ``skip_unsupported_format``: :func:`validate_or_recreate_tree_file`
+          raised ``ValueError`` -- an unsupported extension
+          (``classify_tree_format``) or non-UTF-8 content (a
+          ``UnicodeDecodeError`` is a ``ValueError`` subclass). These files
+          never make it into a manifest and so never reach bulk-sync/queued
+          counts, but :func:`.processor_delta.compute_project_delta`
+          re-detects them as changed every cycle regardless -- a caller doing
+          SCAN-vs-QUEUE divergence accounting should net this count out of
+          the detected side.
+        - ``skip_other``: ``FileNotFoundError``/``OSError`` -- a file
+          vanished or became unreadable between the scan and this call.
+          These are transient races; callers must NOT net them out of
+          divergence accounting so a real, non-chronic drop stays loud.
     """
     try:
         root = project_root.resolve()
@@ -48,6 +68,8 @@ def build_project_disk_manifest(
         root = project_root
 
     rows: List[WatcherDiskFileRow] = []
+    skip_unsupported_format = 0
+    skip_other = 0
     for _abs_key, info in project_files.items():
         file_project_id = info.get("project_id")
         if file_project_id and str(file_project_id) != str(project_id):
@@ -70,7 +92,18 @@ def build_project_disk_manifest(
                 file_path=rel_posix,
             )
             tree_checksum = tree_ref.content_checksum
-        except (FileNotFoundError, ValueError, OSError) as exc:
+        except ValueError as exc:
+            skip_unsupported_format += 1
+            logger.warning(
+                "[MANIFEST] skip file without valid tree (unsupported format or "
+                "non-UTF-8 content) project_id=%s path=%s: %s",
+                project_id,
+                rel_posix,
+                exc,
+            )
+            continue
+        except (FileNotFoundError, OSError) as exc:
+            skip_other += 1
             logger.warning(
                 "[MANIFEST] skip file without valid tree project_id=%s path=%s: %s",
                 project_id,
@@ -88,7 +121,10 @@ def build_project_disk_manifest(
             )
         )
     rows.sort(key=lambda r: r.relative_path)
-    return rows
+    return rows, {
+        "skip_unsupported_format": skip_unsupported_format,
+        "skip_other": skip_other,
+    }
 
 
 def compute_project_files_signature(

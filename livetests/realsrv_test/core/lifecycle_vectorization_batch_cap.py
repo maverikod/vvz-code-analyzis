@@ -1,7 +1,7 @@
 """
 Vectorization embed-batch-cap check (bug 16b1abbe).
 
-Registered as suite ``s22`` (``realsrv_test.suites.s22_vectorization_batch_cap``,
+Registered as suite ``s23`` (``realsrv_test.suites.s23_vectorization_batch_cap``,
 ``SUITE_NAME = "vectorization_batch_cap"``).
 
 The embed service enforces a hard per-request text cap (20 by default; "Job

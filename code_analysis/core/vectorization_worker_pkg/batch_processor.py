@@ -160,6 +160,18 @@ async def recover_unvectorized_by_neighbor_merge(
     Recovery is in-memory only: failed chunks are grouped with a neighbor,
     concatenated in file order, and the recovered vector is repeated for every
     original row id in the successful group.
+
+    Bug e548fcc0: an ``embed_one`` call that RAISES (e.g. the embed service
+    rejects the merged text, or a transient network failure) is contained
+    right here and treated identically to a soft miss (``embed_one``
+    returning ``(None, None)``) — the merge window keeps growing/retrying the
+    same as it already does for soft misses. This keeps a per-chunk embed
+    failure during recovery from ever escaping to the caller: previously such
+    an exception propagated out of this function and was caught by
+    ``process_chunk_only_files``' outer except, which skipped that file's
+    entire commit block for the pass — discarding any sibling sub-batches
+    that had already embedded successfully and bypassing the attempts-map/
+    dead-letter accounting for the failing chunk (infinite retry).
     """
     assignments: Dict[str, Tuple[list, str]] = {}
     if not ordered_chunks:
@@ -181,7 +193,21 @@ async def recover_unvectorized_by_neighbor_merge(
         while True:
             group = ordered_chunks[start : end + 1]
             text = "".join(getattr(ch, "text", "") for ch in group)
-            vector, model = await embed_one(text)
+            try:
+                vector, model = await embed_one(text)
+            except Exception as exc:
+                # Contained here (bug e548fcc0): treat like a soft miss so the
+                # window keeps growing instead of propagating to the caller.
+                vector, model = None, None
+                logger.warning(
+                    "[chunk_only] neighbor-merge embed_one failed for "
+                    "chunk_id=%s (merge window %d-%d): %s",
+                    getattr(chunk, "id", "?"),
+                    start,
+                    end,
+                    exc,
+                    exc_info=True,
+                )
             if vector and model:
                 for group_idx in range(start, end + 1):
                     group_chunk = ordered_chunks[group_idx]
@@ -372,6 +398,12 @@ async def process_chunk_only_files(
                 await svo_mgr.get_embeddings([tmp])
                 return _usable_embedding(tmp), _embedding_model(tmp)
 
+            # Last-resort guard only (bug e548fcc0): a per-chunk embed_one
+            # failure is now contained inside
+            # recover_unvectorized_by_neighbor_merge itself (treated as a
+            # soft miss), so this except is no longer reachable via that
+            # path. It stays as a safety net for a failure in the recovery
+            # function's own bookkeeping (not a specific chunk's embed call).
             try:
                 recovered = await recover_unvectorized_by_neighbor_merge(
                     chunk_objs, _embed_one

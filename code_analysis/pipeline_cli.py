@@ -166,6 +166,18 @@ def _run_live_remote_branch() -> int:
     return _run_live_verifier("remotebranch")
 
 
+def _run_live_vector_parity() -> int:
+    return _run_live_verifier("vectorparity")
+
+
+def _run_live_vector_batch_cap() -> int:
+    return _run_live_verifier("vectorization_batch_cap")
+
+
+def _run_live_indexing_ignore_parity() -> int:
+    return _run_live_verifier("indexing_ignore_parity")
+
+
 _CHECKS: tuple[PipelineCheck, ...] = (
     PipelineCheck(
         name="pipeline-cli",
@@ -688,6 +700,41 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "instead of only the unreachable-remote error."
         ),
         runner=_run_live_remote_branch,
+    ),
+    PipelineCheck(
+        name="live-vector-parity",
+        description=(
+            "Run only the 'vectorparity' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Guards "
+            "bug f4dd4039: embedding_vec dimension parity between the "
+            "configured vector_dim and the pgvector column was not "
+            "reconciled, so a config/column mismatch went undetected instead "
+            "of failing loudly."
+        ),
+        runner=_run_live_vector_parity,
+    ),
+    PipelineCheck(
+        name="live-vector-batch-cap",
+        description=(
+            "Run only the 'vectorization_batch_cap' realsrv-test suite "
+            "against the deployed CAS server -- a subset of "
+            "live-deployed-server. Guards bug 16b1abbe: the embed-batch cap "
+            "was not enforced, so oversized batches could be sent to the "
+            "embedding service."
+        ),
+        runner=_run_live_vector_batch_cap,
+    ),
+    PipelineCheck(
+        name="live-indexing-ignore-parity",
+        description=(
+            "Run only the 'indexing_ignore_parity' realsrv-test suite "
+            "against the deployed CAS server -- a subset of "
+            "live-deployed-server. Guards bug 5b663fbb/6d5ad353: "
+            "update_indexes and the file watcher disagreed on ignore "
+            "policy, so the watcher's purge gate could drop deltas that "
+            "update_indexes would have kept."
+        ),
+        runner=_run_live_indexing_ignore_parity,
     ),
 )
 

@@ -84,6 +84,9 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-cwd-safety",
         "live-session-liveness",
         "live-remote-branch",
+        "live-vector-parity",
+        "live-vector-batch-cap",
+        "live-indexing-ignore-parity",
     ]
 
 

@@ -112,7 +112,7 @@
         "shm_enabled": true
       }
     },
-    "vector_dim": 384,
+    "vector_dim": 1024,
     "min_chunk_length": 30,
     "vectorization_retry_attempts": 3,
     "vectorization_retry_delay": 10.0,

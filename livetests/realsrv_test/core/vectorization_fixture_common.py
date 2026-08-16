@@ -24,6 +24,26 @@ transport level but reports ``success: False`` / a "already running" message in
 its data, which is the only signal that distinguishes the two cases -- see
 ``code_analysis/core/worker_lifecycle.py``'s ``start_vectorization_worker``).
 
+1.6.114 gate hardening (restart race, see ``start_and_verify_vectorization_
+worker``): right after a service restart, the boot vectorization worker
+(``main_workers.py``'s ``startup_vectorization_worker``) takes a few seconds
+to register its PID file. If this module's own ``start_worker`` call raced
+ahead of it, it could win that race and become the fleet's ONLY vectorization
+worker -- the real boot worker then sees an "already running" PID file it did
+not itself write and backs off, so when THIS call's teardown correctly stops
+"its own" worker (``started_fresh`` was True), the fleet is left with no
+vectorization worker at all. ``start_and_verify_vectorization_worker`` now
+waits briefly for an already-running (or about-to-register) worker before
+attempting its own start, so the legitimate boot worker wins that race
+instead.
+
+Also adds the two extra signals ``lifecycle_vectorization_batch_cap.py``
+needs to assert the 16b1abbe fix without depending on fleet-wide ANN
+throughput: ``poll_check_vectors_fully_embedded`` (embedding-complete
+predicate, STEP 1 only) and ``scan_vectorization_log_for_cap_errors``
+(confirms the embed service's per-request cap was never actually hit during
+the run). See both functions' docstrings for why.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -31,6 +51,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from typing import Any, Dict, Optional, Tuple
@@ -40,6 +61,8 @@ from code_analysis_client import CodeAnalysisAsyncClient
 from realsrv_test.core.catalog import Status, truncate
 from realsrv_test.core.lifecycle_common import call_step, call_step_with_data
 
+logger = logging.getLogger(__name__)
+
 # Bounded retries to confirm the vectorization worker process is actually alive
 # (get_worker_status summary.is_running) before trusting the poll window that
 # follows -- start_worker returning success does not guarantee the spawned
@@ -47,6 +70,15 @@ from realsrv_test.core.lifecycle_common import call_step, call_step_with_data
 # before the child finishes its own startup).
 _WORKER_LIVENESS_RETRIES = 3
 _WORKER_LIVENESS_RETRY_DELAY_SECONDS = 2.0
+
+# Bounded wait for an already-running (or about-to-register) boot vectorization
+# worker before racing to start a fresh one ourselves -- see the module
+# docstring's "restart race" paragraph. In steady state (no recent restart)
+# this resolves on the very first poll, since the boot worker has already
+# been running for a while; it only actually waits in the narrow post-restart
+# window.
+_BOOT_WORKER_WAIT_TIMEOUT_SECONDS = 30.0
+_BOOT_WORKER_WAIT_INTERVAL_SECONDS = 3.0
 
 
 def generate_fixture_source(total_functions: int) -> str:
@@ -249,11 +281,141 @@ async def poll_check_vectors_fully_vectorized(
     return Status.FAILED, last_reason, last_data
 
 
+async def poll_check_vectors_fully_embedded(
+    client: CodeAnalysisAsyncClient,
+    project_id: str,
+    *,
+    timeout_seconds: float,
+    interval_seconds: float = 5.0,
+) -> Tuple[Status, str, Optional[Dict[str, Any]]]:
+    """Poll ``check_vectors`` until every chunk has an embedding MODEL recorded.
+
+    Unlike :func:`poll_check_vectors_fully_vectorized`, this predicate does
+    NOT require ``chunks_pending_vectorization == 0``. STEP 2 of
+    vectorization (writing ``embedding_vec`` / the ANN index entry) is
+    throttled by ``worker.batch_size`` PER PROJECT PER FLEET CYCLE (5 by
+    default); once every project on the fleet is unpaused and draining a
+    large shared backlog, one fleet cycle can take minutes, so a single
+    project's ANN write-out can legitimately still show
+    ``chunks_pending_vectorization > 0`` long after that project's chunks
+    are all fully embedded (``chunks_pending_vectorization`` counts both
+    "not yet embedded" and "embedded but ANN write still pending" chunks).
+    Requiring ANN completion inside a check's fixed poll window therefore
+    asserts fleet-wide ANN write throughput, not the bug 16b1abbe actually
+    guards.
+
+    This predicate asserts exactly the thing 16b1abbe's fix is about --
+    STEP 1, the ``get_embeddings()`` call the batch-cap bug used to fail
+    outright for any file with more un-vectorized chunks than the embed
+    service's per-request cap -- and leaves ANN throughput out of scope. See
+    :func:`scan_vectorization_log_for_cap_errors` for the other half of the
+    16b1abbe regression signature (embedding completing by silently retrying
+    past a cap rejection would still slip through this predicate alone).
+
+    Args:
+        client: Connected async client.
+        project_id: Project to poll.
+        timeout_seconds: Bounded poll window.
+        interval_seconds: Delay between polls.
+
+    Returns:
+        Tuple of (status, reason, last ``check_vectors`` data dict or None).
+        ``status`` is :attr:`Status.EXECUTED_OK` only if, before the
+        deadline, a poll observed ``chunks_with_model == total_chunks`` with
+        ``total_chunks > 0``.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_data: Optional[Dict[str, Any]] = None
+    last_reason = "check_vectors was never called"
+    while time.monotonic() < deadline:
+        outcome, data = await call_step_with_data(
+            client,
+            "check_vectors",
+            {"project_id": project_id},
+            ok_reason="check_vectors executed",
+        )
+        if outcome.status is not Status.EXECUTED_OK:
+            last_reason = f"check_vectors call failed: {outcome.reason}"
+        else:
+            last_data = data or {}
+            total = last_data.get("total_chunks")
+            with_model = last_data.get("chunks_with_model")
+            with_vector = last_data.get("chunks_with_vector")
+            pending = last_data.get("chunks_pending_vectorization")
+            last_reason = (
+                f"total_chunks={total} chunks_with_model={with_model} "
+                f"chunks_with_vector={with_vector} "
+                f"chunks_pending_vectorization={pending}"
+            )
+            if isinstance(total, int) and total > 0 and with_model == total:
+                return Status.EXECUTED_OK, last_reason, last_data
+        await asyncio.sleep(interval_seconds)
+    return Status.FAILED, last_reason, last_data
+
+
+async def _poll_worker_is_running(
+    client: CodeAnalysisAsyncClient,
+    worker_type: str,
+    *,
+    timeout_seconds: float,
+    interval_seconds: float,
+) -> Tuple[bool, str]:
+    """Poll ``get_worker_status(worker_type)`` for up to ``timeout_seconds``.
+
+    Always performs at least one check. Never raises: a failed
+    ``get_worker_status`` call is treated as "not confirmed running yet" and
+    retried like any other miss.
+
+    Args:
+        client: Connected async client.
+        worker_type: ``worker_type`` to pass to ``get_worker_status``.
+        timeout_seconds: Bounded wait window (``0`` performs exactly one
+            check, no retries -- used for a single point-in-time read).
+        interval_seconds: Delay between polls.
+
+    Returns:
+        ``(is_running, reason)``.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_reason = f"{worker_type} worker status never checked"
+    while True:
+        status_outcome, status_data = await call_step_with_data(
+            client,
+            "get_worker_status",
+            {"worker_type": worker_type},
+            ok_reason=f"{worker_type} worker status checked",
+        )
+        if status_outcome.status is Status.EXECUTED_OK:
+            is_running = bool(
+                ((status_data or {}).get("summary") or {}).get("is_running")
+            )
+            if is_running:
+                return True, f"{worker_type} worker is running"
+            last_reason = f"{worker_type} worker is not running"
+        else:
+            last_reason = (
+                f"get_worker_status({worker_type}) call failed: "
+                f"{status_outcome.reason}"
+            )
+        if time.monotonic() >= deadline:
+            return False, last_reason
+        await asyncio.sleep(interval_seconds)
+
+
 async def start_and_verify_vectorization_worker(
     client: CodeAnalysisAsyncClient, project_id: str
 ) -> Tuple[Status, str, bool]:
     """Start the vectorization worker and confirm it is actually alive before the
     caller opens its poll window.
+
+    Before attempting its own ``start_worker``, this first waits up to
+    :data:`_BOOT_WORKER_WAIT_TIMEOUT_SECONDS` for an already-running (or
+    about-to-register) vectorization worker -- see the module docstring's
+    "restart race" paragraph for why: right after a service restart, racing
+    ahead of the boot worker's own startup and winning would make THIS call's
+    teardown stop the fleet's only vectorization worker. In steady state this
+    wait resolves on its very first poll (the boot worker has already been up
+    for a while), so it costs nothing outside the narrow post-restart window.
 
     Args:
         client: Connected async client.
@@ -264,11 +426,26 @@ async def start_and_verify_vectorization_worker(
         :attr:`Status.EXECUTED_OK` once liveness is confirmed (or the worker
         was already running -- either way there is a live worker to poll
         against). ``started_fresh`` is True only when THIS call's
-        ``start_worker`` actually spawned a new process (i.e. the response did
-        not report "already running") -- callers use this to decide whether
-        their teardown should ``stop_worker``: stopping a worker a concurrent
-        suite depends on would be its own regression.
+        ``start_worker`` actually spawned a new process (i.e. neither the
+        pre-start wait nor the start response itself found/reported an
+        already-running worker) -- callers use this to decide whether their
+        teardown should ``stop_worker``: stopping a worker a concurrent suite
+        (or the fleet's boot worker) depends on would be its own regression.
     """
+    already_running, wait_reason = await _poll_worker_is_running(
+        client,
+        "vectorization",
+        timeout_seconds=_BOOT_WORKER_WAIT_TIMEOUT_SECONDS,
+        interval_seconds=_BOOT_WORKER_WAIT_INTERVAL_SECONDS,
+    )
+    if already_running:
+        return (
+            Status.EXECUTED_OK,
+            "vectorization worker already running before start_worker was "
+            f"attempted; reused instead of racing a fresh start ({wait_reason})",
+            False,
+        )
+
     start_status, start_data = await call_step_with_data(
         client,
         "start_worker",
@@ -328,7 +505,17 @@ async def stop_vectorization_worker_if_started(
     A concurrent suite may depend on an already-running worker; stopping it out
     from under that suite would be its own flake source, so this is a no-op
     when :func:`start_and_verify_vectorization_worker` reported
-    ``started_fresh=False``.
+    ``started_fresh=False`` (this includes the case where it reused an
+    already-running boot worker instead of starting its own -- see that
+    function's "restart race" wait).
+
+    When the stop actually runs, this logs (observability only, no restart
+    attempted here) whether a vectorization worker remains running
+    afterwards -- e.g. a boot worker that registered while THIS call's worker
+    was alive would leave the fleet covered; none remaining is the scenario
+    :func:`start_and_verify_vectorization_worker`'s pre-start wait exists to
+    avoid, so seeing it here after the wait was added would itself be a
+    signal worth investigating.
 
     Args:
         client: Connected async client.
@@ -342,4 +529,89 @@ async def stop_vectorization_worker_if_started(
         "stop_worker",
         {"worker_type": "vectorization"},
         ok_reason="vectorization worker stopped",
+    )
+    still_running, remain_reason = await _poll_worker_is_running(
+        client, "vectorization", timeout_seconds=0.0, interval_seconds=0.0
+    )
+    logger.info(
+        "stop_vectorization_worker_if_started: post-stop vectorization worker "
+        "state -- %s (%s)",
+        "still running (another worker covers the fleet)"
+        if still_running
+        else "not running (fleet is workerless until a new one starts)",
+        remain_reason,
+    )
+
+
+async def scan_vectorization_log_for_cap_errors(
+    client: CodeAnalysisAsyncClient,
+    *,
+    tail_lines: int = 2000,
+    search_pattern: str = "exceeds the maximum allowed",
+) -> Tuple[Status, str]:
+    """Scan the vectorization worker log for the embed service's cap-error text.
+
+    Bug 16b1abbe's un-fixed behavior has a distinctive log signature: the
+    embed service's own rejection message ("Job command failed: Batch size N
+    exceeds the maximum allowed (20)") on every cycle that tries to send an
+    oversized batch. :func:`poll_check_vectors_fully_embedded` proves chunks
+    eventually got a model recorded, but that alone does not prove the cap
+    was never hit -- a server that silently retried past a cap rejection (or
+    fell back to some other broken path that still eventually records a
+    model) would slip through the poll alone. This scan is the second,
+    independent half of the 16b1abbe regression signature the caller checks
+    for: embedding completed AND the cap was never actually exceeded.
+
+    Uses ``tail`` rather than a computed ``from_time`` window: log lines are
+    parsed as naive local timestamps (see ``log_viewer_utils.
+    parse_log_timestamp``) with no guaranteed clock parity between this
+    client and the remote server, so a client-computed ``from_time`` would be
+    an unreliable bound. ``tail_lines`` is generous enough to cover this
+    check's own run (a single-project, single-file fixture) even under a
+    busy shared fleet log.
+
+    Args:
+        client: Connected async client.
+        tail_lines: How many of the most recent vectorization-log lines to
+            search.
+        search_pattern: Regex/text passed to ``view_worker_logs``'s
+            ``search_pattern``.
+
+    Returns:
+        ``(status, reason)``. :attr:`Status.EXECUTED_OK` when zero matching
+        log lines were found; :attr:`Status.FAILED` with the matching
+        entries (truncated) otherwise. A failed ``view_worker_logs`` call
+        itself is also reported as :attr:`Status.FAILED` -- a check that
+        cannot confirm the log is clean must not silently pass.
+    """
+    outcome, data = await call_step_with_data(
+        client,
+        "view_worker_logs",
+        {
+            "worker_type": "vectorization",
+            "search_pattern": search_pattern,
+            "tail": tail_lines,
+        },
+        ok_reason="vectorization log scanned for cap errors",
+    )
+    if outcome.status is not Status.EXECUTED_OK:
+        return (
+            Status.FAILED,
+            f"could not scan the vectorization log for cap errors: {outcome.reason}",
+        )
+    data = data or {}
+    filtered = data.get("filtered_lines")
+    if not isinstance(filtered, int):
+        filtered = len(data.get("entries") or [])
+    if filtered == 0:
+        return (
+            Status.EXECUTED_OK,
+            f"0 hits for {search_pattern!r} in the last {tail_lines} "
+            "vectorization log line(s)",
+        )
+    entries = data.get("entries") or []
+    return (
+        Status.FAILED,
+        f"{filtered} hit(s) for {search_pattern!r} in the last {tail_lines} "
+        f"vectorization log line(s): {truncate(repr(entries))}",
     )

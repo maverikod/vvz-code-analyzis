@@ -51,6 +51,25 @@ hardening, and ``check_vectors`` polling live in
 use, so all three vectorization-worker livetests stay in sync instead of
 drifting apart.
 
+1.6.114 gate hardening: this check keeps the strict
+``poll_check_vectors_fully_vectorized`` predicate (full ANN completion, not
+just ``poll_check_vectors_fully_embedded``) -- assessed and deliberately
+unchanged, unlike ``lifecycle_vectorization_batch_cap.py``. Its fixture is
+only :data:`_TOTAL_FUNCTIONS` = 5 chunks, comfortably inside
+``worker.batch_size`` (5, default) for a single fleet cycle's STEP-2 ANN
+write-out, so it does not carry the same fleet-load RED risk a 30-chunk
+fixture does. It does still go through ``start_and_verify_vectorization_
+worker`` (via the shared ``vectorization_fixture_common`` helper), so it
+picks up that function's restart-race wait for an already-running boot
+worker for free. That wait does not weaken this check's 827e2b05 coverage:
+post-fix, both the boot worker (``main_workers.py``) and a manually-started
+one build their ``svo_config`` through the same shared
+``worker_start_args.resolve_vectorization_worker_kwargs`` -- a regression in
+that resolver would leave the boot worker just as embed-incapable as a
+manual start, so reusing an already-running worker instead of calling
+``start_worker`` here still exercises the same code the bug lives in, and
+the RED signature (``chunks_with_model`` stays 0) is unaffected either way.
+
 Teardown constraint (read before scheduling a RED run): the vectorization
 worker started by ``main_workers.py`` at server boot is UNIVERSAL -- it is
 not scoped to one project, and the dedup guard against a second one is a PID
@@ -206,8 +225,14 @@ async def run_worker_activity_check(
         )
     finally:
         try:
+            # 1.6.114 gate hardening: this used to call a non-existent
+            # "delete_project" command (silently swallowed below), so this
+            # teardown never actually deleted the isolated disposable
+            # project -- see ``lifecycle_vectorization_batch_cap.py``'s
+            # teardown comment, where this was found and fixed alongside the
+            # same bug in this file.
             await client.call_validated(
-                "delete_project",
+                "project_set_mark_del",
                 {"project_id": project_id, "delete_from_disk": True},
             )
         except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure

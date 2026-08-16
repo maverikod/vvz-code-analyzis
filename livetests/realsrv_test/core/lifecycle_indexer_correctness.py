@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.disposable_project import purge_disposable_project
 from realsrv_test.core.fixtures import FixtureContext
 from realsrv_test.core.lifecycle_common import call_step_with_data
 
@@ -604,12 +605,13 @@ async def run_update_indexes_usages_idempotent(
     watch_dir_id = str(watch_dirs[0]["id"])
 
     project_suffix = uuid.uuid4().hex[:8]
+    isolated_project_name = f"verify_indexer_usage_idem_{project_suffix}"
     create_status, create_data = await call_step_with_data(
         client,
         "create_project",
         {
             "watch_dir_id": watch_dir_id,
-            "project_name": f"verify_indexer_usage_idem_{project_suffix}",
+            "project_name": isolated_project_name,
             "description": "isolated disposable project for the usages-idempotence check",
             "create_venv": False,
             "apply_template": False,
@@ -639,13 +641,16 @@ async def run_update_indexes_usages_idempotent(
             session_id=fixtures.session_id,
         )
     finally:
-        try:
-            await client.call_validated(
-                "delete_project",
-                {"project_id": isolated_project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only
-            pass
+        # 1.6.114 gate hardening (bug d5835fbf): this used to call a
+        # non-existent "delete_project" command, so this teardown always
+        # raised and was silently swallowed below -- the isolated disposable
+        # project was NEVER actually deleted by any run of this check (32
+        # leaked "verify_indexer_usage_idem_*" projects observed). Routed
+        # through the shared purge helper instead of hand-rolling the real
+        # command name.
+        await purge_disposable_project(
+            client, isolated_project_id, isolated_project_name
+        )
 
 
 async def _run_usages_idempotent_check(

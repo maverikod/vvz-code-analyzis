@@ -107,6 +107,7 @@ from realsrv_test.core.vectorization_fixture_common import (
     poll_check_vectors_fully_vectorized,
     start_and_verify_vectorization_worker,
     stop_vectorization_worker_if_started,
+    teardown_vectorization_project,
     upload_fixture_file,
 )
 
@@ -154,7 +155,7 @@ async def run_worker_activity_check(
         chunking, and for the teardown constraint this check cannot fully
         self-heal on a pre-fix server.
     """
-    project_id, _project_root, create_status, create_reason = (
+    project_id, _project_root, project_name, create_status, create_reason = (
         await create_isolated_vectorization_project(
             client,
             name_prefix="verify_worker_activity",
@@ -224,19 +225,13 @@ async def run_worker_activity_check(
             f"embed anything (last check_vectors data: {truncate(repr(final_data))})",
         )
     finally:
-        try:
-            # 1.6.114 gate hardening: this used to call a non-existent
-            # "delete_project" command (silently swallowed below), so this
-            # teardown never actually deleted the isolated disposable
-            # project -- see ``lifecycle_vectorization_batch_cap.py``'s
-            # teardown comment, where this was found and fixed alongside the
-            # same bug in this file.
-            await client.call_validated(
-                "project_set_mark_del",
-                {"project_id": project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure
-            pass
+        # bug d5835fbf: this used to call project_set_mark_del(
+        # delete_from_disk=True) directly and stop (trash-only residue, no
+        # permanently_delete_from_trash follow-up). Routed through the
+        # shared vectorization teardown helper instead -- see
+        # ``lifecycle_vectorization_batch_cap.py``'s teardown comment, fixed
+        # alongside the same defect in this file.
+        await teardown_vectorization_project(client, project_id, project_name)
 
 
 # Re-exported for realsrv_test._cli --list and suite discovery.

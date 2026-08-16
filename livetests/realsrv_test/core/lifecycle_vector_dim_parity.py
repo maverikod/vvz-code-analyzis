@@ -49,6 +49,7 @@ from realsrv_test.core.vectorization_fixture_common import (
     poll_check_vectors_fully_vectorized,
     start_and_verify_vectorization_worker,
     stop_vectorization_worker_if_started,
+    teardown_vectorization_project,
     upload_fixture_file,
 )
 
@@ -156,7 +157,7 @@ async def run_vector_dim_parity_check(
         ``{CHECK_NAME: outcome}`` -- single-entry map, like every check in
         this package.
     """
-    project_id, _project_root, create_status, create_reason = (
+    project_id, _project_root, project_name, create_status, create_reason = (
         await create_isolated_vectorization_project(
             client,
             name_prefix="verify_vecdimparity",
@@ -222,10 +223,10 @@ async def run_vector_dim_parity_check(
             f"{_RELATIVE_PATH}: fully vectorized ({poll_reason}); {search_reason}",
         )
     finally:
-        try:
-            await client.call_validated(
-                "delete_project",
-                {"project_id": project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure
-            pass
+        # bug d5835fbf: this called a non-existent "delete_project" command,
+        # silently swallowed by the bare except below -- the isolated
+        # disposable project was NEVER deleted by any run of this check
+        # (same dead-call defect found and fixed in
+        # lifecycle_indexer_correctness.py / lifecycle_vectorization_batch_cap.py).
+        # Routed through the shared vectorization teardown helper instead.
+        await teardown_vectorization_project(client, project_id, project_name)

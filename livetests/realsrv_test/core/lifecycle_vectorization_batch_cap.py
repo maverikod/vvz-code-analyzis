@@ -85,6 +85,7 @@ from realsrv_test.core.vectorization_fixture_common import (
     scan_vectorization_log_for_cap_errors,
     start_and_verify_vectorization_worker,
     stop_vectorization_worker_if_started,
+    teardown_vectorization_project,
     upload_fixture_file,
 )
 
@@ -140,7 +141,7 @@ async def run_vectorization_batch_cap_lifecycle(
         for the run (see module docstring for why ANN/``chunks_with_vector``
         completion is intentionally not required here).
     """
-    project_id, project_root, create_status, create_reason = (
+    project_id, project_root, project_name, create_status, create_reason = (
         await create_isolated_vectorization_project(
             client,
             name_prefix="verify_vecbatchcap",
@@ -223,23 +224,10 @@ async def run_vectorization_batch_cap_lifecycle(
             f"log scan clean ({cap_scan_reason})",
         )
     finally:
-        try:
-            # 1.6.114 gate hardening: this used to call a non-existent
-            # "delete_project" command, so this teardown always raised and
-            # was silently swallowed below -- the isolated disposable project
-            # was NEVER actually deleted by any run of this check. The real
-            # command is "project_set_mark_del" (see
-            # ``code_analysis/commands/project_management_mcp_commands/
-            # delete_project.py``); orphaned "verify_vecbatchcap_*" projects
-            # from that bug were found still sitting in the live fleet's
-            # vectorization queue hours later, endlessly re-chunking the same
-            # already-chunked file every cycle (their needs_chunking state
-            # never cleared either) and materially contributing to the
-            # fleet-load contention this check's own predicate exists to
-            # tolerate.
-            await client.call_validated(
-                "project_set_mark_del",
-                {"project_id": project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure
-            pass
+        # bug d5835fbf: this used to call project_set_mark_del(
+        # delete_from_disk=True) directly and stop, which soft-deletes but
+        # never follows up with permanently_delete_from_trash -- every run
+        # left its isolated project sitting in trash forever. Routed through
+        # the shared vectorization teardown helper instead, which purges the
+        # trash entry too (see that function's docstring for the leak count).
+        await teardown_vectorization_project(client, project_id, project_name)

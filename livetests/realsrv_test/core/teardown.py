@@ -4,22 +4,27 @@ Disposable-project teardown for the live-server all-commands verifier.
 Closes the sweep-wide session and purges the disposable project created by
 ``realsrv_test.core.fixtures.seed_fixtures``, or — per the
 operator's ``--keep-project`` flag — leaves it in place for manual inspection.
-Trash purge resolves the disposable project's trash folder name via a
-read-only ``list_trashed_projects`` lookup (always safe to call) and passes it
-straight to ``permanently_delete_from_trash``, which takes ``trash_folder_name``
-(a direct child of ``trash_dir``), not ``project_id``. A purge failure, or a
-folder name that fails to resolve, is logged as a WARN rather than an abort:
-by that point ``project_set_mark_del`` has already succeeded, so the project
-is out of the DB either way, and trash is a safe holding area for manual (or
+The purge itself is delegated to
+``realsrv_test.core.disposable_project.purge_disposable_project`` (bug
+d5835fbf), which resolves the trash folder by diffing
+``list_trashed_projects`` before/after the soft-delete instead of matching
+``original_name`` against the project's creation-time name — see that
+module's docstring for why: ``lifecycle_project_lock.py`` renames this exact
+shared fixture project mid-sweep, so a name-based match here used to miss
+every time (47 leaked ``verify_lock_original_*`` trash entries observed
+before this fix). A purge failure, or a folder name that fails to resolve,
+is logged as a WARN rather than an abort: by that point
+``project_set_mark_del`` has already succeeded, so the project is out of the
+DB either way, and trash is a safe holding area for manual (or
 ``clear_trash``) cleanup later.
 
-``project_set_mark_del`` teardown is idempotent: if the project is already
-absent (a "not found in database" rejection, see ``_ALREADY_ABSENT_MARKER``),
-that is logged and treated as a successful delete rather than an abort — this
-is the sole caller of ``project_set_mark_del`` in the whole verifier (see
-``realsrv_test.core.catalog.BUCKET_B_REASONS``), so an "already
-absent" outcome only happens on a re-run against a stale fixture or a
-teardown retry, never mid-sweep. Any other failure still aborts loudly.
+The project_id-in-schema scoping gate below (``schema_has_project_id``) is
+applied only here, immediately before this module's own
+``project_set_mark_del`` call — this is the sole caller of
+``project_set_mark_del`` outside ``purge_disposable_project`` (see
+``realsrv_test.core.catalog.BUCKET_B_REASONS``), so it stays a
+teardown.py-local safety check rather than something the shared helper
+enforces for every disposable-project call site.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -27,52 +32,11 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Optional
-
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import schema_has_project_id
+from realsrv_test.core.disposable_project import purge_disposable_project
 from realsrv_test.core.fixtures import FixtureContext
-
-# Same marker realsrv_test.core.fixtures_registration.py polls for:
-# the server's rejection text when a project_id no longer has a DB row. Used
-# here to make project_set_mark_del teardown idempotent — if some earlier
-# step already deleted the disposable project, teardown must not abort.
-_ALREADY_ABSENT_MARKER = "not found in database"
-
-
-async def _lookup_trash_folder_name(
-    client: CodeAnalysisAsyncClient, fixtures: FixtureContext
-) -> Optional[str]:
-    """Best-effort, read-only lookup of the disposable project's trash folder name.
-
-    Calls ``list_trashed_projects`` (safe: read-only, no purge) and returns the
-    ``folder_name`` of the entry whose parsed ``original_name`` matches the
-    disposable project's directory name, for a more actionable teardown
-    message. Never raises — returns ``None`` on any failure.
-
-    Args:
-        client: Connected async client.
-        fixtures: Fixture context identifying the disposable project by name.
-
-    Returns:
-        The trash folder name, or ``None`` if it could not be resolved.
-    """
-    try:
-        resp = await client.call_validated("list_trashed_projects", {})
-    except Exception:  # noqa: BLE001 - purely cosmetic lookup for the abort message
-        return None
-    if not resp.get("success"):
-        return None
-    data = resp.get("data") or {}
-    for item in data.get("items") or []:
-        if (
-            isinstance(item, dict)
-            and item.get("original_name") == fixtures.project_name
-        ):
-            folder_name = item.get("folder_name")
-            return str(folder_name) if folder_name else None
-    return None
 
 
 async def teardown_fixtures(
@@ -144,75 +108,33 @@ async def teardown_fixtures(
         )
         return False
 
-    try:
-        mark_resp = await client.call_validated(
-            "project_set_mark_del", {"project_id": fixtures.project_id}
-        )
-    except Exception as exc:
-        if _ALREADY_ABSENT_MARKER in str(exc).lower():
-            print(
-                "OK    teardown: project_set_mark_del found project "
-                f"{fixtures.project_id} already-deleted: {exc!r}"
-            )
-        else:
-            print(f"TEARDOWN ABORTED: project_set_mark_del raised: {exc!r}")
-            return False
-    else:
-        if not mark_resp.get("success"):
-            error_text = str(mark_resp.get("error"))
-            if _ALREADY_ABSENT_MARKER in error_text.lower():
-                print(
-                    "OK    teardown: project_set_mark_del found project "
-                    f"{fixtures.project_id} already-deleted: {error_text}"
-                )
-            else:
-                print(
-                    "TEARDOWN ABORTED: project_set_mark_del returned failure: "
-                    f"{mark_resp.get('error')!r}"
-                )
-                return False
-
-    # The live permanently_delete_from_trash schema takes `trash_folder_name`
-    # (a direct child of trash_dir), not `project_id`. The name is already
-    # knowable via the same read-only list_trashed_projects lookup used above
-    # for the (now-removed) abort message, so purge proactively instead of
-    # refusing: by this point project_set_mark_del already succeeded (or the
-    # project was already absent), so a purge failure only leaves the project
-    # sitting in trash — a safe holding area, not a DB-consistency problem —
-    # and is therefore a WARN, never an abort.
-    trash_folder_name = await _lookup_trash_folder_name(client, fixtures)
-    if not trash_folder_name:
+    # project_set_mark_del + trash purge, both delegated to the shared,
+    # rename-proof helper (bug d5835fbf) — see module docstring for why a
+    # name-based trash match (the old approach here) used to miss this exact
+    # shared fixture project after lifecycle_project_lock.py renames it.
+    result = await purge_disposable_project(
+        client, fixtures.project_id, fixtures.project_name
+    )
+    if result.startswith("mark_del-raised") or result.startswith("mark_del-failed"):
         print(
-            "WARN  teardown: could not resolve trash_folder_name via "
-            f"list_trashed_projects for project_id={fixtures.project_id} "
-            f"({fixtures.project_name}); trash purge skipped, project remains in "
-            "trash (safe holding area) for manual/clear_trash cleanup."
+            f"TEARDOWN ABORTED: {result}. project_id={fixtures.project_id} "
+            "was never purged."
+        )
+        return False
+    if result.startswith("purged"):
+        print(
+            f"OK    teardown: {result} "
+            f"(project_id={fixtures.project_id}, {fixtures.project_name})"
         )
         return ok
 
-    try:
-        purge_resp = await client.call_validated(
-            "permanently_delete_from_trash", {"trash_folder_name": trash_folder_name}
-        )
-    except Exception as exc:
-        print(
-            "WARN  teardown: permanently_delete_from_trash raised: "
-            f"{exc!r}. project_id={fixtures.project_id} ({fixtures.project_name}) "
-            f"remains in trash (trash_folder_name={trash_folder_name!r})."
-        )
-        return ok
-    if not purge_resp.get("success"):
-        print(
-            "WARN  teardown: permanently_delete_from_trash returned failure: "
-            f"{purge_resp.get('error')!r}. project_id={fixtures.project_id} "
-            f"({fixtures.project_name}) remains in trash "
-            f"(trash_folder_name={trash_folder_name!r})."
-        )
-        return ok
-
+    # Any other outcome (already-absent-but-trash-entry-not-found,
+    # purge-raised, purge-failed) is a WARN, not an abort: by this point
+    # project_set_mark_del already succeeded (or the project was already
+    # absent), so a stuck trash purge only leaves the project sitting in
+    # trash — a safe holding area, not a DB-consistency problem.
     print(
-        f"OK    teardown: permanently_delete_from_trash purged "
-        f"trash_folder_name={trash_folder_name!r} "
+        f"WARN  teardown: {result} "
         f"(project_id={fixtures.project_id}, {fixtures.project_name})"
     )
     return ok

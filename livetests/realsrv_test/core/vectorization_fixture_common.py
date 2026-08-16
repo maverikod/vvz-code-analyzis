@@ -59,6 +59,7 @@ from typing import Any, Dict, Optional, Tuple
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import Status, truncate
+from realsrv_test.core.disposable_project import purge_disposable_project
 from realsrv_test.core.lifecycle_common import call_step, call_step_with_data
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ async def create_isolated_vectorization_project(
     *,
     name_prefix: str,
     description: str,
-) -> Tuple[Optional[str], Optional[str], Status, str]:
+) -> Tuple[Optional[str], Optional[str], Optional[str], Status, str]:
     """Create the isolated throwaway project a vectorization livetest lifecycle
     runs against, mirroring
     ``realsrv_test.core.lifecycle_indexer_correctness.
@@ -130,10 +131,15 @@ async def create_isolated_vectorization_project(
         description: ``create_project`` description text.
 
     Returns:
-        ``(project_id, project_root, status, reason)``. ``status`` is
-        :attr:`Status.EXECUTED_OK` with ``project_id``/``project_root`` set on
-        success; otherwise both are ``None`` and ``reason`` explains the
-        failure.
+        ``(project_id, project_root, project_name, status, reason)``.
+        ``status`` is :attr:`Status.EXECUTED_OK` with ``project_id``/
+        ``project_root``/``project_name`` set on success; otherwise all
+        three are ``None`` and ``reason`` explains the failure.
+        ``project_name`` is returned alongside the id so callers can pass
+        both straight to
+        :func:`~realsrv_test.core.disposable_project.purge_disposable_project`
+        (via :func:`teardown_vectorization_project`) in teardown, without
+        each lifecycle reconstructing the name from ``name_prefix`` itself.
     """
     watch_dir_status, watch_dir_data = await call_step_with_data(
         client, "list_watch_dirs", {}, ok_reason="watch directories listed"
@@ -143,18 +149,20 @@ async def create_isolated_vectorization_project(
         return (
             None,
             None,
+            None,
             Status.FAILED,
             f"could not list a watch_dir for the isolated project ({watch_dir_status.reason})",
         )
     watch_dir_id = str(watch_dirs[0]["id"])
 
     suffix = uuid.uuid4().hex[:8]
+    project_name = f"{name_prefix}_{suffix}"
     create_status, create_data = await call_step_with_data(
         client,
         "create_project",
         {
             "watch_dir_id": watch_dir_id,
-            "project_name": f"{name_prefix}_{suffix}",
+            "project_name": project_name,
             "description": description,
             "create_venv": False,
             "apply_template": False,
@@ -163,6 +171,7 @@ async def create_isolated_vectorization_project(
     )
     if create_status.status is not Status.EXECUTED_OK:
         return (
+            None,
             None,
             None,
             Status.FAILED,
@@ -174,10 +183,38 @@ async def create_isolated_vectorization_project(
         return (
             None,
             None,
+            None,
             Status.FAILED,
             f"create_project response missing project_id/project_root: {create_data!r}",
         )
-    return project_id, project_root, Status.EXECUTED_OK, "isolated project ready"
+    return project_id, project_root, project_name, Status.EXECUTED_OK, "isolated project ready"
+
+
+async def teardown_vectorization_project(
+    client: CodeAnalysisAsyncClient, project_id: str, project_name: Optional[str]
+) -> str:
+    """Purge an isolated vectorization livetest project (bug d5835fbf).
+
+    Thin wrapper around
+    :func:`~realsrv_test.core.disposable_project.purge_disposable_project` so
+    the three vectorization lifecycles (batch-cap, worker-activity,
+    dim-parity) share one teardown path instead of each hand-rolling a bare
+    ``project_set_mark_del(delete_from_disk=True)`` call with no follow-up
+    trash purge -- the old per-lifecycle version left every one of these
+    isolated projects sitting in trash forever (12 leaked entries observed
+    across the three suites before this fix).
+
+    Args:
+        client: Connected async client.
+        project_id: Isolated project to purge.
+        project_name: The project's name, if known (fallback matcher only;
+            see ``purge_disposable_project``'s docstring).
+
+    Returns:
+        The short outcome string from ``purge_disposable_project`` -- never
+        raises.
+    """
+    return await purge_disposable_project(client, project_id, project_name)
 
 
 async def upload_fixture_file(

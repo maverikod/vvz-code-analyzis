@@ -7,22 +7,18 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.constants import (
-    DATA_DIR_NAME,
-    DEFAULT_IGNORE_PATTERNS,
-    LOGS_DIR_NAME,
-)
 from ..core.worker_manager import get_worker_manager
-from ..core.storage_paths import load_raw_config, resolve_storage_paths
-
-logger = logging.getLogger(__name__)
+from ..core.storage_paths import load_raw_config
+from ..core.worker_start_args import (
+    resolve_file_watcher_worker_kwargs,
+    resolve_indexing_worker_kwargs,
+    resolve_vectorization_worker_kwargs,
+)
 
 
 class StartWorkerMCPCommand(BaseMCPCommand):
@@ -71,36 +67,60 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 "watch_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Directories to watch (file_watcher only; default: project root).",
+                    "description": (
+                        "Directories to watch (file_watcher only). Omit to default "
+                        "to a single watch directory at the project root resolved "
+                        "from project_id."
+                    ),
                     "examples": [["/abs/path/to/project"]],
                 },
                 "scan_interval": {
                     "type": "integer",
-                    "description": "Scan interval seconds (file_watcher only).",
-                    "default": 60,
+                    "description": (
+                        "Scan interval seconds (file_watcher only). Omit to use "
+                        "code_analysis.file_watcher.scan_interval from server config "
+                        "(defaults to 60 there)."
+                    ),
                     "examples": [60],
                 },
                 "poll_interval": {
                     "type": "integer",
-                    "description": "Poll interval seconds (vectorization only).",
-                    "default": 30,
+                    "description": (
+                        "Poll interval seconds (vectorization only; ignored for "
+                        "indexing, which always polls via its own worker loop). "
+                        "Omit to use code_analysis.worker.poll_interval from "
+                        "server config."
+                    ),
                     "examples": [30],
                 },
                 "batch_size": {
                     "type": "integer",
-                    "description": "Batch size (vectorization only).",
-                    "default": 10,
-                    "examples": [10],
+                    "description": (
+                        "Batch size (vectorization or indexing; ignored for "
+                        "file_watcher). Omit to use the configured value for the "
+                        "given worker_type (code_analysis.worker.batch_size for "
+                        "vectorization, code_analysis.indexing_worker.batch_size "
+                        "for indexing)."
+                    ),
+                    "examples": [5, 10],
                 },
                 "vector_dim": {
                     "type": "integer",
-                    "description": "Vector dimension (vectorization only).",
-                    "default": 384,
+                    "description": (
+                        "Vector dimension (vectorization only). Omit to use "
+                        "code_analysis.vector_dim from server config (must match "
+                        "the embedding service vector dimension)."
+                    ),
                     "examples": [384],
                 },
                 "worker_log_path": {
                     "type": "string",
-                    "description": "Optional log path for the worker process.",
+                    "description": (
+                        "Optional log path for the worker process. Omit to use the "
+                        "server-configured log path (falls back to server.log_dir "
+                        "when unset), matching where the server itself would start "
+                        "this worker type at boot."
+                    ),
                     "examples": ["/abs/path/to/logs/vectorization_worker.log"],
                 },
             },
@@ -118,7 +138,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "worker_type": "vectorization",
                     "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "poll_interval": 30,
-                    "batch_size": 10,
+                    "batch_size": 5,
                     "vector_dim": 384,
                     "worker_log_path": "/abs/path/to/project/logs/vectorization_worker.log",
                 },
@@ -130,101 +150,93 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         worker_type: str,
         project_id: str,
         watch_dirs: Optional[List[str]] = None,
-        scan_interval: int = 60,
-        poll_interval: int = 30,
-        batch_size: int = 10,
-        vector_dim: int = 384,
+        scan_interval: Optional[int] = None,
+        poll_interval: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        vector_dim: Optional[int] = None,
         worker_log_path: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Execute start worker command."""
+        """Execute start worker command.
+
+        Resolves start kwargs through ``code_analysis.core.worker_start_args``
+        -- the same boot-parity resolvers ``main_workers.py`` uses at server
+        startup -- so a manually-started worker lands on the same config-driven
+        log path, batch/poll settings, and enabled kill-switch as one started
+        automatically (bug 827e2b05: this command used to build its own,
+        divergent kwargs). Only parameters the caller actually passed are
+        applied as overrides; everything else comes from server config.
+        """
         try:
             root_path = self._resolve_project_root(project_id)
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
-            storage = resolve_storage_paths(
-                config_data=config_data, config_path=config_path
-            )
-            db_path = storage.db_path
 
             if worker_type == "file_watcher":
-                dirs = watch_dirs or [str(root_path)]
-                watch_dirs_config = [{"path": d, "id": d} for d in dirs]
-                log_path = worker_log_path or str(
-                    (root_path / "logs" / "file_watcher.log").resolve()
+                overrides: Dict[str, Any] = {
+                    "watch_dirs": [
+                        {"path": d, "id": d} for d in (watch_dirs or [str(root_path)])
+                    ],
+                }
+                if scan_interval is not None:
+                    overrides["scan_interval"] = scan_interval
+                if worker_log_path is not None:
+                    overrides["worker_log_path"] = worker_log_path
+                plan = resolve_file_watcher_worker_kwargs(
+                    config_data, config_path, overrides=overrides
                 )
-                worker_logs_dir = str(Path(log_path).resolve().parent)
+                if not plan.ok:
+                    return ErrorResult(
+                        message=plan.skip_reason or "file_watcher worker not started",
+                        code="WORKER_START_SKIPPED",
+                        details={"worker_type": worker_type},
+                    )
                 worker_manager = get_worker_manager()
-                res = worker_manager.start_file_watcher_worker(
-                    db_path=str(db_path),
-                    watch_dirs=watch_dirs_config,
-                    config_path=str(config_path),
-                    scan_interval=scan_interval,
-                    version_dir=str(
-                        (storage.config_dir / "data" / "versions").resolve()
-                    ),
-                    worker_log_path=log_path,
-                    worker_logs_dir=worker_logs_dir,
-                    ignore_patterns=list(
-                        DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
-                    ),
-                    locks_dir=str(storage.locks_dir),
-                )
+                res = worker_manager.start_file_watcher_worker(**plan.kwargs)
                 return SuccessResult(data=res.__dict__)
 
             if worker_type == "vectorization":
-                log_path = worker_log_path or str(
-                    (root_path / "logs" / "vectorization_worker.log").resolve()
+                overrides = {}
+                if vector_dim is not None:
+                    overrides["vector_dim"] = vector_dim
+                if batch_size is not None:
+                    overrides["batch_size"] = batch_size
+                if poll_interval is not None:
+                    overrides["poll_interval"] = poll_interval
+                if worker_log_path is not None:
+                    overrides["worker_log_path"] = worker_log_path
+                plan = resolve_vectorization_worker_kwargs(
+                    config_data, config_path, overrides=overrides
                 )
-                worker_logs_dir = str(Path(log_path).resolve().parent)
-                faiss_dir = storage.faiss_dir
-                from code_analysis.core.config import ServerConfig
-
-                svo_config = None
-                code_analysis_config = config_data.get("code_analysis", {})
-                if code_analysis_config:
-                    try:
-                        server_config = ServerConfig(**code_analysis_config)
-                        svo_config = (
-                            server_config.model_dump()
-                            if hasattr(server_config, "model_dump")
-                            else server_config.dict()
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to load SVO config: %s", e)
-
+                if not plan.ok:
+                    return ErrorResult(
+                        message=plan.skip_reason or "vectorization worker not started",
+                        code="WORKER_START_SKIPPED",
+                        details={"worker_type": worker_type},
+                    )
                 worker_manager = get_worker_manager()
-                res = worker_manager.start_vectorization_worker(
-                    db_path=str(db_path),
-                    faiss_dir=str(faiss_dir),
-                    config_path=str(config_path),
-                    vector_dim=vector_dim,
-                    svo_config=svo_config,
-                    batch_size=batch_size,
-                    poll_interval=poll_interval,
-                    worker_log_path=log_path,
-                    worker_logs_dir=worker_logs_dir,
-                )
+                res = worker_manager.start_vectorization_worker(**plan.kwargs)
                 return SuccessResult(data=res.__dict__)
 
             if worker_type == "indexing":
-                log_path = worker_log_path or str(
-                    (root_path / "logs" / "indexing_worker.log").resolve()
+                overrides = {}
+                if batch_size is not None:
+                    overrides["batch_size"] = batch_size
+                if poll_interval is not None:
+                    overrides["poll_interval"] = poll_interval
+                if worker_log_path is not None:
+                    overrides["worker_log_path"] = worker_log_path
+                plan = resolve_indexing_worker_kwargs(
+                    config_data, config_path, overrides=overrides
                 )
-                worker_logs_dir = str(Path(log_path).resolve().parent)
-                code_analysis_cfg = config_data.get("code_analysis", {}) or {}
-                worker_cfg = code_analysis_cfg.get("worker", {}) or {}
-                log_timing = bool(worker_cfg.get("log_all_operations_timing", False))
+                if not plan.ok:
+                    return ErrorResult(
+                        message=plan.skip_reason or "indexing worker not started",
+                        code="WORKER_START_SKIPPED",
+                        details={"worker_type": worker_type},
+                    )
                 worker_manager = get_worker_manager()
-                res = worker_manager.start_indexing_worker(
-                    db_path=str(db_path),
-                    config_path=str(config_path),
-                    poll_interval=poll_interval,
-                    batch_size=batch_size,
-                    worker_log_path=log_path,
-                    worker_logs_dir=worker_logs_dir,
-                    log_timing=log_timing,
-                )
+                res = worker_manager.start_indexing_worker(**plan.kwargs)
                 return SuccessResult(data=res.__dict__)
 
             return ErrorResult(

@@ -71,6 +71,23 @@ def _normalize_postgres_returning_pk(value: Any) -> DbIdentity:
     return str(value)
 
 
+def _normalize_postgres_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Stringify UUID-typed cells in a ``select()`` result row.
+
+    psycopg3 casts PostgreSQL ``uuid`` columns to ``uuid.UUID`` objects by
+    default; ``insert()`` already normalizes the RETURNING primary key to
+    ``str`` via ``_normalize_postgres_returning_pk`` (UUID and TEXT ids must
+    surface as strings). ``select()`` must honor the same contract for every
+    UUID-typed column in the row (id, foreign keys, etc.), not just a single
+    PK cell, so callers can compare ids returned by insert() and select()
+    directly without each call site normalizing defensively.
+    """
+    return {
+        col: (str(val) if isinstance(val, uuid.UUID) else val)
+        for col, val in row.items()
+    }
+
+
 def _postgres_where_clauses(
     where: Dict[str, Any],
 ) -> tuple[list[str], list[Any]]:
@@ -254,7 +271,7 @@ class PostgreSQLOperations:
                     [d[0] for d in cursor.description] if cursor.description else []
                 )
                 rows = cursor.fetchall()
-                out = [dict(zip(cols, row)) for row in rows]
+                out = [_normalize_postgres_row(dict(zip(cols, row))) for row in rows]
             finally:
                 cursor.close()
             # With autocommit=False, a SELECT opens an implicit transaction. If we

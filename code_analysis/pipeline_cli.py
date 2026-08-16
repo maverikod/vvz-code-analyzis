@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import subprocess
 import sys
@@ -176,6 +177,35 @@ def _run_live_vector_batch_cap() -> int:
 
 def _run_live_indexing_ignore_parity() -> int:
     return _run_live_verifier("indexing_ignore_parity")
+
+
+def _run_live_worker_activity() -> int:
+    return _run_live_verifier("worker_activity")
+
+
+def _run_live_leak_audit() -> int:
+    """Run the read-only fixture-leak audit directly in-process (bug d5835fbf).
+
+    Unlike every other ``live-*`` check above, this one does NOT shell out to
+    ``scripts/verify_client_all_commands_live.py`` -- it has no lifecycle
+    suite to run, just a read-only inventory fetch + classification (see
+    ``code_analysis.live_leak_audit``), so it connects its own short-lived
+    client directly. Reuses the same mTLS file resolution and
+    ``PIPELINE_LIVE_HOST``/``PIPELINE_LIVE_PORT`` env vars as
+    ``_live_verifier_command`` for a consistent operator experience.
+    """
+    try:
+        ssl_paths = _resolve_live_verifier_ssl_paths()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    env = os.environ
+    host = env.get("PIPELINE_LIVE_HOST", "192.168.254.26")
+    port = int(env.get("PIPELINE_LIVE_PORT", "15010"))
+
+    from code_analysis.live_leak_audit import run_live_leak_audit_cli
+
+    return asyncio.run(run_live_leak_audit_cli(host=host, port=port, ssl_paths=ssl_paths))
 
 
 _CHECKS: tuple[PipelineCheck, ...] = (
@@ -735,6 +765,31 @@ _CHECKS: tuple[PipelineCheck, ...] = (
             "update_indexes would have kept."
         ),
         runner=_run_live_indexing_ignore_parity,
+    ),
+    PipelineCheck(
+        name="live-worker-activity",
+        description=(
+            "Run only the 'worker_activity' realsrv-test suite against the "
+            "deployed CAS server -- a subset of live-deployed-server. Guards "
+            "bug 827e2b05: a manually-started vectorization worker computed "
+            "svo_config=None and could chunk files but never embed them. "
+            "WARNING: this check stops and starts the process-wide "
+            "vectorization worker -- it must NEVER run in parallel with any "
+            "other live check."
+        ),
+        runner=_run_live_worker_activity,
+    ),
+    PipelineCheck(
+        name="live-leak-audit",
+        description=(
+            "Read-only audit of the deployed CAS server for orphaned "
+            "livetest fixture projects/trash entries (bug d5835fbf): RED if "
+            "any live project or aged (>2h) trash entry matches a known "
+            "fixture-name prefix. Detector only -- never mutates server "
+            "state; deliberately NOT part of run_all (like the other "
+            "live-* subset checks)."
+        ),
+        runner=_run_live_leak_audit,
     ),
 )
 

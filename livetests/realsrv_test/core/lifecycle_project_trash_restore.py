@@ -38,6 +38,7 @@ from typing import Any, Dict, Optional
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
+from realsrv_test.core.disposable_project import purge_disposable_project
 from realsrv_test.core.fixtures import FixtureContext
 
 CHECK_NAME = "project_trash_restore_roundtrip"
@@ -105,49 +106,27 @@ async def _cleanup(
 ) -> None:
     """Best-effort final purge of the disposable project this check created.
 
-    Runs a full mark-del (``delete_from_disk=False`` -> trash + DB clear),
-    then resolves and permanently deletes the trash folder. Never raises --
-    logs a WARN on any failure, mirroring
-    ``realsrv_test.core.teardown.teardown_fixtures``.
+    Delegates to the shared
+    :func:`~realsrv_test.core.disposable_project.purge_disposable_project`
+    (bug d5835fbf) — this check's own mark-del/trash-folder/purge idiom (a
+    full mark-del with ``delete_from_disk=False``, then resolve and
+    permanently delete the trash folder) was the reference implementation
+    the shared helper generalizes, so converging here is a pure
+    dedup: by the time this runs, the project has already been through one
+    full trash+restore round trip earlier in the check itself (see
+    ``run_project_trash_restore_roundtrip_check``), so this is a second,
+    independent soft-delete — the helper's before/after trash diff still
+    resolves it correctly since the earlier cycle's trash folder was already
+    consumed by ``restore_project_from_trash``.
 
     Args:
         client: Connected async client.
         project_id: UUID4 of the disposable project to purge.
         project_name: Directory/display name of the disposable project.
     """
-    try:
-        await client.call_validated(
-            "project_set_mark_del",
-            {"project_id": project_id, "delete_from_disk": False},
-        )
-    except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-        print(
-            "WARN  project_trash_restore_roundtrip cleanup: "
-            f"project_set_mark_del raised: {exc!r}"
-        )
-        return
-
-    try:
-        folder_name = await _find_trash_folder_name(client, project_name)
-        if not folder_name:
-            print(
-                "WARN  project_trash_restore_roundtrip cleanup: could not "
-                f"resolve trash_folder_name for {project_name!r}; project "
-                "remains in trash (safe holding area)."
-            )
-            return
-        purge_resp = await client.call_validated(
-            "permanently_delete_from_trash", {"trash_folder_name": folder_name}
-        )
-        if not purge_resp.get("success"):
-            print(
-                "WARN  project_trash_restore_roundtrip cleanup: "
-                f"permanently_delete_from_trash failed: {purge_resp.get('error')!r}"
-            )
-    except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-        print(
-            f"WARN  project_trash_restore_roundtrip cleanup: purge raised: {exc!r}"
-        )
+    result = await purge_disposable_project(client, project_id, project_name)
+    if not result.startswith("purged"):
+        print(f"WARN  project_trash_restore_roundtrip cleanup: {result}")
 
 
 async def run_project_trash_restore_roundtrip_check(

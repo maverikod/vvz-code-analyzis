@@ -763,6 +763,10 @@ def scan_watch_dir(
             "changed_files": 0,
             "deleted_files": 0,
             "errors": 0,
+            # Bug DIVERGENCE netting: files build_project_disk_manifest skipped
+            # this cycle for a chronic, already-understood reason (unsupported
+            # tree format / non-UTF-8 content) -- see log_cycle_divergence_if_any.
+            "expected_unsynced": 0,
         }
         processed_project_ids: Set[str] = set()
         watcher_coord = {
@@ -826,9 +830,12 @@ def scan_watch_dir(
                         signature[2],
                     )
                     continue
-                manifest = build_project_disk_manifest(
+                manifest, manifest_skip_counts = build_project_disk_manifest(
                     project_files, project_id, project_root
                 )
+                dir_stats["expected_unsynced"] = int(
+                    dir_stats.get("expected_unsynced", 0)
+                ) + int(manifest_skip_counts.get("skip_unsupported_format", 0))
                 project_queue_stats = processor.queue_project_bulk_sync(
                     project_id,
                     project_root,
@@ -994,6 +1001,7 @@ def scan_watch_dir(
             int(dir_stats.get("new_files", 0)),
             int(dir_stats.get("changed_files", 0)),
             int(dir_stats.get("deleted_files", 0)),
+            expected_unsynced=int(dir_stats.get("expected_unsynced", 0)),
             logger_=logger,
         )
 

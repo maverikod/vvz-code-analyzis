@@ -24,10 +24,47 @@ for that single file — see ``core/docstring_chunker_pkg/docstring_chunker.py``
 one chunk per documented function), run ``update_indexes`` to index it,
 ``start_worker(worker_type="vectorization")`` to drive the real chunk-only
 embed + ANN-index pipeline without waiting for file-watcher discovery, and
-poll ``check_vectors`` with a bounded timeout for
-``chunks_pending_vectorization == 0`` and ``chunks_with_model == total_chunks``.
-On the unfixed server this must go RED: the oversized embed call keeps
-failing outright, so the file's chunks never leave "pending".
+poll ``check_vectors`` with a bounded timeout for ``chunks_with_model ==
+total_chunks`` (every chunk got an embedding-model round-trip). On the
+unfixed server this must go RED: the oversized embed call keeps failing
+outright, so the file's chunks never get a model recorded at all.
+
+Why full ANN completion (``chunks_pending_vectorization == 0`` /
+``chunks_with_vector == total_chunks``) is deliberately NOT asserted here
+(1.6.114 gate hardening): STEP 2 of vectorization -- writing
+``embedding_vec`` / the ANN index entry once a chunk has a model -- is
+throttled by ``worker.batch_size`` PER PROJECT PER FLEET CYCLE (5 by
+default). The vectorization worker is universal: it visits every project on
+the fleet in its poll loop, not just this check's isolated one. Once 1.6.114
+unpaused every project and the fleet started draining a large shared
+backlog, a single fleet cycle can take minutes, so this check's bounded poll
+window can observe only a couple of cycles worth of ANN writes for its own
+project -- nowhere near enough to require full ANN completion within the
+window. That is fleet-wide ANN write throughput, not the bug 16b1abbe
+guards, so requiring it here would make this check RED for a reason
+unrelated to 16b1abbe whenever the fleet is busy. See
+``vectorization_fixture_common.poll_check_vectors_fully_embedded``'s
+docstring for the full reasoning, and
+``vectorization_fixture_common.scan_vectorization_log_for_cap_errors`` for
+the second half of the signature this check now also asserts: the embed
+service's per-request cap must never actually have been hit during the run
+(a silent retry-past-cap could otherwise complete embedding while still
+being the bug this check exists to catch).
+
+The isolated-project creation, fixture source generation, and check_vectors
+polling live in ``realsrv_test.core.vectorization_fixture_common`` (factored
+out during the 1.6.113 hardening pass so ``lifecycle_vector_dim_parity.py``
+can share the same machinery instead of targeting a hardcoded fixed project).
+That same pass also added the worker start/stop hardening this lifecycle uses
+(``start_and_verify_vectorization_worker`` / ``stop_vectorization_worker_if_
+started``): confirm the worker process is actually alive via
+``get_worker_status`` (bounded retries) before trusting the poll window, and
+only stop the worker in teardown when THIS call actually started a fresh one
+-- a concurrent suite's already-running worker must not get stopped out from
+under it. The 1.6.114 pass added a further wait, before that start, for an
+already-running boot worker (see ``start_and_verify_vectorization_worker``'s
+docstring) to close a restart race that could otherwise leave the fleet with
+no vectorization worker at all after this check's teardown.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -35,16 +72,22 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import asyncio
-import time
-import uuid
-from typing import Any, Dict, Optional
+from typing import Dict
 
 from code_analysis_client import CodeAnalysisAsyncClient
 
 from realsrv_test.core.catalog import Bucket, CommandOutcome, Status, truncate
 from realsrv_test.core.fixtures import FixtureContext
-from realsrv_test.core.lifecycle_common import call_step, call_step_with_data
+from realsrv_test.core.lifecycle_common import call_step
+from realsrv_test.core.vectorization_fixture_common import (
+    create_isolated_vectorization_project,
+    poll_check_vectors_fully_embedded,
+    scan_vectorization_log_for_cap_errors,
+    start_and_verify_vectorization_worker,
+    stop_vectorization_worker_if_started,
+    teardown_vectorization_project,
+    upload_fixture_file,
+)
 
 CHECK_NAME = "chunk_only_embed_batch_cap"
 
@@ -53,7 +96,14 @@ CHECK_NAME = "chunk_only_embed_batch_cap"
 # the unfixed server.
 _TOTAL_FUNCTIONS = 30
 
-_POLL_TIMEOUT_SECONDS = 180.0
+# Bumped from 180s -> 240s during the 1.6.113 hardening pass: the added
+# liveness-verification step (start_and_verify_vectorization_worker, up to
+# 3 retries with a 2s delay) eats into the time available before this poll's
+# own deadline, and the shared probe server has been observed to take longer
+# under concurrent-suite load than the original budget assumed. The cap
+# semantics this check exists to prove (_TOTAL_FUNCTIONS=30 > the embed
+# service's 20-text cap) are unchanged -- this only widens the flake margin.
+_POLL_TIMEOUT_SECONDS = 240.0
 _POLL_INTERVAL_SECONDS = 5.0
 
 
@@ -68,148 +118,6 @@ def _outcome(status: Status, reason: str) -> Dict[str, CommandOutcome]:
         ``{CHECK_NAME: CommandOutcome(...)}``, the shape ``run_lifecycles`` merges.
     """
     return {CHECK_NAME: CommandOutcome(CHECK_NAME, Bucket.BUCKET_A, status, reason)}
-
-
-def _generate_fixture_source(total_functions: int) -> str:
-    """Build a ``.py`` module with ``total_functions`` documented functions.
-
-    Each function gets its own one-line docstring so the docstring chunker
-    persists one ``code_chunks`` row per function (see module docstring) —
-    ``total_functions`` un-vectorized chunks for a single file.
-
-    Args:
-        total_functions: Number of top-level documented functions to emit.
-
-    Returns:
-        Full Python module source text.
-    """
-    lines = [
-        '"""Fixture module for the vectorization embed-batch-cap check (bug 16b1abbe).',
-        "",
-        f"Has {total_functions} documented functions so the docstring chunker",
-        "persists more un-vectorized chunks for this one file than the embed",
-        "service's default per-request text cap (20).",
-        '"""',
-        "",
-        "",
-    ]
-    for i in range(total_functions):
-        lines.append(f"def batch_cap_fixture_fn_{i}() -> int:")
-        lines.append(f'    """Return a fixed value; function #{i} of the batch-cap fixture set."""')
-        lines.append(f"    return {i}")
-        lines.append("")
-        lines.append("")
-    return "\n".join(lines)
-
-
-async def _create_isolated_project(
-    client: CodeAnalysisAsyncClient,
-) -> tuple[Optional[str], Optional[str], Optional[Dict[str, CommandOutcome]]]:
-    """Create the isolated throwaway project this check runs against.
-
-    Args:
-        client: Connected async client.
-
-    Returns:
-        ``(project_id, project_root, None)`` on success, or
-        ``(None, None, failure_outcome)`` on failure.
-    """
-    watch_dir_status, watch_dir_data = await call_step_with_data(
-        client, "list_watch_dirs", {}, ok_reason="watch directories listed"
-    )
-    watch_dirs = (watch_dir_data or {}).get("watch_dirs") or []
-    if watch_dir_status.status is not Status.EXECUTED_OK or not watch_dirs:
-        return (
-            None,
-            None,
-            _outcome(
-                Status.FAILED,
-                f"could not list a watch_dir for the isolated project ({watch_dir_status.reason})",
-            ),
-        )
-    watch_dir_id = str(watch_dirs[0]["id"])
-
-    suffix = uuid.uuid4().hex[:8]
-    create_status, create_data = await call_step_with_data(
-        client,
-        "create_project",
-        {
-            "watch_dir_id": watch_dir_id,
-            "project_name": f"verify_vecbatchcap_{suffix}",
-            "description": "isolated disposable project for the embed batch-cap check (bug 16b1abbe)",
-            "create_venv": False,
-            "apply_template": False,
-        },
-        ok_reason="isolated throwaway project created",
-    )
-    if create_status.status is not Status.EXECUTED_OK:
-        return (
-            None,
-            None,
-            _outcome(
-                Status.FAILED,
-                f"could not create the isolated project ({create_status.reason})",
-            ),
-        )
-    project_id = str((create_data or {}).get("project_id") or "")
-    project_root = str((create_data or {}).get("project_root") or "")
-    if not project_id or not project_root:
-        return (
-            None,
-            None,
-            _outcome(
-                Status.FAILED,
-                f"create_project response missing project_id/project_root: {create_data!r}",
-            ),
-        )
-    return project_id, project_root, None
-
-
-async def _poll_check_vectors(
-    client: CodeAnalysisAsyncClient, project_id: str
-) -> tuple[Status, str, Optional[Dict[str, Any]]]:
-    """Poll ``check_vectors`` until fully vectorized or the bounded timeout expires.
-
-    Args:
-        client: Connected async client.
-        project_id: Isolated project UUID.
-
-    Returns:
-        Tuple of (status, reason, last ``check_vectors`` data dict or None).
-        ``status`` is :attr:`Status.EXECUTED_OK` only if, before the
-        deadline, a poll observed ``chunks_pending_vectorization == 0`` and
-        ``chunks_with_model == total_chunks`` with ``total_chunks > 0``.
-    """
-    deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
-    last_data: Optional[Dict[str, Any]] = None
-    last_reason = "check_vectors was never called"
-    while time.monotonic() < deadline:
-        outcome, data = await call_step_with_data(
-            client,
-            "check_vectors",
-            {"project_id": project_id},
-            ok_reason="check_vectors executed",
-        )
-        if outcome.status is not Status.EXECUTED_OK:
-            last_reason = f"check_vectors call failed: {outcome.reason}"
-        else:
-            last_data = data or {}
-            total = last_data.get("total_chunks")
-            pending = last_data.get("chunks_pending_vectorization")
-            with_model = last_data.get("chunks_with_model")
-            last_reason = (
-                f"total_chunks={total} chunks_pending_vectorization={pending} "
-                f"chunks_with_model={with_model}"
-            )
-            if (
-                isinstance(total, int)
-                and total > 0
-                and pending == 0
-                and with_model == total
-            ):
-                return Status.EXECUTED_OK, last_reason, last_data
-        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-    return Status.FAILED, last_reason, last_data
 
 
 async def run_vectorization_batch_cap_lifecycle(
@@ -227,46 +135,36 @@ async def run_vectorization_batch_cap_lifecycle(
 
     Returns:
         ``{CHECK_NAME: outcome}`` — :attr:`Status.EXECUTED_OK` only when
-        every chunk of the oversized fixture file ends up fully vectorized
-        (``chunks_pending_vectorization == 0`` and
-        ``chunks_with_model == total_chunks``) within the bounded poll.
+        every chunk of the oversized fixture file ends up with an embedding
+        model recorded (``chunks_with_model == total_chunks``) within the
+        bounded poll AND the vectorization log shows zero cap-rejection hits
+        for the run (see module docstring for why ANN/``chunks_with_vector``
+        completion is intentionally not required here).
     """
-    project_id, project_root, create_failure = await _create_isolated_project(client)
-    if create_failure is not None:
-        return create_failure
+    project_id, project_root, project_name, create_status, create_reason = (
+        await create_isolated_vectorization_project(
+            client,
+            name_prefix="verify_vecbatchcap",
+            description="isolated disposable project for the embed batch-cap check (bug 16b1abbe)",
+        )
+    )
+    if create_status is not Status.EXECUTED_OK:
+        return _outcome(Status.FAILED, create_reason)
     assert project_id is not None and project_root is not None
 
+    started_fresh = False
     try:
-        session_status, session_data = await call_step_with_data(
-            client,
-            "session_create",
-            {"comment": "vectorization batch-cap check (bug 16b1abbe)"},
-            ok_reason="session created for the isolated project",
-        )
-        if session_status.status is not Status.EXECUTED_OK:
-            return _outcome(
-                Status.FAILED,
-                f"could not open a session ({session_status.reason})",
-            )
-        session_id = str((session_data or {}).get("session_id") or "")
-        if not session_id:
-            return _outcome(
-                Status.FAILED,
-                f"session_create response missing session_id: {session_data!r}",
-            )
-
         relative_path = "batch_cap_fixture.py"
-        content = _generate_fixture_source(_TOTAL_FUNCTIONS).encode("utf-8")
-        try:
-            file_id = await client.file_sessions.upload_new(
-                session_id, content, project_id, relative_path
-            )
-        except Exception as exc:  # noqa: BLE001 - a broken check must not abort the sweep
-            return _outcome(
-                Status.FAILED, truncate(f"fixture file upload failed: {exc!r}")
-            )
-        if not file_id:
-            return _outcome(Status.FAILED, "fixture upload returned no file_id")
+        file_id, upload_status, upload_reason = await upload_fixture_file(
+            client,
+            project_id=project_id,
+            relative_path=relative_path,
+            total_functions=_TOTAL_FUNCTIONS,
+            session_comment="vectorization batch-cap check (bug 16b1abbe)",
+        )
+        if upload_status is not Status.EXECUTED_OK:
+            return _outcome(Status.FAILED, upload_reason)
+        assert file_id is not None
 
         update_status = await call_step(
             client,
@@ -280,53 +178,56 @@ async def run_vectorization_batch_cap_lifecycle(
                 f"update_indexes did not succeed: {update_status.reason}",
             )
 
-        start_status = await call_step(
-            client,
-            "start_worker",
-            {"worker_type": "vectorization", "project_id": project_id},
-            ok_reason="vectorization worker started for the isolated project",
+        start_status, start_reason, started_fresh = (
+            await start_and_verify_vectorization_worker(client, project_id)
         )
-        if start_status.status is not Status.EXECUTED_OK:
-            return _outcome(
-                start_status.status,
-                f"start_worker(vectorization) did not succeed: {start_status.reason}",
-            )
+        if start_status is not Status.EXECUTED_OK:
+            return _outcome(start_status, start_reason)
 
         try:
-            poll_status, poll_reason, final_data = await _poll_check_vectors(
-                client, project_id
+            poll_status, poll_reason, final_data = await poll_check_vectors_fully_embedded(
+                client,
+                project_id,
+                timeout_seconds=_POLL_TIMEOUT_SECONDS,
+                interval_seconds=_POLL_INTERVAL_SECONDS,
             )
         finally:
-            # Best-effort: this stops the process-wide vectorization worker
-            # (stop_worker takes no project_id — see s07_workers' identical
-            # file_watcher stop), matching the existing worker-lifecycle
-            # idiom (realsrv_test.core.lifecycle_workers.run_worker_lifecycle).
-            await call_step(
-                client,
-                "stop_worker",
-                {"worker_type": "vectorization"},
-                ok_reason="vectorization worker stopped",
+            # Conditional stop (1.6.113 hardening): only stop the worker if this
+            # call actually started a fresh one -- see module docstring.
+            await stop_vectorization_worker_if_started(client, started_fresh)
+
+        if poll_status is not Status.EXECUTED_OK:
+            return _outcome(
+                Status.FAILED,
+                f"{relative_path}: not fully embedded within "
+                f"{_POLL_TIMEOUT_SECONDS:.0f}s ({poll_reason}) — bug 16b1abbe: a "
+                "file with more un-vectorized chunks than the embed service's "
+                "per-request text cap never completes embedding "
+                f"(last check_vectors data: {truncate(repr(final_data))})",
             )
 
-        if poll_status is Status.EXECUTED_OK:
+        cap_scan_status, cap_scan_reason = await scan_vectorization_log_for_cap_errors(
+            client
+        )
+        if cap_scan_status is not Status.EXECUTED_OK:
             return _outcome(
-                Status.EXECUTED_OK,
-                f"{relative_path}: all {_TOTAL_FUNCTIONS} chunk(s) fully "
-                f"vectorized within {_POLL_TIMEOUT_SECONDS:.0f}s ({poll_reason})",
+                Status.FAILED,
+                f"{relative_path}: all {_TOTAL_FUNCTIONS} chunk(s) got an "
+                f"embedding model ({poll_reason}) but the cap-error log scan "
+                f"failed the 16b1abbe signature: {cap_scan_reason}",
             )
+
         return _outcome(
-            Status.FAILED,
-            f"{relative_path}: not fully vectorized within "
-            f"{_POLL_TIMEOUT_SECONDS:.0f}s ({poll_reason}) — bug 16b1abbe: a "
-            "file with more un-vectorized chunks than the embed service's "
-            "per-request text cap never completes embedding "
-            f"(last check_vectors data: {truncate(repr(final_data))})",
+            Status.EXECUTED_OK,
+            f"{relative_path}: all {_TOTAL_FUNCTIONS} chunk(s) fully embedded "
+            f"within {_POLL_TIMEOUT_SECONDS:.0f}s ({poll_reason}); cap-error "
+            f"log scan clean ({cap_scan_reason})",
         )
     finally:
-        try:
-            await client.call_validated(
-                "delete_project",
-                {"project_id": project_id, "delete_from_disk": True},
-            )
-        except Exception:  # noqa: BLE001 - best-effort cleanup only, even on failure
-            pass
+        # bug d5835fbf: this used to call project_set_mark_del(
+        # delete_from_disk=True) directly and stop, which soft-deletes but
+        # never follows up with permanently_delete_from_trash -- every run
+        # left its isolated project sitting in trash forever. Routed through
+        # the shared vectorization teardown helper instead, which purges the
+        # trash entry too (see that function's docstring for the leak count).
+        await teardown_vectorization_project(client, project_id, project_name)

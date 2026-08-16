@@ -87,6 +87,8 @@ def test_list_checks_contains_named_bugfix_checks() -> None:
         "live-vector-parity",
         "live-vector-batch-cap",
         "live-indexing-ignore-parity",
+        "live-worker-activity",
+        "live-leak-audit",
     ]
 
 

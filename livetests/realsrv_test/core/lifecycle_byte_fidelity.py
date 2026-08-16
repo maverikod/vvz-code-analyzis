@@ -28,7 +28,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import gzip
 import tempfile
 import uuid
 from pathlib import Path
@@ -50,20 +49,6 @@ _CRLF_PAYLOAD = b"alpha\r\nbeta\r\ngamma\r\n"
 # text-mode read collapses the first two, any text-mode write can append or
 # translate the last.
 _MIXED_PAYLOAD = b"crlf\r\ncr\rlf\n\r\nno-trailing-newline"
-
-
-def _is_gzip_upload_blocker(exc: BaseException) -> bool:
-    """True when ``exc`` is the known gzip upload checksum/decompression blocker.
-
-    Args:
-        exc: Exception raised while pushing a gzip-compressed upload.
-
-    Returns:
-        True if the failure is the transfer-stack contract mismatch described
-        in :func:`_create_and_compare`, not a byte-fidelity result.
-    """
-    text = repr(exc).lower()
-    return "checksum" in text or "gzip" in text
 
 
 def _outcome(name: str, status: Status, reason: str) -> Dict[str, CommandOutcome]:
@@ -165,11 +150,14 @@ async def _create_and_compare(
 ) -> Dict[str, CommandOutcome]:
     """Create a new project file from ``payload`` and assert the stored bytes match.
 
-    With ``compression="gzip"`` the transfer contract expects the uploaded
-    bytes to be ALREADY compressed (the adapter uploader streams the source
-    verbatim and the server decompresses the staged buffer to verify it), so
-    the payload is gzipped here before it goes on the wire; the comparison
-    is still against the original, uncompressed ``payload``.
+    With ``compression="gzip"`` the transfer contract expects PLAINTEXT input:
+    the client checksums ``payload`` and only then compresses it for the
+    wire; the server verifies the declared checksum against the decompressed
+    buffer and the save path decompresses it once more before writing. So
+    ``payload`` is passed to ``upload_new`` unmodified here, exactly like the
+    identity branch -- pre-compressing it before the call would make the
+    client gzip already-gzipped bytes, and the save path's single
+    decompression would then hand back garbage instead of the original text.
 
     Args:
         client: Connected async client.
@@ -185,33 +173,16 @@ async def _create_and_compare(
     """
     if not fixtures.session_id:
         return _no_session_skip(name)
-    wire_payload = gzip.compress(payload) if compression == "gzip" else payload
     try:
         file_id = await client.file_sessions.upload_new(
             str(fixtures.session_id),
-            wire_payload,
+            payload,
             fixtures.project_id,
             rel_path,
             compression=compression,
         )
         stored = await _download_bytes(client, fixtures, str(file_id))
     except Exception as exc:  # noqa: BLE001 - a broken step is a real failure here
-        if compression == "gzip" and _is_gzip_upload_blocker(exc):
-            return _outcome(
-                name,
-                Status.INCONCLUSIVE,
-                (
-                    "gzip upload cannot complete end-to-end through the client "
-                    "façade, so the server's gzip save branch was never reached "
-                    "and this check proved nothing either way: the adapter "
-                    "verifies the DECLARED checksum against the DECOMPRESSED "
-                    "buffer while its uploader computes that checksum over the "
-                    "source file it streams, so a pre-compressed payload always "
-                    "fails the checksum and a raw payload always fails "
-                    "decompression. Separate transfer-stack defect, not bug "
-                    f"44724d35. Observed: {truncate(repr(exc))}"
-                ),
-            )
         return _outcome(name, Status.FAILED, truncate(repr(exc)))
     return _verdict(name, payload, stored, context)
 
@@ -246,11 +217,7 @@ async def run_gzip_preserves_crlf(
 
     The compressed branch decompresses the buffer through its own reader, so
     it needs its own coverage: a fix applied only to the plain branch would
-    leave this one silently rewriting line endings. While the transfer
-    stack's gzip upload contract is self-contradictory (see
-    :func:`_create_and_compare`), this check reports INCONCLUSIVE rather than
-    a pass -- the server branch it targets is covered locally by
-    ``tests/test_transfer_buffer_text_io.py``.
+    leave this one silently rewriting line endings.
 
     Args:
         client: Connected async client.

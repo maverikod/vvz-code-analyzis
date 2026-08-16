@@ -11,17 +11,17 @@ from pathlib import Path
 
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.storage_paths import (
-    apply_resolved_batch_output_dir,
     ensure_storage_dirs,
     load_raw_config,
     resolve_storage_paths,
 )
-from code_analysis.core.constants import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_POLL_INTERVAL,
-)
-from code_analysis.core.config import ServerConfig, get_driver_config
+from code_analysis.core.config import get_driver_config
 from code_analysis.core.worker_manager import get_worker_manager
+from code_analysis.core.worker_start_args import (
+    resolve_file_watcher_worker_kwargs,
+    resolve_indexing_worker_kwargs,
+    resolve_vectorization_worker_kwargs,
+)
 
 
 def startup_database_driver() -> None:
@@ -110,43 +110,14 @@ def startup_indexing_worker() -> None:
             with open(cfg.config_path, "r", encoding="utf-8") as f:
                 app_config = json.load(f)
 
-        code_analysis_config = app_config.get("code_analysis", {}) or {}
-        indexing_cfg = code_analysis_config.get("indexing_worker") or {}
-        if isinstance(indexing_cfg, dict) and not indexing_cfg.get("enabled", True):
-            logger.info("ℹ️  Indexing worker is disabled in config, skipping")
+        config_path = BaseMCPCommand._resolve_config_path()
+        plan = resolve_indexing_worker_kwargs(app_config, config_path)
+        if not plan.ok:
+            logger.info("ℹ️  Indexing worker not started: %s", plan.skip_reason)
             return
 
-        config_path = BaseMCPCommand._resolve_config_path()
-        config_data = load_raw_config(config_path)
-        storage = resolve_storage_paths(
-            config_data=config_data, config_path=config_path
-        )
-        db_path = storage.db_path
-
-        poll_interval = 30
-        batch_size = 5
-        worker_log_path = str(storage.log_dir / "indexing_worker.log")
-        log_timing = False
-        worker_cfg = code_analysis_config.get("worker") or {}
-        if isinstance(worker_cfg, dict):
-            log_timing = worker_cfg.get("log_all_operations_timing", False)
-        if isinstance(indexing_cfg, dict):
-            poll_interval = indexing_cfg.get("poll_interval", 30)
-            batch_size = indexing_cfg.get("batch_size", 5)
-            if indexing_cfg.get("log_path"):
-                worker_log_path = indexing_cfg["log_path"]
-
-        worker_logs_dir = str(Path(worker_log_path).resolve().parent)
         worker_manager = get_worker_manager()
-        result = worker_manager.start_indexing_worker(
-            db_path=str(db_path),
-            config_path=str(config_path),
-            poll_interval=int(poll_interval),
-            batch_size=int(batch_size),
-            worker_log_path=worker_log_path,
-            worker_logs_dir=worker_logs_dir,
-            log_timing=log_timing,
-        )
+        result = worker_manager.start_indexing_worker(**plan.kwargs)
         if result.success:
             logger.info(f"✅ Indexing worker started: {result.message}")
             print(f"✅ {result.message}", flush=True)
@@ -213,27 +184,17 @@ def startup_vectorization_worker() -> None:
             )
             return
 
-        # Filter out 'database' field - it's not part of ServerConfig model
-        # ServerConfig has extra="forbid": only pass keys that exist on the model.
         config_path = BaseMCPCommand._resolve_config_path()
-        _allowed = set(ServerConfig.model_fields.keys())
-        server_config_dict = apply_resolved_batch_output_dir(
-            {k: v for k, v in code_analysis_config.items() if k in _allowed},
-            Path(config_path),
-        )
 
-        # Check if SVO chunker is configured
-        server_config = ServerConfig(**server_config_dict)
-        if not server_config.chunker:
-            logger.warning("⚠️  No chunker config found, skipping vectorization worker")
+        # Resolve boot-parity start kwargs first (config filtering, chunker/
+        # enabled checks) -- gates DB auto-creation below exactly like the
+        # pre-refactor early-returns did.
+        plan = resolve_vectorization_worker_kwargs(app_config, config_path)
+        if not plan.ok:
+            logger.warning(
+                "⚠️  Vectorization worker not started: %s", plan.skip_reason
+            )
             return
-
-        # Check if worker is enabled
-        worker_config = server_config.worker
-        if worker_config and isinstance(worker_config, dict):
-            if not worker_config.get("enabled", True):
-                logger.info("ℹ️  Vectorization worker is disabled in config, skipping")
-                return
 
         # Resolve config_dir + state paths (do NOT place state under watched dirs)
         config_data = load_raw_config(config_path)
@@ -241,7 +202,6 @@ def startup_vectorization_worker() -> None:
             config_data=config_data, config_path=config_path
         )
         db_path = storage.db_path
-        faiss_dir = storage.faiss_dir
 
         # Database auto-creation (only if database doesn't exist)
         db_path_obj = Path(db_path)
@@ -296,52 +256,15 @@ def startup_vectorization_worker() -> None:
                     exc_info=True,
                 )
 
-        # Prepare SVO config (absolute batch_output_dir for worker subprocess cwd)
-        svo_config = apply_resolved_batch_output_dir(
-            (
-                server_config.model_dump()
-                if hasattr(server_config, "model_dump")
-                else server_config.dict()
-            ),
-            Path(config_path),
-        )
-
-        # Get worker config parameters
-        vector_dim = server_config.vector_dim or 384
-        batch_size = DEFAULT_BATCH_SIZE
-        poll_interval = DEFAULT_POLL_INTERVAL
-        worker_log_path = None  # default
-        if worker_config and isinstance(worker_config, dict):
-            batch_size = worker_config.get("batch_size", DEFAULT_BATCH_SIZE)
-            poll_interval = worker_config.get("poll_interval", DEFAULT_POLL_INTERVAL)
-            worker_log_path = worker_config.get("log_path")
-
-        # Update log file path to universal name (no project_id in name)
-        if worker_log_path:
-            log_path_obj = Path(worker_log_path)
-            worker_log_path = str(log_path_obj.parent / "vectorization_worker.log")
-        else:
-            # Default log path
-            worker_log_path = str(storage.log_dir / "vectorization_worker.log")
-
-        # Start single universal worker using WorkerManager
-        # Use absolute logs dir for PID file so worker start is not blocked by cwd/stale PID
-        worker_logs_dir = str(Path(worker_log_path).resolve().parent)
+        # Start single universal worker using WorkerManager, using the
+        # already-resolved boot-parity kwargs (db_path/faiss_dir/config_path/
+        # vector_dim/svo_config/batch_size/poll_interval/worker_log_path/
+        # worker_logs_dir).
         logger.info("🚀 Starting universal vectorization worker...")
         print("🚀 Starting universal vectorization worker...", flush=True)
 
         worker_manager = get_worker_manager()
-        result = worker_manager.start_vectorization_worker(
-            db_path=str(db_path),
-            faiss_dir=str(faiss_dir),
-            config_path=str(config_path),
-            vector_dim=vector_dim,
-            svo_config=svo_config,
-            batch_size=batch_size,
-            poll_interval=poll_interval,
-            worker_log_path=worker_log_path,
-            worker_logs_dir=worker_logs_dir,
-        )
+        result = worker_manager.start_vectorization_worker(**plan.kwargs)
 
         if result.success:
             logger.info(f"✅ Universal vectorization worker started: {result.message}")
@@ -397,58 +320,27 @@ def startup_file_watcher_worker() -> bool:
             )
             return False
 
-        # ServerConfig has extra="forbid": only pass keys that exist on the model.
-        # Excludes e.g. "database" (used by driver), not by ServerConfig.
-        _allowed = set(ServerConfig.model_fields.keys())
-        server_config_dict = {
-            k: v for k, v in code_analysis_config.items() if k in _allowed
-        }
-
-        # Check if file watcher is enabled
-        server_config = ServerConfig(**server_config_dict)
-        file_watcher_config = server_config.file_watcher
-        if not file_watcher_config or not isinstance(file_watcher_config, dict):
+        config_path = BaseMCPCommand._resolve_config_path()
+        plan = resolve_file_watcher_worker_kwargs(app_config, config_path)
+        if not plan.ok:
             logger.info(
-                "ℹ️  No file_watcher config found, skipping file watcher worker"
+                "ℹ️  File watcher worker not started: %s", plan.skip_reason
             )
             return False
 
-        if not file_watcher_config.get("enabled", True):
-            logger.info("ℹ️  File watcher worker is disabled in config, skipping")
-            return False
-
-        from code_analysis.main_workers_file_watcher import (
-            build_file_watcher_watch_dir_entries,
-            parse_worker_watch_dirs_raw,
-        )
-
-        watch_dirs_config = parse_worker_watch_dirs_raw(code_analysis_config)
-        if not watch_dirs_config:
+        if not plan.kwargs["watch_dirs"]:
             logger.warning(
                 "⚠️  No watch_dirs in config yet; starting file watcher anyway "
                 "(will reload from config.json each scan cycle)"
             )
 
-        # Resolve config_dir + state paths (do NOT place state under watched dirs)
-        config_path = BaseMCPCommand._resolve_config_path()
         config_data = load_raw_config(config_path)
         storage = resolve_storage_paths(
             config_data=config_data, config_path=config_path
         )
-        db_path = storage.db_path
-
-        watch_dirs_for_worker = build_file_watcher_watch_dir_entries(watch_dirs_config)
-
-        scan_interval = file_watcher_config.get("scan_interval", 60)
-        version_dir = file_watcher_config.get("version_dir", "data/versions")
-        worker_log_path = file_watcher_config.get("log_path")
-        ignore_patterns = file_watcher_config.get("ignore_patterns", [])
-
-        # Use locks_dir from resolve_storage_paths (Step 4 of refactor plan)
-        locks_dir = storage.locks_dir
         ensure_storage_dirs(storage)
 
-        watch_dirs_count = len(watch_dirs_for_worker)
+        watch_dirs_count = len(plan.kwargs["watch_dirs"])
         print(
             f"🚀 Starting file watcher worker (single process) for {watch_dirs_count} watch directory(ies)",
             flush=True,
@@ -459,25 +351,11 @@ def startup_file_watcher_worker() -> bool:
         logger.info(
             "ℹ️  Projects will be discovered automatically within each watch directory"
         )
-        if not worker_log_path:
-            worker_log_path = str(storage.log_dir / "file_watcher.log")
-        worker_logs_dir = str(Path(worker_log_path).resolve().parent)
-        if worker_log_path:
-            logger.info(f"📝 Worker log file: {worker_log_path}")
+        logger.info(f"📝 Worker log file: {plan.kwargs['worker_log_path']}")
 
         # Start file watcher worker using WorkerManager
         worker_manager = get_worker_manager()
-        result = worker_manager.start_file_watcher_worker(
-            db_path=str(db_path),
-            watch_dirs=watch_dirs_for_worker,
-            locks_dir=str(locks_dir),
-            scan_interval=scan_interval,
-            version_dir=version_dir,
-            worker_log_path=worker_log_path,
-            worker_logs_dir=worker_logs_dir,
-            ignore_patterns=ignore_patterns,
-            config_path=str(config_path),
-        )
+        result = worker_manager.start_file_watcher_worker(**plan.kwargs)
 
         if result.success:
             logger.info(
